@@ -1,7 +1,7 @@
 // An II — service worker
 // v68.31: Supabase publishable-key auth fix; robust precache.
 // Не трогает localStorage и облачный прогресс.
-const CACHE_VERSION = 'v69.7.1-familiar-fix';
+const CACHE_VERSION = 'v69.7.2-nav-fix';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();

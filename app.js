@@ -4165,10 +4165,11 @@ function updateBottomNav(id) {
     trainer: 'bn-more',
     study: 'bn-more',
     dict: 'bn-dict',
-    phrases: 'bn-practice',
-    grammar: 'bn-practice',
-    stats: 'bn-progress',
-    leaderboard: 'bn-progress',
+    verbs: 'bn-practice',
+    phrases: 'bn-more',
+    grammar: 'bn-more',
+    stats: 'bn-more',
+    leaderboard: 'bn-more',
   };
   document.querySelectorAll('.bottom-nav-item').forEach(el => el.classList.remove('active'));
   const activeId = navMap[id];
