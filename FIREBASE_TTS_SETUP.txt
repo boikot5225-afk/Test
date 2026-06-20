@@ -1,0 +1,26 @@
+AN II — Firebase / OpenRouter TTS (v68.32)
+
+1) Set the same OpenRouter key that used to live in Supabase:
+   firebase functions:secrets:set OPENROUTER_API_KEY
+
+2) Install function dependencies:
+   cd functions
+   npm install
+   node --check index.js
+   cd ..
+
+3) Deploy the new HTTPS audio function and Hosting:
+   firebase deploy --only functions:ttsAudio
+   firebase deploy --only hosting
+
+4) If Cloud Run asks about unauthenticated invocation, choose Allow public access.
+   The endpoint itself still verifies Firebase ID tokens before it calls OpenRouter.
+
+5) Test AFTER you have signed in to the main app:
+   https://french-da79a.web.app/tts-test.html?v=68.32
+
+Notes:
+- ttsAudio uses Firebase Auth + Firebase Secret Manager.
+- No artificial daily limit is applied.
+- Browser cache stores recently generated MP3 locally.
+- French default voice: ff_siwis. Chinese default voice: zf_xiaobei.

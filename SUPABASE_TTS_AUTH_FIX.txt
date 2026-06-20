@@ -1,0 +1,11 @@
+v68.31: Supabase TTS auth fix
+
+Client change:
+- Sends only apikey: sb_publishable_...
+- Does NOT send Authorization: Bearer sb_publishable_...
+
+Dashboard requirement for the Supabase Edge Function `tts`:
+- Turn OFF Verify JWT / set verify_jwt = false.
+- The new Supabase publishable key is not a JWT; if Verify JWT remains on, the gateway rejects the request before the function runs and browser code sees Failed to fetch.
+
+The function itself must still keep CORS OPTIONS handling, which your current source already has.

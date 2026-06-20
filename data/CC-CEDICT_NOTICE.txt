@@ -1,0 +1,4 @@
+Chinese dictionary data: CC-CEDICT, published by MDBG.
+License: Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0).
+Download/source: https://www.mdbg.net/chinese/dictionary?page=cc-cedict
+This app uses a compact converted form for local Chinese segmentation and pinyin lookup.
