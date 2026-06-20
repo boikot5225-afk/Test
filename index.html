@@ -195,7 +195,7 @@
     <div class="nav-tab active" onclick="showScreen('home')">🏠 Главная</div>
     <div class="nav-tab" onclick="showScreen('reader')">📖 Читать</div>
     <div class="nav-tab" onclick="showScreen('dict')">📚 Слова</div>
-    <div class="nav-tab" onclick="showScreen('verbs')">⚡ Глаголы</div>
+    <div class="nav-tab" onclick="showScreen('trainer')">⚡ Глаголы</div>
     <div class="nav-tab" onclick="toggleMoreMenu()" style="white-space:nowrap">⋯ Ещё</div>
   </div>
 </nav>
@@ -211,7 +211,7 @@
   <div class="bottom-nav-item" id="bn-dict" onclick="showScreen('dict')">
     <span class="bn-icon">📚</span><span>Слова</span>
   </div>
-  <div class="bottom-nav-item" id="bn-practice" onclick="showScreen('verbs')">
+  <div class="bottom-nav-item" id="bn-practice" onclick="showScreen('trainer')">
     <span class="bn-icon">⚡</span><span>Глаголы</span>
   </div>
   <div class="bottom-nav-item" id="bn-more" onclick="toggleMoreMenu()">
@@ -361,7 +361,7 @@
         <b>Библиотека</b>
         <small id="home-books-count-new">0 текстов</small>
       </button>
-      <button class="home-quick-card" onclick="showScreen('verbs')">
+      <button class="home-quick-card" onclick="showScreen('trainer')">
         <i class="hq-icon">⚡</i>
         <b>Глаголы</b>
         <small>тренажёр</small>
@@ -1836,6 +1836,6 @@
       }
     };
   </script>
-<script type="module" src="js/app.js?v=69.7.2-nav-fix"></script>
+<script type="module" src="js/app.js?v=69.8-force-refresh"></script>
 </body>
 </html>

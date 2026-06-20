@@ -4162,7 +4162,7 @@ function updateBottomNav(id) {
   const navMap = {
     home: 'bn-home',
     reader: 'bn-reader',
-    trainer: 'bn-more',
+    trainer: 'bn-practice',
     study: 'bn-more',
     dict: 'bn-dict',
     verbs: 'bn-practice',
