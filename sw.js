@@ -1,7 +1,7 @@
 // An II — service worker
-// v68.31: Supabase publishable-key auth fix; robust precache.
+// v69.9: reader known-word colour scope fix; robust precache.
 // Не трогает localStorage и облачный прогресс.
-const CACHE_VERSION = 'v69.8-force-refresh';
+const CACHE_VERSION = 'v69.9-reader-known-fix';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();

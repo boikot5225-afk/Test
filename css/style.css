@@ -2805,6 +2805,10 @@ input:-webkit-autofill:focus {
   font-size: .66rem; padding: 2px 6px; border-radius: 4px;
   flex-shrink: 0;
 }
-.rw-saved  { background: rgba(196,151,58,.12); color: var(--accent); border: 1px solid rgba(196,151,58,.25); }
-.rw-known  { background: rgba(39,174,96,.08); color: #27ae60; border: 1px solid rgba(39,174,96,.2); }
-.rw-opened { background: var(--surface2); color: var(--text-muted); border: 1px solid var(--border); }
+/* These badges exist only in the “Reader words in dictionary” list.
+   Do NOT leave .rw-known / .rw-saved global: the reader uses the same state
+   classes on inline words, and a global .rw-known rule painted all known/common
+   words green in every reader theme. */
+.rw-status.rw-saved  { background: rgba(196,151,58,.12); color: var(--accent); border: 1px solid rgba(196,151,58,.25); }
+.rw-status.rw-known  { background: rgba(39,174,96,.08); color: #27ae60; border: 1px solid rgba(39,174,96,.2); }
+.rw-status.rw-opened { background: var(--surface2); color: var(--text-muted); border: 1px solid var(--border); }
