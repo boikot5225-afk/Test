@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════
-// home.js — reader-first главный экран v69.5
+// home.js — reader-first главный экран v70.1
 // ════════════════════════════════════════════════
 
 export async function renderHome() {
@@ -12,6 +12,20 @@ export async function renderHome() {
     typeof globalThis.an2ReaderStorageKey === 'function'
       ? globalThis.an2ReaderStorageKey(base)
       : base;
+
+  const lang = globalThis.AN2_LANG || 'fr';
+  const isZh = lang === 'zh';
+
+  // ── Обновить UI переключателя языка ──
+  if (typeof globalThis.updateLangUI === 'function') globalThis.updateLangUI();
+  else {
+    const btnFr = $('hlb-fr'); const btnZh = $('hlb-zh');
+    if (btnFr) btnFr.classList.toggle('active', !isZh);
+    if (btnZh) btnZh.classList.toggle('active', isZh);
+    const icon = $('bn-practice-icon'); const label = $('bn-practice-label');
+    if (icon) icon.textContent = isZh ? '🀄' : '⚡';
+    if (label) label.textContent = isZh ? 'Символы' : 'Глаголы';
+  }
 
   // ── Дата и имя ──
   const username = globalThis.an2CurrentProfileName || '—';
@@ -30,6 +44,12 @@ export async function renderHome() {
   } catch { books = []; }
   if (!Array.isArray(books)) books = [];
 
+  // Фильтрация по текущему языку
+  const langBooks = books.filter(b => {
+    const bl = String(b.lang || b.sourceLang || 'fr').slice(0, 2);
+    return bl === lang;
+  });
+
   const bookProgress = (book) => {
     const chapters = book?.chapters || [];
     const total = chapters.reduce((n, ch) => n + (ch.paragraphs?.length || 0), 0) || 1;
@@ -40,23 +60,23 @@ export async function renderHome() {
     return Math.max(0, Math.min(100, Math.round(done / total * 100)));
   };
 
-  const langFlag = (lang) => ({ fr: '🇫🇷', zh: '🇨🇳', en: '🇬🇧', de: '🇩🇪', es: '🇪🇸' }[String(lang || 'fr').slice(0,2)] || '🌐');
+  const langFlag = (l) => ({ fr: '🇫🇷', zh: '🇨🇳', en: '🇬🇧', de: '🇩🇪', es: '🇪🇸' }[String(l || 'fr').slice(0,2)] || '🌐');
   const formatIcon = (book) => book.format === 'song' ? '🎵' : '📖';
 
-  // Сортируем по дате обновления — самые свежие сверху
-  const sorted = [...books].sort((a, b) =>
+  const sorted = [...langBooks].sort((a, b) =>
     new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
-  const recent = sorted.slice(0, 3); // показываем до 3 карточек
+  const recent = sorted.slice(0, 3);
 
   const section = $('home-continue-section');
   if (section) {
     if (!recent.length) {
+      const langLabel = isZh ? 'китайский текст' : 'французский текст';
       section.innerHTML = `
         <div class="home-section-label">начать</div>
         <button onclick="showScreen('reader');setTimeout(()=>showReaderImportModal(),120)" class="home-add-card">
-          <span style="font-size:1.6rem">📖</span>
+          <span style="font-size:1.6rem">${isZh ? '🀄' : '📖'}</span>
           <div>
-            <b>Добавить первый текст</b>
+            <b>Добавить ${langLabel}</b>
             <small>вставка, TXT, EPUB или URL</small>
           </div>
         </button>`;
@@ -93,9 +113,9 @@ export async function renderHome() {
             </div>
           </div>`;
         }).join('')}
-        ${books.length > 3 ? `
+        ${langBooks.length > 3 ? `
           <button class="home-lib-link" onclick="showScreen('reader')">
-            Все тексты (${books.length}) →
+            Все тексты (${langBooks.length}) →
           </button>` : ''}`;
     }
   }
@@ -106,8 +126,15 @@ export async function renderHome() {
     wordState = JSON.parse(localStorage.getItem(scopedKey('an2_reader_word_state_v1')) || '{}') || {};
   } catch { wordState = {}; }
   const words = Object.values(wordState).filter(w => w && w.word);
-  const savedCount = words.filter(w => w.saved).length;
-  const openedToday = words.filter(w => {
+
+  // Фильтруем слова по языку
+  const langWords = words.filter(w => {
+    const wl = String(w.lang || 'fr').slice(0, 2);
+    return wl === lang;
+  });
+
+  const savedCount = langWords.filter(w => w.saved).length;
+  const openedToday = langWords.filter(w => {
     if (!w.updatedAt) return false;
     const d = new Date(w.updatedAt);
     const now = new Date();
@@ -116,9 +143,9 @@ export async function renderHome() {
            d.getDate() === now.getDate();
   }).length;
 
-  setText('home-stat-words', openedToday || words.filter(w => (w.clicked || 0) > 0).length);
+  setText('home-stat-words', openedToday || langWords.filter(w => (w.clicked || 0) > 0).length);
   setText('home-stat-chapters', (() => {
-    const total = books.reduce((n, b) => n + (b.currentParagraph || 0), 0);
+    const total = langBooks.reduce((n, b) => n + (b.currentParagraph || 0), 0);
     return total > 0 ? total : 0;
   })());
   const readMinutes = (() => {
@@ -130,19 +157,75 @@ export async function renderHome() {
   })();
   setText('home-stat-minutes', readMinutes > 0 ? readMinutes : '—');
 
-  // Обновляем legacy-совместимые поля
+  // Лейблы статов — разные для языков
+  const statChLabel = document.querySelector('#home-stats-row-new .home-stat-card:nth-child(2) .home-stat-lbl');
+  if (statChLabel) statChLabel.textContent = isZh ? 'абзацев' : 'глав';
+  const statWLabel = document.querySelector('#home-stats-row-new .home-stat-card:nth-child(3) .home-stat-lbl');
+  if (statWLabel) statWLabel.textContent = isZh ? 'иероглифов' : 'слов открыто';
+
+  // Legacy
   setText('home-books-count', books.length);
-  setText('home-books-count-new', books.length + ' ' + plural(books.length, 'текст', 'текста', 'текстов'));
+  setText('home-books-count-new', langBooks.length + ' ' + plural(langBooks.length, 'текст', 'текста', 'текстов'));
   setText('home-saved-words-new', savedCount ? savedCount + ' сохранено' : 'сохранённые');
 
-  // ── Последние слова ──
+  // ── Quick access — зависит от языка ──
+  const quickGrid = document.querySelector('.home-quick-grid');
+  if (quickGrid) {
+    if (isZh) {
+      quickGrid.innerHTML = `
+        <button class="home-quick-card" onclick="showScreen('reader')">
+          <i class="hq-icon">📚</i>
+          <b>Библиотека</b>
+          <small id="home-books-count-new">${langBooks.length} ${plural(langBooks.length,'текст','текста','текстов')}</small>
+        </button>
+        <button class="home-quick-card" onclick="navPracticeBtn()">
+          <i class="hq-icon">🀄</i>
+          <b>Символы</b>
+          <small>словарь по HSK</small>
+        </button>
+        <button class="home-quick-card" onclick="toggleMoreMenu()">
+          <i class="hq-icon">···</i>
+          <b>Ещё</b>
+          <small>фразы, выход</small>
+        </button>`;
+    } else {
+      quickGrid.innerHTML = `
+        <button class="home-quick-card" onclick="showScreen('reader')">
+          <i class="hq-icon">📚</i>
+          <b>Библиотека</b>
+          <small id="home-books-count-new">${langBooks.length} ${plural(langBooks.length,'текст','текста','текстов')}</small>
+        </button>
+        <button class="home-quick-card" onclick="showScreen('trainer')">
+          <i class="hq-icon">⚡</i>
+          <b>Глаголы</b>
+          <small>тренажёр</small>
+        </button>
+        <button class="home-quick-card" onclick="toggleMoreMenu()">
+          <i class="hq-icon">···</i>
+          <b>Ещё</b>
+          <small>фразы, выход</small>
+        </button>`;
+    }
+  }
+
+  // ── Последние слова / иероглифы ──
   const recentWords = $('home-recent-reader-words');
   if (recentWords) {
-    const rows = words
+    const rows = langWords
       .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
       .slice(0, 10);
     if (!rows.length) {
-      recentWords.innerHTML = `<div class="home-empty-note">Слова появятся здесь когда начнёшь читать.</div>`;
+      const hint = isZh ? 'Иероглифы появятся здесь когда начнёшь читать.' : 'Слова появятся здесь когда начнёшь читать.';
+      recentWords.innerHTML = `<div class="home-empty-note">${hint}</div>`;
+    } else if (isZh) {
+      // Для ZH — карточки с иероглифом и пиньинем
+      recentWords.innerHTML = rows.map(w => {
+        const pinyin = w.pinyin || w.reading || '';
+        return `<span class="home-word-chip zh-chip" onclick="showScreen('dict');setTimeout(()=>window.renderDictWords&&renderDictWords('zh','${escape(w.word)}'),80)">
+          <b style="font-size:1.1rem;line-height:1">${escape(w.word)}</b>
+          ${pinyin ? `<small style="font-size:.65rem;opacity:.7">${escape(pinyin)}</small>` : ''}
+        </span>`;
+      }).join('');
     } else {
       recentWords.innerHTML = rows.map(w => {
         const status = w.saved ? 'сохранено' : w.known ? 'знаю' : 'открыто';
@@ -152,6 +235,10 @@ export async function renderHome() {
       }).join('');
     }
   }
+
+  // Секция лейбл
+  const recentLabel = document.querySelector('.home-recent-section .home-section-label');
+  if (recentLabel) recentLabel.textContent = isZh ? 'последние иероглифы' : 'последние слова';
 }
 
 function plural(n, one, few, many) {

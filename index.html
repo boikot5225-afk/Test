@@ -211,8 +211,8 @@
   <div class="bottom-nav-item" id="bn-dict" onclick="showScreen('dict')">
     <span class="bn-icon">📚</span><span>Слова</span>
   </div>
-  <div class="bottom-nav-item" id="bn-practice" onclick="showScreen('trainer')">
-    <span class="bn-icon">⚡</span><span>Глаголы</span>
+  <div class="bottom-nav-item" id="bn-practice" onclick="navPracticeBtn()">
+    <span class="bn-icon" id="bn-practice-icon">⚡</span><span id="bn-practice-label">Глаголы</span>
   </div>
   <div class="bottom-nav-item" id="bn-more" onclick="toggleMoreMenu()">
     <span class="bn-icon">⋯</span><span>Ещё</span>
@@ -330,9 +330,15 @@
         <div class="home-app-name">An II</div>
         <div id="home-date" class="home-date"></div>
       </div>
-      <button class="home-topbar-user" onclick="showScreen('profile')" title="Профиль">
-        <span id="home-username-avatar">—</span>
-      </button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="home-lang-switcher" id="home-lang-switcher">
+          <button class="home-lang-btn" id="hlb-fr" onclick="setAppLang('fr')" title="Французский">🇫🇷</button>
+          <button class="home-lang-btn" id="hlb-zh" onclick="setAppLang('zh')" title="Китайский">🇨🇳</button>
+        </div>
+        <button class="home-topbar-user" onclick="showScreen('profile')" title="Профиль">
+          <span id="home-username-avatar">—</span>
+        </button>
+      </div>
     </div>
 
     <!-- CONTINUE CARDS -->
@@ -1836,6 +1842,6 @@
       }
     };
   </script>
-<script type="module" src="js/app.js?v=69.8-force-refresh"></script>
+<script type="module" src="js/app.js?v=70.2"></script>
 </body>
 </html>

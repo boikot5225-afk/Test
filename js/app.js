@@ -2051,18 +2051,21 @@ function readerChunkLongParagraph(paragraph, maxLen = 380) {
 }
 
 function readerNormalizeBookChunks(book) {
-  if (!book || book._v43SentenceChunks) return false;
+  const isZh = readerCanonicalLang(book?.lang || book?.sourceLang || 'fr') === 'zh';
+  const doneFlag = isZh ? '_v70ZhChunks' : '_v43SentenceChunks';
+  if (!book || book[doneFlag]) return false;
+  const maxLen = isZh ? 150 : 380;
   let changed = false;
   for (const ch of (book.chapters || [])) {
     const next = [];
     for (const p of (ch.paragraphs || [])) {
-      const chunks = readerChunkLongParagraph(p, 380);
+      const chunks = readerChunkLongParagraph(p, maxLen);
       if (chunks.length !== 1 || chunks[0] !== p) changed = true;
       next.push(...chunks);
     }
     ch.paragraphs = next;
   }
-  book._v43SentenceChunks = true;
+  book[doneFlag] = true;
   return changed;
 }
 
@@ -2626,7 +2629,7 @@ function readerHtmlToParagraphs(html, lang = null) {
     seen.add(key);
     const parts = clean.split(/\n\s*\n+/).map(x => readerEpubCleanText(x)).filter(Boolean);
     for (const part of (parts.length ? parts : [clean])) {
-      readerChunkLongParagraph(part.replace(/\n+/g, ' '), readerCanonicalLang(lang) === 'zh' ? 420 : 420).forEach(p => {
+      readerChunkLongParagraph(part.replace(/\n+/g, ' '), readerCanonicalLang(lang) === 'zh' ? 150 : 420).forEach(p => {
         if (p && !readerLooksLikeBoilerplate(p)) paragraphs.push(p);
       });
     }
@@ -2652,7 +2655,7 @@ function readerHtmlToParagraphs(html, lang = null) {
   if (bodyChars > 0 && (paragraphs.length === 0 || paraChars < bodyChars * 0.82)) {
     const fallback = [];
     bestText.split(/\n\s*\n+|\n+/).map(x => readerEpubCleanText(x)).filter(x => x && !readerLooksLikeBoilerplate(x)).forEach(part => {
-      readerChunkLongParagraph(part, readerCanonicalLang(lang) === 'zh' ? 420 : 420).forEach(p => fallback.push(p));
+      readerChunkLongParagraph(part, readerCanonicalLang(lang) === 'zh' ? 150 : 420).forEach(p => fallback.push(p));
     });
     if (fallback.join('').replace(/\s+/g, '').length > paraChars) return fallback.filter(p => p.length > 1);
   }
@@ -4159,13 +4162,14 @@ export function showScreen(id) {
 
 function updateBottomNav(id) {
   // Map screen ids to nav item ids
+  const lang = globalThis.AN2_LANG || 'fr';
   const navMap = {
     home: 'bn-home',
     reader: 'bn-reader',
-    trainer: 'bn-more',
+    trainer: lang === 'zh' ? 'bn-more' : 'bn-practice',
     study: 'bn-more',
-    dict: 'bn-dict',
-    phrases: 'bn-practice',
+    dict: lang === 'zh' ? 'bn-practice' : 'bn-dict',
+    phrases: lang === 'fr' ? 'bn-practice' : 'bn-more',
     grammar: 'bn-practice',
     stats: 'bn-progress',
     leaderboard: 'bn-progress',
@@ -4195,7 +4199,7 @@ export function loginProfile(name) {
   // load). A render error must NOT crash startup and dump the user back to a
   // scary "не запустилось" screen — the app shell is already usable.
   try { resetTrainer(); } catch (e) { console.warn('[login] resetTrainer skipped:', e?.message); }
-  try { showScreen('home'); } catch (e) { console.warn('[login] showScreen skipped:', e?.message); }
+  try { updateLangUI(); showScreen('home'); } catch (e) { console.warn('[login] showScreen skipped:', e?.message); }
 }
 
 // Guest mode: use the app without an account. Data lives in localStorage only.
@@ -5112,9 +5116,58 @@ export function startSRSReview() {
   resetTrainer();
 }
 
+// ── Переключение языка ──
+function setAppLang(lang) {
+  const allowed = ['fr', 'zh'];
+  if (!allowed.includes(lang)) return;
+  globalThis.AN2_LANG = lang;
+  try { localStorage.setItem('an2_lang', lang); } catch {}
+  updateLangUI();
+  // Re-render home if active
+  if (document.getElementById('screen-home')?.classList.contains('active')) {
+    Promise.resolve(renderHome()).catch(e => console.error(e));
+  }
+}
+
+function updateLangUI() {
+  const lang = globalThis.AN2_LANG || 'fr';
+  const isZh = lang === 'zh';
+
+  // Topbar buttons
+  const btnFr = document.getElementById('hlb-fr');
+  const btnZh = document.getElementById('hlb-zh');
+  if (btnFr) btnFr.classList.toggle('active', !isZh);
+  if (btnZh) btnZh.classList.toggle('active', isZh);
+
+  // 4th nav button
+  const icon = document.getElementById('bn-practice-icon');
+  const label = document.getElementById('bn-practice-label');
+  if (icon) icon.textContent = isZh ? '🀄' : '⚡';
+  if (label) label.textContent = isZh ? 'Символы' : 'Глаголы';
+}
+
+// 4th nav button action — depends on current lang
+function navPracticeBtn() {
+  const lang = globalThis.AN2_LANG || 'fr';
+  if (lang === 'zh') {
+    showScreen('dict');
+    // Switch dict to ZH tab after short delay
+    setTimeout(() => {
+      if (typeof window.renderDictWords === 'function') {
+        window.renderDictWords('zh');
+      }
+    }, 80);
+  } else {
+    showScreen('trainer');
+  }
+}
+
 // Expose to window (override proxy stubs)
 window.toggleMoreMenu       = toggleMoreMenu;
 window.closeMoreMenu        = closeMoreMenu;
+window.setAppLang           = setAppLang;
+window.navPracticeBtn       = navPracticeBtn;
+window.updateLangUI         = updateLangUI;
 window.showProfileManage    = showProfileManage;
 window.renderLeaderboard    = renderLeaderboard;
 window.setGrammar           = setGrammar;
