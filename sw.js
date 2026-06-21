@@ -1,7 +1,7 @@
 // An II — service worker
 // v69.9: reader known-word colour scope fix; robust precache.
 // Не трогает localStorage и облачный прогресс.
-const CACHE_VERSION = 'v70.2';
+const CACHE_VERSION = 'v70.4';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();

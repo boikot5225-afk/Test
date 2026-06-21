@@ -2838,3 +2838,135 @@ input:-webkit-autofill:focus {
 .rw-status.rw-saved  { background: rgba(196,151,58,.12); color: var(--accent); border: 1px solid rgba(196,151,58,.25); }
 .rw-status.rw-known  { background: rgba(39,174,96,.08); color: #27ae60; border: 1px solid rgba(39,174,96,.2); }
 .rw-status.rw-opened { background: var(--surface2); color: var(--text-muted); border: 1px solid var(--border); }
+
+/* ═══════════════════════════════════════════
+   ZH TRAINER SCREEN
+   ═══════════════════════════════════════════ */
+.zh-trainer-shell {
+  display: flex; flex-direction: column;
+  min-height: 100vh; background: var(--bg);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.zh-trainer-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.zh-tr-back {
+  background: none; border: none; color: var(--text-muted);
+  font-size: .85rem; cursor: pointer; font-family: inherit; padding: 0;
+}
+.zh-tr-title {
+  font-size: .95rem; font-weight: 600; color: var(--text);
+}
+.zh-tr-count {
+  font-size: .78rem; color: var(--text-muted);
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.zh-trainer-body {
+  flex: 1; padding: 20px 16px; display: flex;
+  flex-direction: column; gap: 12px;
+}
+
+/* Card */
+.zh-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 20px 18px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.zh-card-word {
+  font-size: 3rem; font-weight: 400;
+  color: var(--text); text-align: center;
+  line-height: 1.1;
+  letter-spacing: .05em;
+}
+.zh-card-context {
+  background: var(--surface2);
+  border-radius: 12px; padding: 12px 14px;
+}
+.zh-card-sent {
+  font-size: .95rem; color: var(--text);
+  line-height: 1.7;
+}
+.zh-tr-mark {
+  background: rgba(212,175,55,.22);
+  color: var(--accent);
+  border-radius: 3px;
+  padding: 0 2px;
+  font-weight: 600;
+}
+.zh-card-source {
+  font-size: .72rem; color: var(--text-muted);
+  margin-top: 6px;
+}
+.zh-card-no-ctx {
+  font-size: .78rem; color: var(--text-muted);
+  text-align: center; padding: 6px 0;
+}
+
+/* Answer reveal */
+.zh-card-answer {
+  display: flex; flex-direction: column; gap: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  transition: opacity .2s;
+}
+.zh-card-answer.zh-hidden { display: none; }
+.zh-card-pinyin {
+  font-size: 1.1rem; color: var(--text-muted);
+  text-align: center; letter-spacing: .06em;
+}
+.zh-card-ru {
+  font-size: 1.05rem; color: var(--text);
+  text-align: center; line-height: 1.5;
+}
+.zh-no-ru { color: var(--text-muted); font-size: .85rem; }
+.zh-card-status {
+  font-size: .72rem; color: var(--text-muted);
+  text-align: center;
+}
+
+/* Buttons */
+.zh-card-actions { display: flex; flex-direction: column; gap: 8px; }
+.zh-btn {
+  width: 100%; padding: 13px 10px;
+  border-radius: 12px; border: 1px solid var(--border);
+  background: var(--surface2); color: var(--text);
+  font-size: .95rem; font-family: inherit;
+  cursor: pointer; font-weight: 500;
+  transition: all .15s;
+}
+.zh-btn-reveal {
+  background: rgba(196,151,58,.1);
+  border-color: rgba(196,151,58,.3);
+  color: var(--accent);
+}
+.zh-btn-row { display: flex; gap: 8px; }
+.zh-btn-row .zh-btn { flex: 1; }
+.zh-btn-again { color: var(--text-muted); }
+.zh-btn-good {
+  background: rgba(212,175,55,.12);
+  border-color: rgba(212,175,55,.3);
+  color: var(--accent);
+}
+
+/* Session bar */
+.zh-session-bar {
+  display: flex; gap: 14px; justify-content: center;
+  padding: 4px 0;
+}
+.zh-s-good { font-size: .85rem; color: var(--accent); font-weight: 500; }
+.zh-s-again { font-size: .85rem; color: var(--text-muted); }
+
+/* Done screen */
+.zh-done {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 14px; padding: 40px 20px; text-align: center;
+}
+.zh-done-icon { font-size: 3rem; }
+.zh-done-title { font-size: 1.2rem; font-weight: 600; color: var(--text); }
+.zh-done-stats { display: flex; gap: 16px; }
+.zh-done-hint { font-size: .85rem; color: var(--text-muted); line-height: 1.5; max-width: 280px; }

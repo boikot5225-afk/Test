@@ -13,6 +13,7 @@ import { speak, stopSpeak, initSpeech, applyKbMode, initTTSEngineUI, showFrKb, h
          frKbEnabled, autoSpeak, toggleAutoSpeak, toggleKbMode, insertFrChar,
          frBackspace, frEnter, frToggleShift } from './tts.js?v=68.32-firebase-tts';
 import { renderHome } from './home.js';
+import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
 import { renderNumbersScreen, nextNumber, checkNumber, speakCurrentNumber } from './numbers.js';
 import { renderGroupsHome, openGroup, backToGroups, gNextCard, gCheckAnswer, gShowHint, IRR_GROUPS } from './groups.js';
@@ -4130,12 +4131,21 @@ export function showScreen(id) {
     if (listWrap) listWrap.style.display = 'block';
   }
   if (id === 'home')    Promise.resolve(renderHome()).catch(e => console.error(e));
+  if (id === 'zh-trainer') Promise.resolve(renderZhTrainer()).catch(e => console.error(e));
   if (id === 'reader')  renderReaderScreen();
   if (id === 'stats')   {
     // Ensure nouns are loaded so stats show names, not raw ids (n10, n8…)
     loadNounsFromCloud().then(() => renderStats(VERBS, NOUNS)).catch(e => console.error(e));
   }
-  if (id === 'dict')    { closeDictDetail(); window.renderDict(); }
+  if (id === 'dict') {
+    closeDictDetail();
+    const isZhMode = (globalThis.AN2_LANG || 'fr') === 'zh';
+    if (isZhMode && typeof window.setDictType === 'function') {
+      window.setDictType('zh');
+    } else {
+      window.renderDict();
+    }
+  }
   if (id === 'study')   {
     window.renderStudyScreen().catch(e => console.error(e));
     // Update learn-later count badge on study screen
@@ -4169,6 +4179,7 @@ function updateBottomNav(id) {
     trainer: lang === 'zh' ? 'bn-more' : 'bn-practice',
     study: 'bn-more',
     dict: lang === 'zh' ? 'bn-practice' : 'bn-dict',
+    'zh-trainer': 'bn-practice',
     phrases: lang === 'fr' ? 'bn-practice' : 'bn-more',
     grammar: 'bn-practice',
     stats: 'bn-progress',
@@ -5123,6 +5134,20 @@ function setAppLang(lang) {
   globalThis.AN2_LANG = lang;
   try { localStorage.setItem('an2_lang', lang); } catch {}
   updateLangUI();
+  // Reset dict to correct type for new language
+  if (typeof window.setDictType === 'function') {
+    if (document.getElementById('screen-dict')?.classList.contains('active')) {
+      window.setDictType(lang === 'zh' ? 'zh' : 'verbs');
+    } else {
+      // Reset quietly so next open starts on correct tab
+      if (lang === 'fr' && typeof dictType !== 'undefined') {
+        const tabsFr = document.getElementById('dict-tabs-fr');
+        const tabsZh = document.getElementById('dict-tabs-zh');
+        if (tabsFr) tabsFr.style.display = 'flex';
+        if (tabsZh) tabsZh.style.display = 'none';
+      }
+    }
+  }
   // Re-render home if active
   if (document.getElementById('screen-home')?.classList.contains('active')) {
     Promise.resolve(renderHome()).catch(e => console.error(e));
@@ -5150,13 +5175,7 @@ function updateLangUI() {
 function navPracticeBtn() {
   const lang = globalThis.AN2_LANG || 'fr';
   if (lang === 'zh') {
-    showScreen('dict');
-    // Switch dict to ZH tab after short delay
-    setTimeout(() => {
-      if (typeof window.renderDictWords === 'function') {
-        window.renderDictWords('zh');
-      }
-    }, 80);
+    showScreen('zh-trainer');
   } else {
     showScreen('trainer');
   }
@@ -6003,6 +6022,12 @@ let dictPrepsCache = [];
 
 window.setDictType = function(type) {
   dictType = type;
+
+  // Show/hide FR vs ZH tab bars
+  const tabsFr = document.getElementById('dict-tabs-fr');
+  const tabsZh = document.getElementById('dict-tabs-zh');
+  if (tabsFr) tabsFr.style.display = type === 'zh' ? 'none' : 'flex';
+  if (tabsZh) tabsZh.style.display = type === 'zh' ? 'block' : 'none';
 
   // Update tabs — только видимые кнопки
   ['verbs','reader','nouns','preps','zh'].forEach(t => {

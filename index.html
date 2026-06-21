@@ -862,7 +862,7 @@
 <div id="screen-dict" class="screen">
 
   <!-- Type switcher -->
-  <div style="display:flex;gap:4px;background:var(--surface2);border-radius:10px;padding:4px;margin-bottom:14px;">
+  <div id="dict-tabs-fr" style="display:flex;gap:4px;background:var(--surface2);border-radius:10px;padding:4px;margin-bottom:14px;">
     <button id="dict-type-verbs" onclick="setDictType('verbs')"
       style="flex:1;padding:7px 4px;border:none;border-radius:7px;font-size:0.78rem;font-family:'IBM Plex Sans',sans-serif;cursor:pointer;transition:all 0.2s;background:var(--accent);color:#f5ecd8;font-weight:600">
       ✏️ Глаголы
@@ -871,6 +871,12 @@
       style="flex:1;padding:7px 4px;border:none;border-radius:7px;font-size:0.78rem;font-family:'IBM Plex Sans',sans-serif;cursor:pointer;transition:all 0.2s;background:none;color:var(--text-muted)">
       📖 Слова
     </button>
+  </div>
+  <div id="dict-tabs-zh" style="display:none;margin-bottom:14px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <div style="font-size:.78rem;font-weight:600;color:var(--text)">🀄 Китайские слова</div>
+      <button id="dict-type-zh" onclick="setDictType('zh')" style="display:none"></button>
+    </div>
   </div>
 
   <!-- Search row -->
@@ -1842,6 +1848,19 @@
       }
     };
   </script>
-<script type="module" src="js/app.js?v=70.2"></script>
+
+<!-- ZH TRAINER SCREEN -->
+<div id="screen-zh-trainer" class="screen">
+  <div class="zh-trainer-shell">
+    <div class="zh-trainer-topbar">
+      <button class="zh-tr-back" onclick="showScreen('home')">← Главная</button>
+      <div class="zh-tr-title">Китайские слова</div>
+      <div class="zh-tr-count" id="zh-tr-count"></div>
+    </div>
+    <div id="zh-trainer-body" class="zh-trainer-body"></div>
+  </div>
+</div>
+
+<script type="module" src="js/app.js?v=70.4"></script>
 </body>
 </html>
