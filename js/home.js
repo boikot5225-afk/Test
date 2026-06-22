@@ -168,6 +168,48 @@ export async function renderHome() {
   setText('home-books-count-new', langBooks.length + ' ' + plural(langBooks.length, 'текст', 'текста', 'текстов'));
   setText('home-saved-words-new', savedCount ? savedCount + ' сохранено' : 'сохранённые');
 
+  // ── Новости секция ──
+  const newsSection = document.getElementById('home-news-section');
+  if (newsSection) {
+    const newsBooks = books
+      .filter(b => b.format === 'news' && String(b.lang || b.sourceLang || 'fr').slice(0,2) === lang)
+      .sort((a,b) => new Date(b.createdAt||0) - new Date(a.createdAt||0))
+      .slice(0, 3);
+
+    if (!newsBooks.length) {
+      newsSection.innerHTML = `
+        <div class="home-section-label">новости</div>
+        <button onclick="showScreen('reader');setTimeout(()=>{readerSetLibTab('news');},120)" class="home-add-card">
+          <span style="font-size:1.4rem">📰</span>
+          <div><b>Добавить новость</b><small>URL, Wikipedia или текст</small></div>
+        </button>`;
+    } else {
+      newsSection.innerHTML = `
+        <div class="home-section-label">новости</div>
+        ${newsBooks.map(b => {
+          const done = (b.chapters||[]).every((ch,ci) =>
+            (b.currentChapter||0) > ci ||
+            ((b.currentChapter||0) === ci && (b.currentParagraph||0) >= (ch.paragraphs?.length||1)-1));
+          const dateStr = b.newsDate || b.createdAt
+            ? new Date(b.newsDate || b.createdAt).toLocaleDateString('ru-RU',{day:'numeric',month:'long'})
+            : '';
+          const src = b.newsSource || b.author || 'вставка';
+          const isNew = !done;
+          return `
+            <div class="home-news-card${done?' read':''}" onclick="showScreen('reader');setTimeout(()=>readerOpenBook('${escape(b.id)}'),120)">
+              ${isNew ? '<div class="home-news-dot"></div>' : ''}
+              <div class="home-news-body">
+                <div class="home-news-source">📰 ${escape(src)}</div>
+                <div class="home-news-title">${escape(b.title)}</div>
+                <div class="home-news-meta">${escape(dateStr)}${done?' · прочитано':''}</div>
+              </div>
+              <button class="home-news-speak" onclick="event.stopPropagation();showScreen('reader');setTimeout(()=>{readerOpenBook('${escape(b.id)}');setTimeout(()=>readerSpeakCurrentParagraph(),400)},120)">🔊</button>
+            </div>`;
+        }).join('')}
+        ${newsBooks.length >= 3 ? `<button class="home-lib-link" onclick="showScreen('reader');setTimeout(()=>readerSetLibTab('news'),120)">Все новости →</button>` : ''}`;
+    }
+  }
+
   // ── Quick access — зависит от языка ──
   const quickGrid = document.querySelector('.home-quick-grid');
   if (quickGrid) {

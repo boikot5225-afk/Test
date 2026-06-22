@@ -2350,39 +2350,61 @@ async function renderReaderScreen() {
     return;
   }
 
-  // Считываем активный фильтр
-  const activeFilter = library.dataset.filter || 'all';
+  // Считываем активную вкладку
+  const activeTab = library.dataset.tab || 'books';
 
-  let filtered = [...readerBooks];
-  if (activeFilter === 'fr')   filtered = filtered.filter(b => readerBookLang(b) === 'fr');
-  if (activeFilter === 'zh')   filtered = filtered.filter(b => readerBookLang(b) === 'zh');
-  if (activeFilter === 'song') filtered = filtered.filter(b => b.format === 'song');
-  if (activeFilter === 'text') filtered = filtered.filter(b => b.format !== 'song');
-  if (activeFilter === 'reading') filtered = filtered.filter(b => {
-    const pct = readerBookProgress(b);
-    return pct > 0 && pct < 100;
-  });
+  // Разбиваем на новости и книги
+  const allNews  = readerBooks.filter(b => b.format === 'news');
+  const allBooks = readerBooks.filter(b => b.format !== 'news');
 
-  const filters = [
-    { id:'all',     label:'Все' },
-    { id:'fr',      label:'🇫🇷 FR' },
-    { id:'zh',      label:'🇨🇳 ZH' },
-    { id:'text',    label:'Тексты' },
-    { id:'song',    label:'Песни' },
-    { id:'reading', label:'Читаю' },
-  ];
+  // Внутри каждой вкладки — фильтр по текущему языку
+  const curLang = globalThis.AN2_LANG || 'fr';
+  let filtered = activeTab === 'news'
+    ? allNews.filter(b => readerBookLang(b) === curLang)
+    : allBooks.filter(b => b.format !== 'news');
+
+  const booksCount = allBooks.length;
+  const newsCount  = allNews.filter(b => readerBookLang(b) === curLang).length;
 
   const filtersHTML = `
-    <div class="lib-filters" id="lib-filters">
-      ${filters.map(f => `
-        <button class="lib-filter-pill ${activeFilter === f.id ? 'active' : ''}"
-          onclick="readerSetLibFilter('${f.id}')">${readerEscape(f.label)}</button>`).join('')}
+    <div class="lib-tabs-row" id="lib-tabs-row">
+      <button class="lib-tab-btn ${activeTab === 'books' ? 'active' : ''}"
+        onclick="readerSetLibTab('books')">📖 Книги (${booksCount})</button>
+      <button class="lib-tab-btn ${activeTab === 'news' ? 'active' : ''}"
+        onclick="readerSetLibTab('news')">📰 Новости (${newsCount})</button>
     </div>`;
 
   const booksHTML = filtered.length ? filtered.map(book => {
     const pct = readerBookProgress(book);
     const done = pct >= 100;
     const lang = readerBookLang(book);
+    const isNews = book.format === 'news';
+
+    if (isNews) {
+      // News card — compact, blue left border, date + source
+      const dateStr = book.newsDate
+        ? new Date(book.newsDate).toLocaleDateString('ru-RU', { day:'numeric', month:'long' })
+        : new Date(book.createdAt || Date.now()).toLocaleDateString('ru-RU', { day:'numeric', month:'long' });
+      const sourceStr = book.newsSource || book.author || 'вставка';
+      const totalChars = (book.chapters || []).reduce((n,ch) => n + (ch.paragraphs||[]).join('').length, 0);
+      const isNew = !done && pct === 0;
+      return `
+        <div class="lib-news-card${done ? ' done' : ''}">
+          ${isNew ? '<div class="lib-news-dot"></div>' : ''}
+          <div class="lib-news-main" onclick="readerOpenBook('${readerEscape(book.id)}')">
+            <div class="lib-news-badge">📰 ${readerEscape(sourceStr)}</div>
+            <div class="lib-news-title">${readerEscape(book.title)}</div>
+            <div class="lib-news-meta">${readerEscape(dateStr)}${totalChars ? ' · ' + totalChars + ' зн.' : ''}${done ? ' · прочитано' : ''}</div>
+          </div>
+          <div class="lib-book-actions">
+            <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}')">${done ? '📖 Снова' : '📖 Читать'}</button>
+            <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}');setTimeout(()=>readerSpeakCurrentParagraph(),400)">🔊</button>
+            <button class="lib-action-btn danger" onclick="readerDeleteBook('${readerEscape(book.id)}')">🗑</button>
+          </div>
+        </div>`;
+    }
+
+    // Regular book card
     const ch = book.chapters?.[book.currentChapter || 0];
     const pi = book.currentParagraph || 0;
     const totalP = ch?.paragraphs?.length || 0;
@@ -2408,10 +2430,21 @@ async function renderReaderScreen() {
           <button class="lib-action-btn danger" onclick="readerDeleteBook('${readerEscape(book.id)}')">🗑</button>
         </div>
       </div>`;
-  }).join('') : `<div style="padding:16px 2px;font-size:.82rem;color:var(--text-muted)">Ничего не найдено по этому фильтру.</div>`;
+  }).join('') : `<div class="lib-empty-tab">${activeTab === 'news' ? '📰 Нет новостей на этом языке.<br>Добавь по URL или вставь текст.' : '📚 Нет книг.'}</div>`;
 
-  library.innerHTML = filtersHTML + booksHTML;
+  // Empty state for news tab — add button
+  const addNewsBtn = activeTab === 'news' ? `
+    <button class="lib-add-news-btn" onclick="showReaderImportModal('news')">+ Добавить новость</button>` : '';
+
+  library.innerHTML = filtersHTML + booksHTML + addNewsBtn;
 }
+
+function readerSetLibTab(tab) {
+  const library = document.getElementById('reader-library-list');
+  if (library) library.dataset.tab = tab;
+  renderReaderScreen();
+}
+window.readerSetLibTab = readerSetLibTab;
 
 function readerSetLibFilter(filter) {
   const library = document.getElementById('reader-library-list');
@@ -2421,7 +2454,7 @@ function readerSetLibFilter(filter) {
 window.readerSetLibFilter = readerSetLibFilter;
 
 
-function showReaderImportModal() {
+function showReaderImportModal(mode) {
   let modal = document.getElementById('reader-import-modal');
   if (!modal) {
     modal = document.createElement('div');
@@ -2445,7 +2478,7 @@ function showReaderImportModal() {
           </div>
           <div id="reader-import-url-status" style="display:none;font-size:.74rem;color:var(--text-muted);margin-top:4px"></div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px"><option value="fr" selected>🇫🇷 Français</option><option value="zh">🇨🇳 中文</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px"><option value="fr" selected>🇫🇷 Français</option><option value="zh">🇨🇳 中文</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option><option value="news">📰 Новость</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
         <textarea id="reader-import-text" rows="14" placeholder="Вставь сюда главу или текст. Пустая строка = новый абзац." style="width:100%;box-sizing:border-box;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:.94rem;line-height:1.55;resize:vertical;margin-bottom:12px"></textarea>
         <div id="reader-import-status" style="display:none;font-size:.8rem;padding:8px;border-radius:8px;background:var(--surface2);margin-bottom:10px"></div>
         <div style="display:flex;gap:8px"><button onclick="closeReaderImportModal()" class="btn btn-secondary" style="flex:1">Отмена</button><button onclick="saveReaderImport()" class="btn btn-primary" style="flex:1">Сохранить</button></div>
@@ -2453,6 +2486,14 @@ function showReaderImportModal() {
     document.body.appendChild(modal);
   }
   const st = modal.querySelector('#reader-import-status'); if (st) { st.style.display = 'none'; st.textContent = ''; }
+  // Set format based on mode
+  if (mode) {
+    const fmt = modal.querySelector('#reader-import-format');
+    if (fmt) fmt.value = mode;
+    // Auto-detect lang from AN2_LANG
+    const langSel = modal.querySelector('#reader-import-lang');
+    if (langSel && globalThis.AN2_LANG) langSel.value = globalThis.AN2_LANG;
+  }
   modal.style.display = 'flex';
   setTimeout(() => modal.querySelector('#reader-import-title')?.focus(), 80);
 }
@@ -2473,18 +2514,43 @@ async function readerFetchFromUrl() {
   if (st) { st.style.display = 'block'; st.textContent = '⏳ Загружаю…'; }
   if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
   try {
-    const result = await readerAI({ task: 'fetch_url', url });
-    const text = result?.text || '';
-    if (!text) throw new Error('Пустой ответ');
-    if (textEl) textEl.value = text;
-    // Auto-fill title from URL if empty
-    if (titleEl && !titleEl.value.trim()) {
-      try {
-        const host = new URL(url).hostname.replace('www.', '');
-        titleEl.value = host;
-      } catch {}
+    // ── Wikipedia detection ──
+    const wikiMatch = url.match(/([a-z]{2,3})\.wikipedia\.org\/wiki\/(.+)/);
+    if (wikiMatch) {
+      const wikiLang = wikiMatch[1];
+      const wikiTitle = decodeURIComponent(wikiMatch[2].replace(/_/g,' '));
+      const apiUrl = `https://${wikiLang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiTitle)}`;
+      const resp = await fetch(apiUrl);
+      if (!resp.ok) throw new Error('Wikipedia API: ' + resp.status);
+      const data = await resp.json();
+      const extract = data.extract || '';
+      if (!extract) throw new Error('Статья пустая или не найдена');
+      if (textEl) textEl.value = extract;
+      if (titleEl && !titleEl.value.trim()) titleEl.value = data.title || wikiTitle;
+      // Auto-set lang if zh wikipedia
+      const langSel = document.getElementById('reader-import-lang');
+      if (langSel && wikiLang === 'zh') langSel.value = 'zh';
+      // Auto-set format to news
+      const fmtSel = document.getElementById('reader-import-format');
+      if (fmtSel) fmtSel.value = 'news';
+      if (st) { st.style.display = 'block'; st.textContent = `✅ Wikipedia: «${data.title}» — ${extract.length} зн.`; }
+    } else {
+      // Regular URL fetch via Firebase
+      const result = await readerAI({ task: 'fetch_url', url });
+      const fetchedText = result?.text || '';
+      if (!fetchedText) throw new Error('Пустой ответ');
+      if (textEl) textEl.value = fetchedText;
+      if (titleEl && !titleEl.value.trim()) {
+        try {
+          const host = new URL(url).hostname.replace('www.', '');
+          titleEl.value = host;
+        } catch {}
+      }
+      // Auto-set format to news
+      const fmtSel = document.getElementById('reader-import-format');
+      if (fmtSel && fmtSel.value === 'text') fmtSel.value = 'news';
+      if (st) { st.style.display = 'block'; st.textContent = `✅ Загружено ${fetchedText.length} символов`; }
     }
-    if (st) { st.style.display = 'block'; st.textContent = `✅ Загружено ${text.length} символов — проверь и отредактируй текст`; }
   } catch(e) {
     if (st) { st.style.display = 'block'; st.textContent = '❌ ' + (e?.message || 'Ошибка загрузки'); }
   }
@@ -2810,7 +2876,14 @@ function saveReaderImport() {
       : readerSplitTextToChapters(raw, title);
   if (!chapters.length) { if (st) { st.style.display = 'block'; st.style.color = 'var(--bad)'; st.textContent = 'Текст пустой или не получилось разбить на абзацы.'; } return; }
   const now = new Date().toISOString();
-  const book = { id: readerId(), title, author: authorRaw, level, lang, sourceLang: lang, format, source: readerPendingImportSource || 'manual_text', createdAt: now, updatedAt: now, currentChapter: 0, currentParagraph: 0, chapters };
+  const urlVal = document.getElementById('reader-import-url')?.value.trim() || '';
+  const newsSource = format === 'news' && urlVal
+    ? (() => { try { return new URL(urlVal).hostname.replace('www.',''); } catch { return ''; } })()
+    : '';
+  const newsDate = format === 'news' ? now : undefined;
+  const bookObj = { id: readerId(), title, author: authorRaw, level, lang, sourceLang: lang, format, source: readerPendingImportSource || 'manual_text', createdAt: now, updatedAt: now, currentChapter: 0, currentParagraph: 0, chapters };
+  if (format === 'news') { bookObj.newsSource = newsSource || authorRaw || 'вставка'; bookObj.newsDate = newsDate; }
+  const book = bookObj;
   book.importKey = readerBookImportKey(book);
   const __dupe = (readerBooks || []).find(b => readerBookImportKey(b) === book.importKey);
   if (__dupe) {
@@ -2875,7 +2948,17 @@ function renderReaderChapter() {
   const pt = document.getElementById('reader-progress-text');
   const text = document.getElementById('reader-chapter-text');
   if (titleEl) titleEl.textContent = book.title || 'Текст';
-  if (chTitleEl) chTitleEl.textContent = `${readerLangBadge(activeReaderLang)} · ${ch?.title || 'Глава'} · гл. ${ci + 1}/${(book.chapters || []).length} · абзац ${pi + 1}/${Math.max(1, paragraphs.length)}`;
+  if (chTitleEl) {
+    if (book.format === 'news') {
+      const src = book.newsSource || '';
+      const dateStr = book.newsDate
+        ? new Date(book.newsDate).toLocaleDateString('ru-RU', {day:'numeric', month:'long'})
+        : '';
+      chTitleEl.textContent = (src ? '📰 ' + src : '📰') + (dateStr ? ' · ' + dateStr : '') + ` · абзац ${pi + 1}/${Math.max(1, paragraphs.length)}`;
+    } else {
+      chTitleEl.textContent = `${readerLangBadge(activeReaderLang)} · ${ch?.title || 'Глава'} · гл. ${ci + 1}/${(book.chapters || []).length} · абзац ${pi + 1}/${Math.max(1, paragraphs.length)}`;
+    }
+  }
   if (bar) bar.style.width = pct + '%';
   if (pt) pt.textContent = `${pct}% · абзац ${pi + 1} / ${Math.max(1, paragraphs.length)}`;
   const comp = book.comprehension?.[ch.id];
@@ -4138,11 +4221,11 @@ export function showScreen(id) {
     loadNounsFromCloud().then(() => renderStats(VERBS, NOUNS)).catch(e => console.error(e));
   }
   if (id === 'dict') {
-    closeDictDetail();
     const isZhMode = (globalThis.AN2_LANG || 'fr') === 'zh';
     if (isZhMode && typeof window.setDictType === 'function') {
       window.setDictType('zh');
     } else {
+      closeDictDetail();
       window.renderDict();
     }
   }
@@ -5169,6 +5252,12 @@ function updateLangUI() {
   const label = document.getElementById('bn-practice-label');
   if (icon) icon.textContent = isZh ? '🀄' : '⚡';
   if (label) label.textContent = isZh ? 'Символы' : 'Глаголы';
+
+  // Sync dict tabs visibility without triggering a render
+  const tabsFr = document.getElementById('dict-tabs-fr');
+  const tabsZh = document.getElementById('dict-tabs-zh');
+  if (tabsFr) tabsFr.style.display = isZh ? 'none' : 'flex';
+  if (tabsZh) tabsZh.style.display = isZh ? 'block' : 'none';
 }
 
 // 4th nav button action — depends on current lang
