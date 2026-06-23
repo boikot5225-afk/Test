@@ -16,3 +16,7 @@ window.AN2_ADMIN_USERNAME = window.AN2_ADMIN_USERNAME || 'boikot5225';
 
 // Регион Cloud Functions для reader-ai. Должен совпадать с functions/index.js.
 window.AN2_FIREBASE_FUNCTIONS_REGION = window.AN2_FIREBASE_FUNCTIONS_REGION || 'asia-southeast1';
+
+// Изолированный модуль последовательной озвучки читалки. Он не меняет readerAI,
+// DeepSeek, сохранение слов, глаголов или штатное переключение языков.
+import('./reader-book-audio.js?v=1').catch((error) => console.warn('[reader audio] module skipped:', error));
