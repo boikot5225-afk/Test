@@ -1,11 +1,6 @@
 name: Extract reader import parsers
 
 on:
-  push:
-    branches: [reader-refactor-clean]
-    paths:
-      - 'js/reader/import-parsers.js'
-      - '.github/workflows/extract-reader-import-parsers.yml'
   workflow_dispatch:
 
 permissions:
@@ -13,7 +8,6 @@ permissions:
 
 jobs:
   extract:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,15 +36,14 @@ jobs:
           if start < 0 or end < 0:
               raise RuntimeError('Import parser block markers not found')
 
-          replacement = """function readerSplitTextToChapters(rawText, fallbackTitle = 'Текст') {
-  return readerImportSplitTextToChapters(rawText, fallbackTitle, readerChunkLongParagraph);
-}
-
-function readerSplitSongToChapters(rawText, fallbackTitle = 'Песня') {
-  return readerImportSplitSongToChapters(rawText, fallbackTitle);
-}
-
-"""
+          replacement = (
+              "function readerSplitTextToChapters(rawText, fallbackTitle = 'Текст') {\n"
+              "  return readerImportSplitTextToChapters(rawText, fallbackTitle, readerChunkLongParagraph);\n"
+              "}\n\n"
+              "function readerSplitSongToChapters(rawText, fallbackTitle = 'Песня') {\n"
+              "  return readerImportSplitSongToChapters(rawText, fallbackTitle);\n"
+              "}\n\n"
+          )
           source = source[:start] + replacement + source[end:]
           path.write_text(source)
           PY
@@ -69,5 +62,3 @@ function readerSplitSongToChapters(rawText, fallbackTitle = 'Песня') {
           git add js/app.js
           git commit -m "refactor: extract reader import parsers"
           git push origin HEAD:reader-refactor-clean
-
-# Updated after the parser module was added, so this push triggers the extraction.
