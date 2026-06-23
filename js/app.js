@@ -13,6 +13,7 @@ import { speak, stopSpeak, initSpeech, applyKbMode, initTTSEngineUI, showFrKb, h
          frKbEnabled, autoSpeak, toggleAutoSpeak, toggleKbMode, insertFrChar,
          frBackspace, frEnter, frToggleShift } from './tts.js?v=68.32-firebase-tts';
 import { createReaderAudio } from './reader/audio.js?v=1';
+import { createReaderNavigation } from './reader/navigation.js?v=1';
 import { renderHome } from './home.js';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
@@ -3135,9 +3136,8 @@ function installReaderActionDelegation() {
 }
 installReaderActionDelegation();
 
-function readerSelectParagraph(i) {
-  const book = readerCurrentBook(); if (!book) return;
-  book.currentParagraph = i; book.updatedAt = new Date().toISOString(); renderReaderChapter();
+function readerSelectParagraph(index) {
+  return readerNavigation.selectParagraph(index);
 }
 
 function readerScrollActiveParagraph() {
@@ -3148,43 +3148,15 @@ function readerScrollActiveParagraph() {
 }
 
 function readerNextParagraph() {
-  const book = readerCurrentBook(); if (!book) return;
-  readerTimeParagraphClose();
-  const ch = book.chapters?.[book.currentChapter || 0];
-  const max = (ch?.paragraphs?.length || 1) - 1;
-  if ((book.currentParagraph || 0) < max) {
-    book.currentParagraph = (book.currentParagraph || 0) + 1;
-    book.updatedAt = new Date().toISOString();
-    renderReaderChapter();
-    readerScrollActiveParagraph();
-  } else if ((book.currentChapter || 0) < (book.chapters?.length || 1) - 1) {
-    readerNextChapter();
-    readerScrollActiveParagraph();
-  } else showToast('Это конец текста');
+  return readerNavigation.nextParagraph();
 }
 
 function readerPrevParagraph() {
-  const book = readerCurrentBook(); if (!book) return;
-  readerTimeParagraphClose();
-  if ((book.currentParagraph || 0) > 0) {
-    book.currentParagraph = (book.currentParagraph || 0) - 1;
-    book.updatedAt = new Date().toISOString();
-    renderReaderChapter();
-    readerScrollActiveParagraph();
-  } else if ((book.currentChapter || 0) > 0) {
-    readerPrevChapter();
-    const ch = book.chapters?.[book.currentChapter || 0];
-    book.currentParagraph = Math.max(0, (ch?.paragraphs?.length || 1) - 1);
-    renderReaderChapter();
-    readerScrollActiveParagraph();
-  } else showToast('Это начало текста');
+  return readerNavigation.previousParagraph();
 }
 
 function readerCurrentParagraphText(index = null) {
-  const book = readerCurrentBook(); if (!book) return '';
-  const ch = book.chapters?.[book.currentChapter || 0];
-  const i = index == null ? (book.currentParagraph || 0) : index;
-  return ch?.paragraphs?.[i] || '';
+  return readerNavigation.currentParagraphText(index);
 }
 
 function an2ReaderDebugSeen(word = '') {
@@ -3196,6 +3168,14 @@ function an2ReaderDebugSeen(word = '') {
   return st || null;
 }
 window.an2ReaderDebugSeen = an2ReaderDebugSeen;
+
+const readerNavigation = createReaderNavigation({
+  getBook: () => readerCurrentBook(),
+  render: () => renderReaderChapter(),
+  closeParagraphTime: () => readerTimeParagraphClose(),
+  scrollActiveParagraph: () => readerScrollActiveParagraph(),
+  showToast,
+});
 
 const readerAudio = createReaderAudio({
   speak,
@@ -3242,14 +3222,10 @@ async function readerCopyParagraph(i) {
 function readerCopyCurrentParagraph() { return readerCopyParagraph(null); }
 
 function readerNextChapter() {
-  const book = readerCurrentBook(); if (!book) return;
-  if ((book.currentChapter || 0) < (book.chapters?.length || 1) - 1) { book.currentChapter = (book.currentChapter || 0) + 1; book.currentParagraph = 0; book.updatedAt = new Date().toISOString(); renderReaderChapter(); }
-  else showToast('Это последняя глава');
+  return readerNavigation.nextChapter();
 }
 function readerPrevChapter() {
-  const book = readerCurrentBook(); if (!book) return;
-  if ((book.currentChapter || 0) > 0) { book.currentChapter = (book.currentChapter || 0) - 1; book.currentParagraph = 0; book.updatedAt = new Date().toISOString(); renderReaderChapter(); }
-  else showToast('Это первая глава');
+  return readerNavigation.previousChapter();
 }
 function readerDeleteBook(id) {
   loadReaderBooks();
