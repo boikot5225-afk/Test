@@ -12,11 +12,28 @@ function filterBooks() {
     const text = icon ? icon.textContent : '';
     const lang = text.indexOf('\ud83c\udde8\ud83c\uddf3') >= 0 ? 'zh' : text.indexOf('\ud83c\uddec\ud83c\udde7') >= 0 ? 'en' : 'fr';
     const visible = lang === selected;
-    card.classList.toggle('an2-lang-hidden', !visible);
+    if (card.classList.contains('an2-lang-hidden') !== !visible) card.classList.toggle('an2-lang-hidden', !visible);
     if (visible) count++;
   });
   const tab = library.querySelector('.lib-tab-btn');
-  if (tab) tab.textContent = 'Books (' + count + ')';
+  const label = 'Books (' + count + ')';
+  if (tab && tab.textContent !== label) tab.textContent = label;
+}
+
+function scheduleFilter() {
+  requestAnimationFrame(function() { setTimeout(filterBooks, 0); });
+}
+
+function patchReaderRender() {
+  const original = window.renderReaderScreen;
+  if (typeof original !== 'function' || original.__an2LangReader) return;
+  const wrapped = function() {
+    const result = original.apply(this, arguments);
+    Promise.resolve(result).finally(scheduleFilter);
+    return result;
+  };
+  wrapped.__an2LangReader = true;
+  window.renderReaderScreen = wrapped;
 }
 
 function patchImport() {
@@ -92,11 +109,10 @@ function patchVerbSave() {
 }
 
 function install() {
+  patchReaderRender();
   patchImport();
   patchVerbSave();
-  filterBooks();
-  window.addEventListener('an2:languagechange', function() { setTimeout(filterBooks, 60); });
-  const observer = new MutationObserver(function() { patchImport(); patchVerbSave(); filterBooks(); });
-  observer.observe(document.documentElement, { childList: true, subtree: true });
+  scheduleFilter();
+  window.addEventListener('an2:languagechange', scheduleFilter);
 }
 install();
