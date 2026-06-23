@@ -10,7 +10,7 @@ export function createReaderWordState({
   currentLang,
   normalizeWord,
   normalizeImportKey,
-  commonWords,
+  isCommonWord,
   seenAfter,
   fadeAfter,
   familiarAfter,
@@ -43,14 +43,6 @@ export function createReaderWordState({
   function key(word, lang = null) {
     const language = canonicalLang(lang || currentLang());
     return `${language}:${normalizeImportKey(normalizeWord(word, language))}`;
-  }
-
-  function isCommon(word, lang = null) {
-    const language = canonicalLang(lang || currentLang());
-    const normalized = normalizeWord(word, language);
-    if (!normalized) return true;
-    if (language === 'zh') return false;
-    return normalized.length <= 1 || commonWords.has(normalized) || commonWords.has(normalized.replace(/^l'/, ''));
   }
 
   function get(word, lang = null) {
@@ -106,7 +98,7 @@ export function createReaderWordState({
         changed = true;
       }
       if (changed || seenBefore !== nextSeen) state.updatedAt = new Date().toISOString();
-      if (isCommon(word, language)) {
+      if (isCommonWord(word, language)) {
         if (!state.known || state.status !== 'known') changed = true;
         state.known = true;
         state.status = 'known';
@@ -118,7 +110,7 @@ export function createReaderWordState({
   }
 
   function markClicked(word, lang = null) {
-    if (!word || isCommon(word, lang)) return;
+    if (!word || isCommonWord(word, lang)) return;
     const state = touch(word, lang);
     state.clicked = (state.clicked || 0) + 1;
     if (!state.saved && !state.known) state.status = 'looked';
@@ -163,7 +155,7 @@ export function createReaderWordState({
     if (state?.status === 'familiar') return { cls: 'rw-familiar', title: 'закрепляется' };
     if (state?.status === 'learning' || state?.saved) return { cls: 'rw-learning', title: 'изучаю' };
     if (state?.status === 'looked' || (state?.clicked || 0) > 0) return { cls: 'rw-looked', title: `просмотрено ${state?.clicked || 1} раз` };
-    if (isCommon(normalized, language)) return { cls: 'rw-known', title: 'служебное/частое слово' };
+    if (isCommonWord(normalized, language)) return { cls: 'rw-known', title: 'служебное/частое слово' };
     if (language === 'fr' && findVerbByForm(normalized)) return { cls: 'rw-known', title: 'форма известного глагола' };
     if (seen >= fadeAfter) return { cls: 'rw-faded', title: `встречалось ${seen} раз — подсветка скрыта` };
     if (seen >= seenAfter) return { cls: 'rw-seen', title: `часто встречалось: ${seen} абз.` };
@@ -189,7 +181,6 @@ export function createReaderWordState({
     load,
     save,
     key,
-    isCommon,
     get,
     touch,
     trackParagraph,
