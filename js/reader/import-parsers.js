@@ -1,5 +1,6 @@
 // Pure parsers for reader imports.
 // DOM, files, EPUB and library mutations remain in app.js.
+// Kept intentionally behavior-preserving during the split.
 
 export function splitTextToChapters(rawText, fallbackTitle = 'Текст', chunkLongParagraph) {
   const clean = String(rawText || '')
