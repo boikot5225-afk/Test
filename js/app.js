@@ -14,7 +14,7 @@ import { speak, stopSpeak, initSpeech, applyKbMode, initTTSEngineUI, showFrKb, h
          frBackspace, frEnter, frToggleShift } from './tts.js?v=68.32-firebase-tts';
 import { createReaderAudio } from './reader/audio.js?v=1';
 import { createReaderNavigation } from './reader/navigation.js?v=1';
-import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16, zipU32 as epubZipU32, inflateZipData as epubInflateZipData, readZipEntries as epubReadZipEntries } from './reader/epub.js?v=1';
+import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16, zipU32 as epubZipU32, inflateZipData as epubInflateZipData, readZipEntries as epubReadZipEntries, resolveEpubPath as epubResolvePath, cleanEpubText as epubCleanText, looksLikeEpubBoilerplate as epubLooksLikeBoilerplate, htmlToPlainText as epubHtmlToPlainText } from './reader/epub.js?v=1';
 import { renderHome } from './home.js';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
@@ -2571,50 +2571,13 @@ async function readerInflateZipData(bytes) { return epubInflateZipData(bytes); }
 
 async function readerReadZipEntries(arrayBuffer) { return epubReadZipEntries(arrayBuffer); }
 
-function readerResolveEpubPath(base, href) {
-  if (!href) return '';
-  if (/^[a-z]+:/i.test(href)) return href;
-  const parts = (base ? base.split('/') : []).concat(String(href).split('/'));
-  const out = [];
-  for (const p of parts) {
-    if (!p || p === '.') continue;
-    if (p === '..') out.pop();
-    else out.push(p);
-  }
-  return out.join('/');
-}
+function readerResolveEpubPath(base, href) { return epubResolvePath(base, href); }
 
-function readerEpubCleanText(text) {
-  return String(text || '')
-    .replace(/\u00a0/g, ' ')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
+function readerEpubCleanText(text) { return epubCleanText(text); }
 
-function readerLooksLikeBoilerplate(text) {
-  const t = String(text || '').trim().toLowerCase();
-  if (!t) return true;
-  if (t.length <= 2) return true;
-  if (/^(contents?|table of contents|目录|目錄|版权|版權|封面|cover|nav|toc)$/i.test(t)) return true;
-  return false;
-}
+function readerLooksLikeBoilerplate(text) { return epubLooksLikeBoilerplate(text); }
 
-function readerHtmlToPlainTextFallback(html = '') {
-  return readerEpubCleanText(String(html || '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<nav[\s\S]*?<\/nav>/gi, '')
-    .replace(/<br\s*\/?\s*>/gi, '\n')
-    .replace(/<\/(p|div|section|article|li|h[1-6]|blockquote|pre|tr|td|th)>/gi, '\n\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&amp;/gi, '&')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'"));
-}
+function readerHtmlToPlainTextFallback(html = '') { return epubHtmlToPlainText(html); }
 
 
 function readerHtmlToParagraphs(html, lang = null) {
