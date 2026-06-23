@@ -1,7 +1,5 @@
 // Firebase config for An II.
 // ВАЖНО: это публичный web config Firebase, не service account и не приватный ключ.
-// Вставь сюда свой объект из Firebase Console → Project settings → Your apps → Web app.
-// Без databaseURL приложение не сможет читать Realtime Database.
 window.FIREBASE_CONFIG = window.FIREBASE_CONFIG || {
   apiKey: "AIzaSyC_Y-V5OIG61B7x7H54RNVwPL3vBeeyvtM",
   authDomain: "french-da79a.firebaseapp.com",
@@ -10,13 +8,21 @@ window.FIREBASE_CONFIG = window.FIREBASE_CONFIG || {
   appId: "1:534791612002:web:e9a9a990d351ced860133b"
 };
 
-// UID админа задаётся в Realtime Database: /admins/<uid> = true.
-// Это имя пока оставлено для UI-логики приложения.
 window.AN2_ADMIN_USERNAME = window.AN2_ADMIN_USERNAME || 'boikot5225';
-
-// Регион Cloud Functions для reader-ai. Должен совпадать с functions/index.js.
 window.AN2_FIREBASE_FUNCTIONS_REGION = window.AN2_FIREBASE_FUNCTIONS_REGION || 'asia-southeast1';
 
-// Изолированный модуль последовательной озвучки читалки. Он не меняет readerAI,
-// DeepSeek, сохранение слов, глаголов или штатное переключение языков.
-import('./reader-book-audio.js?v=1').catch((error) => console.warn('[reader audio] module skipped:', error));
+// firebase-config.js подключается как обычный script, поэтому здесь нельзя использовать import().
+// Добавляем отдельный, обычный скрипт с очередью озвучки; остальной ридер он не подменяет.
+(function () {
+  if (document.getElementById('an2-reader-book-audio-loader')) return;
+  const load = function () {
+    if (document.getElementById('an2-reader-book-audio-loader')) return;
+    const script = document.createElement('script');
+    script.id = 'an2-reader-book-audio-loader';
+    script.src = 'js/reader-book-audio.js?v=2';
+    script.async = true;
+    document.head.appendChild(script);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', load, { once: true });
+  else load();
+})();
