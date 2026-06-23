@@ -1,14 +1,18 @@
-const AN2_LANGS = { fr: 'French', zh: 'Chinese' };
-function activeLanguage() { return 'fr'; }
-function renderBar() {
-  const nav = document.querySelector('nav');
-  if (!nav) return;
-  let bar = document.getElementById('an2-langbar');
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.id = 'an2-langbar';
-    nav.insertAdjacentElement('afterend', bar);
-  }
-  bar.innerHTML = '<button>French</button><button>Chinese</button>';
+// Language separation bootstrap. AI routes, prompts, TTS and Firebase Functions are not changed.
+function startLanguageShell() {
+  Promise.all([
+    import('./lang-core.js'),
+    import('./lang-reader.js')
+  ]).catch(function(error) {
+    console.warn('[lang-shell] startup failed', error);
+  });
 }
-renderBar();
+(function waitForAn2(tries) {
+  if (window.__ready && typeof window.showScreen === 'function') {
+    startLanguageShell();
+    return;
+  }
+  if ((tries || 0) < 240) {
+    setTimeout(function() { waitForAn2((tries || 0) + 1); }, 100);
+  }
+})(0);
