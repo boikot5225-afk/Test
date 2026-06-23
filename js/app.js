@@ -15,6 +15,7 @@ import { speak, stopSpeak, initSpeech, applyKbMode, initTTSEngineUI, showFrKb, h
 import { createReaderAudio } from './reader/audio.js?v=1';
 import { createReaderNavigation } from './reader/navigation.js?v=1';
 import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16, zipU32 as epubZipU32, inflateZipData as epubInflateZipData, readZipEntries as epubReadZipEntries, resolveEpubPath as epubResolvePath, cleanEpubText as epubCleanText, looksLikeEpubBoilerplate as epubLooksLikeBoilerplate, htmlToPlainText as epubHtmlToPlainText, htmlToParagraphs as epubHtmlToParagraphs } from './reader/epub.js?v=1';
+import { createReaderWordPanel } from './reader/word-panel.js?v=1';
 import { renderHome } from './home.js';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
@@ -3026,6 +3027,14 @@ function an2ReaderDebugSeen(word = '') {
 }
 window.an2ReaderDebugSeen = an2ReaderDebugSeen;
 
+const readerWordPanel = createReaderWordPanel({
+  escape: readerEscape,
+  canonicalLang: readerCanonicalLang,
+  currentLang: () => readerCurrentLang(),
+  extractPinyin: readerExtractPinyin,
+  getSelectedWord: () => readerSelectedWord,
+});
+
 const readerNavigation = createReaderNavigation({
   getBook: () => readerCurrentBook(),
   render: () => renderReaderChapter(),
@@ -3114,173 +3123,24 @@ function readerSendParagraphToPhrase(i) {
   }, 150);
 }
 
-function ensureReaderWordPanel() {
-  let panel = document.getElementById('reader-word-panel');
-  if (panel) return panel;
-  panel = document.createElement('div');
-  panel.id = 'reader-word-panel';
-  panel.className = 'reader-word-panel';
-  panel.innerHTML = `
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px">
-      <div><div id="reader-word-title" style="font-family:'Playfair Display',serif;font-size:1.35rem;font-style:italic;color:var(--accent)">—</div><div id="reader-word-known" style="font-size:.76rem;color:var(--text-muted)"></div></div>
-      <button onclick="readerCloseWordPanel()" style="background:none;border:none;color:var(--text-muted);font-size:1.35rem;cursor:pointer">×</button>
-    </div>
-    <div id="reader-word-status" style="display:none;font-size:.78rem;margin-bottom:8px;padding:8px;border-radius:8px;background:var(--surface2)"></div>
-    <div id="reader-word-analysis" class="reader-word-analysis">
-      <div class="reader-word-loading">⏳ Разбираю слово...</div>
-    </div>
-    <details class="reader-word-edit" style="margin:10px 0">
-      <summary style="cursor:pointer;font-size:.78rem;color:var(--text-muted);user-select:none">ручная правка</summary>
-      <div style="display:grid;grid-template-columns:1fr 104px 88px;gap:8px;margin:8px 0">
-        <input id="reader-word-lemma" placeholder="словарная форма">
-        <select id="reader-word-pos"><option value="noun">сущ.</option><option value="verb">глагол</option><option value="adjective">прил.</option><option value="adverb">нареч.</option><option value="preposition">предлог</option><option value="pronoun">мест.</option><option value="other">другое</option></select>
-        <select id="reader-word-level"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option></select>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 88px;gap:8px;margin-bottom:8px">
-        <input id="reader-word-ru" placeholder="перевод по-русски">
-        <select id="reader-word-gender"><option value="m">m</option><option value="f">f</option><option value="">без рода</option></select>
-      </div>
-      <textarea id="reader-word-context" rows="2" placeholder="контекст-предложение" style="width:100%;box-sizing:border-box;padding:10px 11px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;resize:vertical;max-height:120px"></textarea>
-    </details>
-    <div class="reader-word-actions">
-      <button onclick="readerSpeakSelectedWord()" class="btn btn-secondary">🔊 слово</button>
-      <button onclick="readerSpeakSelectedContext()" class="btn btn-secondary">🔊 контекст</button>
-      <button onclick="readerTranslateWordAI(true)" class="btn btn-secondary">↻ DeepSeek</button>
-      <button id="reader-word-save-btn" onclick="readerSaveWord()" class="btn btn-primary">＋ Сохранить</button>
-      <button onclick="readerMarkSelectedWordProblem()" class="btn btn-secondary">⚠ проблема</button>
-      <button onclick="readerSendParagraphToPhrase(readerSelectedParagraphIndex)" class="btn btn-secondary">＋ фраза</button>
-      <button onclick="readerMarkSelectedWordKnown()" class="btn btn-secondary">✓ знаю</button>
-    </div>`;
-  const root = document.getElementById('reader-reading-view') || document.body;
-  root.appendChild(panel);
-  return panel;
-}
+function ensureReaderWordPanel() { return readerWordPanel.ensure(); }
 
 
-function readerSimplifyPos(pos) {
-  const p = String(pos || '').toLowerCase();
-  if (['verb','verbe'].includes(p)) return 'verb';
-  if (['noun','nom','substantive','substantif'].includes(p)) return 'noun';
-  if (['adjective','adjectif','adj'].includes(p)) return 'adjective';
-  if (['adverb','adverbe','adv'].includes(p)) return 'adverb';
-  if (['preposition','préposition','prep'].includes(p)) return 'preposition';
-  if (['pronoun','pronom'].includes(p)) return 'pronoun';
-  return p || 'other';
-}
+function readerSimplifyPos(pos) { return readerWordPanel.simplifyPos(pos); }
 
-function readerPosRu(pos) {
-  const p = readerSimplifyPos(pos);
-  return {
-    noun: 'существительное', verb: 'глагол', adjective: 'прилагательное',
-    adverb: 'наречие', preposition: 'предлог', pronoun: 'местоимение',
-    particle: 'частица', measure_word: 'счётное слово', classifier: 'счётное слово',
-    proper_noun: 'имя собственное', name: 'имя собственное', other: 'другое'
-  }[p] || 'другое';
-}
+function readerPosRu(pos) { return readerWordPanel.posRu(pos); }
 
 function readerHasRussianMeaning(data = {}) {
   return !!String(data?.ru || data?.translation_ru || data?.russian || data?.meaning_ru || '').trim();
 }
 
-function readerSetPanelFields(data = {}) {
-  const panel = ensureReaderWordPanel();
-  const p = readerSimplifyPos(data.pos || data.type || (data.infinitive || data.inf ? 'verb' : 'noun'));
-  const lemma = data.lemma || data.infinitive || data.inf || data.fr || data.word || readerSelectedWord;
-  const ru = data.ru || data.translations || data.meaning || data.translation || data.suggestion || '';
-  const gender = p === 'noun' ? (data.gender || '') : '';
-  const level = data.level || 'A2';
-  panel.querySelector('#reader-word-lemma').value = lemma || readerSelectedWord;
-  panel.querySelector('#reader-word-pos').value = ['noun','verb','adjective','adverb','preposition','pronoun'].includes(p) ? p : 'other';
-  panel.querySelector('#reader-word-ru').value = ru;
-  panel.querySelector('#reader-word-gender').value = gender;
-  panel.querySelector('#reader-word-level').value = level;
-  return { pos: p, lemma, ru, gender, level };
-}
+function readerSetPanelFields(data = {}) { return readerWordPanel.setFields(data); }
 
-function readerRenderWordAnalysis(data = {}, source = '') {
-  const panel = ensureReaderWordPanel();
-  const box = panel.querySelector('#reader-word-analysis');
-  const known = panel.querySelector('#reader-word-known');
-  const saveBtn = panel.querySelector('#reader-word-save-btn');
-  const filled = readerSetPanelFields(data);
-  const pos = filled.pos;
-  const isVerb = pos === 'verb';
-  const isNoun = pos === 'noun';
-  const form = readerSelectedWord || data.surface || data.word || '';
-  const lemma = filled.lemma || form;
-  const ru = filled.ru || '—';
-  const gender = filled.gender || '';
-  const level = filled.level || 'A2';
-  const formInfo = data.form_note || data.form || data.tense || data.tense_hint || data.note || '';
-  const person = data.person ? ` · ${data.person}` : '';
-  const number = data.number ? ` · ${data.number}` : '';
-  const analysisLang = readerCanonicalLang(data.lang || readerCurrentLang());
-  const isZh = analysisLang === 'zh';
-  const pinyin = isZh ? (readerExtractPinyin(data) || String(data.form_note || '').trim()) : '';
-  const zhNote = isZh ? String(data.note || data.form_note || '').trim() : '';
+function readerRenderWordAnalysis(data = {}, source = '') { return readerWordPanel.renderAnalysis(data, source); }
 
-  if (known) {
-    known.textContent = source === 'local'
-      ? 'найдено в твоей базе'
-      : source === 'deepseek'
-        ? 'разобрано через DeepSeek'
-        : 'готово';
-  }
-  if (saveBtn) saveBtn.textContent = isZh ? '＋ В китайский словарь' : (isVerb ? '＋ Добавить глагол' : '＋ В словарь');
+function readerRenderWordLoading(message = '⏳ DeepSeek разбирает слово...') { return readerWordPanel.renderLoading(message); }
 
-  if (!box) return;
-  if (isZh) {
-    const typeLabel = readerPosRu(pos);
-    const lemmaLine = lemma && lemma !== form ? `<div class="reader-analysis-meta">словарная форма: ${readerEscape(lemma)}</div>` : '';
-    box.innerHTML = `
-      <div class="reader-analysis-card zh">
-        <div class="reader-analysis-kicker">${readerEscape(typeLabel)} · китайский</div>
-        <div class="reader-analysis-main zh-main"><b>${readerEscape(form)}</b></div>
-        ${pinyin ? `<div class="reader-analysis-pinyin">${readerEscape(pinyin)}</div>` : `<div class="reader-analysis-pinyin muted">пиньинь не пришёл — нажми ↻ DeepSeek</div>`}
-        <div class="reader-analysis-ru">${readerEscape(ru)}</div>
-        ${lemmaLine}
-        <div class="reader-analysis-meta">${readerEscape(level)}${zhNote && zhNote !== pinyin ? ' · ' + readerEscape(zhNote) : ''}</div>
-      </div>`;
-    return;
-  }
-  if (isVerb) {
-    box.innerHTML = `
-      <div class="reader-analysis-card verb">
-        <div class="reader-analysis-kicker">глагольная форма</div>
-        <div class="reader-analysis-main"><span>${readerEscape(form)}</span> → <b>${readerEscape(lemma)}</b></div>
-        <div class="reader-analysis-ru">${readerEscape(ru)}</div>
-        <div class="reader-analysis-meta">${readerEscape(formInfo || 'форма глагола')}${readerEscape(person)}${readerEscape(number)} · ${readerEscape(level)}</div>
-      </div>`;
-  } else if (isNoun) {
-    box.innerHTML = `
-      <div class="reader-analysis-card noun">
-        <div class="reader-analysis-kicker">существительное</div>
-        <div class="reader-analysis-main"><b>${readerEscape(lemma)}</b>${gender ? ` <span class="reader-gender-chip">${readerEscape(gender)}</span>` : ''}</div>
-        <div class="reader-analysis-ru">${readerEscape(ru)}</div>
-        <div class="reader-analysis-meta">${gender ? `род: ${readerEscape(gender)} · ` : ''}${readerEscape(level)}</div>
-      </div>`;
-  } else {
-    box.innerHTML = `
-      <div class="reader-analysis-card other">
-        <div class="reader-analysis-kicker">${readerEscape(readerPosRu(pos))}</div>
-        <div class="reader-analysis-main"><b>${readerEscape(lemma)}</b></div>
-        <div class="reader-analysis-ru">${readerEscape(ru)}</div>
-        <div class="reader-analysis-meta">${readerEscape(level)}${formInfo ? ' · ' + readerEscape(formInfo) : ''}</div>
-      </div>`;
-  }
-}
-
-function readerRenderWordLoading(message = '⏳ DeepSeek разбирает слово...') {
-  const panel = ensureReaderWordPanel();
-  const box = panel.querySelector('#reader-word-analysis');
-  if (box) box.innerHTML = `<div class="reader-word-loading">${readerEscape(message)}</div>`;
-}
-
-function readerRenderWordError(message) {
-  const panel = ensureReaderWordPanel();
-  const box = panel.querySelector('#reader-word-analysis');
-  if (box) box.innerHTML = `<div class="reader-word-error">❌ ${readerEscape(message)}</div>`;
-}
+function readerRenderWordError(message) { return readerWordPanel.renderError(message); }
 
 async function readerLookupWord(word) {
   const lang = readerCurrentLang();
