@@ -19,6 +19,7 @@ import { createReaderWordPanel } from './reader/word-panel.js?v=1';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=1';
 import { createReaderLibraryStore } from './reader/library-store.js?v=1';
+import { splitTextToChapters as readerImportSplitTextToChapters, splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
 import { renderHome } from './home.js';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
@@ -2041,81 +2042,11 @@ async function syncReaderCloudNow() {
 function readerCurrentBook() { return readerLibrary.currentBook(); }
 
 function readerSplitTextToChapters(rawText, fallbackTitle = 'Текст') {
-  const clean = String(rawText || '')
-    .replace(/\r/g, '')
-    .replace(/\u00a0/g, ' ')
-    .replace(/[ \t]+\n/g, '\n')
-    .trim();
-  if (!clean) return [];
-
-  const lines = clean.split('\n');
-  const headingRe = /^\s*((chapitre|chapter|глава)\s+[\wivxlcdm\d-]+|[ivxlcdm]{1,8}\.|[0-9]{1,3}\.)\s*[:.\-—]?\s*(.*)$/i;
-  const chunks = [];
-  let current = { title: fallbackTitle, lines: [] };
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const isHeading = headingRe.test(trimmed) && current.lines.join('\n').trim().length > 500;
-    if (isHeading) { chunks.push(current); current = { title: trimmed, lines: [] }; }
-    else current.lines.push(line);
-  }
-  chunks.push(current);
-
-  return chunks.map((ch, idx) => {
-    let paragraphs = ch.lines.join('\n')
-      .split(/\n\s*\n+/)
-      .map(p => p.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim())
-      .filter(Boolean)
-      .flatMap(p => readerChunkLongParagraph(p, 380));
-    if (paragraphs.length <= 1 && ch.lines.join('\n').length > 1200) {
-      paragraphs = readerChunkLongParagraph(ch.lines.join(' ').replace(/\s+/g, ' '), 380);
-    }
-    return { id: 'ch_' + idx, title: ch.title || `Глава ${idx + 1}`, paragraphs };
-  }).filter(ch => ch.paragraphs.length);
+  return readerImportSplitTextToChapters(rawText, fallbackTitle, readerChunkLongParagraph);
 }
 
 function readerSplitSongToChapters(rawText, fallbackTitle = 'Песня') {
-  const clean = String(rawText || '').replace(/\r/g, '').trim();
-  if (!clean) return [];
-
-  // Section tag regex: [Куплет 1], [Припев], [Bridge], [Outro], [Intro], [Verse 1], [Chorus] etc.
-  const sectionRe = /^\[(.+?)\]\s*$/;
-  const lines = clean.split('\n');
-
-  const sections = [];
-  let current = { label: fallbackTitle, type: 'verse', lines: [] };
-
-  for (const line of lines) {
-    const m = line.trim().match(sectionRe);
-    if (m) {
-      if (current.lines.some(l => l.trim())) sections.push(current);
-      const label = m[1].trim();
-      const lower = label.toLowerCase();
-      let type = 'verse';
-      if (/припев|chorus|ref|refrain/.test(lower)) type = 'chorus';
-      else if (/bridge|бридж/.test(lower)) type = 'bridge';
-      else if (/outro|аутро/.test(lower)) type = 'outro';
-      else if (/intro|интро/.test(lower)) type = 'intro';
-      current = { label, type, lines: [] };
-    } else {
-      current.lines.push(line);
-    }
-  }
-  if (current.lines.some(l => l.trim())) sections.push(current);
-
-  // Each section becomes one "chapter", each non-empty line becomes one "paragraph"
-  // We store section metadata in chapter so renderer can use it
-  return sections.map((sec, idx) => {
-    const paragraphs = sec.lines
-      .map(l => l.trim())
-      .filter(Boolean);
-    return {
-      id: 'sec_' + idx,
-      title: sec.label,
-      songSection: true,
-      sectionType: sec.type,   // 'verse' | 'chorus' | 'bridge' | 'outro' | 'intro'
-      paragraphs,
-    };
-  }).filter(ch => ch.paragraphs.length);
+  return readerImportSplitSongToChapters(rawText, fallbackTitle);
 }
 
 function readerBookProgress(book) { return readerLibrary.progress(book); }
