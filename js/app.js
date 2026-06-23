@@ -17,6 +17,7 @@ import { createReaderNavigation } from './reader/navigation.js?v=1';
 import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16, zipU32 as epubZipU32, inflateZipData as epubInflateZipData, readZipEntries as epubReadZipEntries, resolveEpubPath as epubResolvePath, cleanEpubText as epubCleanText, looksLikeEpubBoilerplate as epubLooksLikeBoilerplate, htmlToPlainText as epubHtmlToPlainText, htmlToParagraphs as epubHtmlToParagraphs } from './reader/epub.js?v=1';
 import { createReaderWordPanel } from './reader/word-panel.js?v=1';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
+import { createReaderWordState } from './reader/word-state.js?v=1';
 import { renderHome } from './home.js';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
@@ -1620,17 +1621,9 @@ function readerScheduleChineseSegmentation(text) {
 }
 
 
-function loadReaderWordState() {
-  if (readerWordStateCache) return readerWordStateCache;
-  try {
-    readerWordStateCache = JSON.parse(localStorage.getItem(readerWordStateStorageKey()) || '{}') || {};
-  } catch { readerWordStateCache = {}; }
-  return readerWordStateCache;
-}
+function loadReaderWordState() { return readerWordState.load(); }
 
-function saveReaderWordState() {
-  try { localStorage.setItem(readerWordStateStorageKey(), JSON.stringify(loadReaderWordState())); } catch(e) { console.warn('[reader word state] save failed', e); }
-}
+function saveReaderWordState() { return readerWordState.save(); }
 
 const READER_WORD_COLOR_CLASSES = ['rw-new','rw-seen','rw-faded','rw-saved','rw-known','rw-looked','rw-learning','rw-familiar','rw-problem','rw-sel'];
 let readerVisibleParagraphObserver = null;
@@ -1711,10 +1704,7 @@ function readerBindVisibleParagraphTracking(scroller = null) {
   items.forEach(el => readerVisibleParagraphObserver.observe(el));
 }
 
-function readerWordStateKey(word, lang = null) {
-  const l = readerCanonicalLang(lang || readerCurrentLang());
-  return `${l}:${normalizeImportKey(readerNormalizeWord(word, l))}`;
-}
+function readerWordStateKey(word, lang = null) { return readerWordState.key(word, lang); }
 
 function readerIsCommonWord(word, lang = null) {
   const l = readerCanonicalLang(lang || readerCurrentLang());
@@ -1724,128 +1714,21 @@ function readerIsCommonWord(word, lang = null) {
   return w.length <= 1 || READER_COMMON_WORDS.has(w) || READER_COMMON_WORDS.has(w.replace(/^l'/,''));
 }
 
-function readerGetWordState(word, lang = null) {
-  const l = readerCanonicalLang(lang || readerCurrentLang());
-  const key = readerWordStateKey(word, l);
-  const store = loadReaderWordState();
-  if (!store[key]) store[key] = { word: readerNormalizeWord(word, l), lang: l, seen: 0, clicked: 0, saved: false, known: false, status: 'new', places: {}, updatedAt: new Date().toISOString() };
-  return store[key];
-}
+function readerGetWordState(word, lang = null) { return readerWordState.get(word, lang); }
 
-function readerTouchWordState(word, lang = null) {
-  const st = readerGetWordState(word, lang);
-  st.updatedAt = new Date().toISOString();
-  return st;
-}
+function readerTouchWordState(word, lang = null) { return readerWordState.touch(word, lang); }
 
-function readerTrackParagraphWords(book, ch, paragraphIndex, paragraphText) {
-  if (!book || !ch) return false;
-  const lang = readerBookLang(book);
-  const bookId = book.id || 'book';
-  const chapterId = ch.id || String(book.currentChapter || 0);
-  const placeKey = `${bookId}:${chapterId}:${paragraphIndex}`;
-  let changed = false;
-  const unique = new Set(readerTokenizeParagraph(paragraphText, lang)
-    .map(tok => readerNormalizeWord(tok, lang))
-    .filter(Boolean));
-  unique.forEach(word => {
-    const st = readerGetWordState(word, lang);
-    st.places = st.places || {};
-    const beforeSeen = st.seen || 0;
-    if (!st.places[placeKey]) {
-      st.places[placeKey] = true;
-      changed = true;
-    }
-    // v68.22: count real distinct paragraphs seen, including paragraphs reached by normal scroll.
-    // v68.21 counted only the active paragraph, so manual scrolling did not make words yellow.
-    const nextSeen = Object.keys(st.places).length;
-    if (st.seen !== nextSeen) {
-      st.seen = nextSeen;
-      changed = true;
-    }
-    if (changed || beforeSeen !== nextSeen) st.updatedAt = new Date().toISOString();
-    if (readerIsCommonWord(word, lang)) {
-      if (!st.known || st.status !== 'known') changed = true;
-      st.known = true;
-      st.status = 'known';
-    }
-  });
-  if (changed) saveReaderWordState();
-  return changed;
-}
+function readerTrackParagraphWords(book, ch, paragraphIndex, paragraphText) { return readerWordState.trackParagraph(book, ch, paragraphIndex, paragraphText); }
 
-function readerMarkWordClicked(word, lang = null) {
-  if (!word || readerIsCommonWord(word, lang)) return;
-  const st = readerTouchWordState(word, lang);
-  st.clicked = (st.clicked || 0) + 1;
-  if (!st.saved && !st.known) st.status = 'looked';
-  saveReaderWordState();
-}
+function readerMarkWordClicked(word, lang = null) { return readerWordState.markClicked(word, lang); }
 
-function readerMarkWordSaved(word, lemma = null, lang = null, ru = '') {
-  const st = readerTouchWordState(lemma || word, lang);
-  st.saved = true;
-  st.known = false;
-  st.status = st.seen >= READER_FAMILIAR_AFTER ? 'familiar' : 'learning';
-  st.updatedAt = new Date().toISOString();
-  if (ru) st.ru = ru;
-  if (word && lemma && readerWordStateKey(word, lang) !== readerWordStateKey(lemma, lang)) {
-    const form = readerTouchWordState(word, lang);
-    form.saved = true;
-    form.linkedLemma = readerNormalizeWord(lemma, lang);
-    form.status = 'learning';
-    if (ru) form.ru = ru;
-  }
-  saveReaderWordState();
-}
+function readerMarkWordSaved(word, lemma = null, lang = null, ru = '') { return readerWordState.markSaved(word, lemma, lang, ru); }
 
-function readerMarkWordKnown(word, lang = null) {
-  const st = readerTouchWordState(word, lang);
-  st.known = true; st.status = 'known'; st.autoKnown = false;
-  saveReaderWordState();
-}
+function readerMarkWordKnown(word, lang = null) { return readerWordState.markKnown(word, lang); }
 
-function readerWordVisual(word, lang = null) {
-  const l = readerCanonicalLang(lang || readerCurrentLang());
-  const w = readerNormalizeWord(word, l);
-  if (!w) return { cls: 'rw-known', title: 'служебное/частое слово' };
+function readerWordVisual(word, lang = null) { return readerWordState.visual(word, lang); }
 
-  const st = loadReaderWordState()[readerWordStateKey(w, l)];
-  const seen = Number(st?.seen || 0);
-
-  // Manual status always wins. These are the only strong reading colours: a word you
-  // deliberately opened, are learning, find difficult, or are consolidating.
-  if (st?.known || st?.status === 'known') return { cls: 'rw-known', title: 'изучено' };
-  if (st?.status === 'problem' || st?.status === 'hard') return { cls: 'rw-problem', title: 'проблемное слово' };
-  if (st?.status === 'familiar') return { cls: 'rw-familiar', title: 'закрепляется' };
-  if (st?.status === 'learning' || st?.saved) return { cls: 'rw-learning', title: 'изучаю' };
-  if (st?.status === 'looked' || (st?.clicked || 0) > 0) return { cls: 'rw-looked', title: `просмотрено ${st?.clicked || 1} раз` };
-
-  // Automatic background logic is intentionally quiet. A word existing in the French
-  // noun table is NOT automatically blue: dictionary membership is storage, not a
-  // learning decision. Known/common forms stay neutral; untouched words first appear,
-  // then become yellow, then fade without being falsely marked as "known".
-  if (readerIsCommonWord(w, l)) return { cls: 'rw-known', title: 'служебное/частое слово' };
-  if (l === 'fr' && readerFindVerbByForm(w)) return { cls: 'rw-known', title: 'форма известного глагола' };
-  if (seen >= READER_AUTO_FADE_AFTER) return { cls: 'rw-faded', title: `встречалось ${seen} раз — подсветка скрыта` };
-  if (seen >= READER_SEEN_AFTER) return { cls: 'rw-seen', title: `часто встречалось: ${seen} абз.` };
-  return { cls: 'rw-new', title: l === 'zh' ? 'новый китайский сегмент' : 'новое слово' };
-}
-
-function readerWordStatusRu(st) {
-  if (!st) return 'новое';
-  const seen = Number(st.seen || 0);
-  if (st.known || st.status === 'known') return 'изучено';
-  if (st.status === 'problem' || st.status === 'hard') return 'проблемное';
-  if (st.status === 'learning') return 'изучаю';
-  if (st.status === 'familiar') return 'закрепляется';
-  if (st.saved) return 'в словаре';
-  if ((st.clicked || 0) > 0 || st.status === 'looked') return 'просмотрено';
-  if (seen >= READER_AUTO_FADE_AFTER) return `видел ${seen} — подсветка скрыта`;
-  if (seen >= READER_SEEN_AFTER) return `часто встречалось: ${seen}`;
-  if (seen > 0) return `видел ${seen}`;
-  return 'новое';
-}
+function readerWordStatusRu(st) { return readerWordState.statusRu(st); }
 
 function readerExtractPinyin(data = {}) {
   return String(data.pinyin || data.py || data.pinyin_marked || data.pinyinTone || '').trim();
@@ -3027,6 +2910,23 @@ function an2ReaderDebugSeen(word = '') {
   return st || null;
 }
 window.an2ReaderDebugSeen = an2ReaderDebugSeen;
+
+const readerWordState = createReaderWordState({
+  getCache: () => readerWordStateCache,
+  setCache: (value) => { readerWordStateCache = value; },
+  storageKey: readerWordStateStorageKey,
+  canonicalLang: readerCanonicalLang,
+  currentLang: () => readerCurrentLang(),
+  normalizeWord: readerNormalizeWord,
+  normalizeImportKey,
+  isCommonWord: readerIsCommonWord,
+  seenAfter: READER_SEEN_AFTER,
+  fadeAfter: READER_AUTO_FADE_AFTER,
+  familiarAfter: READER_FAMILIAR_AFTER,
+  getBookLang: readerBookLang,
+  tokenizeParagraph: readerTokenizeParagraph,
+  findVerbByForm: readerFindVerbByForm,
+});
 
 const readerWordLookup = createReaderWordLookup({
   currentLang: () => readerCurrentLang(),
