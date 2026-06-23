@@ -14,7 +14,7 @@ import { speak, stopSpeak, initSpeech, applyKbMode, initTTSEngineUI, showFrKb, h
          frBackspace, frEnter, frToggleShift } from './tts.js?v=68.32-firebase-tts';
 import { createReaderAudio } from './reader/audio.js?v=1';
 import { createReaderNavigation } from './reader/navigation.js?v=1';
-import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16, zipU32 as epubZipU32, inflateZipData as epubInflateZipData, readZipEntries as epubReadZipEntries, resolveEpubPath as epubResolvePath, cleanEpubText as epubCleanText, looksLikeEpubBoilerplate as epubLooksLikeBoilerplate, htmlToPlainText as epubHtmlToPlainText } from './reader/epub.js?v=1';
+import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16, zipU32 as epubZipU32, inflateZipData as epubInflateZipData, readZipEntries as epubReadZipEntries, resolveEpubPath as epubResolvePath, cleanEpubText as epubCleanText, looksLikeEpubBoilerplate as epubLooksLikeBoilerplate, htmlToPlainText as epubHtmlToPlainText, htmlToParagraphs as epubHtmlToParagraphs } from './reader/epub.js?v=1';
 import { renderHome } from './home.js';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
@@ -2581,55 +2581,11 @@ function readerHtmlToPlainTextFallback(html = '') { return epubHtmlToPlainText(h
 
 
 function readerHtmlToParagraphs(html, lang = null) {
-  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
-  doc.querySelectorAll('script,style,nav,header,footer,svg,iframe,object,form,noscript').forEach(x => x.remove());
-  doc.querySelectorAll('br').forEach(br => br.replaceWith(doc.createTextNode('\n')));
-
-  const blockSelector = 'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,div,section,article,main,td,th,dd,dt';
-  const hardTags = new Set('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre'.split(','));
-  const nodes = [...doc.body?.querySelectorAll(blockSelector) || []];
-  const paragraphs = [];
-  const seen = new Set();
-
-  const pushParagraph = (raw) => {
-    const clean = readerEpubCleanText(raw);
-    if (!clean || readerLooksLikeBoilerplate(clean)) return;
-    const key = clean.slice(0, 180);
-    if (seen.has(key)) return;
-    seen.add(key);
-    const parts = clean.split(/\n\s*\n+/).map(x => readerEpubCleanText(x)).filter(Boolean);
-    for (const part of (parts.length ? parts : [clean])) {
-      readerChunkLongParagraph(part.replace(/\n+/g, ' '), readerCanonicalLang(lang) === 'zh' ? 150 : 420).forEach(p => {
-        if (p && !readerLooksLikeBoilerplate(p)) paragraphs.push(p);
-      });
-    }
-  };
-
-  nodes.forEach(node => {
-    const tag = node.tagName?.toLowerCase() || '';
-    const text = node.textContent || '';
-    if (!text.trim()) return;
-    const childBlocks = [...node.querySelectorAll(blockSelector)].filter(ch => ch !== node && (ch.textContent || '').trim().length > 12);
-    const isHard = hardTags.has(tag);
-    // Chinese EPUBs often store chapter text in leaf divs instead of <p>.
-    // Use leaf-like div/section/article only to avoid duplicating whole parent chapters.
-    if (!isHard && childBlocks.length) return;
-    pushParagraph(text);
+  return epubHtmlToParagraphs(html, {
+    lang,
+    canonicalLang: readerCanonicalLang,
+    chunkLongParagraph: readerChunkLongParagraph,
   });
-
-  const bodyText = readerEpubCleanText(doc.body?.textContent || '').replace(/\n+/g, '\n');
-  const plainText = readerHtmlToPlainTextFallback(html).replace(/\n{3,}/g, '\n\n');
-  const bestText = plainText.replace(/\s+/g, '').length > bodyText.replace(/\s+/g, '').length ? plainText : bodyText;
-  const bodyChars = bestText.replace(/\s+/g, '').length;
-  const paraChars = paragraphs.join('').replace(/\s+/g, '').length;
-  if (bodyChars > 0 && (paragraphs.length === 0 || paraChars < bodyChars * 0.82)) {
-    const fallback = [];
-    bestText.split(/\n\s*\n+|\n+/).map(x => readerEpubCleanText(x)).filter(x => x && !readerLooksLikeBoilerplate(x)).forEach(part => {
-      readerChunkLongParagraph(part, readerCanonicalLang(lang) === 'zh' ? 150 : 420).forEach(p => fallback.push(p));
-    });
-    if (fallback.join('').replace(/\s+/g, '').length > paraChars) return fallback.filter(p => p.length > 1);
-  }
-  return paragraphs.filter(p => p.length > 1);
 }
 
 function readerParseAttrs(tag = '') {
