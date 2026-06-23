@@ -8,6 +8,7 @@ on:
       - 'js/reader/epub.js'
       - 'scripts/extract-reader-navigation.mjs'
       - 'scripts/extract-reader-zip.mjs'
+      - 'scripts/extract-reader-epub-text.mjs'
       - '.github/workflows/extract-reader-navigation.yml'
   workflow_dispatch:
 
@@ -30,6 +31,8 @@ jobs:
         run: node scripts/extract-reader-navigation.mjs
       - name: Extract EPUB zip helpers
         run: node scripts/extract-reader-zip.mjs
+      - name: Extract EPUB text helpers
+        run: node scripts/extract-reader-epub-text.mjs
       - name: Check JavaScript syntax
         run: |
           node --check js/app.js
@@ -37,6 +40,7 @@ jobs:
           node --check js/reader/epub.js
           node --check scripts/extract-reader-navigation.mjs
           node --check scripts/extract-reader-zip.mjs
+          node --check scripts/extract-reader-epub-text.mjs
       - name: Commit extracted app wiring
         run: |
           if git diff --quiet -- js/app.js; then
@@ -46,5 +50,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add js/app.js
-          git commit -m "refactor: extract reader navigation and EPUB zip helpers"
+          git commit -m "refactor: extract reader navigation and EPUB helpers"
           git push origin HEAD:reader-refactor
