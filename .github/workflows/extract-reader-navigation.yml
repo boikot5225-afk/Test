@@ -9,6 +9,7 @@ on:
       - 'scripts/extract-reader-navigation.mjs'
       - 'scripts/extract-reader-zip.mjs'
       - 'scripts/extract-reader-epub-text.mjs'
+      - 'scripts/extract-reader-epub-html.mjs'
       - '.github/workflows/extract-reader-navigation.yml'
   workflow_dispatch:
 
@@ -33,6 +34,8 @@ jobs:
         run: node scripts/extract-reader-zip.mjs
       - name: Extract EPUB text helpers
         run: node scripts/extract-reader-epub-text.mjs
+      - name: Extract EPUB HTML parser
+        run: node scripts/extract-reader-epub-html.mjs
       - name: Check JavaScript syntax
         run: |
           node --check js/app.js
@@ -41,6 +44,7 @@ jobs:
           node --check scripts/extract-reader-navigation.mjs
           node --check scripts/extract-reader-zip.mjs
           node --check scripts/extract-reader-epub-text.mjs
+          node --check scripts/extract-reader-epub-html.mjs
       - name: Commit extracted app wiring
         run: |
           if git diff --quiet -- js/app.js; then
