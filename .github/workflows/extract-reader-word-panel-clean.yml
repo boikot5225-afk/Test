@@ -1,0 +1,139 @@
+name: Extract reader word panel
+
+on:
+  push:
+    branches: [reader-refactor-clean]
+    paths:
+      - 'js/reader/word-panel.js'
+      - '.github/workflows/extract-reader-word-panel-clean.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: reader-refactor-clean
+          fetch-depth: 0
+      - name: Extract word panel UI
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('js/app.js')
+          source = path.read_text()
+
+          def skip_string(text, index):
+              quote = text[index]
+              index += 1
+              escaped = False
+              while index < len(text):
+                  char = text[index]
+                  if escaped:
+                      escaped = False
+                  elif char == '\\':
+                      escaped = True
+                  elif char == quote:
+                      return index + 1
+                  index += 1
+              raise RuntimeError('Unclosed string')
+
+          def find_body(name):
+              match = re.search(r'function\s+' + re.escape(name) + r'\s*\(', source)
+              if not match:
+                  raise RuntimeError('Missing function: ' + name)
+              start = match.start()
+              index = source.find('(', start)
+              depth = 0
+              while index < len(source):
+                  char = source[index]
+                  if char in "'\"`":
+                      index = skip_string(source, index)
+                      continue
+                  if char == '(':
+                      depth += 1
+                  elif char == ')':
+                      depth -= 1
+                      if depth == 0:
+                          index += 1
+                          break
+                  index += 1
+              while index < len(source) and source[index].isspace():
+                  index += 1
+              if index >= len(source) or source[index] != '{':
+                  raise RuntimeError('Body missing: ' + name)
+              body_start = index
+              depth = 0
+              index = body_start
+              while index < len(source):
+                  char = source[index]
+                  if char in "'\"`":
+                      index = skip_string(source, index)
+                      continue
+                  if char == '{':
+                      depth += 1
+                  elif char == '}':
+                      depth -= 1
+                      if depth == 0:
+                          return start, index + 1
+                  index += 1
+              raise RuntimeError('Body unclosed: ' + name)
+
+          def replace(name, replacement):
+              nonlocal_source = source
+              start, end = find_body(name)
+              return nonlocal_source[:start] + replacement + nonlocal_source[end:]
+
+          if "./reader/word-panel.js" not in source:
+              anchor = "import { renderHome } from './home.js';"
+              source = source.replace(anchor, "import { createReaderWordPanel } from './reader/word-panel.js?v=1';\n" + anchor)
+
+          if 'const readerWordPanel = createReaderWordPanel(' not in source:
+              anchor = 'const readerNavigation = createReaderNavigation({'
+              setup = """const readerWordPanel = createReaderWordPanel({
+            escape: readerEscape,
+            canonicalLang: readerCanonicalLang,
+            currentLang: () => readerCurrentLang(),
+            extractPinyin: readerExtractPinyin,
+            getSelectedWord: () => readerSelectedWord,
+          });
+
+          """
+              source = source.replace(anchor, setup + anchor)
+
+          replacements = {
+              'ensureReaderWordPanel': 'function ensureReaderWordPanel() { return readerWordPanel.ensure(); }',
+              'readerSimplifyPos': 'function readerSimplifyPos(pos) { return readerWordPanel.simplifyPos(pos); }',
+              'readerPosRu': 'function readerPosRu(pos) { return readerWordPanel.posRu(pos); }',
+              'readerSetPanelFields': 'function readerSetPanelFields(data = {}) { return readerWordPanel.setFields(data); }',
+              'readerRenderWordAnalysis': "function readerRenderWordAnalysis(data = {}, source = '') { return readerWordPanel.renderAnalysis(data, source); }",
+              'readerRenderWordLoading': "function readerRenderWordLoading(message = '⏳ DeepSeek разбирает слово...') { return readerWordPanel.renderLoading(message); }",
+              'readerRenderWordError': 'function readerRenderWordError(message) { return readerWordPanel.renderError(message); }',
+          }
+          for name, replacement in replacements.items():
+              start, end = find_body(name)
+              source = source[:start] + replacement + source[end:]
+
+          path.write_text(source)
+          PY
+      - name: Check JavaScript syntax
+        run: |
+          node --check js/app.js
+          node --check js/reader/word-panel.js
+      - name: Commit extracted app wiring
+        run: |
+          if git diff --quiet -- js/app.js; then
+            echo "No app wiring changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add js/app.js
+          git commit -m "refactor: extract reader word panel"
+          git push origin HEAD:reader-refactor-clean
