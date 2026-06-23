@@ -1,0 +1,120 @@
+name: Extract reader EPUB metadata
+
+on:
+  push:
+    branches: [reader-refactor-clean]
+    paths:
+      - 'js/reader/epub.js'
+      - '.github/workflows/extract-reader-epub-meta-clean.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: reader-refactor-clean
+          fetch-depth: 0
+      - name: Extract EPUB metadata helpers
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('js/app.js')
+          source = path.read_text()
+
+          def skip_string(text, index):
+              quote = text[index]
+              index += 1
+              escaped = False
+              while index < len(text):
+                  char = text[index]
+                  if escaped:
+                      escaped = False
+                  elif char == '\\':
+                      escaped = True
+                  elif char == quote:
+                      return index + 1
+                  index += 1
+              raise RuntimeError('Unclosed string')
+
+          def find_body(name):
+              match = re.search(r'function\s+' + re.escape(name) + r'\s*\(', source)
+              if not match:
+                  raise RuntimeError('Missing function: ' + name)
+              start = match.start()
+              index = source.find('(', start)
+              depth = 0
+              while index < len(source):
+                  char = source[index]
+                  if char in "'\"`":
+                      index = skip_string(source, index)
+                      continue
+                  if char == '(':
+                      depth += 1
+                  elif char == ')':
+                      depth -= 1
+                      if depth == 0:
+                          index += 1
+                          break
+                  index += 1
+              while index < len(source) and source[index].isspace():
+                  index += 1
+              if index >= len(source) or source[index] != '{':
+                  raise RuntimeError('Body missing: ' + name)
+              body_start = index
+              depth = 0
+              index = body_start
+              while index < len(source):
+                  char = source[index]
+                  if char in "'\"`":
+                      index = skip_string(source, index)
+                      continue
+                  if char == '{':
+                      depth += 1
+                  elif char == '}':
+                      depth -= 1
+                      if depth == 0:
+                          return start, index + 1
+                  index += 1
+              raise RuntimeError('Body unclosed: ' + name)
+
+          def replace(name, replacement):
+              global source
+              start, end = find_body(name)
+              source = source[:start] + replacement + source[end:]
+
+          old = "import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16, zipU32 as epubZipU32, inflateZipData as epubInflateZipData, readZipEntries as epubReadZipEntries, resolveEpubPath as epubResolvePath, cleanEpubText as epubCleanText, looksLikeEpubBoilerplate as epubLooksLikeBoilerplate, htmlToPlainText as epubHtmlToPlainText, htmlToParagraphs as epubHtmlToParagraphs } from './reader/epub.js?v=1';"
+          new = "import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16, zipU32 as epubZipU32, inflateZipData as epubInflateZipData, readZipEntries as epubReadZipEntries, resolveEpubPath as epubResolvePath, cleanEpubText as epubCleanText, looksLikeEpubBoilerplate as epubLooksLikeBoilerplate, htmlToPlainText as epubHtmlToPlainText, htmlToParagraphs as epubHtmlToParagraphs, parseAttrs as epubParseAttrs, extractManifestAndSpine as epubExtractManifestAndSpine, extractEpubMeta as epubExtractMeta } from './reader/epub.js?v=1';"
+          if 'epubExtractManifestAndSpine' not in source:
+              if old not in source:
+                  raise RuntimeError('EPUB import line missing')
+              source = source.replace(old, new)
+
+          replace('readerParseAttrs', "function readerParseAttrs(tag = '') { return epubParseAttrs(tag); }")
+          replace('readerExtractEpubManifestAndSpine', "function readerExtractEpubManifestAndSpine(opfText, base) { return epubExtractManifestAndSpine(opfText, base); }")
+          replace('readerExtractEpubMeta', "function readerExtractEpubMeta(opfText, fallbackTitle) { return epubExtractMeta(opfText, fallbackTitle); }")
+
+          path.write_text(source)
+          PY
+      - name: Check JavaScript syntax
+        run: |
+          node --check js/app.js
+          node --check js/reader/epub.js
+      - name: Commit extracted app wiring
+        run: |
+          if git diff --quiet -- js/app.js; then
+            echo "No app wiring changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add js/app.js
+          git commit -m "refactor: extract reader EPUB metadata"
+          git push origin HEAD:reader-refactor-clean
