@@ -1,0 +1,44 @@
+name: Extract reader navigation
+
+on:
+  push:
+    branches: [reader-refactor]
+    paths:
+      - 'js/reader/navigation.js'
+      - 'scripts/extract-reader-navigation.mjs'
+      - '.github/workflows/extract-reader-navigation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: reader-refactor
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Extract reader navigation
+        run: node scripts/extract-reader-navigation.mjs
+      - name: Check JavaScript syntax
+        run: |
+          node --check js/app.js
+          node --check js/reader/navigation.js
+          node --check scripts/extract-reader-navigation.mjs
+      - name: Commit extracted app wiring
+        run: |
+          if git diff --quiet -- js/app.js; then
+            echo "No app wiring changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add js/app.js
+          git commit -m "refactor: extract reader navigation"
+          git push origin HEAD:reader-refactor
