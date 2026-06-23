@@ -44,9 +44,9 @@ export function createReaderNavigation(deps) {
     const chapter = book.chapters?.[book.currentChapter || 0];
     const max = (chapter?.paragraphs?.length || 1) - 1;
     if ((book.currentParagraph || 0) < max) {
-      book.currentParagraph += 1;
+      book.currentParagraph = (book.currentParagraph || 0) + 1;
     } else if ((book.currentChapter || 0) < (book.chapters?.length || 1) - 1) {
-      book.currentChapter += 1;
+      book.currentChapter = (book.currentChapter || 0) + 1;
       book.currentParagraph = 0;
     } else {
       return showToast('Это конец текста');
@@ -61,9 +61,9 @@ export function createReaderNavigation(deps) {
     if (!book) return;
     closeParagraphTime();
     if ((book.currentParagraph || 0) > 0) {
-      book.currentParagraph -= 1;
+      book.currentParagraph = (book.currentParagraph || 0) - 1;
     } else if ((book.currentChapter || 0) > 0) {
-      book.currentChapter -= 1;
+      book.currentChapter = (book.currentChapter || 0) - 1;
       const chapter = book.chapters?.[book.currentChapter || 0];
       book.currentParagraph = Math.max(0, (chapter?.paragraphs?.length || 1) - 1);
     } else {
