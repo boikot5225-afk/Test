@@ -6,6 +6,7 @@ on:
     paths:
       - 'js/reader/navigation.js'
       - 'js/reader/epub.js'
+      - 'js/reader/word-panel.js'
       - 'scripts/extract-reader-navigation.mjs'
       - 'scripts/extract-reader-zip.mjs'
       - 'scripts/extract-reader-epub-text.mjs'
@@ -36,11 +37,107 @@ jobs:
         run: node scripts/extract-reader-epub-text.mjs
       - name: Extract EPUB HTML parser
         run: node scripts/extract-reader-epub-html.mjs
+      - name: Extract reader word panel UI
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('js/app.js')
+          source = path.read_text()
+
+          def find_range(name):
+              match = re.search(r'function\s+' + re.escape(name) + r'\s*\(', source)
+              if not match:
+                  raise RuntimeError('Missing function: ' + name)
+              start = match.start()
+              brace = source.find('{', start)
+              depth = 0
+              quote = None
+              escaped = False
+              line_comment = False
+              block_comment = False
+              index = brace
+              while index < len(source):
+                  char = source[index]
+                  nxt = source[index + 1] if index + 1 < len(source) else ''
+                  if line_comment:
+                      if char == '\n': line_comment = False
+                      index += 1
+                      continue
+                  if block_comment:
+                      if char == '*' and nxt == '/':
+                          block_comment = False
+                          index += 2
+                          continue
+                      index += 1
+                      continue
+                  if quote:
+                      if escaped:
+                          escaped = False
+                      elif char == '\\':
+                          escaped = True
+                      elif char == quote:
+                          quote = None
+                      index += 1
+                      continue
+                  if char == '/' and nxt == '/':
+                      line_comment = True
+                      index += 2
+                      continue
+                  if char == '/' and nxt == '*':
+                      block_comment = True
+                      index += 2
+                      continue
+                  if char in "'\"`":
+                      quote = char
+                  elif char == '{':
+                      depth += 1
+                  elif char == '}':
+                      depth -= 1
+                      if depth == 0:
+                          return start, index + 1
+                  index += 1
+              raise RuntimeError('Unclosed function: ' + name)
+
+          def replace(name, replacement):
+              global source
+              start, end = find_range(name)
+              source = source[:start] + replacement + source[end:]
+
+          anchor_import = "import { renderHome } from './home.js';"
+          if "./reader/word-panel.js" not in source:
+              source = source.replace(anchor_import, "import { createReaderWordPanel } from './reader/word-panel.js?v=1';\n" + anchor_import)
+
+          controller_anchor = 'const readerNavigation = createReaderNavigation({'
+          if 'const readerWordPanel = createReaderWordPanel(' not in source:
+              setup = """const readerWordPanel = createReaderWordPanel({
+            escape: readerEscape,
+            canonicalLang: readerCanonicalLang,
+            currentLang: () => readerCurrentLang(),
+            extractPinyin: readerExtractPinyin,
+            getSelectedWord: () => readerSelectedWord,
+          });
+
+          """
+              source = source.replace(controller_anchor, setup + controller_anchor)
+
+          replace('ensureReaderWordPanel', 'function ensureReaderWordPanel() { return readerWordPanel.ensure(); }')
+          replace('readerSimplifyPos', 'function readerSimplifyPos(pos) { return readerWordPanel.simplifyPos(pos); }')
+          replace('readerPosRu', 'function readerPosRu(pos) { return readerWordPanel.posRu(pos); }')
+          replace('readerSetPanelFields', 'function readerSetPanelFields(data = {}) { return readerWordPanel.setFields(data); }')
+          replace('readerRenderWordAnalysis', "function readerRenderWordAnalysis(data = {}, source = '') { return readerWordPanel.renderAnalysis(data, source); }")
+          replace('readerRenderWordLoading', "function readerRenderWordLoading(message = '⏳ DeepSeek разбирает слово...') { return readerWordPanel.renderLoading(message); }")
+          replace('readerRenderWordError', 'function readerRenderWordError(message) { return readerWordPanel.renderError(message); }')
+
+          path.write_text(source)
+          PY
       - name: Check JavaScript syntax
         run: |
           node --check js/app.js
           node --check js/reader/navigation.js
           node --check js/reader/epub.js
+          node --check js/reader/word-panel.js
           node --check scripts/extract-reader-navigation.mjs
           node --check scripts/extract-reader-zip.mjs
           node --check scripts/extract-reader-epub-text.mjs
@@ -54,5 +151,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add js/app.js
-          git commit -m "refactor: extract reader navigation and EPUB helpers"
+          git commit -m "refactor: extract reader word panel"
           git push origin HEAD:reader-refactor
