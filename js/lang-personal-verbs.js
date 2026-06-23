@@ -29,9 +29,9 @@ function addButton() {
     button.addEventListener('click', openPersonalVerbs);
     bar.appendChild(button);
   }
-  button.style.display = currentLang() === 'fr' ? '' : 'none';
+  const next = currentLang() === 'fr' ? '' : 'none';
+  if (button.style.display !== next) button.style.display = next;
 }
 window.addEventListener('an2:languagechange', function() { setTimeout(addButton, 0); });
-new MutationObserver(addButton).observe(document.documentElement, { childList: true, subtree: true });
-addButton();
+setTimeout(addButton, 300);
 window.showPersonalFrenchVerbs = openPersonalVerbs;
