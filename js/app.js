@@ -14,6 +14,7 @@ import { speak, stopSpeak, initSpeech, applyKbMode, initTTSEngineUI, showFrKb, h
          frBackspace, frEnter, frToggleShift } from './tts.js?v=68.32-firebase-tts';
 import { createReaderAudio } from './reader/audio.js?v=1';
 import { createReaderNavigation } from './reader/navigation.js?v=1';
+import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16, zipU32 as epubZipU32, inflateZipData as epubInflateZipData, readZipEntries as epubReadZipEntries } from './reader/epub.js?v=1';
 import { renderHome } from './home.js';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
@@ -2561,77 +2562,14 @@ async function readerFetchFromUrl() {
 window.readerFetchFromUrl = readerFetchFromUrl;
 
 
-function readerReadFileAsArrayBuffer(file) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(r.result);
-    r.onerror = () => reject(r.error || new Error('Не удалось прочитать файл'));
-    r.readAsArrayBuffer(file);
-  });
-}
+function readerReadFileAsArrayBuffer(file) { return epubReadFileAsArrayBuffer(file); }
 
-function readerZipU16(view, off) { return view.getUint16(off, true); }
-function readerZipU32(view, off) { return view.getUint32(off, true); }
+function readerZipU16(view, offset) { return epubZipU16(view, offset); }
+function readerZipU32(view, offset) { return epubZipU32(view, offset); }
 
-async function readerInflateZipData(bytes) {
-  if (typeof DecompressionStream === 'undefined') {
-    throw new Error('Браузер не поддерживает распаковку EPUB. На Android/Chrome и Edge обычно работает; иначе экспортируй текст в TXT.');
-  }
-  for (const fmt of ['deflate-raw', 'deflate']) {
-    try {
-      const ds = new DecompressionStream(fmt);
-      const stream = new Blob([bytes]).stream().pipeThrough(ds);
-      return new Uint8Array(await new Response(stream).arrayBuffer());
-    } catch(e) {}
-  }
-  throw new Error('Не удалось распаковать EPUB: deflate не поддержан браузером.');
-}
+async function readerInflateZipData(bytes) { return epubInflateZipData(bytes); }
 
-async function readerReadZipEntries(arrayBuffer) {
-  const view = new DataView(arrayBuffer);
-  const bytes = new Uint8Array(arrayBuffer);
-  let eocd = -1;
-  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 66000); i--) {
-    if (readerZipU32(view, i) === 0x06054b50) { eocd = i; break; }
-  }
-  if (eocd < 0) throw new Error('Это не похоже на EPUB/ZIP.');
-  const count = readerZipU16(view, eocd + 10);
-  let off = readerZipU32(view, eocd + 16);
-  const decoder = new TextDecoder('utf-8');
-  const entries = new Map();
-
-  for (let n = 0; n < count; n++) {
-    if (readerZipU32(view, off) !== 0x02014b50) break;
-    const method = readerZipU16(view, off + 10);
-    const compSize = readerZipU32(view, off + 20);
-    const nameLen = readerZipU16(view, off + 28);
-    const extraLen = readerZipU16(view, off + 30);
-    const commentLen = readerZipU16(view, off + 32);
-    const localOff = readerZipU32(view, off + 42);
-    const name = decoder.decode(bytes.slice(off + 46, off + 46 + nameLen)).replace(/^\/+/, '');
-
-    if (readerZipU32(view, localOff) === 0x04034b50 && !name.endsWith('/')) {
-      const localNameLen = readerZipU16(view, localOff + 26);
-      const localExtraLen = readerZipU16(view, localOff + 28);
-      const dataStart = localOff + 30 + localNameLen + localExtraLen;
-      const comp = bytes.slice(dataStart, dataStart + compSize);
-      entries.set(name, {
-        name,
-        method,
-        async bytes() {
-          if (method === 0) return comp;
-          if (method === 8) return await readerInflateZipData(comp);
-          throw new Error('EPUB содержит неподдерживаемый ZIP-метод: ' + method);
-        },
-        async text() {
-          return decoder.decode(await this.bytes());
-        }
-      });
-    }
-    off += 46 + nameLen + extraLen + commentLen;
-  }
-  return entries;
-}
+async function readerReadZipEntries(arrayBuffer) { return epubReadZipEntries(arrayBuffer); }
 
 function readerResolveEpubPath(base, href) {
   if (!href) return '';
