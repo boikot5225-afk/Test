@@ -69,3 +69,5 @@ function readerSplitSongToChapters(rawText, fallbackTitle = 'Песня') {
           git add js/app.js
           git commit -m "refactor: extract reader import parsers"
           git push origin HEAD:reader-refactor-clean
+
+# Updated after the parser module was added, so this push triggers the extraction.
