@@ -144,3 +144,5 @@ jobs:
           git add js/app.js
           git commit -m "refactor: extract reader word state"
           git push origin HEAD:reader-refactor-clean
+
+# This commit intentionally retriggers the extraction after the workflow file was created.
