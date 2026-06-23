@@ -18,6 +18,7 @@ import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU1
 import { createReaderWordPanel } from './reader/word-panel.js?v=1';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=1';
+import { createReaderLibraryStore } from './reader/library-store.js?v=1';
 import { renderHome } from './home.js';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
@@ -2015,95 +2016,19 @@ function readerFindKnownNoun(word) {
   ) || null;
 }
 
-function loadReaderBooks() {
-  try {
-    const raw = localStorage.getItem(readerBooksStorageKey());
-    readerBooks = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(readerBooks)) readerBooks = [];
-    const deduped = readerDedupeBooks(readerBooks);
-    if (deduped.length !== readerBooks.length) localStorage.setItem(readerBooksStorageKey(), JSON.stringify(deduped));
-    readerBooks = deduped;
-  } catch { readerBooks = []; }
-  return readerBooks;
-}
+function loadReaderBooks() { return readerLibrary.load(); }
 
-function saveReaderBooks() {
-  try {
-    readerBooks = readerDedupeBooks(readerBooks);
-    localStorage.setItem(readerBooksStorageKey(), JSON.stringify(readerBooks));
-  }
-  catch(e) { console.warn('[reader] save failed', e); }
-  scheduleReaderCloudSave();
-}
+function saveReaderBooks() { return readerLibrary.save(); }
 
 function readerCloudUserId() {
   return sbUser?.id || null;
 }
 
-async function loadReaderBooksFromCloud(force = false) {
-  if (readerCloudLoadedOnce && !force) return false;
-  const userId = readerCloudUserId();
-  if (!userId || !isSupabaseReady?.()) { readerCloudLoadedOnce = true; return false; }
-  try {
-    const { data, error } = await sb.from('reader_books')
-      .select('id,title,updated_at,data')
-      .eq('user_id', userId)
-      .order('updated_at', { ascending: false });
-    if (error) throw error;
-    const remoteBooks = (data || []).map(row => row.data || {}).filter(b => b.id);
-    const byId = new Map((readerBooks || []).map(b => [b.id, b]));
-    for (const rb of remoteBooks) {
-      const local = byId.get(rb.id);
-      if (!local || new Date(rb.updatedAt || rb.updated_at || 0) > new Date(local.updatedAt || 0)) byId.set(rb.id, rb);
-    }
-    readerBooks = readerDedupeBooks([...byId.values()]);
-    localStorage.setItem(readerBooksStorageKey(), JSON.stringify(readerBooks));
-    readerCloudLoadedOnce = true;
-    if (readerBooks.length !== byId.size) setTimeout(() => saveReaderBooksToCloud({ replaceAll: true }).catch(e => console.warn('[reader cloud] duplicate cleanup skipped:', e?.message || e)), 0);
-    return true;
-  } catch(e) {
-    readerCloudLoadedOnce = true;
-    console.warn('[reader cloud] load skipped:', e?.message || e);
-    return false;
-  }
-}
+async function loadReaderBooksFromCloud(force = false) { return readerLibrary.loadFromCloud(force); }
 
-function scheduleReaderCloudSave() {
-  if (readerCloudSaveTimer) clearTimeout(readerCloudSaveTimer);
-  readerCloudSaveTimer = setTimeout(() => saveReaderBooksToCloud().catch(e => console.warn('[reader cloud] save skipped:', e?.message || e)), 1200);
-}
+function scheduleReaderCloudSave() { return readerLibrary.scheduleCloudSave(); }
 
-async function saveReaderBooksToCloud(options = {}) {
-  const userId = readerCloudUserId();
-  if (!userId || !isSupabaseReady?.() || readerCloudSaving) return false;
-  readerBooks = readerDedupeBooks(readerBooks);
-  if (!Array.isArray(readerBooks) || !readerBooks.length) {
-    if (options.replaceAll) await sb.from('reader_books').delete().eq('user_id', userId);
-    return false;
-  }
-  readerCloudSaving = true;
-  try {
-    if (options.replaceAll) {
-      try { await sb.from('reader_books').delete().eq('user_id', userId); }
-      catch(e) { console.warn('[reader cloud] replaceAll delete skipped:', e?.message || e); }
-    }
-    const rows = readerBooks.map(b => {
-      const book = { ...b, importKey: readerBookImportKey(b), updatedAt: b.updatedAt || new Date().toISOString() };
-      return {
-        id: book.id,
-        user_id: userId,
-        title: book.title || 'Без названия',
-        updated_at: book.updatedAt,
-        data: book
-      };
-    });
-    const { error } = await sb.from('reader_books').upsert(rows, { onConflict: 'id' });
-    if (error) throw error;
-    return true;
-  } finally {
-    readerCloudSaving = false;
-  }
-}
+async function saveReaderBooksToCloud(options = {}) { return readerLibrary.saveToCloud(options); }
 
 async function syncReaderCloudNow() {
   showToast('☁️ Синхронизирую библиотеку...');
@@ -2113,10 +2038,7 @@ async function syncReaderCloudNow() {
   showToast(changed ? '☁️ Библиотека синхронизирована' : '☁️ Синхронизация завершена');
 }
 
-function readerCurrentBook() {
-  if (!readerBooks.length) loadReaderBooks();
-  return readerBooks.find(b => b.id === readerCurrentBookId) || null;
-}
+function readerCurrentBook() { return readerLibrary.currentBook(); }
 
 function readerSplitTextToChapters(rawText, fallbackTitle = 'Текст') {
   const clean = String(rawText || '')
@@ -2196,20 +2118,9 @@ function readerSplitSongToChapters(rawText, fallbackTitle = 'Песня') {
   }).filter(ch => ch.paragraphs.length);
 }
 
-function readerBookProgress(book) {
-  const chapters = book?.chapters || [];
-  const totalParagraphs = chapters.reduce((n, ch) => n + (ch.paragraphs?.length || 0), 0) || 1;
-  let done = 0;
-  const ci = book.currentChapter || 0;
-  for (let i = 0; i < Math.min(ci, chapters.length); i++) done += chapters[i].paragraphs?.length || 0;
-  done += Math.min(book.currentParagraph || 0, chapters[ci]?.paragraphs?.length || 0);
-  return Math.max(0, Math.min(100, Math.round(done / totalParagraphs * 100)));
-}
+function readerBookProgress(book) { return readerLibrary.progress(book); }
 
-function readerContinueBook() {
-  if (!readerBooks.length) return null;
-  return [...readerBooks].sort((a,b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))[0];
-}
+function readerContinueBook() { return readerLibrary.continueBook(); }
 
 async function renderReaderScreen() {
   loadReaderBooks();
@@ -2910,6 +2821,24 @@ function an2ReaderDebugSeen(word = '') {
   return st || null;
 }
 window.an2ReaderDebugSeen = an2ReaderDebugSeen;
+
+const readerLibrary = createReaderLibraryStore({
+  getBooks: () => readerBooks,
+  setBooks: (value) => { readerBooks = value; },
+  storageKey: readerBooksStorageKey,
+  dedupeBooks: readerDedupeBooks,
+  getCloudUserId: readerCloudUserId,
+  isCloudReady: () => !!isSupabaseReady?.(),
+  db: () => sb,
+  bookImportKey: readerBookImportKey,
+  getCloudLoadedOnce: () => readerCloudLoadedOnce,
+  setCloudLoadedOnce: (value) => { readerCloudLoadedOnce = value; },
+  getCloudSaving: () => readerCloudSaving,
+  setCloudSaving: (value) => { readerCloudSaving = value; },
+  getCloudSaveTimer: () => readerCloudSaveTimer,
+  setCloudSaveTimer: (value) => { readerCloudSaveTimer = value; },
+  getCurrentBookId: () => readerCurrentBookId,
+});
 
 const readerWordState = createReaderWordState({
   getCache: () => readerWordStateCache,
