@@ -1,4 +1,6 @@
-// Sequential reader playback. It is isolated from readerAI, word saving and language UI.
+// Sequential reader playback.
+// This module replaces only the existing pinned “🔊 Слушать” button in the reader.
+// It does not touch readerAI, DeepSeek, word saving, verbs, or language switching.
 (function () {
   'use strict';
 
@@ -12,21 +14,21 @@
     try { window.showToast?.(message, ms); } catch (_) {}
   }
 
-  function readerRoot() {
-    return document.getElementById('screen-reader') || document.getElementById('reader-reading-view') || document.body;
-  }
-
   function chapterRoot() {
     return document.getElementById('reader-chapter-text');
   }
 
-  function getLang() {
-    const view = document.getElementById('reader-reading-view');
-    const value = view?.dataset?.readerLang || document.documentElement?.dataset?.readerLang || globalThis.AN2_LANG || 'fr';
-    return String(value).toLowerCase().startsWith('zh') ? 'zh' : 'fr';
+  function listenButton() {
+    return document.getElementById('reader-listen-btn');
   }
 
-  function getRate(lang) {
+  function detectLang() {
+    const text = String(chapterRoot()?.textContent || '');
+    if (/[㐀-鿿]/.test(text)) return 'zh';
+    return 'fr';
+  }
+
+  function rateFor(lang) {
     return lang === 'zh' ? 0.92 : 0.9;
   }
 
@@ -39,31 +41,30 @@
     return audioContext;
   }
 
-  async function getFirebaseUser() {
+  async function firebaseUser() {
     const auth = globalThis.firebase?.auth?.();
     if (!auth) throw new Error('Firebase ещё не готов. Перезагрузи приложение и войди снова.');
     if (auth.currentUser) return auth.currentUser;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Не удалось дождаться входа в аккаунт.')), 7000);
-      const off = auth.onAuthStateChanged((user) => {
+      const unsubscribe = auth.onAuthStateChanged((user) => {
         if (!user) return;
         clearTimeout(timer);
-        try { off?.(); } catch (_) {}
+        try { unsubscribe?.(); } catch (_) {}
         resolve(user);
       });
     });
   }
 
-  async function fetchAudio(text, lang) {
-    const user = await getFirebaseUser();
-    const token = await user.getIdToken(false);
+  async function requestAudio(text, lang) {
+    const user = await firebaseUser();
+    const idToken = await user.getIdToken(false);
     const projectId = String(globalThis.FIREBASE_CONFIG?.projectId || 'french-da79a').trim();
     const region = String(globalThis.AN2_FIREBASE_FUNCTIONS_REGION || 'asia-southeast1').trim();
-    const url = `https://${region}-${projectId}.cloudfunctions.net/ttsAudio`;
-    const response = await fetch(url, {
+    const response = await fetch(`https://${region}-${projectId}.cloudfunctions.net/ttsAudio`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ text, lang, speed: getRate(lang) })
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({ text, lang, speed: rateFor(lang) })
     });
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
@@ -74,63 +75,57 @@
     return buffer;
   }
 
-  function paragraphs() {
+  function allParagraphs() {
     const root = chapterRoot();
     if (!root) return [];
     return [...root.querySelectorAll('.reader-paragraph')]
-      .map((el) => ({ el, index: Number(el.dataset.p), text: String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim() }))
+      .map((el) => ({
+        el,
+        index: Number(el.dataset.p),
+        text: String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim()
+      }))
       .filter((item) => Number.isFinite(item.index) && item.text);
   }
 
-  function getStartIndex() {
+  function selectedIndex() {
     const active = chapterRoot()?.querySelector('.reader-paragraph.active');
     const index = Number(active?.dataset?.p);
     return Number.isFinite(index) ? index : 0;
   }
 
-  function setControls(state) {
-    const start = document.getElementById('an2-reader-audio-start');
-    const stop = document.getElementById('an2-reader-audio-stop');
-    const label = document.getElementById('an2-reader-audio-status');
-    if (start) start.disabled = state === 'playing';
-    if (stop) stop.style.display = state === 'playing' ? '' : 'none';
-    if (label) label.textContent = state === 'playing'
-      ? `🎧 Слушаю абзац ${activeParagraph + 1}`
-      : state === 'done' ? '✓ Озвучка остановлена на текущем месте' : 'Слушать с текущего места';
+  function setButtonState(state) {
+    const button = listenButton();
+    if (!button) return;
+    if (state === 'playing') {
+      button.textContent = `⏹ Стоп · ${activeParagraph + 1}`;
+      button.title = 'Остановить озвучку';
+      button.setAttribute('aria-label', 'Остановить озвучку');
+      button.classList.add('is-playing');
+    } else {
+      button.textContent = '🔊 Слушать';
+      button.title = state === 'done' ? 'Продолжить с текущего абзаца' : 'Слушать с текущего места';
+      button.setAttribute('aria-label', 'Слушать с текущего места');
+      button.classList.remove('is-playing');
+    }
   }
 
-  function ensureControls() {
-    const root = chapterRoot();
-    if (!root) return;
-    const existing = document.getElementById('an2-reader-audio-bar');
-    if (existing && existing.parentElement === root.parentElement) return;
-    existing?.remove();
-    const bar = document.createElement('div');
-    bar.id = 'an2-reader-audio-bar';
-    bar.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 14px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface2);';
-    bar.innerHTML = '<button id="an2-reader-audio-start" type="button" class="btn btn-primary" style="padding:8px 12px;font-size:.82rem">🎧 Слушать с текущего места</button><button id="an2-reader-audio-stop" type="button" class="btn btn-secondary" style="display:none;padding:8px 12px;font-size:.82rem">⏹ Стоп</button><span id="an2-reader-audio-status" style="font-size:.76rem;color:var(--text-muted)">Слушать с текущего места</span>';
-    root.parentElement.insertBefore(bar, root);
-    bar.querySelector('#an2-reader-audio-start')?.addEventListener('click', () => startFromCurrent());
-    bar.querySelector('#an2-reader-audio-stop')?.addEventListener('click', () => stop());
-  }
-
-  function markParagraph(index) {
-    const item = paragraphs().find((p) => p.index === index);
-    if (!item) return;
-    item.el.classList.add('active');
-    item.el.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-  }
-
-  function moveReaderPosition(index) {
-    const item = paragraphs().find((p) => p.index === index);
+  function updateReaderPosition(index) {
+    const item = allParagraphs().find((p) => p.index === index);
     if (!item) return false;
     try { item.el.click(); } catch (_) {}
     return true;
   }
 
-  async function playNext(index, token) {
+  function focusParagraph(index) {
+    const item = allParagraphs().find((p) => p.index === index);
+    if (!item) return;
+    item.el.classList.add('active');
+    item.el.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+  }
+
+  async function playFrom(index, token) {
     if (!isPlaying || token !== playbackToken) return;
-    const item = paragraphs().find((p) => p.index === index);
+    const item = allParagraphs().find((p) => p.index === index);
     if (!item) {
       finish();
       toast('🎧 Глава закончилась');
@@ -138,16 +133,17 @@
     }
 
     activeParagraph = index;
-    markParagraph(index);
-    setControls('playing');
+    focusParagraph(index);
+    setButtonState('playing');
 
     try {
       const ctx = getContext();
       if (ctx.state === 'suspended') await ctx.resume();
-      const raw = await fetchAudio(item.text, getLang());
+      const audioBuffer = await requestAudio(item.text, detectLang());
       if (!isPlaying || token !== playbackToken) return;
-      const decoded = await ctx.decodeAudioData(raw.slice(0));
+      const decoded = await ctx.decodeAudioData(audioBuffer.slice(0));
       if (!isPlaying || token !== playbackToken) return;
+
       const source = ctx.createBufferSource();
       source.buffer = decoded;
       source.connect(ctx.destination);
@@ -155,8 +151,8 @@
       source.onended = () => {
         if (!isPlaying || token !== playbackToken || currentSource !== source) return;
         currentSource = null;
-        moveReaderPosition(index + 1);
-        setTimeout(() => playNext(index + 1, token), 80);
+        updateReaderPosition(index + 1);
+        setTimeout(() => playFrom(index + 1, token), 80);
       };
       source.start(0);
     } catch (error) {
@@ -166,70 +162,63 @@
     }
   }
 
-  function startFromCurrent() {
-    const list = paragraphs();
-    if (!list.length) { toast('Сначала открой книгу или главу.'); return; }
+  function start() {
+    const list = allParagraphs();
+    if (!list.length) {
+      toast('Сначала открой книгу или главу.');
+      return;
+    }
     stop(false);
     isPlaying = true;
     playbackToken += 1;
     const token = playbackToken;
-    const start = getStartIndex();
-    activeParagraph = start;
-    setControls('playing');
-    playNext(start, token);
+    const startIndex = selectedIndex();
+    activeParagraph = startIndex;
+    setButtonState('playing');
+    playFrom(startIndex, token);
   }
 
   function finish() {
     isPlaying = false;
     currentSource = null;
-    setControls('done');
+    setButtonState('done');
   }
 
-  function stop(show = true) {
+  function stop(showToast = true) {
     playbackToken += 1;
     isPlaying = false;
     if (currentSource) {
       try { currentSource.stop(); } catch (_) {}
       currentSource = null;
     }
-    setControls('done');
-    if (show) toast('⏹ Озвучка остановлена');
+    setButtonState('done');
+    if (showToast) toast('⏹ Озвучка остановлена');
   }
 
-  function installLibraryButtons() {
-    const library = document.getElementById('reader-library-list');
-    if (!library || library.dataset.bookAudioBound === '1') return;
-    library.dataset.bookAudioBound = '1';
-    const bind = () => {
-      library.querySelectorAll('.lib-book-actions .lib-action-btn, .lib-news-card .lib-action-btn').forEach((button) => {
-        if (button.dataset.bookAudioBound === '1' || button.textContent.trim() !== '🔊') return;
-        button.dataset.bookAudioBound = '1';
-        button.title = 'Открыть книгу и слушать с текущего места';
-        button.onclick = (event) => {
-          event?.preventDefault?.();
-          event?.stopPropagation?.();
-          const card = button.closest('.lib-book-card, .lib-news-card');
-          const open = card?.querySelector('.lib-book-main, .lib-news-main');
-          open?.click?.();
-          setTimeout(startFromCurrent, 650);
-          return false;
-        };
-      });
+  function toggle() {
+    if (isPlaying) stop();
+    else start();
+  }
+
+  function wirePinnedButton() {
+    const button = listenButton();
+    if (!button || button.dataset.readerBookAudioBound === '1') return;
+    button.dataset.readerBookAudioBound = '1';
+    button.onclick = function (event) {
+      try { event?.preventDefault?.(); event?.stopPropagation?.(); } catch (_) {}
+      toggle();
+      return false;
     };
-    bind();
-    new MutationObserver(bind).observe(library, { childList: true, subtree: true });
+    setButtonState('idle');
   }
 
-  function install() {
-    const scan = () => {
-      ensureControls();
-      installLibraryButtons();
-    };
-    scan();
-    setInterval(scan, 1200);
+  function boot() {
+    wirePinnedButton();
+    // The button is part of the static reader shell; this only retries until the shell exists.
+    if (!listenButton()) setTimeout(boot, 300);
   }
 
-  window.an2ReaderStartBookAudio = startFromCurrent;
+  window.an2ReaderStartBookAudio = start;
   window.an2ReaderStopBookAudio = stop;
-  install();
+  boot();
 })();
