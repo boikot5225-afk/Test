@@ -12,6 +12,7 @@ import { loadStats, saveStats, loadMeta, saveMeta, syncStatsFromCloud,
 import { speak, stopSpeak, initSpeech, applyKbMode, initTTSEngineUI, showFrKb, hideFrKb, isFrKbEnabled, setTTSEngine,
          frKbEnabled, autoSpeak, toggleAutoSpeak, toggleKbMode, insertFrChar,
          frBackspace, frEnter, frToggleShift } from './tts.js?v=68.32-firebase-tts';
+import { createReaderAudio } from './reader/audio.js?v=1';
 import { renderHome } from './home.js';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
@@ -3196,46 +3197,42 @@ function an2ReaderDebugSeen(word = '') {
 }
 window.an2ReaderDebugSeen = an2ReaderDebugSeen;
 
-async function readerSpeakText(text, opts = {}) {
-  const clean = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!clean) return;
-  const chunk = clean.length > 900 ? clean.slice(0, 900) : clean;
-  const lang = readerCanonicalLang(opts.lang || readerCurrentLang());
-  const rate = opts.rate || (lang === 'zh' ? 0.92 : 0.9);
+const readerAudio = createReaderAudio({
+  speak,
+  stopSpeak,
+  showToast,
+  getLang: () => readerCurrentLang(),
+  getParagraphText: (index) => {
+    if (index === '__chapter__') {
+      const book = readerCurrentBook();
+      const chapter = book?.chapters?.[book.currentChapter || 0];
+      return (chapter?.paragraphs || []).join(' ');
+    }
+    return readerCurrentParagraphText(index);
+  },
+  onActiveChange: (active) => { readerSpeechActive = active; },
+});
 
-  readerStopSpeech(false);
-  readerSpeechActive = true;
-  try {
-    // French and Chinese both go through the existing Supabase /tts endpoint.
-    // Browser speech is used only if the user manually selects webspeech.
-    const ok = await speak(chunk, { lang, rate });
-    if (!ok) { readerSpeechActive = false; return; }
-    setTimeout(() => { readerSpeechActive = false; }, Math.max(1800, Math.min(12000, chunk.length * 85)));
-  } catch (error) {
-    readerSpeechActive = false;
-    console.warn('[reader tts] Supabase TTS failed:', error);
-    showToast(`⚠️ Облачная озвучка не сработала: ${String(error?.message || error).slice(0, 160)}`, 6000);
-  }
+async function readerSpeakText(text, opts = {}) {
+  return readerAudio.speakText(text, opts);
 }
 
 function readerStopSpeech(show = true) {
-  try { stopSpeak(); } catch {}
-  try { window.speechSynthesis?.cancel?.(); } catch {}
-  readerSpeechActive = false;
-  if (show) showToast('⏹ Озвучка остановлена');
+  return readerAudio.stop(show);
 }
 
-function readerSpeakParagraph(i) { const text = readerCurrentParagraphText(i); if (text) readerSpeakText(text); }
-function readerSpeakCurrentParagraph() { readerSpeakParagraph(null); }
+function readerSpeakParagraph(index) {
+  return readerAudio.speakParagraph(index);
+}
+
+function readerSpeakCurrentParagraph() {
+  return readerAudio.speakCurrentParagraph();
+}
 
 function readerSpeakChapter() {
-  const book = readerCurrentBook(); if (!book) return;
-  const ch = book.chapters?.[book.currentChapter || 0];
-  const text = (ch?.paragraphs || []).join(' ');
-  if (!text) return;
-  if (text.length > 1800) { showToast('🎧 Глава длинная: озвучу текущий абзац, чтобы TTS не подавился.'); readerSpeakCurrentParagraph(); return; }
-  readerSpeakText(text);
+  return readerAudio.speakChapter();
 }
+
 
 async function readerCopyParagraph(i) {
   const text = readerCurrentParagraphText(i); if (!text) return;
