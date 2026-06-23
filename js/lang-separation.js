@@ -1,8 +1,8 @@
 // Language separation bootstrap. AI routes, prompts, TTS and Firebase Functions are not changed.
 function startLanguageShell() {
   Promise.all([
-    import('./lang-core.js'),
-    import('./lang-reader.js')
+    import('./lang-core.js?v=71.2'),
+    import('./lang-reader.js?v=71.2')
   ]).catch(function(error) {
     console.warn('[lang-shell] startup failed', error);
   });
