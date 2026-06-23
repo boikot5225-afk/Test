@@ -1,4 +1,3 @@
-// Firebase web configuration for An II.
 window.FIREBASE_CONFIG = window.FIREBASE_CONFIG || {
   apiKey: "AIzaSyC_Y-V5OIG61B7x7H54RNVwPL3vBeeyvtM",
   authDomain: "french-da79a.firebaseapp.com",
@@ -8,18 +7,20 @@ window.FIREBASE_CONFIG = window.FIREBASE_CONFIG || {
 };
 window.AN2_ADMIN_USERNAME = window.AN2_ADMIN_USERNAME || 'boikot5225';
 window.AN2_FIREBASE_FUNCTIONS_REGION = window.AN2_FIREBASE_FUNCTIONS_REGION || 'asia-southeast1';
-
-// Load the language UI after the main module becomes ready.
 (function() {
   const base = document.currentScript && document.currentScript.src ? document.currentScript.src : location.href;
-  const load = function() {
-    if (document.getElementById('an2-language-shell-loader')) return;
+  const load = function(name, id) {
+    if (document.getElementById(id)) return;
     const script = document.createElement('script');
-    script.id = 'an2-language-shell-loader';
+    script.id = id;
     script.type = 'module';
-    script.src = new URL('lang-separation.js?v=71.0', base).href;
+    script.src = new URL(name, base).href;
     document.head.appendChild(script);
   };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', load, { once: true });
-  else load();
+  const start = function() {
+    load('lang-separation.js?v=71.0', 'an2-language-shell-loader');
+    load('lang-personal-verbs.js?v=71.0', 'an2-personal-verbs-loader');
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
+  else start();
 })();
