@@ -42,3 +42,5 @@ jobs:
           git add js/app.js
           git commit -m "refactor: extract baseline reader audio"
           git push origin HEAD:reader-refactor
+
+# This workflow only moves existing reader audio code; it intentionally changes no user-facing behaviour.
