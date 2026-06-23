@@ -16,6 +16,7 @@ import { createReaderAudio } from './reader/audio.js?v=1';
 import { createReaderNavigation } from './reader/navigation.js?v=1';
 import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16, zipU32 as epubZipU32, inflateZipData as epubInflateZipData, readZipEntries as epubReadZipEntries, resolveEpubPath as epubResolvePath, cleanEpubText as epubCleanText, looksLikeEpubBoilerplate as epubLooksLikeBoilerplate, htmlToPlainText as epubHtmlToPlainText, htmlToParagraphs as epubHtmlToParagraphs } from './reader/epub.js?v=1';
 import { createReaderWordPanel } from './reader/word-panel.js?v=1';
+import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { renderHome } from './home.js';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
@@ -3027,6 +3028,17 @@ function an2ReaderDebugSeen(word = '') {
 }
 window.an2ReaderDebugSeen = an2ReaderDebugSeen;
 
+const readerWordLookup = createReaderWordLookup({
+  currentLang: () => readerCurrentLang(),
+  normalizeWord: readerNormalizeWord,
+  lookupChineseWord: readerLookupChineseWord,
+  fetchChineseDictEntry: readerFetchChineseDictEntry,
+  quickLookup: readerQuickLookup,
+  getCachedLexical: readerGetCachedLexical,
+  findVerbByForm: readerFindVerbByForm,
+  findKnownNoun: readerFindKnownNoun,
+});
+
 const readerWordPanel = createReaderWordPanel({
   escape: readerEscape,
   canonicalLang: readerCanonicalLang,
@@ -3142,44 +3154,7 @@ function readerRenderWordLoading(message = '⏳ DeepSeek разбирает сл
 
 function readerRenderWordError(message) { return readerWordPanel.renderError(message); }
 
-async function readerLookupWord(word) {
-  const lang = readerCurrentLang();
-  const norm = readerNormalizeWord(word, lang);
-  if (!norm) return null;
-  if (lang === 'zh') {
-    const zh = readerLookupChineseWord(norm);
-    // Локальный словарь/кэш быстрый. Если записи нет — добираем CC-CEDICT/lang_dictionary.
-    if (zh) return zh;
-    const remote = await readerFetchChineseDictEntry(norm);
-    if (remote) return remote;
-    return null;
-  }
-  const quick = readerQuickLookup(norm);
-  if (quick) return quick;
-  const cached = readerGetCachedLexical(norm);
-  if (cached) return { ...cached, _source: 'cache', _note: 'из локального кэша' };
-  const verbHit = readerFindVerbByForm(norm);
-  if (verbHit) {
-    return {
-      pos: 'verb',
-      lemma: verbHit.verb.inf,
-      fr: verbHit.verb.inf,
-      ru: verbHit.verb.meaning || '',
-      meaning: verbHit.verb.meaning || '',
-      gender: '',
-      level: verbHit.verb.level || 'A2',
-      _source: 'verbs',
-      _note: `форма глагола: ${verbHit.tense}`
-    };
-  }
-
-  const localNoun = readerFindKnownNoun(norm);
-  if (localNoun) return { ...localNoun, pos: localNoun.pos || 'noun', lemma: localNoun.fr || norm, _source: 'local' };
-
-  // Do not query Firebase per word click: on phones it makes "simple" words feel slow.
-  // Unknown words go straight to cached/DeepSeek path.
-  return null;
-}
+async function readerLookupWord(word) { return readerWordLookup.lookup(word); }
 
 async function readerOpenWordPanel(word, paragraphIndex = 0) {
   readerSelectedWord = readerNormalizeWord(word, readerCurrentLang());
