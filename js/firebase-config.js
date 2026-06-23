@@ -8,21 +8,8 @@ window.FIREBASE_CONFIG = window.FIREBASE_CONFIG || {
   appId: "1:534791612002:web:e9a9a990d351ced860133b"
 };
 
+// UID админа задаётся в Realtime Database: /admins/<uid> = true.
 window.AN2_ADMIN_USERNAME = window.AN2_ADMIN_USERNAME || 'boikot5225';
-window.AN2_FIREBASE_FUNCTIONS_REGION = window.AN2_FIREBASE_FUNCTIONS_REGION || 'asia-southeast1';
 
-// firebase-config.js подключается как обычный script.
-// Подключаем отдельную очередь озвучки: она заменяет только нижнюю кнопку «Слушать» в читалке.
-(function () {
-  if (document.getElementById('an2-reader-book-audio-loader')) return;
-  const load = function () {
-    if (document.getElementById('an2-reader-book-audio-loader')) return;
-    const script = document.createElement('script');
-    script.id = 'an2-reader-book-audio-loader';
-    script.src = 'js/reader-book-audio.js?v=3';
-    script.async = true;
-    document.head.appendChild(script);
-  };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', load, { once: true });
-  else load();
-})();
+// Регион Cloud Functions для reader-ai. Должен совпадать с functions/index.js.
+window.AN2_FIREBASE_FUNCTIONS_REGION = window.AN2_FIREBASE_FUNCTIONS_REGION || 'asia-southeast1';
