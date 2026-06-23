@@ -1,2 +1,2 @@
-// Language separation entrypoint.
+const A = 1;
 console.log('x');
