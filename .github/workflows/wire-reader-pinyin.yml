@@ -1,0 +1,74 @@
+name: Wire reader pinyin controls
+
+on:
+  push:
+    branches: [reader-refactor-clean]
+    paths:
+      - 'js/reader/pinyin.js'
+      - '.github/workflows/wire-reader-pinyin.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: reader-refactor-clean
+          fetch-depth: 0
+      - name: Wire pinyin controller
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('js/app.js')
+          source = path.read_text()
+
+          import_anchor = "import { createReaderTimeTracker } from './reader/reading-time.js?v=1';"
+          import_line = "import { createReaderPinyinControls } from './reader/pinyin.js?v=1';\n"
+          if "./reader/pinyin.js" not in source:
+              if import_anchor not in source:
+                  raise RuntimeError('Pinyin import anchor missing')
+              source = source.replace(import_anchor, import_anchor + '\n' + import_line)
+
+          start_marker = 'function readerZhPinyinMode()'
+          end_marker = 'let readerCloudLoadedOnce = false;'
+          start = source.find(start_marker)
+          end = source.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise RuntimeError('Pinyin block markers not found')
+
+          block = (
+              "const readerPinyinControls = createReaderPinyinControls({\n"
+              "  storageKey: READER_ZH_PINYIN_MODE_KEY,\n"
+              "  getCurrentLang: readerCurrentLang,\n"
+              "  canonicalLang: readerCanonicalLang,\n"
+              "  rerender: renderReaderChapter,\n"
+              "  toast: showToast,\n"
+              "});\n\n"
+              "function readerZhPinyinMode() { return readerPinyinControls.mode(); }\n"
+              "function readerZhPinyinModeLabel(mode = readerZhPinyinMode()) { return readerPinyinControls.label(mode); }\n"
+              "function readerZhPinyinModeTitle(mode = readerZhPinyinMode()) { return readerPinyinControls.title(mode); }\n"
+              "function readerUpdatePinyinButton(lang = readerCurrentLang()) { return readerPinyinControls.update(lang); }\n"
+              "function readerCycleZhPinyinMode() { return readerPinyinControls.cycle(); }\n\n"
+          )
+          source = source[:start] + block + source[end:]
+          path.write_text(source)
+          PY
+      - name: Check syntax
+        run: |
+          node --check js/app.js
+          node --check js/reader/pinyin.js
+      - name: Commit wiring
+        run: |
+          if git diff --quiet -- js/app.js; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add js/app.js
+          git commit -m "refactor: wire reader pinyin controls"
+          git push origin HEAD:reader-refactor-clean
