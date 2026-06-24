@@ -1,6 +1,6 @@
 // Loads Firebase compat SDK parts before firebase-db.js starts.
-// index.html already tries first; this is the second, awaited path for cases
-// where gstatic/jsdelivr was late or one of the auth/database modules failed.
+// index.html already tries first; this is the awaited retry path when one
+// Firebase CDN tag failed or arrived without Auth/Database.
 const VERSION = '10.12.5';
 
 function hasCore() {
@@ -17,17 +17,11 @@ function hasDatabase() {
 
 function loadScript(url) {
   return new Promise((resolve, reject) => {
-    const existing = [...document.scripts].find((script) => script.src === url);
-    if (existing) {
-      existing.addEventListener('load', resolve, { once: true });
-      existing.addEventListener('error', () => reject(new Error(`Не загрузился ${url}`)), { once: true });
-      if (existing.dataset.an2Loaded === '1') resolve();
-      return;
-    }
     const script = document.createElement('script');
-    script.src = url;
+    // A unique query avoids attaching to an earlier tag that already failed.
+    script.src = `${url}${url.includes('?') ? '&' : '?'}an2retry=${Date.now()}`;
     script.async = false;
-    script.onload = () => { script.dataset.an2Loaded = '1'; resolve(); };
+    script.onload = resolve;
     script.onerror = () => reject(new Error(`Не загрузился ${url}`));
     document.head.appendChild(script);
   });
