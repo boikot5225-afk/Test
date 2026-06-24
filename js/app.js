@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════
 // app.js — главный модуль, точка входа — v73
 // ════════════════════════════════════════════════
-console.log('[app] v73 loaded');
+console.log('[app] v74 loaded');
 
 import { todayStr, addDays, profileKey, showToast, showLoading, hideLoading, toDateStr } from './utils.js';
 import { initSupabase, isSupabaseReady, sb, sbUser, setSbUser, sbSignIn, sbSignUp, sbSignOut,
@@ -3610,6 +3610,19 @@ async function readerTranslateWordAI(forceOrOptions = true) {
 
 // ── Навигация ──
 export function showScreen(id) {
+  if (id === 'profile') {
+    const uid = typeof sbGetCurrentUserId === 'function' ? sbGetCurrentUserId() : null;
+    if (uid && !isGuest) {
+      id = 'profile-user';
+      setTimeout(() => renderUserProfile(), 0);
+    } else {
+      document.getElementById('main-app').style.display = 'none';
+      const el = document.getElementById('screen-profile');
+      if (el) el.style.display = 'flex';
+      switchAuthTab('login');
+      return;
+    }
+  }
   // Hide ALL French keyboards and clear their state when leaving any screen
   ['main','grp','ph','num','learn','phrase-learn'].forEach(kbId => {
     const kb = document.getElementById('fr-kb-' + kbId);
@@ -3638,7 +3651,7 @@ export function showScreen(id) {
   // Reset scroll to top on every screen change — prevents landing in empty
   // space when the previous screen was scrolled down.
   window.scrollTo(0, 0);
-  const tabName = {home:'Главная',reader:'Читать',phrases:'Фразы',grammar:'Правила',trainer:'Тренажёр',study:'Изучить',stats:'Статистика',dict:'Слова',leaderboard:'Лидерборд',profile:'Профиль'}[id];
+  const tabName = {home:'Главная',reader:'Читать',phrases:'Фразы',grammar:'Правила',trainer:'Тренажёр',study:'Изучить',stats:'Статистика',dict:'Слова',leaderboard:'Лидерборд',profile:'Профиль','profile-user':'Профиль'}[id];
   document.querySelectorAll('.nav-tab').forEach(t => {
     if (tabName && t.textContent.includes(tabName)) t.classList.add('active');
   });
@@ -3700,6 +3713,7 @@ function updateBottomNav(id) {
     dict: 'bn-dict',
     'zh-trainer': 'bn-dict',
     profile: 'bn-profile',
+    'profile-user': 'bn-profile',
     trainer: 'bn-profile',
     study: 'bn-profile',
     phrases: 'bn-profile',
@@ -4499,9 +4513,70 @@ export function closeMoreMenu() {
 }
 
 export function showProfileManage() {
+  const uid = typeof sbGetCurrentUserId === 'function' ? sbGetCurrentUserId() : null;
+  if (uid && !isGuest) {
+    document.getElementById('main-app').style.display = 'block';
+    showScreen('profile-user');
+    renderUserProfile();
+    return;
+  }
   document.getElementById('main-app').style.display = 'none';
   const el = document.getElementById('screen-profile');
   if (el) { el.style.display = 'flex'; switchAuthTab('login'); }
+}
+
+function renderUserProfile() {
+  const uid = typeof sbGetCurrentUserId === 'function' ? sbGetCurrentUserId() : null;
+  const user = sbUser;
+
+  const name = currentProfile || user?.displayName || user?.email?.split('@')[0] || 'U';
+  const avatarEl = document.getElementById('pu-avatar');
+  if (avatarEl) avatarEl.textContent = String(name).charAt(0).toUpperCase();
+
+  const nameEl = document.getElementById('pu-name');
+  if (nameEl) nameEl.textContent = currentProfile || user?.displayName || name;
+  const emailEl = document.getElementById('pu-email');
+  if (emailEl) emailEl.textContent = user?.email || '';
+
+  const state = loadReaderWordState();
+  const entries = Object.values(state || {});
+  const saved = entries.filter(e => e?.saved).length;
+  const known = entries.filter(e => e?.known || e?.status === 'known').length;
+  const seen = entries.filter(e => (e?.seen || 0) > 0 || (e?.clicked || 0) > 0).length;
+  const statsEl = document.getElementById('pu-stats');
+  if (statsEl) {
+    statsEl.innerHTML = [
+      [saved, 'Сохранено', 'var(--blue)'],
+      [known, 'Знаю', 'var(--text-muted)'],
+      [seen, 'Встречено', 'var(--accent)'],
+    ].map(([n, label, color]) => `
+      <div style="text-align:center;padding:10px 6px;background:var(--surface2);border-radius:8px;">
+        <div style="font-size:1.4rem;font-weight:700;color:${color}">${n}</div>
+        <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px">${label}</div>
+      </div>
+    `).join('');
+  }
+
+  const langMeta = READER_LANG_META[readerCanonicalLang(globalThis.AN2_LANG || 'fr')];
+  const langEl = document.getElementById('pu-lang');
+  if (langEl) langEl.textContent = (langMeta?.emoji ? langMeta.emoji + ' ' : '') + (langMeta?.label || 'Français');
+
+  const syncEl = document.getElementById('pu-sync-status');
+  if (syncEl) syncEl.textContent = uid ? 'Прогресс слов сохраняется в облаке' : 'Войдите для синхронизации';
+}
+
+async function syncWordStateNow() {
+  const btn = document.querySelector('[onclick="window.syncWordStateNow?.()"]');
+  if (btn) btn.textContent = '⏳ Синхронизация...';
+  try {
+    await syncWordStateToCloud();
+    await syncWordStateFromCloud();
+    if (btn) btn.textContent = '✅ Готово';
+    setTimeout(() => { if (btn) btn.textContent = '☁️ Синхронизировать сейчас'; }, 2000);
+  } catch (e) {
+    if (btn) btn.textContent = '❌ Ошибка';
+    setTimeout(() => { if (btn) btn.textContent = '☁️ Синхронизировать сейчас'; }, 2000);
+  }
 }
 
 // ── Leaderboard ──
@@ -4728,6 +4803,8 @@ window.setAppLang           = setAppLang;
 window.navPracticeBtn       = navPracticeBtn;
 window.updateLangUI         = updateLangUI;
 window.showProfileManage    = showProfileManage;
+window.renderUserProfile    = renderUserProfile;
+window.syncWordStateNow     = syncWordStateNow;
 window.renderLeaderboard    = renderLeaderboard;
 window.setGrammar           = setGrammar;
 window.openGrammar          = openGrammar;

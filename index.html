@@ -177,7 +177,7 @@
           📡 Проверить связь с сервером
         </button>
         <div id="health-result" style="display:none;margin-top:10px;font-size:0.78rem;line-height:1.5;padding:8px 12px;border-radius:8px;"></div>
-        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v67.2-trim-nav</span></div>
+        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v74.0-profile-screen</span></div>
       </div>
     </div>
 
@@ -189,7 +189,7 @@
 <div id="main-app" style="display:none">
 <nav>
   <div style="display:flex;align-items:center;gap:8px;margin-right:auto">
-    <div class="nav-brand" style="margin-right:0">Reader AI <span style="font-size:0.5rem;color:var(--accent);vertical-align:super">v73</span></div>
+    <div class="nav-brand" style="margin-right:0">Reader AI <span style="font-size:0.5rem;color:var(--accent);vertical-align:super">v74</span></div>
   </div>
   <div class="nav-tabs" style="overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;flex-shrink:1;min-width:0">
     <div class="nav-tab active" onclick="showScreen('home')">🏠 Главная</div>
@@ -1846,6 +1846,44 @@
       <div class="zh-tr-count" id="zh-tr-count"></div>
     </div>
     <div id="zh-trainer-body" class="zh-trainer-body"></div>
+  </div>
+</div>
+
+<!-- PROFILE (logged-in view) -->
+<div id="screen-profile-user" class="screen">
+  <div style="max-width:480px;margin:0 auto;padding:24px 16px 80px">
+    <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin:0 0 20px">Профиль</h2>
+
+    <!-- User card -->
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:14px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:16px;">
+      <div id="pu-avatar" style="width:52px;height:52px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:1.4rem;color:#f5ecd8;font-weight:700;flex-shrink:0"></div>
+      <div style="min-width:0">
+        <div id="pu-name" style="font-size:1rem;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+        <div id="pu-email" style="font-size:0.78rem;color:var(--text-muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+      </div>
+    </div>
+
+    <!-- Word stats -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 20px;margin-bottom:12px;">
+      <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);margin-bottom:12px">Статистика слов</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px" id="pu-stats"></div>
+    </div>
+
+    <!-- Language -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 20px;margin-bottom:12px;">
+      <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);margin-bottom:8px">Текущий язык</div>
+      <div id="pu-lang" style="font-size:0.92rem;color:var(--text)"></div>
+    </div>
+
+    <!-- Cloud sync -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 20px;margin-bottom:20px;">
+      <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);margin-bottom:8px">Облачная синхронизация</div>
+      <div id="pu-sync-status" style="font-size:0.82rem;color:var(--text-muted);margin-bottom:10px"></div>
+      <button onclick="window.syncWordStateNow?.()" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:0.82rem;cursor:pointer">☁️ Синхронизировать сейчас</button>
+    </div>
+
+    <!-- Logout -->
+    <button onclick="logoutProfile()" style="width:100%;padding:12px;background:none;border:1px solid var(--bad);border-radius:10px;color:var(--bad);font-family:'IBM Plex Sans',sans-serif;font-size:0.9rem;cursor:pointer;font-weight:500">Выйти из аккаунта</button>
   </div>
 </div>
 
