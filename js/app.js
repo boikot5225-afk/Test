@@ -847,6 +847,7 @@ let readerTranslationsHidden = localStorage.getItem(READER_HIDE_TRANSLATIONS_KEY
 
 // ── Настройки отображения текста читалки ──────────────────────────────────
 const READER_DISPLAY_KEY = 'an2_reader_display_v1';
+const READER_ZH_PINYIN_MODE_KEY = 'an2_reader_zh_pinyin_mode_v1';
 const readerDisplay = createReaderDisplay({ key: READER_DISPLAY_KEY });
 
 function readerLoadDisplay() { return readerDisplay.load(); }
