@@ -20,6 +20,7 @@ import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=1';
 import { createReaderLibraryStore } from './reader/library-store.js?v=1';
 import { createReaderDisplay } from './reader/display.js?v=1';
+import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
 
 import { splitTextToChapters as readerImportSplitTextToChapters, splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
 import { renderHome } from './home.js';
@@ -746,36 +747,13 @@ export async function loadPhrasesFromCloud(options = {}) {
 const READER_BOOKS_KEY = 'an2_reader_books_v1';
 
 // ── Трекер времени чтения ─────────────────────────────
-const READER_TIME_KEY = 'an2_reader_time_v1'; // { date: 'YYYY-MM-DD', minutes: N }
-let _readerParagraphStart = null; // Date.now() когда открыли абзац
+const READER_TIME_KEY = 'an2_reader_time_v1';
+const readerTimeTracker = createReaderTimeTracker({ key: READER_TIME_KEY });
 
-function readerTimeToday() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(READER_TIME_KEY) || '{}');
-    const today = new Date().toISOString().slice(0, 10);
-    return raw.date === today ? (raw.minutes || 0) : 0;
-  } catch { return 0; }
-}
-function readerTimeAddSeconds(sec) {
-  if (!sec || sec < 2) return; // игнорируем случайные клики < 2 сек
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    const raw = JSON.parse(localStorage.getItem(READER_TIME_KEY) || '{}');
-    const base = raw.date === today ? (raw.minutes || 0) : 0;
-    const added = base + sec / 60;
-    localStorage.setItem(READER_TIME_KEY, JSON.stringify({ date: today, minutes: added }));
-  } catch {}
-}
-function readerTimeParagraphOpen() {
-  _readerParagraphStart = Date.now();
-}
-function readerTimeParagraphClose() {
-  if (!_readerParagraphStart) return;
-  const sec = (Date.now() - _readerParagraphStart) / 1000;
-  _readerParagraphStart = null;
-  // Считаем только реалистичное время: от 3 сек до 5 минут на абзац
-  if (sec >= 3 && sec <= 300) readerTimeAddSeconds(sec);
-}
+function readerTimeToday() { return readerTimeTracker.today(); }
+function readerTimeAddSeconds(seconds) { return readerTimeTracker.addSeconds(seconds); }
+function readerTimeParagraphOpen() { return readerTimeTracker.openParagraph(); }
+function readerTimeParagraphClose() { return readerTimeTracker.closeParagraph(); }
 
 const READER_OWNER_KEY = 'an2_reader_active_owner_v1';
 let readerBooks = [];
