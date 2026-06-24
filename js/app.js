@@ -2036,7 +2036,7 @@ async function renderReaderScreen() {
           </div>
           <div class="lib-book-actions">
             <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}')">${done ? '📖 Снова' : '📖 Читать'}</button>
-            <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}');setTimeout(()=>readerSpeakCurrentParagraph(),400)">🔊</button>
+            <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}');setTimeout(()=>readerListenToggle(),400)">🔊</button>
             <button class="lib-action-btn danger" onclick="readerDeleteBook('${readerEscape(book.id)}')">🗑</button>
           </div>
         </div>`;
@@ -2064,7 +2064,7 @@ async function renderReaderScreen() {
         </div>
         <div class="lib-book-actions">
           <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}')">📖 Читать</button>
-          <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}');setTimeout(()=>readerSpeakCurrentParagraph(),400)">🔊</button>
+          <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}');setTimeout(()=>readerListenToggle(),400)">🔊</button>
           <button class="lib-action-btn danger" onclick="readerDeleteBook('${readerEscape(book.id)}')">🗑</button>
         </div>
       </div>`;
