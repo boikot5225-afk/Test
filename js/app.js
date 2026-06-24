@@ -3568,7 +3568,7 @@ export function loginProfile(name) {
   readerSwitchStorageOwner(isGuest ? 'guest' : ((typeof sbGetCurrentUserId === 'function' ? sbGetCurrentUserId() : null) || sbUser?.uid || sbUser?.id || name || 'anon'));
   setActiveProfileName(String(name || 'user').toLowerCase(), sbUser || null);
   const brand = document.querySelector('.nav-brand');
-  if (brand) brand.innerHTML = 'An II <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + name + '</span>';
+  if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + name + '</span>';
   document.getElementById('screen-profile').style.display = 'none';
   document.getElementById('main-app').style.display = 'block';
   hideLoading();
@@ -3596,7 +3596,7 @@ export async function continueAsGuest() {
     readerSwitchStorageOwner('guest');
 
     const brand = document.querySelector('.nav-brand');
-    if (brand) brand.innerHTML = 'An II <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">гость</span>';
+    if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">гость</span>';
 
     showLoading('Загружаем глаголы...');
     const verbsOk = await withDeadline(() => loadVerbsFromCloud(), CORE_LOAD_TIMEOUT_MS + 3000, 'Глаголы');
@@ -3665,7 +3665,7 @@ export function logoutProfile() {
   VERBS.length = 0;
   PHRASES.length = 0;
   const brand = document.querySelector('.nav-brand');
-  if (brand) brand.innerHTML = 'An II';
+  if (brand) brand.innerHTML = 'Reader AI';
   document.getElementById('main-app').style.display = 'none';
   document.getElementById('screen-profile').style.display = 'flex';
   switchAuthTab('login');
@@ -3742,7 +3742,7 @@ export async function doLogin() {
         if (profile?.username) {
           setActiveProfileName(profile.username, user);
           const brand = document.querySelector('.nav-brand');
-          if (brand) brand.innerHTML = 'An II <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + currentProfile + '</span>';
+          if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + currentProfile + '</span>';
         }
         const [verbsOk, cloudStats, cloudSRS, cloudMeta] = await Promise.all([
           runOptional('Глаголы (фон)', () => loadVerbsFromCloud({ force: true }), CORE_LOAD_TIMEOUT_MS + 3000),
@@ -4016,7 +4016,7 @@ async function init() {
         if (profile?.username) {
           setActiveProfileName(profile.username, user);
           const brand = document.querySelector('.nav-brand');
-          if (brand) brand.innerHTML = 'An II <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + currentProfile + '</span>';
+          if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + currentProfile + '</span>';
         }
         const [verbsOk, cloudStats, cloudSRS, cloudMeta] = await Promise.all([
           runOptional('Глаголы (фон)', () => loadVerbsFromCloud({ force: true }), CORE_LOAD_TIMEOUT_MS + 3000),

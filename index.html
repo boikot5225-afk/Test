@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>An II — Французский язык</title>
+  <title>Reader AI</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#a62a21">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="An II">
+  <meta name="apple-mobile-web-app-title" content="Reader AI">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
@@ -95,8 +95,8 @@
 <div id="screen-profile" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg);">
   <div style="width:100%;max-width:400px;">
     <div style="text-align:center;margin-bottom:36px;">
-      <div style="font-family:'Playfair Display',serif;font-size:2.8rem;color:var(--accent);margin-bottom:2px;letter-spacing:0.04em;font-weight:700">An&nbsp;II</div><div style="font-family:'Playfair Display',serif;font-style:italic;font-size:0.95rem;color:var(--text-muted);margin-bottom:8px">apprendre le français · l'an deux</div>
-      <div style="color:var(--text-muted);font-size:0.9rem">Тренажёр французских глаголов</div>
+      <div style="font-family:'Playfair Display',serif;font-size:2.8rem;color:var(--accent);margin-bottom:2px;letter-spacing:0.04em;font-weight:700">Reader&nbsp;AI</div>
+      <div style="color:var(--text-muted);font-size:0.9rem">Читалка с AI-переводом и словарём</div>
     </div>
 
     <!-- Tab switcher -->
@@ -188,8 +188,7 @@
 <div id="main-app" style="display:none">
 <nav>
   <div style="display:flex;align-items:center;gap:8px;margin-right:auto">
-    <span class="cockade" title="cocarde tricolore"></span>
-    <div class="nav-brand" style="margin-right:0">An II <span style="font-size:0.5rem;color:var(--accent);vertical-align:super">v65</span></div>
+    <div class="nav-brand" style="margin-right:0">Reader AI <span style="font-size:0.5rem;color:var(--accent);vertical-align:super">v65</span></div>
   </div>
   <div class="nav-tabs" style="overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;flex-shrink:1;min-width:0">
     <div class="nav-tab active" onclick="showScreen('home')">🏠 Главная</div>
@@ -270,7 +269,7 @@
 
         <div style="margin-bottom:16px">
           <div style="font-size:1rem;font-weight:600;margin-bottom:6px">🎹 Виртуальная клавиатура AZERTY</div>
-          <div style="font-size:0.83rem;color:var(--text-muted);line-height:1.6">Полная французская раскладка — андроидная клавиатура не появляется. Долгое нажатие на <b>a e i o u c</b> показывает акценты: à â é è ê ë... Переключение на родную клавиатуру кнопкой «⌨ Своя клавиатура».</div>
+          <div style="font-size:0.83rem;color:var(--text-muted);line-height:1.6">Виртуальная раскладка — системная клавиатура не появляется. Долгое нажатие на <b>a e i o u c</b> показывает акценты: à â é è ê ë... Переключение на родную клавиатуру кнопкой «⌨ Своя клавиатура».</div>
         </div>
 
         <div style="margin-bottom:16px">
@@ -304,15 +303,9 @@
         </div>
 
         <div>
-          <div style="font-size:1rem;font-weight:600;margin-bottom:10px">🔊 Установка французского голоса</div>
-          <div style="font-size:0.83rem;color:var(--text-muted);line-height:1.6;margin-bottom:10px">Без установленного французского голоса браузер говорит по-английски. Исправляется за 1 минуту:</div>
-          <div style="background:var(--surface2);border-radius:10px;padding:14px 16px;font-size:0.8rem;line-height:1.9;color:var(--text-muted);">
-            <div>🤖 <b style="color:var(--text)">Android:</b> Настройки → Язык и ввод → Синтез речи → Google TTS → Установить голосовые данные → <b>Français</b></div>
-            <div>🍎 <b style="color:var(--text)">iOS:</b> Настройки → Универсальный доступ → Озвученный контент → Голоса → Français → скачать <b>Enhanced</b></div>
-            <div>🪟 <b style="color:var(--text)">Windows:</b> Настройки → Время и язык → Речь → Управление голосами → добавить <b>французский</b></div>
-            <div>🍏 <b style="color:var(--text)">macOS:</b> Системные настройки → Универсальный доступ → Озвученный контент → Управление голосами → <b>французский</b></div>
-          </div>
-          <div style="font-size:0.76rem;color:var(--text-dim);margin-top:8px">Также в меню ⋯ Ещё можно выбрать движок озвучки вручную и протестировать.</div>
+          <div style="font-size:1rem;font-weight:600;margin-bottom:10px">🔊 Озвучка текстов</div>
+          <div style="font-size:0.83rem;color:var(--text-muted);line-height:1.6;margin-bottom:10px">Используется облачный TTS. При отсутствии интернета — встроенный голос устройства.</div>
+          <div style="font-size:0.76rem;color:var(--text-dim);margin-top:8px">В меню ⋯ Ещё можно выбрать движок озвучки вручную и протестировать.</div>
         </div>
 
       </div>
@@ -327,7 +320,7 @@
     <!-- TOP BAR -->
     <div class="home-topbar">
       <div class="home-topbar-left">
-        <div class="home-app-name">An II</div>
+        <div class="home-app-name">Reader AI</div>
         <div id="home-date" class="home-date"></div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
@@ -1198,7 +1191,7 @@
     <div id="check-feedback" style="min-height:40px;"></div>
 
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
-      <div id="learn-kb-indicator" style="font-size:0.72rem;color:var(--text-dim);display:none">⌨ французская клавиатура активна</div>
+      <div id="learn-kb-indicator" style="font-size:0.72rem;color:var(--text-dim);display:none">⌨ виртуальная клавиатура активна</div>
       <button class="kb-toggle-btn" id="kb-toggle-learn" onclick="toggleKbMode('learn')" style="margin-left:auto">⌨ Своя клавиатура</button>
     </div>
     <div class="fr-keyboard" id="fr-kb-learn"></div>
@@ -1226,7 +1219,7 @@
     </div>
     <div id="phrase-feedback" style="min-height:40px;"></div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
-      <div id="phrase-kb-indicator" style="font-size:0.72rem;color:var(--text-dim);display:none">⌨ французская клавиатура активна</div>
+      <div id="phrase-kb-indicator" style="font-size:0.72rem;color:var(--text-dim);display:none">⌨ виртуальная клавиатура активна</div>
       <button class="kb-toggle-btn" id="kb-toggle-phrase-learn" onclick="toggleKbMode('phrase-learn')" style="margin-left:auto">⌨ Своя клавиатура</button>
     </div>
     <div class="fr-keyboard" id="fr-kb-phrase-learn"></div>

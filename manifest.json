@@ -1,7 +1,7 @@
 {
-  "name": "An II — Французский язык",
-  "short_name": "An II",
-  "description": "Тренажёр французского: спряжения, словарь, фразы, интервальное повторение",
+  "name": "Reader AI",
+  "short_name": "Reader AI",
+  "description": "Читалка с AI-переводом: словарь, озвучка, интервальное повторение",
   "start_url": "./?v=18-clean-boot",
   "scope": "./",
   "id": "./",
