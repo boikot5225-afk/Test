@@ -3885,6 +3885,8 @@ export function logoutProfile() {
   if (brand) brand.innerHTML = 'Reader AI';
   document.getElementById('main-app').style.display = 'none';
   document.getElementById('screen-profile').style.display = 'flex';
+  const puEl = document.getElementById('screen-profile-user');
+  if (puEl) puEl.style.display = 'none';
   switchAuthTab('login');
 }
 
