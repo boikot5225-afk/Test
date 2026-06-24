@@ -21,6 +21,8 @@ import { createReaderWordState } from './reader/word-state.js?v=1';
 import { createReaderLibraryStore } from './reader/library-store.js?v=1';
 import { createReaderDisplay } from './reader/display.js?v=1';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
+import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
+
 
 import { splitTextToChapters as readerImportSplitTextToChapters, splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
 import { renderHome } from './home.js';
@@ -858,38 +860,19 @@ function rdSetSize(input) { return readerDisplay.setSize(input); }
 function rdSetLH(input) { return readerDisplay.setLineHeight(input); }
 function rdSetTheme(theme, element) { return readerDisplay.setTheme(theme, element); }
 
-function readerZhPinyinMode() {
-  try { return localStorage.getItem(READER_ZH_PINYIN_MODE_KEY) || 'unknown'; } catch { return 'unknown'; }
-}
-function readerZhPinyinModeLabel(mode = readerZhPinyinMode()) {
-  return mode === 'off' ? '拼×' : mode === 'learning' ? '拼*' : '拼';
-}
-function readerZhPinyinModeTitle(mode = readerZhPinyinMode()) {
-  return mode === 'off'
-    ? 'Пиньинь выключен'
-    : mode === 'learning'
-      ? 'Пиньинь только для слов в изучении/проблемных'
-      : 'Пиньинь для всех не изученных китайских слов, где он есть';
-}
-function readerUpdatePinyinButton(lang = readerCurrentLang()) {
-  const btn = document.getElementById('reader-pinyin-btn');
-  if (!btn) return;
-  const isZh = readerCanonicalLang(lang) === 'zh';
-  btn.style.display = isZh ? 'flex' : 'none';
-  const mode = readerZhPinyinMode();
-  btn.textContent = readerZhPinyinModeLabel(mode);
-  btn.title = readerZhPinyinModeTitle(mode);
-  btn.setAttribute('aria-label', readerZhPinyinModeTitle(mode));
-  btn.classList.toggle('on', isZh && mode !== 'off');
-}
-function readerCycleZhPinyinMode() {
-  const cur = readerZhPinyinMode();
-  const next = cur === 'unknown' ? 'learning' : cur === 'learning' ? 'off' : 'unknown';
-  try { localStorage.setItem(READER_ZH_PINYIN_MODE_KEY, next); } catch {}
-  readerUpdatePinyinButton(readerCurrentLang());
-  renderReaderChapter();
-  showToast(next === 'off' ? '拼 Пиньинь выключен' : next === 'learning' ? '拼 Пиньинь только для слов в работе' : '拼 Пиньинь для всех новых слов');
-}
+const readerPinyinControls = createReaderPinyinControls({
+  storageKey: READER_ZH_PINYIN_MODE_KEY,
+  getCurrentLang: readerCurrentLang,
+  canonicalLang: readerCanonicalLang,
+  rerender: renderReaderChapter,
+  toast: showToast,
+});
+
+function readerZhPinyinMode() { return readerPinyinControls.mode(); }
+function readerZhPinyinModeLabel(mode = readerZhPinyinMode()) { return readerPinyinControls.label(mode); }
+function readerZhPinyinModeTitle(mode = readerZhPinyinMode()) { return readerPinyinControls.title(mode); }
+function readerUpdatePinyinButton(lang = readerCurrentLang()) { return readerPinyinControls.update(lang); }
+function readerCycleZhPinyinMode() { return readerPinyinControls.cycle(); }
 
 let readerCloudLoadedOnce = false;
 let readerCloudSaveTimer = null;
