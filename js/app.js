@@ -3361,7 +3361,7 @@ function renderReaderAnalysisBlock(data = {}) {
         ${chunks.length ? `<div class="reader-grammar-lines">
           ${chunks.map(ch => `
             <div class="reader-grammar-line">
-              <span class="rg-fr">${readerEscape(ch.fr || ch.zh || ch.text || '')}</span>
+              <span class="rg-fr">${readerEscape(ch.en || ch.fr || ch.zh || ch.text || '')}</span>
               <span class="rg-note">${readerEscape([ch.role, ch.grammar || ch.pinyin].filter(Boolean).join(' · ') || ch.ru || '')}</span>
             </div>`).join('')}
         </div>` : ''}
@@ -3379,7 +3379,7 @@ function renderReaderAnalysisBlock(data = {}) {
       <div class="ra2-map-label">из чего состоит</div>
       ${parts.map((p, idx) => {
         const col  = colors[idx % colors.length];
-        const text = readerEscape(p.fr || p.zh || p.text || '');
+        const text = readerEscape(p.en || p.fr || p.zh || p.text || '');
         const pinyin = p.pinyin ? `<div class="ra2-pinyin">${readerEscape(p.pinyin)}</div>` : '';
         return `
         <div class="ra2-part" style="border-left-color:${col}">
