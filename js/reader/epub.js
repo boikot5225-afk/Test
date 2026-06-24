@@ -172,6 +172,63 @@ export function htmlToParagraphs(html, { lang = null, canonicalLang, chunkLongPa
   return paragraphs.filter(item => item.length > 1);
 }
 
+// Like htmlToParagraphs but also extracts <img> elements as image items.
+// Returns (string | {type:'image', path:string, alt:string})[]
+export function htmlToMixedItems(html, { lang = null, canonicalLang, chunkLongParagraph, basePath = '' }) {
+  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  doc.querySelectorAll('script,style,nav,header,footer,svg,iframe,object,form,noscript').forEach(n => n.remove());
+  doc.querySelectorAll('br').forEach(n => n.replaceWith(doc.createTextNode('\n')));
+
+  const isChinese = canonicalLang(lang) === 'zh';
+  const items = [];
+  const seenText = new Set();
+  const seenImgs = new Set();
+
+  function addText(raw) {
+    const clean = cleanEpubText(raw);
+    if (!clean || looksLikeEpubBoilerplate(clean)) return;
+    const key = clean.slice(0, 180);
+    if (seenText.has(key)) return;
+    seenText.add(key);
+    const parts = clean.split(/\n\s*\n+/).map(cleanEpubText).filter(Boolean);
+    for (const part of (parts.length ? parts : [clean])) {
+      chunkLongParagraph(part.replace(/\n+/g, ' '), isChinese ? 150 : 420).forEach(chunk => {
+        if (chunk && !looksLikeEpubBoilerplate(chunk)) items.push(chunk);
+      });
+    }
+  }
+
+  function addImg(imgEl) {
+    const src = imgEl.getAttribute('src') || '';
+    if (!src || /^data:/i.test(src)) return;
+    const resolved = resolveEpubPath(basePath, src);
+    if (!resolved || seenImgs.has(resolved)) return;
+    seenImgs.add(resolved);
+    items.push({ type: 'image', path: resolved, alt: imgEl.getAttribute('alt') || '' });
+  }
+
+  const blockSelector = 'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,div,section,article,main,td,th,dd,dt,figure,figcaption';
+  const hardTags = new Set('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,figure'.split(','));
+
+  [...(doc.body?.querySelectorAll(blockSelector) || [])].forEach(node => {
+    const tag = node.tagName?.toLowerCase() || '';
+    const textContent = (node.textContent || '').trim();
+    const imgs = [...node.querySelectorAll('img')];
+    const childBlocks = [...node.querySelectorAll(blockSelector)]
+      .filter(c => c !== node && (c.textContent || '').trim().length > 12);
+
+    if (!hardTags.has(tag) && childBlocks.length) {
+      if (!textContent && imgs.length) imgs.forEach(addImg);
+      return;
+    }
+
+    if (imgs.length) imgs.forEach(addImg);
+    if (textContent) addText(textContent);
+  });
+
+  return items;
+}
+
 export function parseAttrs(tag = '') {
   const attrs = {};
   String(tag || '').replace(/([:\w-]+)\s*=\s*(["'])(.*?)\2/g, (_, key, _quote, value) => {

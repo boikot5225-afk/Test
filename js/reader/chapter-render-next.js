@@ -20,6 +20,7 @@ export function createReaderChapterRenderer({
   saveBooks,
   schedulePrefetch,
   openParagraphTimer,
+  loadEpubImages,
 }) {
   function render() {
     const book = getCurrentBook();
@@ -88,6 +89,7 @@ export function createReaderChapterRenderer({
         bindReaderInteractions();
         if (scroller) scroller.scrollTop = scrollTop;
         bindVisibleParagraphTracking(scroller);
+        loadEpubImages?.(chapterText);
       }
     }
 

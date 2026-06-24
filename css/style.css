@@ -3084,3 +3084,16 @@ input:-webkit-autofill:focus {
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; flex-shrink: 0;
 }
+.epub-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 8px auto;
+}
+.reader-paragraph:has(.epub-img) {
+  cursor: default;
+  pointer-events: none;
+  background: none !important;
+  border: none !important;
+}

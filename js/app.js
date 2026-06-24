@@ -14,7 +14,8 @@ import { speak, stopSpeak, initSpeech, applyKbMode, initTTSEngineUI, showFrKb, h
          frBackspace, frEnter, frToggleShift } from './tts.js?v=68.32-firebase-tts';
 import { createReaderAudio } from './reader/audio.js?v=1';
 import { createReaderNavigation } from './reader/navigation.js?v=1';
-import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16, zipU32 as epubZipU32, inflateZipData as epubInflateZipData, readZipEntries as epubReadZipEntries, resolveEpubPath as epubResolvePath, cleanEpubText as epubCleanText, looksLikeEpubBoilerplate as epubLooksLikeBoilerplate, htmlToPlainText as epubHtmlToPlainText, htmlToParagraphs as epubHtmlToParagraphs } from './reader/epub.js?v=1';
+import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16, zipU32 as epubZipU32, inflateZipData as epubInflateZipData, readZipEntries as epubReadZipEntries, resolveEpubPath as epubResolvePath, cleanEpubText as epubCleanText, looksLikeEpubBoilerplate as epubLooksLikeBoilerplate, htmlToPlainText as epubHtmlToPlainText, htmlToParagraphs as epubHtmlToParagraphs, htmlToMixedItems as epubHtmlToMixedItems } from './reader/epub.js?v=2';
+import { imgStorePut, imgStoreGet, imgStoreDeleteBook } from './reader/image-store.js?v=1';
 import { createReaderWordPanel } from './reader/word-panel.js?v=1';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=1';
@@ -769,6 +770,7 @@ let readerAutoPlayActive = false;
 let readerAutoPlayAbort = false;
 let readerPendingImportChapters = null;
 let readerPendingImportSource = 'manual_text';
+let readerPendingImportBookId = null;
 let readerActiveOwnerId = null;
 let readerWordStateCache = null;
 
@@ -1881,6 +1883,9 @@ function readerSentenceContext(paragraphText, word, lang = null) {
 }
 
 function readerRenderParagraphText(p, paragraphIndex) {
+  if (p && typeof p === 'object' && p.type === 'image') {
+    return `<img data-img-key="${readerEscape(p.key || '')}" alt="${readerEscape(p.alt || '')}" class="epub-img">`;
+  }
   const book = readerCurrentBook?.();
   const lang = readerBookLang(book);
   return readerTokenizeParagraph(p, lang).map(tok => {
@@ -2223,6 +2228,25 @@ function readerHtmlToParagraphs(html, lang = null) {
   });
 }
 
+function readerHtmlToMixedItems(html, lang, basePath) {
+  return epubHtmlToMixedItems(html, {
+    lang,
+    canonicalLang: readerCanonicalLang,
+    chunkLongParagraph: readerChunkLongParagraph,
+    basePath,
+  });
+}
+
+async function readerLoadEpubImages(container) {
+  if (!container) return;
+  container.querySelectorAll('img[data-img-key]').forEach(async (img) => {
+    try {
+      const blob = await imgStoreGet(img.dataset.imgKey);
+      if (blob) img.src = URL.createObjectURL(blob);
+    } catch {}
+  });
+}
+
 function readerParseAttrs(tag = '') {
   const attrs = {};
   String(tag || '').replace(/([:\w-]+)\s*=\s*(["'])(.*?)\2/g, (_, k, _q, v) => { attrs[k] = v; return ''; });
@@ -2295,39 +2319,76 @@ async function readerImportEpubFromFile(file) {
   }
   if (!htmlPaths.length) htmlPaths = [...entries.keys()].filter(n => /\.(xhtml|html|htm)$/i.test(n) && !/\b(nav|toc|cover)\b/i.test(n)).sort();
 
+  const pendingBookId = readerId();
   const chapters = [];
+  const imageBlobs = new Map();
   const importLang = readerCanonicalLang(document.getElementById('reader-import-lang')?.value || 'fr');
   let importChars = 0;
   const diagnostics = [];
   for (let i = 0; i < htmlPaths.length; i++) {
     const p = htmlPaths[i];
     try {
+      const chapterBase = p.split('/').slice(0, -1).join('/');
       const html = await entries.get(p).text();
-      const paragraphs = readerHtmlToParagraphs(html, importLang);
-      const chars = paragraphs.join('').replace(/\s+/g, '').length;
+      const items = readerHtmlToMixedItems(html, importLang, chapterBase);
+
+      // Resolve image items: check entry exists, collect blobs keyed by bookId::path
+      const resolvedItems = [];
+      for (const item of items) {
+        if (typeof item === 'string') {
+          resolvedItems.push(item);
+        } else if (item.type === 'image' && entries.has(item.path)) {
+          const key = pendingBookId + '::' + item.path;
+          if (!imageBlobs.has(key)) {
+            const bytes = await entries.get(item.path).bytes();
+            const ext = item.path.split('.').pop().toLowerCase();
+            const mime = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' }[ext] || 'image/jpeg';
+            imageBlobs.set(key, new Blob([bytes], { type: mime }));
+          }
+          resolvedItems.push({ type: 'image', key: pendingBookId + '::' + item.path, alt: item.alt });
+        }
+      }
+
+      const textOnly = resolvedItems.filter(it => typeof it === 'string');
+      const chars = textOnly.join('').replace(/\s+/g, '').length;
       diagnostics.push(`${p}: ${chars} зн.`);
-      if (paragraphs.length && chars > 20) {
+      if (textOnly.length && chars > 20) {
         importChars += chars;
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const h = (doc.querySelector('h1,h2,h3,title')?.textContent || '').replace(/\s+/g, ' ').trim();
-        chapters.push({ id: 'ch_' + chapters.length, title: h || `Глава ${chapters.length + 1}`, paragraphs });
+        chapters.push({ id: 'ch_' + chapters.length, title: h || `Глава ${chapters.length + 1}`, paragraphs: resolvedItems });
       }
     } catch(e) { console.warn('[epub] skipped', p, e); diagnostics.push(`${p}: ошибка ${e?.message || e}`); }
   }
   if (!chapters.length) throw new Error('Не получилось извлечь текст из EPUB.');
 
+  // Store images in IndexedDB
+  if (imageBlobs.size) {
+    if (st) { st.style.display = 'block'; st.style.color = 'var(--accent)'; st.textContent = `⏳ Сохраняю ${imageBlobs.size} изображений...`; }
+    for (const [key, blob] of imageBlobs) {
+      await imgStorePut(key, blob).catch(e => console.warn('[epub] img store failed:', key, e));
+    }
+  }
+
   readerPendingImportChapters = chapters;
   readerPendingImportSource = 'epub';
+  readerPendingImportBookId = pendingBookId;
   const titleEl = document.getElementById('reader-import-title');
   const authorEl = document.getElementById('reader-import-author');
   const textEl = document.getElementById('reader-import-text');
   if (titleEl && !titleEl.value.trim()) titleEl.value = meta.title;
   if (authorEl && !authorEl.value.trim()) authorEl.value = meta.author;
   if (textEl) {
-    textEl.value = chapters.slice(0, 5).map(ch => `${ch.title}\n\n${ch.paragraphs.slice(0, 4).join('\n\n')}`).join('\n\n---\n\n');
+    const preview = chapters.slice(0, 5).map(ch => {
+      const textItems = (ch.paragraphs || []).filter(it => typeof it === 'string');
+      return `${ch.title}\n\n${textItems.slice(0, 4).join('\n\n')}`;
+    }).join('\n\n---\n\n');
+    textEl.value = preview;
     textEl.placeholder = 'EPUB загружен. Это предпросмотр, при сохранении будут использованы главы из EPUB.';
   }
-  if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = `✅ EPUB загружен: ${chapters.length} глав · ${chapters.reduce((n,ch)=>n+(ch.paragraphs?.length||0),0)} абз. · ${importChars} зн. Нажми «Сохранить».`; st.title = diagnostics.slice(0, 80).join('\n'); }
+  const totalPara = chapters.reduce((n, ch) => n + (ch.paragraphs?.length || 0), 0);
+  const imgCount = imageBlobs.size;
+  if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = `✅ EPUB загружен: ${chapters.length} глав · ${totalPara} абз.${imgCount ? ' · ' + imgCount + ' фото' : ''} · ${importChars} зн. Нажми «Сохранить».`; st.title = diagnostics.slice(0, 80).join('\n'); }
 }
 
 async function readerImportFromFile(event) {
@@ -2335,6 +2396,7 @@ async function readerImportFromFile(event) {
   const st = document.getElementById('reader-import-status');
   readerPendingImportChapters = null;
   readerPendingImportSource = 'manual_text';
+  readerPendingImportBookId = null;
   if (file.name.toLowerCase().endsWith('.epub')) {
     try { await readerImportEpubFromFile(file); }
     catch(e) {
@@ -2375,7 +2437,9 @@ function saveReaderImport() {
     ? (() => { try { return new URL(urlVal).hostname.replace('www.',''); } catch { return ''; } })()
     : '';
   const newsDate = format === 'news' ? now : undefined;
-  const bookObj = { id: readerId(), title, author: authorRaw, level, lang, sourceLang: lang, format, source: readerPendingImportSource || 'manual_text', createdAt: now, updatedAt: now, currentChapter: 0, currentParagraph: 0, chapters };
+  const bookId = readerPendingImportBookId || readerId();
+  readerPendingImportBookId = null;
+  const bookObj = { id: bookId, title, author: authorRaw, level, lang, sourceLang: lang, format, source: readerPendingImportSource || 'manual_text', createdAt: now, updatedAt: now, currentChapter: 0, currentParagraph: 0, chapters };
   if (format === 'news') { bookObj.newsSource = newsSource || authorRaw || 'вставка'; bookObj.newsDate = newsDate; }
   const book = bookObj;
   book.importKey = readerBookImportKey(book);
@@ -2443,6 +2507,7 @@ const readerChapterRenderer = createReaderChapterRenderer({
   saveBooks: saveReaderBooks,
   schedulePrefetch: readerSchedulePrefetch,
   openParagraphTimer: readerTimeParagraphOpen,
+  loadEpubImages: readerLoadEpubImages,
 });
 
 function renderReaderChapter() {
@@ -2733,6 +2798,7 @@ function readerDeleteBook(id) {
   if (!confirm(`Удалить текст «${book.title}»?`)) return;
   readerBooks = readerBooks.filter(b => b.id !== id);
   saveReaderBooks();
+  imgStoreDeleteBook(id).catch(() => {});
   const userId = readerCloudUserId();
   if (userId && isSupabaseReady?.()) {
     sb.from('reader_books').delete().eq('user_id', userId).eq('id', id)
