@@ -2253,12 +2253,24 @@ function readerHtmlToMixedItems(html, lang, basePath) {
 
 async function readerLoadEpubImages(container) {
   if (!container) return;
-  container.querySelectorAll('img[data-img-key]').forEach(async (img) => {
+  const imgs = [...container.querySelectorAll('img[data-img-key]')];
+  console.log('[epub-img] loading', imgs.length, 'image(s)');
+  for (const img of imgs) {
+    const key = img.dataset.imgKey;
     try {
-      const blob = await imgStoreGet(img.dataset.imgKey);
-      if (blob) img.src = URL.createObjectURL(blob);
-    } catch {}
-  });
+      const blob = await imgStoreGet(key);
+      if (blob) {
+        img.src = URL.createObjectURL(blob);
+        console.log('[epub-img] loaded', key);
+      } else {
+        console.warn('[epub-img] blob not found for key:', key);
+        img.alt = img.alt || '[изображение]';
+        img.style.cssText = 'display:block;padding:8px;color:var(--text-muted);font-size:0.8rem';
+      }
+    } catch (e) {
+      console.warn('[epub-img] error loading', key, e);
+    }
+  }
 }
 
 function readerParseAttrs(tag = '') {
