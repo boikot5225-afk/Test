@@ -1,5 +1,6 @@
 // Chapter rendering for the reader.
 // AI actions and word interactions stay in app.js and are injected here as callbacks.
+// This module deliberately preserves the existing DOM and progress behavior.
 
 export function createReaderChapterRenderer({
   getCurrentBook,
