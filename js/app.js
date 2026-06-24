@@ -7,7 +7,7 @@ import { todayStr, addDays, profileKey, showToast, showLoading, hideLoading, toD
 import { initSupabase, isSupabaseReady, sb, sbUser, setSbUser, sbSignIn, sbSignUp, sbSignOut,
          sbGetProfile, sbLoadStats, sbLoadSRS, sbLoadMeta, fetchWithTimeout, LONG_REQUEST_TIMEOUT_MS, SUPABASE_URL, SUPABASE_KEY, ADMIN_USERNAME, sbIsCurrentUserAdmin, sbGetCurrentUserId,
          fbSaveWordState, fbLoadWordState } from './supabase.js';
-import { setCurrentProfile } from './state.js';
+import { setCurrentProfile, isGuest, setIsGuest, NOUNS, NOUNS_LOADED, setNounsLoaded } from './state.js';
 import { sm2Update, loadSRS, saveSRS, mergeSRS, flushFailedSync, sanitizeSRS, srsKey, verbHasAnyCard, SRS_TENSES } from './srs.js';
 import { loadStats, saveStats, loadMeta, saveMeta, syncStatsFromCloud,
          loadLearnLater, addLearnLater, removeLearnLater, isInLearnLater } from './storage.js';
@@ -60,12 +60,10 @@ import { pickCard, renderCard, checkAnswer, srsSessionActive, isSrsSessionActive
 
 // ── Глобальное состояние ──
 export let currentProfile = null;
-export let isGuest = false;
 export let VERBS = [];
 export let PHRASES = [];
 export let VERBS_LOADED = false;
 export let PHRASES_LOADED = false;
-export let NOUNS = [];
 let currentUserIsFirebaseAdmin = false;
 
 // v68: активный язык обучения (Фаза 1 — только французский, переключатель позже).
@@ -3805,7 +3803,7 @@ export function loginProfile(name) {
 // but everything else — including TTS — works.
 export async function continueAsGuest() {
   try {
-    isGuest = true;
+    setIsGuest(true);
     localStorage.setItem('an2_guest', '1');
     currentProfile = 'guest';
     setCurrentProfile('guest');
@@ -3872,7 +3870,7 @@ window.checkServerHealth = async function() {
 
 export function logoutProfile() {
   if (sbUser) { sbSignOut(); setSbUser(null); }
-  isGuest = false;
+  setIsGuest(false);
   localStorage.removeItem('an2_guest');
   stopBackgroundSync();
   currentProfile = null; setCurrentProfile(null); try { window.an2CurrentProfileName = ''; } catch {}
@@ -5048,8 +5046,6 @@ window.setPhrasesMode       = window.setPhrasesMode || (() => {});
 // NOUNS — загрузка и тренажёр существительных
 // ════════════════════════════════════════════════
 
-export let NOUNS_LOADED = false;
-
 const NOUNS_BUILTIN = [
   // corps
   {id:'n1',fr:'bras',ru:'рука (от плеча)',gender:'m',theme:'corps'},
@@ -5196,7 +5192,7 @@ export async function loadNounsFromCloud() {
     console.warn('[nouns] Firebase nouns load skipped:', e?.message || e);
   }
   byId.forEach(n => NOUNS.push(n));
-  NOUNS_LOADED = true;
+  setNounsLoaded(true);
 }
 
 let currentNoun = null;
@@ -6535,7 +6531,7 @@ window.confirmClearNouns = async function() {
     if (error) throw error;
     dictNounsCache = [];
     NOUNS.length = 0;
-    NOUNS_LOADED = false;
+    setNounsLoaded(false);
     try { Object.keys(localStorage).forEach(k => { if (k.includes('nouns') || k.includes('noun')) localStorage.removeItem(k); }); } catch {}
     window.setDictType('nouns');
     showToast('✅ Слова очищены');
@@ -7612,7 +7608,7 @@ window.saveReaderDraftImport = async function() {
       VERBS_LOADED = false;
       await loadVerbsFromCloud({ force: true });
     }
-    if (nouns.length) { NOUNS_LOADED = false; await loadNounsFromCloud(); dictNounsCache = nouns.concat(dictNounsCache.filter(x => !nouns.some(n => n.id === x.id))); }
+    if (nouns.length) { setNounsLoaded(false); await loadNounsFromCloud(); dictNounsCache = nouns.concat(dictNounsCache.filter(x => !nouns.some(n => n.id === x.id))); }
     if (preps.length) { dictPrepsCache = preps.concat(dictPrepsCache.filter(x => !preps.some(p => p.id === x.id))); }
     try { Object.keys(localStorage).forEach(k => { if (k.startsWith('an2_cache_verbs') || k.startsWith('an2_cache_phrases')) localStorage.removeItem(k); }); } catch {}
 
@@ -7728,7 +7724,7 @@ window.runXlsxImport = async function() {
     const { error } = await sb.from(table).upsert(records);
     if (error) throw error;
     if (type === 'verbs') { VERBS_LOADED = false; await loadVerbsFromCloud({ force: true }); dictType = 'verbs'; }
-    if (type === 'nouns') { dictNounsCache = records.concat(dictNounsCache.filter(x => !records.some(r => r.id === x.id))); NOUNS_LOADED = false; await loadNounsFromCloud(); dictType = 'nouns'; }
+    if (type === 'nouns') { dictNounsCache = records.concat(dictNounsCache.filter(x => !records.some(r => r.id === x.id))); setNounsLoaded(false); await loadNounsFromCloud(); dictType = 'nouns'; }
     if (type === 'preps') { dictPrepsCache = records.concat(dictPrepsCache.filter(x => !records.some(r => r.id === x.id))); records.forEach(r => PREPS_DATA.push({ id:r.id, verb:r.verb, ru:r.ru, prep:r.preps?.[0]?.prep || '', example:r.examples?.[0]?.fr || r.fr, exru:r.examples?.[0]?.ru || r.ru, group:'custom' })); dictType = 'preps'; }
     try { Object.keys(localStorage).forEach(k => { if (k.startsWith('an2_cache_verbs') || k.startsWith('an2_cache_phrases')) localStorage.removeItem(k); }); } catch {}
     if (st) { st.style.color = 'var(--good)'; st.textContent = `✅ Импортировано: ${records.length}${phraseCount ? `, фраз из контекста: ${phraseCount}` : ''}`; }

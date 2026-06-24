@@ -99,6 +99,15 @@ export function setTtsVoice(v) { ttsVoice = v; }
 export function setTtsAudio(a) { ttsAudio = a; }
 export function nextTtsToken() { return ++ttsToken; }
 
+// ── Существительные ──
+export let NOUNS = [];
+export let NOUNS_LOADED = false;
+export function setNounsLoaded(v) { NOUNS_LOADED = v; }
+
+// ── Сессия ──
+export let isGuest = false;
+export function setIsGuest(v) { isGuest = v; }
+
 // ── Прочее ──
 export let selectedVerbIds = new Set();
 export let vpGroupFilter = 'all';

@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v75.0-reader-toc';
+const CACHE_VERSION = 'v75.1-state-refactor';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
