@@ -771,3 +771,25 @@ export async function fbLoadTable(table, orderField = null) {
   if (orderField) rows.sort((a, b) => String(a?.[orderField] || '').localeCompare(String(b?.[orderField] || ''), 'fr'));
   return rows;
 }
+
+export async function fbSaveWordState(uid, state) {
+  if (!fbDb || !uid || !state) return false;
+  try {
+    await fbDb.ref(`reader_word_state/${uid}`).set(state);
+    return true;
+  } catch (e) {
+    console.warn('[word-state cloud] save failed:', e?.message);
+    return false;
+  }
+}
+
+export async function fbLoadWordState(uid) {
+  if (!fbDb || !uid) return null;
+  try {
+    const snap = await fbDb.ref(`reader_word_state/${uid}`).get();
+    return snap.exists() ? snap.val() : null;
+  } catch (e) {
+    console.warn('[word-state cloud] load failed:', e?.message);
+    return null;
+  }
+}

@@ -5,7 +5,8 @@ console.log('[app] v73 loaded');
 
 import { todayStr, addDays, profileKey, showToast, showLoading, hideLoading, toDateStr } from './utils.js';
 import { initSupabase, isSupabaseReady, sb, sbUser, setSbUser, sbSignIn, sbSignUp, sbSignOut,
-         sbGetProfile, sbLoadStats, sbLoadSRS, sbLoadMeta, fetchWithTimeout, LONG_REQUEST_TIMEOUT_MS, SUPABASE_URL, SUPABASE_KEY, ADMIN_USERNAME, sbIsCurrentUserAdmin, sbGetCurrentUserId } from './supabase.js';
+         sbGetProfile, sbLoadStats, sbLoadSRS, sbLoadMeta, fetchWithTimeout, LONG_REQUEST_TIMEOUT_MS, SUPABASE_URL, SUPABASE_KEY, ADMIN_USERNAME, sbIsCurrentUserAdmin, sbGetCurrentUserId,
+         fbSaveWordState, fbLoadWordState } from './supabase.js';
 import { setCurrentProfile } from './state.js';
 import { sm2Update, loadSRS, saveSRS, mergeSRS, flushFailedSync, sanitizeSRS, srsKey, verbHasAnyCard, SRS_TENSES } from './srs.js';
 import { loadStats, saveStats, loadMeta, saveMeta, syncStatsFromCloud,
@@ -1537,7 +1538,43 @@ function readerScheduleChineseSegmentation(text) {
 
 function loadReaderWordState() { return readerWordState.load(); }
 
-function saveReaderWordState() { return readerWordState.save(); }
+function saveReaderWordState() { return readerWordState.save(); scheduleWordStateCloudSync(); }
+
+// ── Облачная синхронизация статусов слов ──
+let _wordStateSyncTimer = null;
+function scheduleWordStateCloudSync() {
+  clearTimeout(_wordStateSyncTimer);
+  _wordStateSyncTimer = setTimeout(() => syncWordStateToCloud().catch(() => {}), 60000);
+}
+
+async function syncWordStateToCloud() {
+  const uid = typeof sbGetCurrentUserId === 'function' ? sbGetCurrentUserId() : null;
+  if (!uid || !isSupabaseReady?.()) return;
+  const state = loadReaderWordState();
+  if (!state || !Object.keys(state).length) return;
+  await fbSaveWordState(uid, state);
+}
+
+async function syncWordStateFromCloud() {
+  const uid = typeof sbGetCurrentUserId === 'function' ? sbGetCurrentUserId() : null;
+  if (!uid || !isSupabaseReady?.()) return;
+  const cloud = await fbLoadWordState(uid);
+  if (!cloud || typeof cloud !== 'object') return;
+  const local = loadReaderWordState();
+  let changed = false;
+  for (const [k, v] of Object.entries(cloud)) {
+    if (!v || !v.word) continue;
+    const localEntry = local[k];
+    if (!localEntry || new Date(v.updatedAt || 0) > new Date(localEntry.updatedAt || 0)) {
+      local[k] = v;
+      changed = true;
+    }
+  }
+  if (changed) {
+    try { localStorage.setItem(readerWordStateStorageKey(), JSON.stringify(local)); } catch {}
+    console.log('[word-state] merged', Object.keys(cloud).length, 'words from cloud');
+  }
+}
 
 const READER_WORD_COLOR_CLASSES = ['rw-new','rw-seen','rw-faded','rw-saved','rw-known','rw-looked','rw-learning','rw-familiar','rw-problem','rw-sel'];
 let readerVisibleParagraphObserver = null;
@@ -3871,6 +3908,7 @@ export async function doLogin() {
           await loadReaderBooksFromCloud(true);
           if (document.getElementById('screen-home')?.classList.contains('active')) renderHome();
         } catch {}
+        syncWordStateFromCloud().catch(() => {});
         if (!verbsOk) console.warn('[login-bg] verbs refresh skipped');
       } catch (e) {
         console.warn('[login-bg] cloud sync skipped:', getErrorMessage(e));
@@ -4146,6 +4184,7 @@ async function init() {
           await loadReaderBooksFromCloud(true);
           if (document.getElementById('screen-home')?.classList.contains('active')) renderHome();
         } catch {}
+        syncWordStateFromCloud().catch(() => {});
         if (!verbsOk) console.warn('[restore-bg] verbs refresh skipped');
       } catch (e) {
         console.warn('[restore-bg] cloud sync skipped:', getErrorMessage(e));
@@ -7891,3 +7930,11 @@ function readerStartWarm() {
 function readerStopWarm() {
   if (readerWarmTimer) { clearInterval(readerWarmTimer); readerWarmTimer = null; }
 }
+
+// Немедленная синхронизация статусов слов при скрытии страницы (переключение вкладки, закрытие)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    clearTimeout(_wordStateSyncTimer);
+    syncWordStateToCloud().catch(() => {});
+  }
+});
