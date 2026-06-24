@@ -4,7 +4,7 @@
 
 import { sb, sbUser, sbGetCurrentUserId, isSupabaseReady, fbSaveWordState, fbLoadWordState,
          LONG_REQUEST_TIMEOUT_MS, initSupabase } from './supabase.js';
-import { isGuest, VERBS, NOUNS } from './state.js';
+import { isGuest, VERBS, NOUNS, setCurrentProfile } from './state.js';
 import { speak, stopSpeak } from './tts.js?v=68.32-firebase-tts';
 import { showToast, showLoading, hideLoading, normalizeImportKey } from './utils.js';
 import { createReaderAudio } from './reader/audio.js?v=1';
@@ -98,9 +98,9 @@ function setCachedProfileName(name, user = null) {
   try { window.an2CurrentProfileName = clean; } catch {}
 }
 function setActiveProfileName(name, user = null) {
-  currentProfile = String(name || '').trim() || 'user';
-  setCurrentProfile(currentProfile);
-  setCachedProfileName(currentProfile, user);
+  const profile = String(name || '').trim() || 'user';
+  setCurrentProfile(profile);
+  setCachedProfileName(profile, user);
 }
 
 function readerSwitchStorageOwner(owner = null) {
