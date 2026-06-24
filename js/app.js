@@ -2999,25 +2999,6 @@ async function renderDictWords(type, search = '') {
 // CHINESE DICTIONARY — отдельный словарь для чтения 中文
 // ════════════════════════════════════════════════
 
-function readerZhEntryFromSources(word, st = null) {
-  const w = readerNormalizeWord(word, 'zh');
-  if (!w) return null;
-  const cached = readerGetCachedLexical(w, 'zh') || {};
-  const local = readerLookupChineseWord(w) || {};
-  const data = { ...local, ...cached };
-  return {
-    word: w,
-    lemma: readerNormalizeWord(data.lemma || data.word || w, 'zh') || w,
-    pinyin: readerExtractPinyin(data),
-    ru: String(data.ru || data.translation || data.meaning_ru || '').trim(),
-    en: String(data.en || data.english || data.gloss || '').trim(),
-    pos: data.pos || data.partOfSpeech || '',
-    level: data.level || data.hsk || '',
-    note: data.note || data.form_note || data._note || '',
-    source: data._source || (local.pinyin ? 'local' : cached.pinyin ? 'cache' : 'state'),
-    state: st || loadReaderWordState()[readerWordStateKey(w, 'zh')] || null
-  };
-}
 
 function readerChineseDictionaryEntries() {
   const map = new Map();
@@ -3045,32 +3026,6 @@ function readerChineseDictionaryEntries() {
     if (r) return r;
     return String(a.word).localeCompare(String(b.word), 'zh-Hans-CN');
   });
-}
-
-function readerSearchZhCoreJson(query, limit = 80) {
-  const q = String(query || '').trim().toLowerCase();
-  if (!q || !readerZhCoreJson) return [];
-  const exact = readerLookupChineseJsonEntry(q);
-  const out = [];
-  const seen = new Set();
-  const push = (entry) => {
-    if (!entry?.word || seen.has(entry.word) || out.length >= limit) return;
-    seen.add(entry.word);
-    out.push({ ...entry, state: loadReaderWordState()[readerWordStateKey(entry.word, 'zh')] || null });
-  };
-  if (exact) push(exact);
-  const isHan = /[㐀-鿿]/.test(q);
-  for (const [word, entry] of Object.entries(readerZhCoreJson)) {
-    if (out.length >= limit) break;
-    if (seen.has(word)) continue;
-    if (isHan) {
-      if (word.startsWith(q) || word.includes(q)) push(entry);
-    } else if (q.length >= 2) {
-      const hay = `${entry.pinyin || ''} ${entry.en || entry.english || ''}`.toLowerCase();
-      if (hay.includes(q)) push(entry);
-    }
-  }
-  return out;
 }
 
 function renderChineseDictWords(search = '') {
