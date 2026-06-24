@@ -50,11 +50,12 @@ function extractJson(text) {
 function sourceLang(body) {
   const raw = String(body?.sourceLang || body?.lang || 'fr').trim().toLowerCase();
   if (raw === 'zh' || raw.startsWith('zh-') || raw === 'cn' || raw === 'chinese') return 'zh';
+  if (raw === 'en' || raw.startsWith('en-') || raw === 'english') return 'en';
   return 'fr';
 }
 
 function sourceLangName(code) {
-  return code === 'zh' ? 'Chinese' : 'French';
+  return code === 'zh' ? 'Chinese' : code === 'en' ? 'English' : 'French';
 }
 
 function buildPrompt(task, body) {
@@ -64,6 +65,12 @@ function buildPrompt(task, body) {
   if (task === 'reader_word') {
     if (lang === 'zh') {
       return `You are a Chinese-Russian lexical assistant for a language reader. Analyze the selected Chinese token in context. Return ONLY valid JSON with keys: pos (noun|verb|adjective|adverb|preposition|pronoun|particle|measure_word|proper_noun|other), lemma, surface, pinyin, ru, level (HSK1|HSK2|HSK3|HSK4|HSK5|HSK6|unknown), form_note, note. Rules: pinyin must use tone marks; ru must be short and natural Russian; if the token is a name or place, mark proper_noun; do not invent grammar essays.
+
+TOKEN: ${body.word || body.surface || ''}
+CONTEXT: ${body.context || ''}`;
+    }
+    if (lang === 'en') {
+      return `You are an English-Russian lexical assistant for a language reader. Analyze the selected English token in context. Return ONLY valid JSON with keys: pos (noun|verb|adjective|adverb|preposition|pronoun|other), lemma, ru, level (A1|A2|B1|B2), form_note, note. Rules: lemma is the base/infinitive form; ru must be a short natural Russian meaning; form_note briefly explains the form if it is inflected (e.g. "past tense", "plural", "3rd person singular"). No gender needed.
 
 TOKEN: ${body.word || body.surface || ''}
 CONTEXT: ${body.context || ''}`;
@@ -324,11 +331,14 @@ const TTS_MODEL = 'hexgrad/kokoro-82m';
 const TTS_VOICES = Object.freeze({
   fr: 'ff_siwis',
   zh: 'zf_xiaobei',
+  en: 'af_heart',
 });
 
 function ttsLang(raw) {
   const v = String(raw || 'fr').trim().toLowerCase();
-  return (v === 'zh' || v.startsWith('zh') || v === 'cn' || v === 'chinese') ? 'zh' : 'fr';
+  if (v === 'zh' || v.startsWith('zh') || v === 'cn' || v === 'chinese') return 'zh';
+  if (v === 'en' || v.startsWith('en-') || v === 'english') return 'en';
+  return 'fr';
 }
 
 function safeTtsSpeed(raw) {
