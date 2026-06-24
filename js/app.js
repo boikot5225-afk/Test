@@ -22,6 +22,8 @@ import { createReaderLibraryStore } from './reader/library-store.js?v=1';
 import { createReaderDisplay } from './reader/display.js?v=1';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
+import { createReaderChapterRenderer } from './reader/chapter-render.js?v=1';
+
 
 
 import { splitTextToChapters as readerImportSplitTextToChapters, splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
@@ -763,9 +765,12 @@ let readerCurrentBookId = null;
 let readerSelectedWord = null;
 let readerSelectedParagraphIndex = 0;
 let readerSpeechActive = false;
+let readerAutoPlayActive = false;
+let readerAutoPlayAbort = false;
 let readerPendingImportChapters = null;
 let readerPendingImportSource = 'manual_text';
 let readerActiveOwnerId = null;
+let readerWordStateCache = null;
 
 function readerSafeOwnerKey(owner) {
   return String(owner || 'anon').replace(/[.#$\[\]/\s:]+/g, '_').slice(0, 96) || 'anon';
@@ -1033,7 +1038,6 @@ function readerWordStateStorageKey() { return readerScopedKey(READER_WORD_STATE_
 const READER_SEEN_AFTER = 3;             // 3 distinct visible paragraphs → yellow “often seen”
 const READER_AUTO_FADE_AFTER = 6;        // 6+ distinct paragraphs without action → visually neutral
 const READER_FAMILIAR_AFTER = 5;         // saved word may be marked “familiar”
-let readerWordStateCache = null;
 
 const READER_COMMON_WORDS = new Set(`
   le la les un une des du de d' l' au aux à a et ou mais donc car ni que qui quoi dont où en y ce cet cette ces
@@ -2032,7 +2036,7 @@ async function renderReaderScreen() {
           </div>
           <div class="lib-book-actions">
             <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}')">${done ? '📖 Снова' : '📖 Читать'}</button>
-            <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}');setTimeout(()=>readerSpeakCurrentParagraph(),400)">🔊</button>
+            <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}');setTimeout(()=>readerListenToggle(),400)">🔊</button>
             <button class="lib-action-btn danger" onclick="readerDeleteBook('${readerEscape(book.id)}')">🗑</button>
           </div>
         </div>`;
@@ -2060,7 +2064,7 @@ async function renderReaderScreen() {
         </div>
         <div class="lib-book-actions">
           <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}')">📖 Читать</button>
-          <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}');setTimeout(()=>readerSpeakCurrentParagraph(),400)">🔊</button>
+          <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}');setTimeout(()=>readerListenToggle(),400)">🔊</button>
           <button class="lib-action-btn danger" onclick="readerDeleteBook('${readerEscape(book.id)}')">🗑</button>
         </div>
       </div>`;
@@ -2418,78 +2422,32 @@ function readerBackToLibrary() {
   renderReaderScreen();
 }
 
+const readerChapterRenderer = createReaderChapterRenderer({
+  getCurrentBook: readerCurrentBook,
+  getBookLang: readerBookLang,
+  canonicalLang: readerCanonicalLang,
+  ensureZhCoreLoaded: readerEnsureZhCoreJsonLoaded,
+  needsZhCoreLoad: () => !readerZhCoreJson && !readerZhCoreJsonPromise,
+  trackParagraphSeen: readerTrackParagraphIndexSeen,
+  getBookProgress: readerBookProgress,
+  langBadge: readerLangBadge,
+  getTranslationsHidden: () => readerTranslationsHidden,
+  updatePinyinButton: readerUpdatePinyinButton,
+  renderSongSection,
+  bindParagraphEvents: bindReaderParagraphEvents,
+  bindSongStropheEvents,
+  renderParagraphText: readerRenderParagraphText,
+  renderTranslationBlock: renderReaderTranslationBlock,
+  renderAnalysisBlock: renderReaderAnalysisBlock,
+  bindVisibleParagraphTracking: readerBindVisibleParagraphTracking,
+  saveBooks: saveReaderBooks,
+  schedulePrefetch: readerSchedulePrefetch,
+  openParagraphTimer: readerTimeParagraphOpen,
+});
+
 function renderReaderChapter() {
-  const book = readerCurrentBook(); if (!book) return;
-  const activeReaderLang = readerBookLang(book);
-  if (readerCanonicalLang(activeReaderLang) === 'zh' && !readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: true });
-  const readingView = document.getElementById('reader-reading-view');
-  if (readingView) readingView.dataset.readerLang = activeReaderLang;
-  const ci = Math.max(0, Math.min(book.currentChapter || 0, (book.chapters || []).length - 1));
-  book.currentChapter = ci;
-  const ch = book.chapters[ci];
-  const paragraphs = ch?.paragraphs || [];
-  const pi = Math.max(0, Math.min(book.currentParagraph || 0, Math.max(0, paragraphs.length - 1)));
-  book.currentParagraph = pi;
-  readerTrackParagraphIndexSeen(pi, { refresh: false });
-  const pct = readerBookProgress(book);
-  const titleEl = document.getElementById('reader-book-title');
-  const chTitleEl = document.getElementById('reader-chapter-title');
-  const bar = document.getElementById('reader-progress-bar');
-  const pt = document.getElementById('reader-progress-text');
-  const text = document.getElementById('reader-chapter-text');
-  if (titleEl) titleEl.textContent = book.title || 'Текст';
-  if (chTitleEl) {
-    if (book.format === 'news') {
-      const src = book.newsSource || '';
-      const dateStr = book.newsDate
-        ? new Date(book.newsDate).toLocaleDateString('ru-RU', {day:'numeric', month:'long'})
-        : '';
-      chTitleEl.textContent = (src ? '📰 ' + src : '📰') + (dateStr ? ' · ' + dateStr : '') + ` · абзац ${pi + 1}/${Math.max(1, paragraphs.length)}`;
-    } else {
-      chTitleEl.textContent = `${readerLangBadge(activeReaderLang)} · ${ch?.title || 'Глава'} · гл. ${ci + 1}/${(book.chapters || []).length} · абзац ${pi + 1}/${Math.max(1, paragraphs.length)}`;
-    }
-  }
-  if (bar) bar.style.width = pct + '%';
-  if (pt) pt.textContent = `${pct}% · абзац ${pi + 1} / ${Math.max(1, paragraphs.length)}`;
-  const comp = book.comprehension?.[ch.id];
-  const note = document.getElementById('reader-comprehension-note');
-  if (note) note.textContent = comp ? `Оценка понятности: ${comp}/5` : 'Оцени после чтения: это поможет выбирать уровень дальше.';
-  const helpBtn = document.getElementById('reader-help-btn');
-  if (helpBtn) helpBtn.classList.toggle('on', !readerTranslationsHidden);
-  readerUpdatePinyinButton(activeReaderLang);
-  if (text) {
-    text.dataset.lang = activeReaderLang;
-    const __sc = document.querySelector('#reader-reading-view .rd-scroll');
-    const __top = __sc ? __sc.scrollTop : 0;
-    const translations = book.readerTranslations || {};
-    if (book.format === 'song' && ch.songSection) {
-      // ── SONG RENDER ──
-      text.innerHTML = renderSongSection(book, ch, paragraphs, pi);
-      bindReaderParagraphEvents();
-      bindSongStropheEvents(book, ch);
-    } else {
-      // ── NORMAL RENDER ──
-      text.innerHTML = paragraphs.map((p, i) => {
-        const trKey = `${ch.id}:${i}`;
-        const tr = translations[trKey];
-        return `
-      <div class="reader-paragraph ${i===pi?'active':''}" data-p="${i}">
-        <div class="reader-paragraph-text">${readerRenderParagraphText(p, i)}</div>
-        ${i===pi && tr && !readerTranslationsHidden ? renderReaderTranslationBlock(tr) : ''}
-        ${i===pi && book.readerAnalyses?.[trKey] && !readerTranslationsHidden ? renderReaderAnalysisBlock(book.readerAnalyses[trKey]) : ''}
-
-      </div>`;
-      }).join('');
-      bindReaderParagraphEvents();
-      if (__sc) __sc.scrollTop = __top;
-      readerBindVisibleParagraphTracking(__sc);
-    }
-  }
-  saveReaderBooks();
-  readerSchedulePrefetch();
-  readerTimeParagraphOpen();
+  return readerChapterRenderer.render();
 }
-
 
 
 function bindReaderSwipe() {
@@ -3610,7 +3568,7 @@ export function loginProfile(name) {
   readerSwitchStorageOwner(isGuest ? 'guest' : ((typeof sbGetCurrentUserId === 'function' ? sbGetCurrentUserId() : null) || sbUser?.uid || sbUser?.id || name || 'anon'));
   setActiveProfileName(String(name || 'user').toLowerCase(), sbUser || null);
   const brand = document.querySelector('.nav-brand');
-  if (brand) brand.innerHTML = 'An II <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + name + '</span>';
+  if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + name + '</span>';
   document.getElementById('screen-profile').style.display = 'none';
   document.getElementById('main-app').style.display = 'block';
   hideLoading();
@@ -3638,7 +3596,7 @@ export async function continueAsGuest() {
     readerSwitchStorageOwner('guest');
 
     const brand = document.querySelector('.nav-brand');
-    if (brand) brand.innerHTML = 'An II <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">гость</span>';
+    if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">гость</span>';
 
     showLoading('Загружаем глаголы...');
     const verbsOk = await withDeadline(() => loadVerbsFromCloud(), CORE_LOAD_TIMEOUT_MS + 3000, 'Глаголы');
@@ -3707,7 +3665,7 @@ export function logoutProfile() {
   VERBS.length = 0;
   PHRASES.length = 0;
   const brand = document.querySelector('.nav-brand');
-  if (brand) brand.innerHTML = 'An II';
+  if (brand) brand.innerHTML = 'Reader AI';
   document.getElementById('main-app').style.display = 'none';
   document.getElementById('screen-profile').style.display = 'flex';
   switchAuthTab('login');
@@ -3784,7 +3742,7 @@ export async function doLogin() {
         if (profile?.username) {
           setActiveProfileName(profile.username, user);
           const brand = document.querySelector('.nav-brand');
-          if (brand) brand.innerHTML = 'An II <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + currentProfile + '</span>';
+          if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + currentProfile + '</span>';
         }
         const [verbsOk, cloudStats, cloudSRS, cloudMeta] = await Promise.all([
           runOptional('Глаголы (фон)', () => loadVerbsFromCloud({ force: true }), CORE_LOAD_TIMEOUT_MS + 3000),
@@ -4058,7 +4016,7 @@ async function init() {
         if (profile?.username) {
           setActiveProfileName(profile.username, user);
           const brand = document.querySelector('.nav-brand');
-          if (brand) brand.innerHTML = 'An II <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + currentProfile + '</span>';
+          if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + currentProfile + '</span>';
         }
         const [verbsOk, cloudStats, cloudSRS, cloudMeta] = await Promise.all([
           runOptional('Глаголы (фон)', () => loadVerbsFromCloud({ force: true }), CORE_LOAD_TIMEOUT_MS + 3000),
@@ -4710,24 +4668,57 @@ window.readerAnalyzeParagraphAI = readerAnalyzeParagraphAI;
 window.readerAction = readerAction;
 
 // ── v66 reader: compact controls glue (presentation only) ──
+function readerListenSetBtn(playing) {
+  const b = document.getElementById('reader-listen-btn');
+  if (!b) return;
+  if (playing) { b.classList.add('playing'); b.innerHTML = '⏹ Стоп'; }
+  else { b.classList.remove('playing'); b.innerHTML = '🔊 Слушать'; }
+}
+
+async function readerAutoPlay() {
+  if (readerAutoPlayActive) return;
+  readerAutoPlayActive = true;
+  readerAutoPlayAbort = false;
+  readerListenSetBtn(true);
+  try {
+    while (!readerAutoPlayAbort) {
+      const ok = await readerSpeakCurrentParagraph();
+      if (!ok || readerAutoPlayAbort) break;
+
+      // Pause between paragraphs
+      await new Promise(r => setTimeout(r, 500));
+      if (readerAutoPlayAbort) break;
+
+      // Check if we're at the end of the book
+      const book = readerCurrentBook();
+      if (!book) break;
+      const chapter = book.chapters?.[book.currentChapter || 0];
+      const paragraphs = chapter?.paragraphs || [];
+      const isLastParagraph = (book.currentParagraph || 0) >= paragraphs.length - 1;
+      const isLastChapter = (book.currentChapter || 0) >= (book.chapters?.length || 1) - 1;
+      if (isLastParagraph && isLastChapter) {
+        showToast('📚 Конец текста');
+        break;
+      }
+
+      // Advance — handles chapter transitions + scroll automatically
+      readerNavigation.nextParagraph();
+      await new Promise(r => setTimeout(r, 150));
+    }
+  } finally {
+    readerAutoPlayActive = false;
+    readerAutoPlayAbort = false;
+    readerListenSetBtn(false);
+  }
+}
+
 function readerListenToggle() {
-  const btn = document.getElementById('reader-listen-btn');
-  const resetBtn = () => { const b = document.getElementById('reader-listen-btn'); if (b) { b.classList.remove('playing'); b.innerHTML = '🔊 Слушать'; } };
-  if (typeof readerSpeechActive !== 'undefined' && readerSpeechActive) {
-    readerStopSpeech();
-    resetBtn();
-    clearInterval(window.__readerListenPoll);
+  if (readerAutoPlayActive) {
+    readerAutoPlayAbort = true;
+    readerStopSpeech(false);
     return;
   }
-  readerSpeakCurrentParagraph();
-  if (btn) { btn.classList.add('playing'); btn.innerHTML = '⏹ Стоп'; }
-  clearInterval(window.__readerListenPoll);
-  window.__readerListenPoll = setInterval(() => {
-    if (typeof readerSpeechActive === 'undefined' || !readerSpeechActive) {
-      resetBtn();
-      clearInterval(window.__readerListenPoll);
-    }
-  }, 400);
+  readerAutoPlay().catch(e => console.error('[autoplay]', e));
 }
 function readerOpenMoreSheet() {
   document.getElementById('reader-sheet-back')?.classList.add('show');

@@ -107,7 +107,7 @@ export async function renderHome() {
               <button class="hcc-btn primary" onclick="showScreen('reader');setTimeout(()=>readerOpenBook('${escape(book.id)}'),120)">
                 📖 Читать
               </button>
-              <button class="hcc-btn" onclick="showScreen('reader');setTimeout(()=>{readerOpenBook('${escape(book.id)}');setTimeout(()=>readerSpeakCurrentParagraph(),300)},120)">
+              <button class="hcc-btn" onclick="showScreen('reader');setTimeout(()=>{readerOpenBook('${escape(book.id)}');setTimeout(()=>readerListenToggle(),300)},120)">
                 🔊 Слушать
               </button>
             </div>
@@ -203,7 +203,7 @@ export async function renderHome() {
                 <div class="home-news-title">${escape(b.title)}</div>
                 <div class="home-news-meta">${escape(dateStr)}${done?' · прочитано':''}</div>
               </div>
-              <button class="home-news-speak" onclick="event.stopPropagation();showScreen('reader');setTimeout(()=>{readerOpenBook('${escape(b.id)}');setTimeout(()=>readerSpeakCurrentParagraph(),400)},120)">🔊</button>
+              <button class="home-news-speak" onclick="event.stopPropagation();showScreen('reader');setTimeout(()=>{readerOpenBook('${escape(b.id)}');setTimeout(()=>readerListenToggle(),400)},120)">🔊</button>
             </div>`;
         }).join('')}
         ${newsBooks.length >= 3 ? `<button class="home-lib-link" onclick="showScreen('reader');setTimeout(()=>readerSetLibTab('news'),120)">Все новости →</button>` : ''}`;

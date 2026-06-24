@@ -1979,7 +1979,8 @@ input:-webkit-autofill:focus {
   display:flex; align-items:center; justify-content:center; gap:8px; transition:.15s;
 }
 #reader-reading-view .rd-listen:active{transform:translateY(1px);}
-#reader-reading-view .rd-listen.playing{background:var(--surface); color:var(--accent);}
+#reader-reading-view .rd-listen.playing{background:var(--surface); color:var(--accent); border-color:var(--accent); animation:rd-listen-pulse 1.8s ease-in-out infinite;}
+@keyframes rd-listen-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 40%,transparent);}50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 0%,transparent);}}
 #reader-reading-view .rd-desk{display:none;}
 
 /* desktop: roomier column + a couple of inline actions */
