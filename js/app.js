@@ -1819,6 +1819,7 @@ function readerTokenizeChineseParagraph(text) {
 
 
 function readerTokenizeParagraph(p, lang = null) {
+  if (p && typeof p === 'object') return [];
   const l = readerCanonicalLang(lang || readerCurrentLang());
   if (l === 'zh') return readerTokenizeChineseParagraph(p);
   // Keeps words clickable while preserving punctuation/spaces.
@@ -1835,6 +1836,7 @@ function readerSplitIntoSentences(text) {
 }
 
 function readerChunkLongParagraph(paragraph, maxLen = 380) {
+  if (paragraph && typeof paragraph === 'object') return [paragraph];
   const p = String(paragraph || '').replace(/\s+/g, ' ').trim();
   if (!p) return [];
   const sentences = readerSplitIntoSentences(p);
@@ -1860,6 +1862,7 @@ function readerNormalizeBookChunks(book) {
   for (const ch of (book.chapters || [])) {
     const next = [];
     for (const p of (ch.paragraphs || [])) {
+      if (p && typeof p === 'object') { next.push(p); continue; }
       const chunks = readerChunkLongParagraph(p, maxLen);
       if (chunks.length !== 1 || chunks[0] !== p) changed = true;
       next.push(...chunks);
@@ -2439,7 +2442,10 @@ function saveReaderImport() {
   const newsDate = format === 'news' ? now : undefined;
   const bookId = readerPendingImportBookId || readerId();
   readerPendingImportBookId = null;
-  const bookObj = { id: bookId, title, author: authorRaw, level, lang, sourceLang: lang, format, source: readerPendingImportSource || 'manual_text', createdAt: now, updatedAt: now, currentChapter: 0, currentParagraph: 0, chapters };
+  const firstParas = chapters[0]?.paragraphs || [];
+  let firstParaIdx = 0;
+  while (firstParaIdx < firstParas.length && firstParas[firstParaIdx] && typeof firstParas[firstParaIdx] === 'object') firstParaIdx++;
+  const bookObj = { id: bookId, title, author: authorRaw, level, lang, sourceLang: lang, format, source: readerPendingImportSource || 'manual_text', createdAt: now, updatedAt: now, currentChapter: 0, currentParagraph: firstParaIdx, chapters };
   if (format === 'news') { bookObj.newsSource = newsSource || authorRaw || 'вставка'; bookObj.newsDate = newsDate; }
   const book = bookObj;
   book.importKey = readerBookImportKey(book);
