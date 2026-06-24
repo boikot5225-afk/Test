@@ -24,13 +24,10 @@ export function createReaderAudio({
     stop(false);
     setActive(true);
     try {
+      // speak() now resolves when audio actually finishes (or returns false if stopped early)
       const ok = await speak(chunk, { lang, rate });
-      if (!ok) {
-        setActive(false);
-        return false;
-      }
-      setTimeout(() => setActive(false), Math.max(1800, Math.min(12000, chunk.length * 85)));
-      return true;
+      setActive(false);
+      return !!ok;
     } catch (error) {
       setActive(false);
       console.warn('[reader tts] TTS failed:', error);

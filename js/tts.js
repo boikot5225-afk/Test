@@ -182,17 +182,24 @@ async function playAudioBuffer(buffer, mimeType = 'audio/mpeg', token = ++ttsTok
     source.buffer = decoded;
     source.connect(ctx.destination);
     ttsCurrentSource = source;
-    source.onended = () => { if (ttsCurrentSource === source) ttsCurrentSource = null; };
-    source.start(0);
-    return true;
+    // Resolve when audio ends; false means stopped early (ttsToken changed by stopSpeak)
+    return new Promise((resolve) => {
+      source.onended = () => {
+        if (ttsCurrentSource === source) ttsCurrentSource = null;
+        resolve(token === ttsToken);
+      };
+      source.start(0);
+    });
   } catch (_) {
     const blob = new Blob([buffer], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     ttsAudio = audio;
-    audio.onended = () => { URL.revokeObjectURL(url); if (ttsAudio === audio) ttsAudio = null; };
-    await audio.play();
-    return true;
+    return new Promise((resolve) => {
+      audio.onended = () => { URL.revokeObjectURL(url); if (ttsAudio === audio) ttsAudio = null; resolve(true); };
+      audio.onerror = () => { URL.revokeObjectURL(url); resolve(false); };
+      audio.play().catch(() => resolve(false));
+    });
   }
 }
 
@@ -208,15 +215,18 @@ function speakViaWebSpeech(text, { lang = 'fr', rate = 1 } = {}) {
   if (!window.speechSynthesis) throw new Error('В браузере нет локальной озвучки.');
   const normalizedLang = normalizeLang(lang);
   const prepared = normalizeSpeechText(text, normalizedLang);
-  if (!prepared) return false;
+  if (!prepared) return Promise.resolve(false);
   window.speechSynthesis.cancel();
   const utt = new SpeechSynthesisUtterance(prepared);
   utt.lang = normalizedLang === 'zh' ? 'zh-CN' : 'fr-FR';
   utt.rate = Math.max(0.65, Math.min(1.25, Number(rate) || 1));
   const voice = pickBrowserVoice(normalizedLang);
   if (voice) utt.voice = voice;
-  window.speechSynthesis.speak(utt);
-  return true;
+  return new Promise((resolve) => {
+    utt.onend = () => resolve(true);
+    utt.onerror = () => resolve(false);
+    window.speechSynthesis.speak(utt);
+  });
 }
 
 export function stopSpeak() {

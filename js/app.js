@@ -765,6 +765,8 @@ let readerCurrentBookId = null;
 let readerSelectedWord = null;
 let readerSelectedParagraphIndex = 0;
 let readerSpeechActive = false;
+let readerAutoPlayActive = false;
+let readerAutoPlayAbort = false;
 let readerPendingImportChapters = null;
 let readerPendingImportSource = 'manual_text';
 let readerActiveOwnerId = null;
@@ -4666,24 +4668,57 @@ window.readerAnalyzeParagraphAI = readerAnalyzeParagraphAI;
 window.readerAction = readerAction;
 
 // ── v66 reader: compact controls glue (presentation only) ──
+function readerListenSetBtn(playing) {
+  const b = document.getElementById('reader-listen-btn');
+  if (!b) return;
+  if (playing) { b.classList.add('playing'); b.innerHTML = '⏹ Стоп'; }
+  else { b.classList.remove('playing'); b.innerHTML = '🔊 Слушать'; }
+}
+
+async function readerAutoPlay() {
+  if (readerAutoPlayActive) return;
+  readerAutoPlayActive = true;
+  readerAutoPlayAbort = false;
+  readerListenSetBtn(true);
+  try {
+    while (!readerAutoPlayAbort) {
+      const ok = await readerSpeakCurrentParagraph();
+      if (!ok || readerAutoPlayAbort) break;
+
+      // Pause between paragraphs
+      await new Promise(r => setTimeout(r, 500));
+      if (readerAutoPlayAbort) break;
+
+      // Check if we're at the end of the book
+      const book = readerCurrentBook();
+      if (!book) break;
+      const chapter = book.chapters?.[book.currentChapter || 0];
+      const paragraphs = chapter?.paragraphs || [];
+      const isLastParagraph = (book.currentParagraph || 0) >= paragraphs.length - 1;
+      const isLastChapter = (book.currentChapter || 0) >= (book.chapters?.length || 1) - 1;
+      if (isLastParagraph && isLastChapter) {
+        showToast('📚 Конец текста');
+        break;
+      }
+
+      // Advance — handles chapter transitions + scroll automatically
+      readerNavigation.nextParagraph();
+      await new Promise(r => setTimeout(r, 150));
+    }
+  } finally {
+    readerAutoPlayActive = false;
+    readerAutoPlayAbort = false;
+    readerListenSetBtn(false);
+  }
+}
+
 function readerListenToggle() {
-  const btn = document.getElementById('reader-listen-btn');
-  const resetBtn = () => { const b = document.getElementById('reader-listen-btn'); if (b) { b.classList.remove('playing'); b.innerHTML = '🔊 Слушать'; } };
-  if (typeof readerSpeechActive !== 'undefined' && readerSpeechActive) {
-    readerStopSpeech();
-    resetBtn();
-    clearInterval(window.__readerListenPoll);
+  if (readerAutoPlayActive) {
+    readerAutoPlayAbort = true;
+    readerStopSpeech(false);
     return;
   }
-  readerSpeakCurrentParagraph();
-  if (btn) { btn.classList.add('playing'); btn.innerHTML = '⏹ Стоп'; }
-  clearInterval(window.__readerListenPoll);
-  window.__readerListenPoll = setInterval(() => {
-    if (typeof readerSpeechActive === 'undefined' || !readerSpeechActive) {
-      resetBtn();
-      clearInterval(window.__readerListenPoll);
-    }
-  }, 400);
+  readerAutoPlay().catch(e => console.error('[autoplay]', e));
 }
 function readerOpenMoreSheet() {
   document.getElementById('reader-sheet-back')?.classList.add('show');
