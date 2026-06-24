@@ -81,7 +81,7 @@ export function createReaderChapterRenderer({
         bindSongStropheEvents(book, chapter);
       } else {
         chapterText.innerHTML = paragraphs.map((paragraph, index) => {
-          const translationKey = `${chapter.id}:${index}`;
+          const translationKey = `${chapter?.id}:${index}`;
           const translation = translations[translationKey];
           return `<div class="reader-paragraph ${index === paragraphIndex ? 'active' : ''}" data-p="${index}"><div class="reader-paragraph-text">${renderParagraphText(paragraph, index)}</div>${index === paragraphIndex && translation && !getTranslationsHidden() ? renderTranslationBlock(translation) : ''}${index === paragraphIndex && book.readerAnalyses?.[translationKey] && !getTranslationsHidden() ? renderAnalysisBlock(book.readerAnalyses[translationKey]) : ''}</div>`;
         }).join('');

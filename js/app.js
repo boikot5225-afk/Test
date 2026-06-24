@@ -768,6 +768,7 @@ let readerSpeechActive = false;
 let readerPendingImportChapters = null;
 let readerPendingImportSource = 'manual_text';
 let readerActiveOwnerId = null;
+let readerWordStateCache = null;
 
 function readerSafeOwnerKey(owner) {
   return String(owner || 'anon').replace(/[.#$\[\]/\s:]+/g, '_').slice(0, 96) || 'anon';
@@ -1034,7 +1035,6 @@ function readerWordStateStorageKey() { return readerScopedKey(READER_WORD_STATE_
 const READER_SEEN_AFTER = 3;             // 3 distinct visible paragraphs → yellow “often seen”
 const READER_AUTO_FADE_AFTER = 6;        // 6+ distinct paragraphs without action → visually neutral
 const READER_FAMILIAR_AFTER = 5;         // saved word may be marked “familiar”
-let readerWordStateCache = null;
 
 const READER_COMMON_WORDS = new Set(`
   le la les un une des du de d' l' au aux à a et ou mais donc car ni que qui quoi dont où en y ce cet cette ces
