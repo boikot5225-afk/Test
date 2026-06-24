@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v71.5-rebrand';
+const CACHE_VERSION = 'v71.6-no-login-flash';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

@@ -72,9 +72,10 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
-<div id="loading-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--bg);flex-direction:column;align-items:center;justify-content:center;gap:16px;">
-  <div style="width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;"></div>
-  <div id="loading-text" style="font-size:0.85rem;color:var(--text-muted)">Загружаем данные...</div>
+<div id="loading-overlay" style="display:flex;position:fixed;inset:0;z-index:9999;background:var(--bg);flex-direction:column;align-items:center;justify-content:center;gap:20px;">
+  <div style="font-family:'Playfair Display',serif;font-size:2rem;color:var(--accent);font-weight:700;letter-spacing:0.04em">Reader AI</div>
+  <div style="width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+  <div id="loading-text" style="font-size:0.8rem;color:var(--text-muted)">Reader AI — запуск...</div>
 </div>
 
 <!-- Toast notification -->
@@ -92,7 +93,7 @@
 </style>
 
 
-<div id="screen-profile" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg);">
+<div id="screen-profile" style="min-height:100vh;display:none;align-items:center;justify-content:center;padding:24px;background:var(--bg);">
   <div style="width:100%;max-width:400px;">
     <div style="text-align:center;margin-bottom:36px;">
       <div style="font-family:'Playfair Display',serif;font-size:2.8rem;color:var(--accent);margin-bottom:2px;letter-spacing:0.04em;font-weight:700">Reader&nbsp;AI</div>

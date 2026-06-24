@@ -3927,6 +3927,7 @@ function stopBackgroundSync() {
 
 // ── Инициализация ──
 async function init() {
+  showLoading('Reader AI — запуск...');
   initSpeech();
   applyKbMode();
   initTTSEngineUI();
@@ -3943,6 +3944,7 @@ async function init() {
 
   if (!supabaseOk || !isSupabaseReady()) {
     console.warn('[init] Firebase SDK never loaded; offering guest + retry');
+    hideLoading();
     const profileScreen = document.getElementById('screen-profile');
     if (profileScreen) profileScreen.style.display = 'flex';
     switchAuthTab('login');
@@ -4047,6 +4049,7 @@ async function init() {
     }
   }
 
+  hideLoading();
   document.getElementById('screen-profile').style.display = 'flex';
   switchAuthTab('login');
 }
