@@ -1853,6 +1853,17 @@ function readerChunkLongParagraph(paragraph, maxLen = 380) {
   return chunks;
 }
 
+function readerCleanCorruptedImageParagraphs(book) {
+  if (!book || book._v71ImgClean) return false;
+  book._v71ImgClean = true;
+  let changed = false;
+  for (const ch of (book.chapters || [])) {
+    const filtered = (ch.paragraphs || []).filter(p => p !== '[object Object]');
+    if (filtered.length !== ch.paragraphs.length) { ch.paragraphs = filtered; changed = true; }
+  }
+  return changed;
+}
+
 function readerNormalizeBookChunks(book) {
   const isZh = readerCanonicalLang(book?.lang || book?.sourceLang || 'fr') === 'zh';
   const doneFlag = isZh ? '_v70ZhChunks' : '_v43SentenceChunks';
@@ -2465,7 +2476,8 @@ function readerOpenBook(id) {
   const book = readerBooks.find(b => b.id === id);
   if (!book) { showToast('⚠️ Текст не найден'); return; }
   readerCurrentBookId = id;
-  if (readerNormalizeBookChunks(book)) {
+  const cleanChanged = readerCleanCorruptedImageParagraphs(book);
+  if (readerNormalizeBookChunks(book) || cleanChanged) {
     book.currentParagraph = Math.min(book.currentParagraph || 0, book.chapters?.[book.currentChapter || 0]?.paragraphs?.length || 0);
     book.updatedAt = new Date().toISOString();
     saveReaderBooks();
