@@ -3596,7 +3596,7 @@ export function showScreen(id) {
   // Reset scroll to top on every screen change — prevents landing in empty
   // space when the previous screen was scrolled down.
   window.scrollTo(0, 0);
-  const tabName = {home:'Главная',reader:'Читать',phrases:'Фразы',grammar:'Правила',trainer:'Тренажёр',study:'Изучить',stats:'Статистика',dict:'Слова',leaderboard:'Лидерборд'}[id];
+  const tabName = {home:'Главная',reader:'Читать',phrases:'Фразы',grammar:'Правила',trainer:'Тренажёр',study:'Изучить',stats:'Статистика',dict:'Слова',leaderboard:'Лидерборд',profile:'Профиль'}[id];
   document.querySelectorAll('.nav-tab').forEach(t => {
     if (tabName && t.textContent.includes(tabName)) t.classList.add('active');
   });
@@ -3653,14 +3653,15 @@ function updateBottomNav(id) {
   const navMap = {
     home: 'bn-home',
     reader: 'bn-reader',
-    trainer: lang === 'zh' ? 'bn-more' : 'bn-practice',
-    study: 'bn-more',
-    dict: lang === 'zh' ? 'bn-practice' : 'bn-dict',
-    'zh-trainer': 'bn-practice',
-    phrases: lang === 'fr' ? 'bn-practice' : 'bn-more',
-    grammar: 'bn-practice',
-    stats: 'bn-progress',
-    leaderboard: 'bn-progress',
+    dict: 'bn-dict',
+    'zh-trainer': 'bn-dict',
+    profile: 'bn-profile',
+    trainer: 'bn-profile',
+    study: 'bn-profile',
+    phrases: 'bn-profile',
+    grammar: 'bn-profile',
+    stats: 'bn-profile',
+    leaderboard: 'bn-profile',
   };
   document.querySelectorAll('.bottom-nav-item').forEach(el => el.classList.remove('active'));
   const activeId = navMap[id];

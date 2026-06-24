@@ -99,6 +99,7 @@ main {
 }
 .screen { display: none; padding: 40px 24px; max-width: 900px; margin: 0 auto; }
 .screen.active { display: block; }
+#screen-profile.active { display: flex; max-width: none; padding: 24px; }
 /* Practice screen: pin content to top, no vertical stretching */
 #screen-phrases.active { display: flex; flex-direction: column; }
 

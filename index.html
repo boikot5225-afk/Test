@@ -93,7 +93,7 @@
 </style>
 
 
-<div id="screen-profile" style="min-height:100vh;display:none;align-items:center;justify-content:center;padding:24px;background:var(--bg);">
+<div id="screen-profile" class="screen" style="min-height:100vh;align-items:center;justify-content:center;background:var(--bg);">
   <div style="width:100%;max-width:400px;">
     <div style="text-align:center;margin-bottom:36px;">
       <div style="font-family:'Playfair Display',serif;font-size:2.8rem;color:var(--accent);margin-bottom:2px;letter-spacing:0.04em;font-weight:700">Reader&nbsp;AI</div>
@@ -195,8 +195,7 @@
     <div class="nav-tab active" onclick="showScreen('home')">🏠 Главная</div>
     <div class="nav-tab" onclick="showScreen('reader')">📖 Читать</div>
     <div class="nav-tab" onclick="showScreen('dict')">📚 Слова</div>
-    <div class="nav-tab" onclick="showScreen('trainer')">⚡ Глаголы</div>
-    <div class="nav-tab" onclick="toggleMoreMenu()" style="white-space:nowrap">⋯ Ещё</div>
+    <div class="nav-tab" onclick="showScreen('profile')">👤 Профиль</div>
   </div>
 </nav>
 
@@ -211,20 +210,18 @@
   <div class="bottom-nav-item" id="bn-dict" onclick="showScreen('dict')">
     <span class="bn-icon">📚</span><span>Слова</span>
   </div>
-  <div class="bottom-nav-item" id="bn-practice" onclick="navPracticeBtn()">
-    <span class="bn-icon" id="bn-practice-icon">⚡</span><span id="bn-practice-label">Глаголы</span>
+  <div class="bottom-nav-item" id="bn-profile" onclick="showScreen('profile')">
+    <span class="bn-icon">👤</span><span>Профиль</span>
   </div>
-  <div class="bottom-nav-item" id="bn-more" onclick="toggleMoreMenu()">
-    <span class="bn-icon">⋯</span><span>Ещё</span>
-  </div>
+  <!-- hidden stubs so JS refs to bn-practice / bn-more don't break -->
+  <div id="bn-practice" style="display:none"><span id="bn-practice-icon"></span><span id="bn-practice-label"></span></div>
+  <div id="bn-more" style="display:none"></div>
 </div>
 
-<!-- MORE MENU — slides up on mobile -->
+<!-- MORE MENU — kept in DOM so JS refs don't break; hidden via never-opened -->
 <div id="more-menu" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:300;background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:20px 16px calc(20px + env(safe-area-inset-bottom));">
   <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 20px"></div>
   <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;">
-    <div onclick="showScreen('trainer');closeMoreMenu()" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 8px;background:var(--surface2);border-radius:12px;cursor:pointer;font-size:0.75rem;color:var(--text-muted)"><span style="font-size:1.6rem">✏️</span>Тренажёр</div>
-    <div onclick="showScreen('phrases');closeMoreMenu()" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 8px;background:var(--surface2);border-radius:12px;cursor:pointer;font-size:0.75rem;color:var(--text-muted)"><span style="font-size:1.6rem">💬</span>Фразы</div>
     <div onclick="logoutProfile();closeMoreMenu()" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 8px;background:var(--surface2);border-radius:12px;cursor:pointer;font-size:0.75rem;color:#e05555"><span style="font-size:1.6rem">⇠</span>Выйти</div>
   </div>
 
@@ -356,21 +353,16 @@
     </div>
 
     <!-- QUICK ACCESS -->
-    <div class="home-quick-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+    <div class="home-quick-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
       <button class="home-quick-card" onclick="showScreen('reader')">
         <i class="hq-icon">📚</i>
         <b>Библиотека</b>
         <small id="home-books-count-new">0 текстов</small>
       </button>
-      <button class="home-quick-card" onclick="showScreen('trainer')">
-        <i class="hq-icon">⚡</i>
-        <b>Глаголы</b>
-        <small>тренажёр</small>
-      </button>
-      <button class="home-quick-card" onclick="toggleMoreMenu()">
-        <i class="hq-icon">···</i>
-        <b>Ещё</b>
-        <small>фразы, выход</small>
+      <button class="home-quick-card" onclick="showScreen('dict')">
+        <i class="hq-icon">🔤</i>
+        <b>Словарь</b>
+        <small>мои слова</small>
       </button>
     </div>
 

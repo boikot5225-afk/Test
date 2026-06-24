@@ -70,7 +70,7 @@ export async function renderHome() {
   const section = $('home-continue-section');
   if (section) {
     if (!recent.length) {
-      const langLabel = isZh ? 'китайский текст' : 'французский текст';
+      const langLabel = isZh ? 'китайский текст' : 'текст';
       section.innerHTML = `
         <div class="home-section-label">начать</div>
         <button onclick="showScreen('reader');setTimeout(()=>showReaderImportModal(),120)" class="home-add-card">
@@ -210,44 +210,20 @@ export async function renderHome() {
     }
   }
 
-  // ── Quick access — зависит от языка ──
+  // ── Quick access ──
   const quickGrid = document.querySelector('.home-quick-grid');
   if (quickGrid) {
-    if (isZh) {
-      quickGrid.innerHTML = `
-        <button class="home-quick-card" onclick="showScreen('reader')">
-          <i class="hq-icon">📚</i>
-          <b>Библиотека</b>
-          <small id="home-books-count-new">${langBooks.length} ${plural(langBooks.length,'текст','текста','текстов')}</small>
-        </button>
-        <button class="home-quick-card" onclick="navPracticeBtn()">
-          <i class="hq-icon">🀄</i>
-          <b>Символы</b>
-          <small>словарь по HSK</small>
-        </button>
-        <button class="home-quick-card" onclick="toggleMoreMenu()">
-          <i class="hq-icon">···</i>
-          <b>Ещё</b>
-          <small>фразы, выход</small>
-        </button>`;
-    } else {
-      quickGrid.innerHTML = `
-        <button class="home-quick-card" onclick="showScreen('reader')">
-          <i class="hq-icon">📚</i>
-          <b>Библиотека</b>
-          <small id="home-books-count-new">${langBooks.length} ${plural(langBooks.length,'текст','текста','текстов')}</small>
-        </button>
-        <button class="home-quick-card" onclick="showScreen('trainer')">
-          <i class="hq-icon">⚡</i>
-          <b>Глаголы</b>
-          <small>тренажёр</small>
-        </button>
-        <button class="home-quick-card" onclick="toggleMoreMenu()">
-          <i class="hq-icon">···</i>
-          <b>Ещё</b>
-          <small>фразы, выход</small>
-        </button>`;
-    }
+    quickGrid.innerHTML = `
+      <button class="home-quick-card" onclick="showScreen('reader')">
+        <i class="hq-icon">📚</i>
+        <b>Библиотека</b>
+        <small id="home-books-count-new">${langBooks.length} ${plural(langBooks.length,'текст','текста','текстов')}</small>
+      </button>
+      <button class="home-quick-card" onclick="showScreen('dict')">
+        <i class="hq-icon">🔤</i>
+        <b>Словарь</b>
+        <small>мои слова</small>
+      </button>`;
   }
 
   // ── Последние слова / иероглифы ──
