@@ -19,6 +19,8 @@ import { createReaderWordPanel } from './reader/word-panel.js?v=1';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=1';
 import { createReaderLibraryStore } from './reader/library-store.js?v=1';
+import { createReaderDisplay } from './reader/display.js?v=1';
+
 import { splitTextToChapters as readerImportSplitTextToChapters, splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
 import { renderHome } from './home.js';
 import { renderZhTrainer } from './zh_trainer.js';
@@ -865,78 +867,18 @@ let readerTranslationsHidden = localStorage.getItem(READER_HIDE_TRANSLATIONS_KEY
 
 // ── Настройки отображения текста читалки ──────────────────────────────────
 const READER_DISPLAY_KEY = 'an2_reader_display_v1';
-const READER_DISPLAY_DEFAULTS = {
-  font:    'Playfair Display',
-  size:    17,
-  lh:      182,   // line-height * 100, e.g. 182 = 1.82
-  theme:   '',    // '' | 'sepia' | 'parchment' | 'night'
-};
-function readerLoadDisplay() {
-  try { return { ...READER_DISPLAY_DEFAULTS, ...JSON.parse(localStorage.getItem(READER_DISPLAY_KEY) || '{}') }; }
-  catch { return { ...READER_DISPLAY_DEFAULTS }; }
-}
-function readerSaveDisplay(settings) {
-  try { localStorage.setItem(READER_DISPLAY_KEY, JSON.stringify(settings)); } catch {}
-}
-const READER_FONT_MAP = {
-  'Playfair Display': "'Playfair Display', serif",
-  'Lora':             "'Lora', serif",
-  'Source Serif 4':   "'Source Serif 4', serif",
-  'Georgia':          "Georgia, serif",
-  'IBM Plex Sans':    "'IBM Plex Sans', sans-serif",
-};
-function readerApplyDisplay(s) {
-  const root = document.getElementById('reader-reading-view');
-  if (!root) return;
-  root.style.setProperty('--rd-font', READER_FONT_MAP[s.font] || READER_FONT_MAP['Playfair Display']);
-  root.style.setProperty('--rd-size', s.size + 'px');
-  root.style.setProperty('--rd-lh',   (s.lh / 100).toFixed(2));
-  root.dataset.rdTheme = s.theme || '';
-}
-function readerInitDisplay() {
-  const s = readerLoadDisplay();
-  readerApplyDisplay(s);
-  // Sync panel controls if panel exists
-  const panel = document.getElementById('rd-display-panel');
-  if (!panel) return;
-  panel.querySelectorAll('.rd-dp-font').forEach(b => b.classList.toggle('rd-dp-active', b.dataset.font === s.font));
-  panel.querySelectorAll('.rd-dp-theme').forEach(b => b.classList.toggle('rd-dp-active', b.dataset.theme === (s.theme || '')));
-  const szEl = panel.querySelector('#rd-dp-size');
-  const lhEl = panel.querySelector('#rd-dp-lh');
-  if (szEl) { szEl.value = s.size; panel.querySelector('#rd-dp-size-val').textContent = s.size; }
-  if (lhEl) { lhEl.value = s.lh;   panel.querySelector('#rd-dp-lh-val').textContent   = (s.lh / 100).toFixed(2); }
-}
-function readerToggleDisplayPanel() {
-  const panel = document.getElementById('rd-display-panel');
-  const back  = document.getElementById('rd-display-back');
-  if (!panel) return;
-  const open = panel.classList.toggle('show');
-  if (back) back.classList.toggle('show', open);
-  if (open) readerInitDisplay();
-}
-function readerCloseDisplayPanel() {
-  document.getElementById('rd-display-panel')?.classList.remove('show');
-  document.getElementById('rd-display-back')?.classList.remove('show');
-}
-function rdSetFont(name, el) {
-  const s = readerLoadDisplay(); s.font = name; readerSaveDisplay(s); readerApplyDisplay(s);
-  el.closest('.rd-dp-row').querySelectorAll('.rd-dp-font').forEach(b => b.classList.remove('rd-dp-active'));
-  el.classList.add('rd-dp-active');
-}
-function rdSetSize(input) {
-  const s = readerLoadDisplay(); s.size = Number(input.value); readerSaveDisplay(s); readerApplyDisplay(s);
-  document.getElementById('rd-dp-size-val').textContent = s.size;
-}
-function rdSetLH(input) {
-  const s = readerLoadDisplay(); s.lh = Number(input.value); readerSaveDisplay(s); readerApplyDisplay(s);
-  document.getElementById('rd-dp-lh-val').textContent = (s.lh / 100).toFixed(2);
-}
-function rdSetTheme(theme, el) {
-  const s = readerLoadDisplay(); s.theme = theme; readerSaveDisplay(s); readerApplyDisplay(s);
-  el.closest('.rd-dp-row').querySelectorAll('.rd-dp-theme').forEach(b => b.classList.remove('rd-dp-active'));
-  el.classList.add('rd-dp-active');
-}
+const readerDisplay = createReaderDisplay({ key: READER_DISPLAY_KEY });
 
+function readerLoadDisplay() { return readerDisplay.load(); }
+function readerSaveDisplay(settings) { return readerDisplay.save(settings); }
+function readerApplyDisplay(settings) { return readerDisplay.apply(settings); }
+function readerInitDisplay() { return readerDisplay.init(); }
+function readerToggleDisplayPanel() { return readerDisplay.togglePanel(); }
+function readerCloseDisplayPanel() { return readerDisplay.closePanel(); }
+function rdSetFont(name, element) { return readerDisplay.setFont(name, element); }
+function rdSetSize(input) { return readerDisplay.setSize(input); }
+function rdSetLH(input) { return readerDisplay.setLineHeight(input); }
+function rdSetTheme(theme, element) { return readerDisplay.setTheme(theme, element); }
 
 function readerZhPinyinMode() {
   try { return localStorage.getItem(READER_ZH_PINYIN_MODE_KEY) || 'unknown'; } catch { return 'unknown'; }
