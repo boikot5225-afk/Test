@@ -12,6 +12,21 @@ import { loadStats, saveStats, loadMeta, saveMeta, syncStatsFromCloud,
 import { speak, stopSpeak, initSpeech, applyKbMode, initTTSEngineUI, showFrKb, hideFrKb, isFrKbEnabled, setTTSEngine,
          frKbEnabled, autoSpeak, toggleAutoSpeak, toggleKbMode, insertFrChar,
          frBackspace, frEnter, frToggleShift } from './tts.js?v=68.32-firebase-tts';
+import { createReaderAudio } from './reader/audio.js?v=1';
+import { createReaderNavigation } from './reader/navigation.js?v=1';
+import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16, zipU32 as epubZipU32, inflateZipData as epubInflateZipData, readZipEntries as epubReadZipEntries, resolveEpubPath as epubResolvePath, cleanEpubText as epubCleanText, looksLikeEpubBoilerplate as epubLooksLikeBoilerplate, htmlToPlainText as epubHtmlToPlainText, htmlToParagraphs as epubHtmlToParagraphs } from './reader/epub.js?v=1';
+import { createReaderWordPanel } from './reader/word-panel.js?v=1';
+import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
+import { createReaderWordState } from './reader/word-state.js?v=1';
+import { createReaderLibraryStore } from './reader/library-store.js?v=1';
+import { createReaderDisplay } from './reader/display.js?v=1';
+import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
+import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
+import { createReaderChapterRenderer } from './reader/chapter-render.js?v=1';
+
+
+
+import { splitTextToChapters as readerImportSplitTextToChapters, splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
 import { renderHome } from './home.js';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
@@ -736,36 +751,13 @@ export async function loadPhrasesFromCloud(options = {}) {
 const READER_BOOKS_KEY = 'an2_reader_books_v1';
 
 // ── Трекер времени чтения ─────────────────────────────
-const READER_TIME_KEY = 'an2_reader_time_v1'; // { date: 'YYYY-MM-DD', minutes: N }
-let _readerParagraphStart = null; // Date.now() когда открыли абзац
+const READER_TIME_KEY = 'an2_reader_time_v1';
+const readerTimeTracker = createReaderTimeTracker({ key: READER_TIME_KEY });
 
-function readerTimeToday() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(READER_TIME_KEY) || '{}');
-    const today = new Date().toISOString().slice(0, 10);
-    return raw.date === today ? (raw.minutes || 0) : 0;
-  } catch { return 0; }
-}
-function readerTimeAddSeconds(sec) {
-  if (!sec || sec < 2) return; // игнорируем случайные клики < 2 сек
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    const raw = JSON.parse(localStorage.getItem(READER_TIME_KEY) || '{}');
-    const base = raw.date === today ? (raw.minutes || 0) : 0;
-    const added = base + sec / 60;
-    localStorage.setItem(READER_TIME_KEY, JSON.stringify({ date: today, minutes: added }));
-  } catch {}
-}
-function readerTimeParagraphOpen() {
-  _readerParagraphStart = Date.now();
-}
-function readerTimeParagraphClose() {
-  if (!_readerParagraphStart) return;
-  const sec = (Date.now() - _readerParagraphStart) / 1000;
-  _readerParagraphStart = null;
-  // Считаем только реалистичное время: от 3 сек до 5 минут на абзац
-  if (sec >= 3 && sec <= 300) readerTimeAddSeconds(sec);
-}
+function readerTimeToday() { return readerTimeTracker.today(); }
+function readerTimeAddSeconds(seconds) { return readerTimeTracker.addSeconds(seconds); }
+function readerTimeParagraphOpen() { return readerTimeTracker.openParagraph(); }
+function readerTimeParagraphClose() { return readerTimeTracker.closeParagraph(); }
 
 const READER_OWNER_KEY = 'an2_reader_active_owner_v1';
 let readerBooks = [];
@@ -857,111 +849,32 @@ let readerTranslationsHidden = localStorage.getItem(READER_HIDE_TRANSLATIONS_KEY
 
 // ── Настройки отображения текста читалки ──────────────────────────────────
 const READER_DISPLAY_KEY = 'an2_reader_display_v1';
-const READER_DISPLAY_DEFAULTS = {
-  font:    'Playfair Display',
-  size:    17,
-  lh:      182,   // line-height * 100, e.g. 182 = 1.82
-  theme:   '',    // '' | 'sepia' | 'parchment' | 'night'
-};
-function readerLoadDisplay() {
-  try { return { ...READER_DISPLAY_DEFAULTS, ...JSON.parse(localStorage.getItem(READER_DISPLAY_KEY) || '{}') }; }
-  catch { return { ...READER_DISPLAY_DEFAULTS }; }
-}
-function readerSaveDisplay(settings) {
-  try { localStorage.setItem(READER_DISPLAY_KEY, JSON.stringify(settings)); } catch {}
-}
-const READER_FONT_MAP = {
-  'Playfair Display': "'Playfair Display', serif",
-  'Lora':             "'Lora', serif",
-  'Source Serif 4':   "'Source Serif 4', serif",
-  'Georgia':          "Georgia, serif",
-  'IBM Plex Sans':    "'IBM Plex Sans', sans-serif",
-};
-function readerApplyDisplay(s) {
-  const root = document.getElementById('reader-reading-view');
-  if (!root) return;
-  root.style.setProperty('--rd-font', READER_FONT_MAP[s.font] || READER_FONT_MAP['Playfair Display']);
-  root.style.setProperty('--rd-size', s.size + 'px');
-  root.style.setProperty('--rd-lh',   (s.lh / 100).toFixed(2));
-  root.dataset.rdTheme = s.theme || '';
-}
-function readerInitDisplay() {
-  const s = readerLoadDisplay();
-  readerApplyDisplay(s);
-  // Sync panel controls if panel exists
-  const panel = document.getElementById('rd-display-panel');
-  if (!panel) return;
-  panel.querySelectorAll('.rd-dp-font').forEach(b => b.classList.toggle('rd-dp-active', b.dataset.font === s.font));
-  panel.querySelectorAll('.rd-dp-theme').forEach(b => b.classList.toggle('rd-dp-active', b.dataset.theme === (s.theme || '')));
-  const szEl = panel.querySelector('#rd-dp-size');
-  const lhEl = panel.querySelector('#rd-dp-lh');
-  if (szEl) { szEl.value = s.size; panel.querySelector('#rd-dp-size-val').textContent = s.size; }
-  if (lhEl) { lhEl.value = s.lh;   panel.querySelector('#rd-dp-lh-val').textContent   = (s.lh / 100).toFixed(2); }
-}
-function readerToggleDisplayPanel() {
-  const panel = document.getElementById('rd-display-panel');
-  const back  = document.getElementById('rd-display-back');
-  if (!panel) return;
-  const open = panel.classList.toggle('show');
-  if (back) back.classList.toggle('show', open);
-  if (open) readerInitDisplay();
-}
-function readerCloseDisplayPanel() {
-  document.getElementById('rd-display-panel')?.classList.remove('show');
-  document.getElementById('rd-display-back')?.classList.remove('show');
-}
-function rdSetFont(name, el) {
-  const s = readerLoadDisplay(); s.font = name; readerSaveDisplay(s); readerApplyDisplay(s);
-  el.closest('.rd-dp-row').querySelectorAll('.rd-dp-font').forEach(b => b.classList.remove('rd-dp-active'));
-  el.classList.add('rd-dp-active');
-}
-function rdSetSize(input) {
-  const s = readerLoadDisplay(); s.size = Number(input.value); readerSaveDisplay(s); readerApplyDisplay(s);
-  document.getElementById('rd-dp-size-val').textContent = s.size;
-}
-function rdSetLH(input) {
-  const s = readerLoadDisplay(); s.lh = Number(input.value); readerSaveDisplay(s); readerApplyDisplay(s);
-  document.getElementById('rd-dp-lh-val').textContent = (s.lh / 100).toFixed(2);
-}
-function rdSetTheme(theme, el) {
-  const s = readerLoadDisplay(); s.theme = theme; readerSaveDisplay(s); readerApplyDisplay(s);
-  el.closest('.rd-dp-row').querySelectorAll('.rd-dp-theme').forEach(b => b.classList.remove('rd-dp-active'));
-  el.classList.add('rd-dp-active');
-}
+const readerDisplay = createReaderDisplay({ key: READER_DISPLAY_KEY });
 
+function readerLoadDisplay() { return readerDisplay.load(); }
+function readerSaveDisplay(settings) { return readerDisplay.save(settings); }
+function readerApplyDisplay(settings) { return readerDisplay.apply(settings); }
+function readerInitDisplay() { return readerDisplay.init(); }
+function readerToggleDisplayPanel() { return readerDisplay.togglePanel(); }
+function readerCloseDisplayPanel() { return readerDisplay.closePanel(); }
+function rdSetFont(name, element) { return readerDisplay.setFont(name, element); }
+function rdSetSize(input) { return readerDisplay.setSize(input); }
+function rdSetLH(input) { return readerDisplay.setLineHeight(input); }
+function rdSetTheme(theme, element) { return readerDisplay.setTheme(theme, element); }
 
-function readerZhPinyinMode() {
-  try { return localStorage.getItem(READER_ZH_PINYIN_MODE_KEY) || 'unknown'; } catch { return 'unknown'; }
-}
-function readerZhPinyinModeLabel(mode = readerZhPinyinMode()) {
-  return mode === 'off' ? '拼×' : mode === 'learning' ? '拼*' : '拼';
-}
-function readerZhPinyinModeTitle(mode = readerZhPinyinMode()) {
-  return mode === 'off'
-    ? 'Пиньинь выключен'
-    : mode === 'learning'
-      ? 'Пиньинь только для слов в изучении/проблемных'
-      : 'Пиньинь для всех не изученных китайских слов, где он есть';
-}
-function readerUpdatePinyinButton(lang = readerCurrentLang()) {
-  const btn = document.getElementById('reader-pinyin-btn');
-  if (!btn) return;
-  const isZh = readerCanonicalLang(lang) === 'zh';
-  btn.style.display = isZh ? 'flex' : 'none';
-  const mode = readerZhPinyinMode();
-  btn.textContent = readerZhPinyinModeLabel(mode);
-  btn.title = readerZhPinyinModeTitle(mode);
-  btn.setAttribute('aria-label', readerZhPinyinModeTitle(mode));
-  btn.classList.toggle('on', isZh && mode !== 'off');
-}
-function readerCycleZhPinyinMode() {
-  const cur = readerZhPinyinMode();
-  const next = cur === 'unknown' ? 'learning' : cur === 'learning' ? 'off' : 'unknown';
-  try { localStorage.setItem(READER_ZH_PINYIN_MODE_KEY, next); } catch {}
-  readerUpdatePinyinButton(readerCurrentLang());
-  renderReaderChapter();
-  showToast(next === 'off' ? '拼 Пиньинь выключен' : next === 'learning' ? '拼 Пиньинь только для слов в работе' : '拼 Пиньинь для всех новых слов');
-}
+const readerPinyinControls = createReaderPinyinControls({
+  storageKey: READER_ZH_PINYIN_MODE_KEY,
+  getCurrentLang: readerCurrentLang,
+  canonicalLang: readerCanonicalLang,
+  rerender: renderReaderChapter,
+  toast: showToast,
+});
+
+function readerZhPinyinMode() { return readerPinyinControls.mode(); }
+function readerZhPinyinModeLabel(mode = readerZhPinyinMode()) { return readerPinyinControls.label(mode); }
+function readerZhPinyinModeTitle(mode = readerZhPinyinMode()) { return readerPinyinControls.title(mode); }
+function readerUpdatePinyinButton(lang = readerCurrentLang()) { return readerPinyinControls.update(lang); }
+function readerCycleZhPinyinMode() { return readerPinyinControls.cycle(); }
 
 let readerCloudLoadedOnce = false;
 let readerCloudSaveTimer = null;
@@ -1615,17 +1528,9 @@ function readerScheduleChineseSegmentation(text) {
 }
 
 
-function loadReaderWordState() {
-  if (readerWordStateCache) return readerWordStateCache;
-  try {
-    readerWordStateCache = JSON.parse(localStorage.getItem(readerWordStateStorageKey()) || '{}') || {};
-  } catch { readerWordStateCache = {}; }
-  return readerWordStateCache;
-}
+function loadReaderWordState() { return readerWordState.load(); }
 
-function saveReaderWordState() {
-  try { localStorage.setItem(readerWordStateStorageKey(), JSON.stringify(loadReaderWordState())); } catch(e) { console.warn('[reader word state] save failed', e); }
-}
+function saveReaderWordState() { return readerWordState.save(); }
 
 const READER_WORD_COLOR_CLASSES = ['rw-new','rw-seen','rw-faded','rw-saved','rw-known','rw-looked','rw-learning','rw-familiar','rw-problem','rw-sel'];
 let readerVisibleParagraphObserver = null;
@@ -1706,10 +1611,7 @@ function readerBindVisibleParagraphTracking(scroller = null) {
   items.forEach(el => readerVisibleParagraphObserver.observe(el));
 }
 
-function readerWordStateKey(word, lang = null) {
-  const l = readerCanonicalLang(lang || readerCurrentLang());
-  return `${l}:${normalizeImportKey(readerNormalizeWord(word, l))}`;
-}
+function readerWordStateKey(word, lang = null) { return readerWordState.key(word, lang); }
 
 function readerIsCommonWord(word, lang = null) {
   const l = readerCanonicalLang(lang || readerCurrentLang());
@@ -1719,128 +1621,21 @@ function readerIsCommonWord(word, lang = null) {
   return w.length <= 1 || READER_COMMON_WORDS.has(w) || READER_COMMON_WORDS.has(w.replace(/^l'/,''));
 }
 
-function readerGetWordState(word, lang = null) {
-  const l = readerCanonicalLang(lang || readerCurrentLang());
-  const key = readerWordStateKey(word, l);
-  const store = loadReaderWordState();
-  if (!store[key]) store[key] = { word: readerNormalizeWord(word, l), lang: l, seen: 0, clicked: 0, saved: false, known: false, status: 'new', places: {}, updatedAt: new Date().toISOString() };
-  return store[key];
-}
+function readerGetWordState(word, lang = null) { return readerWordState.get(word, lang); }
 
-function readerTouchWordState(word, lang = null) {
-  const st = readerGetWordState(word, lang);
-  st.updatedAt = new Date().toISOString();
-  return st;
-}
+function readerTouchWordState(word, lang = null) { return readerWordState.touch(word, lang); }
 
-function readerTrackParagraphWords(book, ch, paragraphIndex, paragraphText) {
-  if (!book || !ch) return false;
-  const lang = readerBookLang(book);
-  const bookId = book.id || 'book';
-  const chapterId = ch.id || String(book.currentChapter || 0);
-  const placeKey = `${bookId}:${chapterId}:${paragraphIndex}`;
-  let changed = false;
-  const unique = new Set(readerTokenizeParagraph(paragraphText, lang)
-    .map(tok => readerNormalizeWord(tok, lang))
-    .filter(Boolean));
-  unique.forEach(word => {
-    const st = readerGetWordState(word, lang);
-    st.places = st.places || {};
-    const beforeSeen = st.seen || 0;
-    if (!st.places[placeKey]) {
-      st.places[placeKey] = true;
-      changed = true;
-    }
-    // v68.22: count real distinct paragraphs seen, including paragraphs reached by normal scroll.
-    // v68.21 counted only the active paragraph, so manual scrolling did not make words yellow.
-    const nextSeen = Object.keys(st.places).length;
-    if (st.seen !== nextSeen) {
-      st.seen = nextSeen;
-      changed = true;
-    }
-    if (changed || beforeSeen !== nextSeen) st.updatedAt = new Date().toISOString();
-    if (readerIsCommonWord(word, lang)) {
-      if (!st.known || st.status !== 'known') changed = true;
-      st.known = true;
-      st.status = 'known';
-    }
-  });
-  if (changed) saveReaderWordState();
-  return changed;
-}
+function readerTrackParagraphWords(book, ch, paragraphIndex, paragraphText) { return readerWordState.trackParagraph(book, ch, paragraphIndex, paragraphText); }
 
-function readerMarkWordClicked(word, lang = null) {
-  if (!word || readerIsCommonWord(word, lang)) return;
-  const st = readerTouchWordState(word, lang);
-  st.clicked = (st.clicked || 0) + 1;
-  if (!st.saved && !st.known) st.status = 'looked';
-  saveReaderWordState();
-}
+function readerMarkWordClicked(word, lang = null) { return readerWordState.markClicked(word, lang); }
 
-function readerMarkWordSaved(word, lemma = null, lang = null, ru = '') {
-  const st = readerTouchWordState(lemma || word, lang);
-  st.saved = true;
-  st.known = false;
-  st.status = st.seen >= READER_FAMILIAR_AFTER ? 'familiar' : 'learning';
-  st.updatedAt = new Date().toISOString();
-  if (ru) st.ru = ru;
-  if (word && lemma && readerWordStateKey(word, lang) !== readerWordStateKey(lemma, lang)) {
-    const form = readerTouchWordState(word, lang);
-    form.saved = true;
-    form.linkedLemma = readerNormalizeWord(lemma, lang);
-    form.status = 'learning';
-    if (ru) form.ru = ru;
-  }
-  saveReaderWordState();
-}
+function readerMarkWordSaved(word, lemma = null, lang = null, ru = '') { return readerWordState.markSaved(word, lemma, lang, ru); }
 
-function readerMarkWordKnown(word, lang = null) {
-  const st = readerTouchWordState(word, lang);
-  st.known = true; st.status = 'known'; st.autoKnown = false;
-  saveReaderWordState();
-}
+function readerMarkWordKnown(word, lang = null) { return readerWordState.markKnown(word, lang); }
 
-function readerWordVisual(word, lang = null) {
-  const l = readerCanonicalLang(lang || readerCurrentLang());
-  const w = readerNormalizeWord(word, l);
-  if (!w) return { cls: 'rw-known', title: 'служебное/частое слово' };
+function readerWordVisual(word, lang = null) { return readerWordState.visual(word, lang); }
 
-  const st = loadReaderWordState()[readerWordStateKey(w, l)];
-  const seen = Number(st?.seen || 0);
-
-  // Manual status always wins. These are the only strong reading colours: a word you
-  // deliberately opened, are learning, find difficult, or are consolidating.
-  if (st?.known || st?.status === 'known') return { cls: 'rw-known', title: 'изучено' };
-  if (st?.status === 'problem' || st?.status === 'hard') return { cls: 'rw-problem', title: 'проблемное слово' };
-  if (st?.status === 'familiar') return { cls: 'rw-familiar', title: 'закрепляется' };
-  if (st?.status === 'learning' || st?.saved) return { cls: 'rw-learning', title: 'изучаю' };
-  if (st?.status === 'looked' || (st?.clicked || 0) > 0) return { cls: 'rw-looked', title: `просмотрено ${st?.clicked || 1} раз` };
-
-  // Automatic background logic is intentionally quiet. A word existing in the French
-  // noun table is NOT automatically blue: dictionary membership is storage, not a
-  // learning decision. Known/common forms stay neutral; untouched words first appear,
-  // then become yellow, then fade without being falsely marked as "known".
-  if (readerIsCommonWord(w, l)) return { cls: 'rw-known', title: 'служебное/частое слово' };
-  if (l === 'fr' && readerFindVerbByForm(w)) return { cls: 'rw-known', title: 'форма известного глагола' };
-  if (seen >= READER_AUTO_FADE_AFTER) return { cls: 'rw-faded', title: `встречалось ${seen} раз — подсветка скрыта` };
-  if (seen >= READER_SEEN_AFTER) return { cls: 'rw-seen', title: `часто встречалось: ${seen} абз.` };
-  return { cls: 'rw-new', title: l === 'zh' ? 'новый китайский сегмент' : 'новое слово' };
-}
-
-function readerWordStatusRu(st) {
-  if (!st) return 'новое';
-  const seen = Number(st.seen || 0);
-  if (st.known || st.status === 'known') return 'изучено';
-  if (st.status === 'problem' || st.status === 'hard') return 'проблемное';
-  if (st.status === 'learning') return 'изучаю';
-  if (st.status === 'familiar') return 'закрепляется';
-  if (st.saved) return 'в словаре';
-  if ((st.clicked || 0) > 0 || st.status === 'looked') return 'просмотрено';
-  if (seen >= READER_AUTO_FADE_AFTER) return `видел ${seen} — подсветка скрыта`;
-  if (seen >= READER_SEEN_AFTER) return `часто встречалось: ${seen}`;
-  if (seen > 0) return `видел ${seen}`;
-  return 'новое';
-}
+function readerWordStatusRu(st) { return readerWordState.statusRu(st); }
 
 function readerExtractPinyin(data = {}) {
   return String(data.pinyin || data.py || data.pinyin_marked || data.pinyinTone || '').trim();
@@ -2127,95 +1922,19 @@ function readerFindKnownNoun(word) {
   ) || null;
 }
 
-function loadReaderBooks() {
-  try {
-    const raw = localStorage.getItem(readerBooksStorageKey());
-    readerBooks = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(readerBooks)) readerBooks = [];
-    const deduped = readerDedupeBooks(readerBooks);
-    if (deduped.length !== readerBooks.length) localStorage.setItem(readerBooksStorageKey(), JSON.stringify(deduped));
-    readerBooks = deduped;
-  } catch { readerBooks = []; }
-  return readerBooks;
-}
+function loadReaderBooks() { return readerLibrary.load(); }
 
-function saveReaderBooks() {
-  try {
-    readerBooks = readerDedupeBooks(readerBooks);
-    localStorage.setItem(readerBooksStorageKey(), JSON.stringify(readerBooks));
-  }
-  catch(e) { console.warn('[reader] save failed', e); }
-  scheduleReaderCloudSave();
-}
+function saveReaderBooks() { return readerLibrary.save(); }
 
 function readerCloudUserId() {
   return sbUser?.id || null;
 }
 
-async function loadReaderBooksFromCloud(force = false) {
-  if (readerCloudLoadedOnce && !force) return false;
-  const userId = readerCloudUserId();
-  if (!userId || !isSupabaseReady?.()) { readerCloudLoadedOnce = true; return false; }
-  try {
-    const { data, error } = await sb.from('reader_books')
-      .select('id,title,updated_at,data')
-      .eq('user_id', userId)
-      .order('updated_at', { ascending: false });
-    if (error) throw error;
-    const remoteBooks = (data || []).map(row => row.data || {}).filter(b => b.id);
-    const byId = new Map((readerBooks || []).map(b => [b.id, b]));
-    for (const rb of remoteBooks) {
-      const local = byId.get(rb.id);
-      if (!local || new Date(rb.updatedAt || rb.updated_at || 0) > new Date(local.updatedAt || 0)) byId.set(rb.id, rb);
-    }
-    readerBooks = readerDedupeBooks([...byId.values()]);
-    localStorage.setItem(readerBooksStorageKey(), JSON.stringify(readerBooks));
-    readerCloudLoadedOnce = true;
-    if (readerBooks.length !== byId.size) setTimeout(() => saveReaderBooksToCloud({ replaceAll: true }).catch(e => console.warn('[reader cloud] duplicate cleanup skipped:', e?.message || e)), 0);
-    return true;
-  } catch(e) {
-    readerCloudLoadedOnce = true;
-    console.warn('[reader cloud] load skipped:', e?.message || e);
-    return false;
-  }
-}
+async function loadReaderBooksFromCloud(force = false) { return readerLibrary.loadFromCloud(force); }
 
-function scheduleReaderCloudSave() {
-  if (readerCloudSaveTimer) clearTimeout(readerCloudSaveTimer);
-  readerCloudSaveTimer = setTimeout(() => saveReaderBooksToCloud().catch(e => console.warn('[reader cloud] save skipped:', e?.message || e)), 1200);
-}
+function scheduleReaderCloudSave() { return readerLibrary.scheduleCloudSave(); }
 
-async function saveReaderBooksToCloud(options = {}) {
-  const userId = readerCloudUserId();
-  if (!userId || !isSupabaseReady?.() || readerCloudSaving) return false;
-  readerBooks = readerDedupeBooks(readerBooks);
-  if (!Array.isArray(readerBooks) || !readerBooks.length) {
-    if (options.replaceAll) await sb.from('reader_books').delete().eq('user_id', userId);
-    return false;
-  }
-  readerCloudSaving = true;
-  try {
-    if (options.replaceAll) {
-      try { await sb.from('reader_books').delete().eq('user_id', userId); }
-      catch(e) { console.warn('[reader cloud] replaceAll delete skipped:', e?.message || e); }
-    }
-    const rows = readerBooks.map(b => {
-      const book = { ...b, importKey: readerBookImportKey(b), updatedAt: b.updatedAt || new Date().toISOString() };
-      return {
-        id: book.id,
-        user_id: userId,
-        title: book.title || 'Без названия',
-        updated_at: book.updatedAt,
-        data: book
-      };
-    });
-    const { error } = await sb.from('reader_books').upsert(rows, { onConflict: 'id' });
-    if (error) throw error;
-    return true;
-  } finally {
-    readerCloudSaving = false;
-  }
-}
+async function saveReaderBooksToCloud(options = {}) { return readerLibrary.saveToCloud(options); }
 
 async function syncReaderCloudNow() {
   showToast('☁️ Синхронизирую библиотеку...');
@@ -2225,103 +1944,19 @@ async function syncReaderCloudNow() {
   showToast(changed ? '☁️ Библиотека синхронизирована' : '☁️ Синхронизация завершена');
 }
 
-function readerCurrentBook() {
-  if (!readerBooks.length) loadReaderBooks();
-  return readerBooks.find(b => b.id === readerCurrentBookId) || null;
-}
+function readerCurrentBook() { return readerLibrary.currentBook(); }
 
 function readerSplitTextToChapters(rawText, fallbackTitle = 'Текст') {
-  const clean = String(rawText || '')
-    .replace(/\r/g, '')
-    .replace(/\u00a0/g, ' ')
-    .replace(/[ \t]+\n/g, '\n')
-    .trim();
-  if (!clean) return [];
-
-  const lines = clean.split('\n');
-  const headingRe = /^\s*((chapitre|chapter|глава)\s+[\wivxlcdm\d-]+|[ivxlcdm]{1,8}\.|[0-9]{1,3}\.)\s*[:.\-—]?\s*(.*)$/i;
-  const chunks = [];
-  let current = { title: fallbackTitle, lines: [] };
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const isHeading = headingRe.test(trimmed) && current.lines.join('\n').trim().length > 500;
-    if (isHeading) { chunks.push(current); current = { title: trimmed, lines: [] }; }
-    else current.lines.push(line);
-  }
-  chunks.push(current);
-
-  return chunks.map((ch, idx) => {
-    let paragraphs = ch.lines.join('\n')
-      .split(/\n\s*\n+/)
-      .map(p => p.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim())
-      .filter(Boolean)
-      .flatMap(p => readerChunkLongParagraph(p, 380));
-    if (paragraphs.length <= 1 && ch.lines.join('\n').length > 1200) {
-      paragraphs = readerChunkLongParagraph(ch.lines.join(' ').replace(/\s+/g, ' '), 380);
-    }
-    return { id: 'ch_' + idx, title: ch.title || `Глава ${idx + 1}`, paragraphs };
-  }).filter(ch => ch.paragraphs.length);
+  return readerImportSplitTextToChapters(rawText, fallbackTitle, readerChunkLongParagraph);
 }
 
 function readerSplitSongToChapters(rawText, fallbackTitle = 'Песня') {
-  const clean = String(rawText || '').replace(/\r/g, '').trim();
-  if (!clean) return [];
-
-  // Section tag regex: [Куплет 1], [Припев], [Bridge], [Outro], [Intro], [Verse 1], [Chorus] etc.
-  const sectionRe = /^\[(.+?)\]\s*$/;
-  const lines = clean.split('\n');
-
-  const sections = [];
-  let current = { label: fallbackTitle, type: 'verse', lines: [] };
-
-  for (const line of lines) {
-    const m = line.trim().match(sectionRe);
-    if (m) {
-      if (current.lines.some(l => l.trim())) sections.push(current);
-      const label = m[1].trim();
-      const lower = label.toLowerCase();
-      let type = 'verse';
-      if (/припев|chorus|ref|refrain/.test(lower)) type = 'chorus';
-      else if (/bridge|бридж/.test(lower)) type = 'bridge';
-      else if (/outro|аутро/.test(lower)) type = 'outro';
-      else if (/intro|интро/.test(lower)) type = 'intro';
-      current = { label, type, lines: [] };
-    } else {
-      current.lines.push(line);
-    }
-  }
-  if (current.lines.some(l => l.trim())) sections.push(current);
-
-  // Each section becomes one "chapter", each non-empty line becomes one "paragraph"
-  // We store section metadata in chapter so renderer can use it
-  return sections.map((sec, idx) => {
-    const paragraphs = sec.lines
-      .map(l => l.trim())
-      .filter(Boolean);
-    return {
-      id: 'sec_' + idx,
-      title: sec.label,
-      songSection: true,
-      sectionType: sec.type,   // 'verse' | 'chorus' | 'bridge' | 'outro' | 'intro'
-      paragraphs,
-    };
-  }).filter(ch => ch.paragraphs.length);
+  return readerImportSplitSongToChapters(rawText, fallbackTitle);
 }
 
-function readerBookProgress(book) {
-  const chapters = book?.chapters || [];
-  const totalParagraphs = chapters.reduce((n, ch) => n + (ch.paragraphs?.length || 0), 0) || 1;
-  let done = 0;
-  const ci = book.currentChapter || 0;
-  for (let i = 0; i < Math.min(ci, chapters.length); i++) done += chapters[i].paragraphs?.length || 0;
-  done += Math.min(book.currentParagraph || 0, chapters[ci]?.paragraphs?.length || 0);
-  return Math.max(0, Math.min(100, Math.round(done / totalParagraphs * 100)));
-}
+function readerBookProgress(book) { return readerLibrary.progress(book); }
 
-function readerContinueBook() {
-  if (!readerBooks.length) return null;
-  return [...readerBooks].sort((a,b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))[0];
-}
+function readerContinueBook() { return readerLibrary.continueBook(); }
 
 async function renderReaderScreen() {
   loadReaderBooks();
@@ -2559,174 +2194,30 @@ async function readerFetchFromUrl() {
 window.readerFetchFromUrl = readerFetchFromUrl;
 
 
-function readerReadFileAsArrayBuffer(file) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(r.result);
-    r.onerror = () => reject(r.error || new Error('Не удалось прочитать файл'));
-    r.readAsArrayBuffer(file);
-  });
-}
+function readerReadFileAsArrayBuffer(file) { return epubReadFileAsArrayBuffer(file); }
 
-function readerZipU16(view, off) { return view.getUint16(off, true); }
-function readerZipU32(view, off) { return view.getUint32(off, true); }
+function readerZipU16(view, offset) { return epubZipU16(view, offset); }
+function readerZipU32(view, offset) { return epubZipU32(view, offset); }
 
-async function readerInflateZipData(bytes) {
-  if (typeof DecompressionStream === 'undefined') {
-    throw new Error('Браузер не поддерживает распаковку EPUB. На Android/Chrome и Edge обычно работает; иначе экспортируй текст в TXT.');
-  }
-  for (const fmt of ['deflate-raw', 'deflate']) {
-    try {
-      const ds = new DecompressionStream(fmt);
-      const stream = new Blob([bytes]).stream().pipeThrough(ds);
-      return new Uint8Array(await new Response(stream).arrayBuffer());
-    } catch(e) {}
-  }
-  throw new Error('Не удалось распаковать EPUB: deflate не поддержан браузером.');
-}
+async function readerInflateZipData(bytes) { return epubInflateZipData(bytes); }
 
-async function readerReadZipEntries(arrayBuffer) {
-  const view = new DataView(arrayBuffer);
-  const bytes = new Uint8Array(arrayBuffer);
-  let eocd = -1;
-  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 66000); i--) {
-    if (readerZipU32(view, i) === 0x06054b50) { eocd = i; break; }
-  }
-  if (eocd < 0) throw new Error('Это не похоже на EPUB/ZIP.');
-  const count = readerZipU16(view, eocd + 10);
-  let off = readerZipU32(view, eocd + 16);
-  const decoder = new TextDecoder('utf-8');
-  const entries = new Map();
+async function readerReadZipEntries(arrayBuffer) { return epubReadZipEntries(arrayBuffer); }
 
-  for (let n = 0; n < count; n++) {
-    if (readerZipU32(view, off) !== 0x02014b50) break;
-    const method = readerZipU16(view, off + 10);
-    const compSize = readerZipU32(view, off + 20);
-    const nameLen = readerZipU16(view, off + 28);
-    const extraLen = readerZipU16(view, off + 30);
-    const commentLen = readerZipU16(view, off + 32);
-    const localOff = readerZipU32(view, off + 42);
-    const name = decoder.decode(bytes.slice(off + 46, off + 46 + nameLen)).replace(/^\/+/, '');
+function readerResolveEpubPath(base, href) { return epubResolvePath(base, href); }
 
-    if (readerZipU32(view, localOff) === 0x04034b50 && !name.endsWith('/')) {
-      const localNameLen = readerZipU16(view, localOff + 26);
-      const localExtraLen = readerZipU16(view, localOff + 28);
-      const dataStart = localOff + 30 + localNameLen + localExtraLen;
-      const comp = bytes.slice(dataStart, dataStart + compSize);
-      entries.set(name, {
-        name,
-        method,
-        async bytes() {
-          if (method === 0) return comp;
-          if (method === 8) return await readerInflateZipData(comp);
-          throw new Error('EPUB содержит неподдерживаемый ZIP-метод: ' + method);
-        },
-        async text() {
-          return decoder.decode(await this.bytes());
-        }
-      });
-    }
-    off += 46 + nameLen + extraLen + commentLen;
-  }
-  return entries;
-}
+function readerEpubCleanText(text) { return epubCleanText(text); }
 
-function readerResolveEpubPath(base, href) {
-  if (!href) return '';
-  if (/^[a-z]+:/i.test(href)) return href;
-  const parts = (base ? base.split('/') : []).concat(String(href).split('/'));
-  const out = [];
-  for (const p of parts) {
-    if (!p || p === '.') continue;
-    if (p === '..') out.pop();
-    else out.push(p);
-  }
-  return out.join('/');
-}
+function readerLooksLikeBoilerplate(text) { return epubLooksLikeBoilerplate(text); }
 
-function readerEpubCleanText(text) {
-  return String(text || '')
-    .replace(/\u00a0/g, ' ')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-function readerLooksLikeBoilerplate(text) {
-  const t = String(text || '').trim().toLowerCase();
-  if (!t) return true;
-  if (t.length <= 2) return true;
-  if (/^(contents?|table of contents|目录|目錄|版权|版權|封面|cover|nav|toc)$/i.test(t)) return true;
-  return false;
-}
-
-function readerHtmlToPlainTextFallback(html = '') {
-  return readerEpubCleanText(String(html || '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<nav[\s\S]*?<\/nav>/gi, '')
-    .replace(/<br\s*\/?\s*>/gi, '\n')
-    .replace(/<\/(p|div|section|article|li|h[1-6]|blockquote|pre|tr|td|th)>/gi, '\n\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&amp;/gi, '&')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'"));
-}
+function readerHtmlToPlainTextFallback(html = '') { return epubHtmlToPlainText(html); }
 
 
 function readerHtmlToParagraphs(html, lang = null) {
-  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
-  doc.querySelectorAll('script,style,nav,header,footer,svg,iframe,object,form,noscript').forEach(x => x.remove());
-  doc.querySelectorAll('br').forEach(br => br.replaceWith(doc.createTextNode('\n')));
-
-  const blockSelector = 'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,div,section,article,main,td,th,dd,dt';
-  const hardTags = new Set('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre'.split(','));
-  const nodes = [...doc.body?.querySelectorAll(blockSelector) || []];
-  const paragraphs = [];
-  const seen = new Set();
-
-  const pushParagraph = (raw) => {
-    const clean = readerEpubCleanText(raw);
-    if (!clean || readerLooksLikeBoilerplate(clean)) return;
-    const key = clean.slice(0, 180);
-    if (seen.has(key)) return;
-    seen.add(key);
-    const parts = clean.split(/\n\s*\n+/).map(x => readerEpubCleanText(x)).filter(Boolean);
-    for (const part of (parts.length ? parts : [clean])) {
-      readerChunkLongParagraph(part.replace(/\n+/g, ' '), readerCanonicalLang(lang) === 'zh' ? 150 : 420).forEach(p => {
-        if (p && !readerLooksLikeBoilerplate(p)) paragraphs.push(p);
-      });
-    }
-  };
-
-  nodes.forEach(node => {
-    const tag = node.tagName?.toLowerCase() || '';
-    const text = node.textContent || '';
-    if (!text.trim()) return;
-    const childBlocks = [...node.querySelectorAll(blockSelector)].filter(ch => ch !== node && (ch.textContent || '').trim().length > 12);
-    const isHard = hardTags.has(tag);
-    // Chinese EPUBs often store chapter text in leaf divs instead of <p>.
-    // Use leaf-like div/section/article only to avoid duplicating whole parent chapters.
-    if (!isHard && childBlocks.length) return;
-    pushParagraph(text);
+  return epubHtmlToParagraphs(html, {
+    lang,
+    canonicalLang: readerCanonicalLang,
+    chunkLongParagraph: readerChunkLongParagraph,
   });
-
-  const bodyText = readerEpubCleanText(doc.body?.textContent || '').replace(/\n+/g, '\n');
-  const plainText = readerHtmlToPlainTextFallback(html).replace(/\n{3,}/g, '\n\n');
-  const bestText = plainText.replace(/\s+/g, '').length > bodyText.replace(/\s+/g, '').length ? plainText : bodyText;
-  const bodyChars = bestText.replace(/\s+/g, '').length;
-  const paraChars = paragraphs.join('').replace(/\s+/g, '').length;
-  if (bodyChars > 0 && (paragraphs.length === 0 || paraChars < bodyChars * 0.82)) {
-    const fallback = [];
-    bestText.split(/\n\s*\n+|\n+/).map(x => readerEpubCleanText(x)).filter(x => x && !readerLooksLikeBoilerplate(x)).forEach(part => {
-      readerChunkLongParagraph(part, readerCanonicalLang(lang) === 'zh' ? 150 : 420).forEach(p => fallback.push(p));
-    });
-    if (fallback.join('').replace(/\s+/g, '').length > paraChars) return fallback.filter(p => p.length > 1);
-  }
-  return paragraphs.filter(p => p.length > 1);
 }
 
 function readerParseAttrs(tag = '') {
@@ -2928,78 +2419,32 @@ function readerBackToLibrary() {
   renderReaderScreen();
 }
 
+const readerChapterRenderer = createReaderChapterRenderer({
+  getCurrentBook: readerCurrentBook,
+  getBookLang: readerBookLang,
+  canonicalLang: readerCanonicalLang,
+  ensureZhCoreLoaded: readerEnsureZhCoreJsonLoaded,
+  needsZhCoreLoad: () => !readerZhCoreJson && !readerZhCoreJsonPromise,
+  trackParagraphSeen: readerTrackParagraphIndexSeen,
+  getBookProgress: readerBookProgress,
+  langBadge: readerLangBadge,
+  getTranslationsHidden: () => readerTranslationsHidden,
+  updatePinyinButton: readerUpdatePinyinButton,
+  renderSongSection,
+  bindParagraphEvents: bindReaderParagraphEvents,
+  bindSongStropheEvents,
+  renderParagraphText: readerRenderParagraphText,
+  renderTranslationBlock: renderReaderTranslationBlock,
+  renderAnalysisBlock: renderReaderAnalysisBlock,
+  bindVisibleParagraphTracking: readerBindVisibleParagraphTracking,
+  saveBooks: saveReaderBooks,
+  schedulePrefetch: readerSchedulePrefetch,
+  openParagraphTimer: readerTimeParagraphOpen,
+});
+
 function renderReaderChapter() {
-  const book = readerCurrentBook(); if (!book) return;
-  const activeReaderLang = readerBookLang(book);
-  if (readerCanonicalLang(activeReaderLang) === 'zh' && !readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: true });
-  const readingView = document.getElementById('reader-reading-view');
-  if (readingView) readingView.dataset.readerLang = activeReaderLang;
-  const ci = Math.max(0, Math.min(book.currentChapter || 0, (book.chapters || []).length - 1));
-  book.currentChapter = ci;
-  const ch = book.chapters[ci];
-  const paragraphs = ch?.paragraphs || [];
-  const pi = Math.max(0, Math.min(book.currentParagraph || 0, Math.max(0, paragraphs.length - 1)));
-  book.currentParagraph = pi;
-  readerTrackParagraphIndexSeen(pi, { refresh: false });
-  const pct = readerBookProgress(book);
-  const titleEl = document.getElementById('reader-book-title');
-  const chTitleEl = document.getElementById('reader-chapter-title');
-  const bar = document.getElementById('reader-progress-bar');
-  const pt = document.getElementById('reader-progress-text');
-  const text = document.getElementById('reader-chapter-text');
-  if (titleEl) titleEl.textContent = book.title || 'Текст';
-  if (chTitleEl) {
-    if (book.format === 'news') {
-      const src = book.newsSource || '';
-      const dateStr = book.newsDate
-        ? new Date(book.newsDate).toLocaleDateString('ru-RU', {day:'numeric', month:'long'})
-        : '';
-      chTitleEl.textContent = (src ? '📰 ' + src : '📰') + (dateStr ? ' · ' + dateStr : '') + ` · абзац ${pi + 1}/${Math.max(1, paragraphs.length)}`;
-    } else {
-      chTitleEl.textContent = `${readerLangBadge(activeReaderLang)} · ${ch?.title || 'Глава'} · гл. ${ci + 1}/${(book.chapters || []).length} · абзац ${pi + 1}/${Math.max(1, paragraphs.length)}`;
-    }
-  }
-  if (bar) bar.style.width = pct + '%';
-  if (pt) pt.textContent = `${pct}% · абзац ${pi + 1} / ${Math.max(1, paragraphs.length)}`;
-  const comp = book.comprehension?.[ch.id];
-  const note = document.getElementById('reader-comprehension-note');
-  if (note) note.textContent = comp ? `Оценка понятности: ${comp}/5` : 'Оцени после чтения: это поможет выбирать уровень дальше.';
-  const helpBtn = document.getElementById('reader-help-btn');
-  if (helpBtn) helpBtn.classList.toggle('on', !readerTranslationsHidden);
-  readerUpdatePinyinButton(activeReaderLang);
-  if (text) {
-    text.dataset.lang = activeReaderLang;
-    const __sc = document.querySelector('#reader-reading-view .rd-scroll');
-    const __top = __sc ? __sc.scrollTop : 0;
-    const translations = book.readerTranslations || {};
-    if (book.format === 'song' && ch.songSection) {
-      // ── SONG RENDER ──
-      text.innerHTML = renderSongSection(book, ch, paragraphs, pi);
-      bindReaderParagraphEvents();
-      bindSongStropheEvents(book, ch);
-    } else {
-      // ── NORMAL RENDER ──
-      text.innerHTML = paragraphs.map((p, i) => {
-        const trKey = `${ch.id}:${i}`;
-        const tr = translations[trKey];
-        return `
-      <div class="reader-paragraph ${i===pi?'active':''}" data-p="${i}">
-        <div class="reader-paragraph-text">${readerRenderParagraphText(p, i)}</div>
-        ${i===pi && tr && !readerTranslationsHidden ? renderReaderTranslationBlock(tr) : ''}
-        ${i===pi && book.readerAnalyses?.[trKey] && !readerTranslationsHidden ? renderReaderAnalysisBlock(book.readerAnalyses[trKey]) : ''}
-
-      </div>`;
-      }).join('');
-      bindReaderParagraphEvents();
-      if (__sc) __sc.scrollTop = __top;
-      readerBindVisibleParagraphTracking(__sc);
-    }
-  }
-  saveReaderBooks();
-  readerSchedulePrefetch();
-  readerTimeParagraphOpen();
+  return readerChapterRenderer.render();
 }
-
 
 
 function bindReaderSwipe() {
@@ -3134,9 +2579,8 @@ function installReaderActionDelegation() {
 }
 installReaderActionDelegation();
 
-function readerSelectParagraph(i) {
-  const book = readerCurrentBook(); if (!book) return;
-  book.currentParagraph = i; book.updatedAt = new Date().toISOString(); renderReaderChapter();
+function readerSelectParagraph(index) {
+  return readerNavigation.selectParagraph(index);
 }
 
 function readerScrollActiveParagraph() {
@@ -3147,43 +2591,15 @@ function readerScrollActiveParagraph() {
 }
 
 function readerNextParagraph() {
-  const book = readerCurrentBook(); if (!book) return;
-  readerTimeParagraphClose();
-  const ch = book.chapters?.[book.currentChapter || 0];
-  const max = (ch?.paragraphs?.length || 1) - 1;
-  if ((book.currentParagraph || 0) < max) {
-    book.currentParagraph = (book.currentParagraph || 0) + 1;
-    book.updatedAt = new Date().toISOString();
-    renderReaderChapter();
-    readerScrollActiveParagraph();
-  } else if ((book.currentChapter || 0) < (book.chapters?.length || 1) - 1) {
-    readerNextChapter();
-    readerScrollActiveParagraph();
-  } else showToast('Это конец текста');
+  return readerNavigation.nextParagraph();
 }
 
 function readerPrevParagraph() {
-  const book = readerCurrentBook(); if (!book) return;
-  readerTimeParagraphClose();
-  if ((book.currentParagraph || 0) > 0) {
-    book.currentParagraph = (book.currentParagraph || 0) - 1;
-    book.updatedAt = new Date().toISOString();
-    renderReaderChapter();
-    readerScrollActiveParagraph();
-  } else if ((book.currentChapter || 0) > 0) {
-    readerPrevChapter();
-    const ch = book.chapters?.[book.currentChapter || 0];
-    book.currentParagraph = Math.max(0, (ch?.paragraphs?.length || 1) - 1);
-    renderReaderChapter();
-    readerScrollActiveParagraph();
-  } else showToast('Это начало текста');
+  return readerNavigation.previousParagraph();
 }
 
 function readerCurrentParagraphText(index = null) {
-  const book = readerCurrentBook(); if (!book) return '';
-  const ch = book.chapters?.[book.currentChapter || 0];
-  const i = index == null ? (book.currentParagraph || 0) : index;
-  return ch?.paragraphs?.[i] || '';
+  return readerNavigation.currentParagraphText(index);
 }
 
 function an2ReaderDebugSeen(word = '') {
@@ -3196,46 +2612,104 @@ function an2ReaderDebugSeen(word = '') {
 }
 window.an2ReaderDebugSeen = an2ReaderDebugSeen;
 
-async function readerSpeakText(text, opts = {}) {
-  const clean = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!clean) return;
-  const chunk = clean.length > 900 ? clean.slice(0, 900) : clean;
-  const lang = readerCanonicalLang(opts.lang || readerCurrentLang());
-  const rate = opts.rate || (lang === 'zh' ? 0.92 : 0.9);
+const readerLibrary = createReaderLibraryStore({
+  getBooks: () => readerBooks,
+  setBooks: (value) => { readerBooks = value; },
+  storageKey: readerBooksStorageKey,
+  dedupeBooks: readerDedupeBooks,
+  getCloudUserId: readerCloudUserId,
+  isCloudReady: () => !!isSupabaseReady?.(),
+  db: () => sb,
+  bookImportKey: readerBookImportKey,
+  getCloudLoadedOnce: () => readerCloudLoadedOnce,
+  setCloudLoadedOnce: (value) => { readerCloudLoadedOnce = value; },
+  getCloudSaving: () => readerCloudSaving,
+  setCloudSaving: (value) => { readerCloudSaving = value; },
+  getCloudSaveTimer: () => readerCloudSaveTimer,
+  setCloudSaveTimer: (value) => { readerCloudSaveTimer = value; },
+  getCurrentBookId: () => readerCurrentBookId,
+});
 
-  readerStopSpeech(false);
-  readerSpeechActive = true;
-  try {
-    // French and Chinese both go through the existing Supabase /tts endpoint.
-    // Browser speech is used only if the user manually selects webspeech.
-    const ok = await speak(chunk, { lang, rate });
-    if (!ok) { readerSpeechActive = false; return; }
-    setTimeout(() => { readerSpeechActive = false; }, Math.max(1800, Math.min(12000, chunk.length * 85)));
-  } catch (error) {
-    readerSpeechActive = false;
-    console.warn('[reader tts] Supabase TTS failed:', error);
-    showToast(`⚠️ Облачная озвучка не сработала: ${String(error?.message || error).slice(0, 160)}`, 6000);
-  }
+const readerWordState = createReaderWordState({
+  getCache: () => readerWordStateCache,
+  setCache: (value) => { readerWordStateCache = value; },
+  storageKey: readerWordStateStorageKey,
+  canonicalLang: readerCanonicalLang,
+  currentLang: () => readerCurrentLang(),
+  normalizeWord: readerNormalizeWord,
+  normalizeImportKey,
+  isCommonWord: readerIsCommonWord,
+  seenAfter: READER_SEEN_AFTER,
+  fadeAfter: READER_AUTO_FADE_AFTER,
+  familiarAfter: READER_FAMILIAR_AFTER,
+  getBookLang: readerBookLang,
+  tokenizeParagraph: readerTokenizeParagraph,
+  findVerbByForm: readerFindVerbByForm,
+});
+
+const readerWordLookup = createReaderWordLookup({
+  currentLang: () => readerCurrentLang(),
+  normalizeWord: readerNormalizeWord,
+  lookupChineseWord: readerLookupChineseWord,
+  fetchChineseDictEntry: readerFetchChineseDictEntry,
+  quickLookup: readerQuickLookup,
+  getCachedLexical: readerGetCachedLexical,
+  findVerbByForm: readerFindVerbByForm,
+  findKnownNoun: readerFindKnownNoun,
+});
+
+const readerWordPanel = createReaderWordPanel({
+  escape: readerEscape,
+  canonicalLang: readerCanonicalLang,
+  currentLang: () => readerCurrentLang(),
+  extractPinyin: readerExtractPinyin,
+  getSelectedWord: () => readerSelectedWord,
+});
+
+const readerNavigation = createReaderNavigation({
+  getBook: () => readerCurrentBook(),
+  render: () => renderReaderChapter(),
+  closeParagraphTime: () => readerTimeParagraphClose(),
+  scrollActiveParagraph: () => readerScrollActiveParagraph(),
+  showToast,
+});
+
+const readerAudio = createReaderAudio({
+  speak,
+  stopSpeak,
+  showToast,
+  getLang: () => readerCurrentLang(),
+  getParagraphText: (index) => {
+    if (index === '__chapter__') {
+      const book = readerCurrentBook();
+      const chapter = book?.chapters?.[book.currentChapter || 0];
+      return (chapter?.paragraphs || []).join(' ');
+    }
+    return readerCurrentParagraphText(index);
+  },
+  onActiveChange: (active) => { readerSpeechActive = active; },
+});
+
+async function readerSpeakText(text, opts = {}) {
+  return readerAudio.speakText(text, opts);
 }
 
 function readerStopSpeech(show = true) {
-  try { stopSpeak(); } catch {}
-  try { window.speechSynthesis?.cancel?.(); } catch {}
-  readerSpeechActive = false;
-  if (show) showToast('⏹ Озвучка остановлена');
+  return readerAudio.stop(show);
 }
 
-function readerSpeakParagraph(i) { const text = readerCurrentParagraphText(i); if (text) readerSpeakText(text); }
-function readerSpeakCurrentParagraph() { readerSpeakParagraph(null); }
+function readerSpeakParagraph(index) {
+  return readerAudio.speakParagraph(index);
+}
+
+function readerSpeakCurrentParagraph() {
+  return readerAudio.speakCurrentParagraph();
+}
 
 function readerSpeakChapter() {
-  const book = readerCurrentBook(); if (!book) return;
-  const ch = book.chapters?.[book.currentChapter || 0];
-  const text = (ch?.paragraphs || []).join(' ');
-  if (!text) return;
-  if (text.length > 1800) { showToast('🎧 Глава длинная: озвучу текущий абзац, чтобы TTS не подавился.'); readerSpeakCurrentParagraph(); return; }
-  readerSpeakText(text);
+  return readerAudio.speakChapter();
 }
+
 
 async function readerCopyParagraph(i) {
   const text = readerCurrentParagraphText(i); if (!text) return;
@@ -3245,14 +2719,10 @@ async function readerCopyParagraph(i) {
 function readerCopyCurrentParagraph() { return readerCopyParagraph(null); }
 
 function readerNextChapter() {
-  const book = readerCurrentBook(); if (!book) return;
-  if ((book.currentChapter || 0) < (book.chapters?.length || 1) - 1) { book.currentChapter = (book.currentChapter || 0) + 1; book.currentParagraph = 0; book.updatedAt = new Date().toISOString(); renderReaderChapter(); }
-  else showToast('Это последняя глава');
+  return readerNavigation.nextChapter();
 }
 function readerPrevChapter() {
-  const book = readerCurrentBook(); if (!book) return;
-  if ((book.currentChapter || 0) > 0) { book.currentChapter = (book.currentChapter || 0) - 1; book.currentParagraph = 0; book.updatedAt = new Date().toISOString(); renderReaderChapter(); }
-  else showToast('Это первая глава');
+  return readerNavigation.previousChapter();
 }
 function readerDeleteBook(id) {
   loadReaderBooks();
@@ -3284,212 +2754,26 @@ function readerSendParagraphToPhrase(i) {
   }, 150);
 }
 
-function ensureReaderWordPanel() {
-  let panel = document.getElementById('reader-word-panel');
-  if (panel) return panel;
-  panel = document.createElement('div');
-  panel.id = 'reader-word-panel';
-  panel.className = 'reader-word-panel';
-  panel.innerHTML = `
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px">
-      <div><div id="reader-word-title" style="font-family:'Playfair Display',serif;font-size:1.35rem;font-style:italic;color:var(--accent)">—</div><div id="reader-word-known" style="font-size:.76rem;color:var(--text-muted)"></div></div>
-      <button onclick="readerCloseWordPanel()" style="background:none;border:none;color:var(--text-muted);font-size:1.35rem;cursor:pointer">×</button>
-    </div>
-    <div id="reader-word-status" style="display:none;font-size:.78rem;margin-bottom:8px;padding:8px;border-radius:8px;background:var(--surface2)"></div>
-    <div id="reader-word-analysis" class="reader-word-analysis">
-      <div class="reader-word-loading">⏳ Разбираю слово...</div>
-    </div>
-    <details class="reader-word-edit" style="margin:10px 0">
-      <summary style="cursor:pointer;font-size:.78rem;color:var(--text-muted);user-select:none">ручная правка</summary>
-      <div style="display:grid;grid-template-columns:1fr 104px 88px;gap:8px;margin:8px 0">
-        <input id="reader-word-lemma" placeholder="словарная форма">
-        <select id="reader-word-pos"><option value="noun">сущ.</option><option value="verb">глагол</option><option value="adjective">прил.</option><option value="adverb">нареч.</option><option value="preposition">предлог</option><option value="pronoun">мест.</option><option value="other">другое</option></select>
-        <select id="reader-word-level"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option></select>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 88px;gap:8px;margin-bottom:8px">
-        <input id="reader-word-ru" placeholder="перевод по-русски">
-        <select id="reader-word-gender"><option value="m">m</option><option value="f">f</option><option value="">без рода</option></select>
-      </div>
-      <textarea id="reader-word-context" rows="2" placeholder="контекст-предложение" style="width:100%;box-sizing:border-box;padding:10px 11px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;resize:vertical;max-height:120px"></textarea>
-    </details>
-    <div class="reader-word-actions">
-      <button onclick="readerSpeakSelectedWord()" class="btn btn-secondary">🔊 слово</button>
-      <button onclick="readerSpeakSelectedContext()" class="btn btn-secondary">🔊 контекст</button>
-      <button onclick="readerTranslateWordAI(true)" class="btn btn-secondary">↻ DeepSeek</button>
-      <button id="reader-word-save-btn" onclick="readerSaveWord()" class="btn btn-primary">＋ Сохранить</button>
-      <button onclick="readerMarkSelectedWordProblem()" class="btn btn-secondary">⚠ проблема</button>
-      <button onclick="readerSendParagraphToPhrase(readerSelectedParagraphIndex)" class="btn btn-secondary">＋ фраза</button>
-      <button onclick="readerMarkSelectedWordKnown()" class="btn btn-secondary">✓ знаю</button>
-    </div>`;
-  const root = document.getElementById('reader-reading-view') || document.body;
-  root.appendChild(panel);
-  return panel;
-}
+function ensureReaderWordPanel() { return readerWordPanel.ensure(); }
 
 
-function readerSimplifyPos(pos) {
-  const p = String(pos || '').toLowerCase();
-  if (['verb','verbe'].includes(p)) return 'verb';
-  if (['noun','nom','substantive','substantif'].includes(p)) return 'noun';
-  if (['adjective','adjectif','adj'].includes(p)) return 'adjective';
-  if (['adverb','adverbe','adv'].includes(p)) return 'adverb';
-  if (['preposition','préposition','prep'].includes(p)) return 'preposition';
-  if (['pronoun','pronom'].includes(p)) return 'pronoun';
-  return p || 'other';
-}
+function readerSimplifyPos(pos) { return readerWordPanel.simplifyPos(pos); }
 
-function readerPosRu(pos) {
-  const p = readerSimplifyPos(pos);
-  return {
-    noun: 'существительное', verb: 'глагол', adjective: 'прилагательное',
-    adverb: 'наречие', preposition: 'предлог', pronoun: 'местоимение',
-    particle: 'частица', measure_word: 'счётное слово', classifier: 'счётное слово',
-    proper_noun: 'имя собственное', name: 'имя собственное', other: 'другое'
-  }[p] || 'другое';
-}
+function readerPosRu(pos) { return readerWordPanel.posRu(pos); }
 
 function readerHasRussianMeaning(data = {}) {
   return !!String(data?.ru || data?.translation_ru || data?.russian || data?.meaning_ru || '').trim();
 }
 
-function readerSetPanelFields(data = {}) {
-  const panel = ensureReaderWordPanel();
-  const p = readerSimplifyPos(data.pos || data.type || (data.infinitive || data.inf ? 'verb' : 'noun'));
-  const lemma = data.lemma || data.infinitive || data.inf || data.fr || data.word || readerSelectedWord;
-  const ru = data.ru || data.translations || data.meaning || data.translation || data.suggestion || '';
-  const gender = p === 'noun' ? (data.gender || '') : '';
-  const level = data.level || 'A2';
-  panel.querySelector('#reader-word-lemma').value = lemma || readerSelectedWord;
-  panel.querySelector('#reader-word-pos').value = ['noun','verb','adjective','adverb','preposition','pronoun'].includes(p) ? p : 'other';
-  panel.querySelector('#reader-word-ru').value = ru;
-  panel.querySelector('#reader-word-gender').value = gender;
-  panel.querySelector('#reader-word-level').value = level;
-  return { pos: p, lemma, ru, gender, level };
-}
+function readerSetPanelFields(data = {}) { return readerWordPanel.setFields(data); }
 
-function readerRenderWordAnalysis(data = {}, source = '') {
-  const panel = ensureReaderWordPanel();
-  const box = panel.querySelector('#reader-word-analysis');
-  const known = panel.querySelector('#reader-word-known');
-  const saveBtn = panel.querySelector('#reader-word-save-btn');
-  const filled = readerSetPanelFields(data);
-  const pos = filled.pos;
-  const isVerb = pos === 'verb';
-  const isNoun = pos === 'noun';
-  const form = readerSelectedWord || data.surface || data.word || '';
-  const lemma = filled.lemma || form;
-  const ru = filled.ru || '—';
-  const gender = filled.gender || '';
-  const level = filled.level || 'A2';
-  const formInfo = data.form_note || data.form || data.tense || data.tense_hint || data.note || '';
-  const person = data.person ? ` · ${data.person}` : '';
-  const number = data.number ? ` · ${data.number}` : '';
-  const analysisLang = readerCanonicalLang(data.lang || readerCurrentLang());
-  const isZh = analysisLang === 'zh';
-  const pinyin = isZh ? (readerExtractPinyin(data) || String(data.form_note || '').trim()) : '';
-  const zhNote = isZh ? String(data.note || data.form_note || '').trim() : '';
+function readerRenderWordAnalysis(data = {}, source = '') { return readerWordPanel.renderAnalysis(data, source); }
 
-  if (known) {
-    known.textContent = source === 'local'
-      ? 'найдено в твоей базе'
-      : source === 'deepseek'
-        ? 'разобрано через DeepSeek'
-        : 'готово';
-  }
-  if (saveBtn) saveBtn.textContent = isZh ? '＋ В китайский словарь' : (isVerb ? '＋ Добавить глагол' : '＋ В словарь');
+function readerRenderWordLoading(message = '⏳ DeepSeek разбирает слово...') { return readerWordPanel.renderLoading(message); }
 
-  if (!box) return;
-  if (isZh) {
-    const typeLabel = readerPosRu(pos);
-    const lemmaLine = lemma && lemma !== form ? `<div class="reader-analysis-meta">словарная форма: ${readerEscape(lemma)}</div>` : '';
-    box.innerHTML = `
-      <div class="reader-analysis-card zh">
-        <div class="reader-analysis-kicker">${readerEscape(typeLabel)} · китайский</div>
-        <div class="reader-analysis-main zh-main"><b>${readerEscape(form)}</b></div>
-        ${pinyin ? `<div class="reader-analysis-pinyin">${readerEscape(pinyin)}</div>` : `<div class="reader-analysis-pinyin muted">пиньинь не пришёл — нажми ↻ DeepSeek</div>`}
-        <div class="reader-analysis-ru">${readerEscape(ru)}</div>
-        ${lemmaLine}
-        <div class="reader-analysis-meta">${readerEscape(level)}${zhNote && zhNote !== pinyin ? ' · ' + readerEscape(zhNote) : ''}</div>
-      </div>`;
-    return;
-  }
-  if (isVerb) {
-    box.innerHTML = `
-      <div class="reader-analysis-card verb">
-        <div class="reader-analysis-kicker">глагольная форма</div>
-        <div class="reader-analysis-main"><span>${readerEscape(form)}</span> → <b>${readerEscape(lemma)}</b></div>
-        <div class="reader-analysis-ru">${readerEscape(ru)}</div>
-        <div class="reader-analysis-meta">${readerEscape(formInfo || 'форма глагола')}${readerEscape(person)}${readerEscape(number)} · ${readerEscape(level)}</div>
-      </div>`;
-  } else if (isNoun) {
-    box.innerHTML = `
-      <div class="reader-analysis-card noun">
-        <div class="reader-analysis-kicker">существительное</div>
-        <div class="reader-analysis-main"><b>${readerEscape(lemma)}</b>${gender ? ` <span class="reader-gender-chip">${readerEscape(gender)}</span>` : ''}</div>
-        <div class="reader-analysis-ru">${readerEscape(ru)}</div>
-        <div class="reader-analysis-meta">${gender ? `род: ${readerEscape(gender)} · ` : ''}${readerEscape(level)}</div>
-      </div>`;
-  } else {
-    box.innerHTML = `
-      <div class="reader-analysis-card other">
-        <div class="reader-analysis-kicker">${readerEscape(readerPosRu(pos))}</div>
-        <div class="reader-analysis-main"><b>${readerEscape(lemma)}</b></div>
-        <div class="reader-analysis-ru">${readerEscape(ru)}</div>
-        <div class="reader-analysis-meta">${readerEscape(level)}${formInfo ? ' · ' + readerEscape(formInfo) : ''}</div>
-      </div>`;
-  }
-}
+function readerRenderWordError(message) { return readerWordPanel.renderError(message); }
 
-function readerRenderWordLoading(message = '⏳ DeepSeek разбирает слово...') {
-  const panel = ensureReaderWordPanel();
-  const box = panel.querySelector('#reader-word-analysis');
-  if (box) box.innerHTML = `<div class="reader-word-loading">${readerEscape(message)}</div>`;
-}
-
-function readerRenderWordError(message) {
-  const panel = ensureReaderWordPanel();
-  const box = panel.querySelector('#reader-word-analysis');
-  if (box) box.innerHTML = `<div class="reader-word-error">❌ ${readerEscape(message)}</div>`;
-}
-
-async function readerLookupWord(word) {
-  const lang = readerCurrentLang();
-  const norm = readerNormalizeWord(word, lang);
-  if (!norm) return null;
-  if (lang === 'zh') {
-    const zh = readerLookupChineseWord(norm);
-    // Локальный словарь/кэш быстрый. Если записи нет — добираем CC-CEDICT/lang_dictionary.
-    if (zh) return zh;
-    const remote = await readerFetchChineseDictEntry(norm);
-    if (remote) return remote;
-    return null;
-  }
-  const quick = readerQuickLookup(norm);
-  if (quick) return quick;
-  const cached = readerGetCachedLexical(norm);
-  if (cached) return { ...cached, _source: 'cache', _note: 'из локального кэша' };
-  const verbHit = readerFindVerbByForm(norm);
-  if (verbHit) {
-    return {
-      pos: 'verb',
-      lemma: verbHit.verb.inf,
-      fr: verbHit.verb.inf,
-      ru: verbHit.verb.meaning || '',
-      meaning: verbHit.verb.meaning || '',
-      gender: '',
-      level: verbHit.verb.level || 'A2',
-      _source: 'verbs',
-      _note: `форма глагола: ${verbHit.tense}`
-    };
-  }
-
-  const localNoun = readerFindKnownNoun(norm);
-  if (localNoun) return { ...localNoun, pos: localNoun.pos || 'noun', lemma: localNoun.fr || norm, _source: 'local' };
-
-  // Do not query Firebase per word click: on phones it makes "simple" words feel slow.
-  // Unknown words go straight to cached/DeepSeek path.
-  return null;
-}
+async function readerLookupWord(word) { return readerWordLookup.lookup(word); }
 
 async function readerOpenWordPanel(word, paragraphIndex = 0) {
   readerSelectedWord = readerNormalizeWord(word, readerCurrentLang());
