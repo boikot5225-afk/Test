@@ -1,4 +1,5 @@
 // Resilient Firebase bootstrap for this branch.
+// The fallback is installed immediately: app.js must not give up while CDNs are timing out.
 const VERSION = '10.12.5';
 const SDK_TIMEOUT_MS = 3500;
 const REST_SESSION_KEY = 'an2_firebase_rest_session_v1';
@@ -174,6 +175,7 @@ function installRestFallback() {
     app() { if (!apps.length) apps.push(app); return app; },
     auth: authFactory,
     database: () => ({ ref }),
+    __an2RestFallback: true,
   };
 
   if (!globalThis.firebase) {
@@ -187,12 +189,22 @@ function installRestFallback() {
   }
 }
 
-try {
-  if (!hasCore()) await loadPart('firebase-app');
-  if (!hasAuth()) await loadPart('firebase-auth');
-  if (!hasDatabase()) await loadPart('firebase-database');
-} catch (error) {
-  console.warn('[firebase bootstrap]', error?.message || error);
-}
-
+// Do this before trying the CDN. app.js only waits about three seconds; the old loader
+// waited longer than that and therefore lost the race even though the fallback existed.
 if (!hasCore() || !hasAuth() || !hasDatabase()) installRestFallback();
+
+// When a real compat SDK is already present, leave it alone. If it isn't, the REST
+// adapter above is immediately usable for Email/Password and Realtime Database.
+// We intentionally do not wait here: the app must be able to initialize now.
+if (globalThis.firebase?.__an2RestFallback) {
+  console.warn('[firebase bootstrap] using immediate REST fallback');
+} else {
+  try {
+    if (!hasCore()) await loadPart('firebase-app');
+    if (!hasAuth()) await loadPart('firebase-auth');
+    if (!hasDatabase()) await loadPart('firebase-database');
+  } catch (error) {
+    console.warn('[firebase bootstrap]', error?.message || error);
+  }
+  if (!hasCore() || !hasAuth() || !hasDatabase()) installRestFallback();
+}
