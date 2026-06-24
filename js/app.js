@@ -772,6 +772,7 @@ let readerAutoPlayAbort = false;
 let readerPendingImportChapters = null;
 let readerPendingImportSource = 'manual_text';
 let readerPendingImportBookId = null;
+const readerEpubImgCache = new Map(); // key → blob URL (session-scoped, avoids repeated IndexedDB reads)
 let readerActiveOwnerId = null;
 let readerWordStateCache = null;
 
@@ -2255,22 +2256,31 @@ function readerHtmlToMixedItems(html, lang, basePath) {
 async function readerLoadEpubImages(container) {
   if (!container) return;
   const imgs = [...container.querySelectorAll('img[data-img-key]')];
-  console.log('[epub-img] loading', imgs.length, 'image(s)');
+  if (!imgs.length) return;
+  const scroller = document.querySelector('#reader-reading-view .rd-scroll');
   for (const img of imgs) {
     const key = img.dataset.imgKey;
+    if (!key) continue;
+    // Serve from session cache instantly (no layout shift on re-renders)
+    const cached = readerEpubImgCache.get(key);
+    if (cached) { img.src = cached; continue; }
     try {
       const blob = await imgStoreGet(key);
-      if (blob) {
-        img.src = URL.createObjectURL(blob);
-        console.log('[epub-img] loaded', key);
-      } else {
-        console.warn('[epub-img] blob not found for key:', key);
-        img.alt = img.alt || '[изображение]';
-        img.style.cssText = 'display:block;padding:8px;color:var(--text-muted);font-size:0.8rem';
+      if (!blob) continue;
+      const url = URL.createObjectURL(blob);
+      readerEpubImgCache.set(key, url);
+      // Anchor the active paragraph so layout shift doesn't scroll the view
+      const anchor = container.querySelector('.reader-paragraph.active') || container.querySelector('.reader-paragraph');
+      const anchorTop = anchor ? anchor.getBoundingClientRect().top : null;
+      img.src = url;
+      // After image renders, compensate scroll to keep anchor stationary
+      if (scroller && anchorTop != null) {
+        await new Promise(r => { img.onload = r; img.onerror = r; setTimeout(r, 300); });
+        await new Promise(r => requestAnimationFrame(r));
+        const delta = anchor.getBoundingClientRect().top - anchorTop;
+        if (Math.abs(delta) > 1) scroller.scrollTop += delta;
       }
-    } catch (e) {
-      console.warn('[epub-img] error loading', key, e);
-    }
+    } catch (_) {}
   }
 }
 

@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v72.1-version-check';
+const CACHE_VERSION = 'v72.2-smooth-scroll';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

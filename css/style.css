@@ -3090,6 +3090,12 @@ input:-webkit-autofill:focus {
   height: auto;
   border-radius: 8px;
   margin: 8px auto;
+  contain: layout;
+}
+.epub-img:not([src]) {
+  min-height: 160px;
+  background: var(--border);
+  border-radius: 8px;
 }
 .reader-paragraph:has(.epub-img) {
   cursor: default;
