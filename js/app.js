@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════
-// app.js — главный модуль, точка входа — v72
+// app.js — главный модуль, точка входа — v73
 // ════════════════════════════════════════════════
-console.log('[app] v72 loaded');
+console.log('[app] v73 loaded');
 
 import { todayStr, addDays, profileKey, showToast, showLoading, hideLoading, toDateStr } from './utils.js';
 import { initSupabase, isSupabaseReady, sb, sbUser, setSbUser, sbSignIn, sbSignUp, sbSignOut,
@@ -1753,11 +1753,13 @@ function readerId() {
 const READER_LANG_META = Object.freeze({
   fr: { code: 'fr', label: 'Français', short: 'FR', emoji: '🇫🇷', speech: 'fr-FR' },
   zh: { code: 'zh', label: '中文', short: 'ZH', emoji: '🇨🇳', speech: 'zh-CN' },
+  en: { code: 'en', label: 'English', short: 'EN', emoji: '🇬🇧', speech: 'en-US' },
 });
 
 function readerCanonicalLang(lang) {
   const raw = String(lang || '').trim().toLowerCase();
   if (raw === 'zh' || raw.startsWith('zh-') || raw === 'cn' || raw === 'chinese') return 'zh';
+  if (raw === 'en' || raw.startsWith('en-') || raw === 'english') return 'en';
   return 'fr';
 }
 
@@ -2137,7 +2139,7 @@ function showReaderImportModal(mode) {
           </div>
           <div id="reader-import-url-status" style="display:none;font-size:.74rem;color:var(--text-muted);margin-top:4px"></div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px"><option value="fr" selected>🇫🇷 Français</option><option value="zh">🇨🇳 中文</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option><option value="news">📰 Новость</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px"><option value="fr" selected>🇫🇷 Français</option><option value="en">🇬🇧 English</option><option value="zh">🇨🇳 中文</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option><option value="news">📰 Новость</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
         <textarea id="reader-import-text" rows="14" placeholder="Вставь сюда главу или текст. Пустая строка = новый абзац." style="width:100%;box-sizing:border-box;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:.94rem;line-height:1.55;resize:vertical;margin-bottom:12px"></textarea>
         <div id="reader-import-status" style="display:none;font-size:.8rem;padding:8px;border-radius:8px;background:var(--surface2);margin-bottom:10px"></div>
         <div style="display:flex;gap:8px"><button onclick="closeReaderImportModal()" class="btn btn-secondary" style="flex:1">Отмена</button><button onclick="saveReaderImport()" class="btn btn-primary" style="flex:1">Сохранить</button></div>
@@ -2186,9 +2188,10 @@ async function readerFetchFromUrl() {
       if (!extract) throw new Error('Статья пустая или не найдена');
       if (textEl) textEl.value = extract;
       if (titleEl && !titleEl.value.trim()) titleEl.value = data.title || wikiTitle;
-      // Auto-set lang if zh wikipedia
+      // Auto-set lang from wikipedia domain
       const langSel = document.getElementById('reader-import-lang');
       if (langSel && wikiLang === 'zh') langSel.value = 'zh';
+      else if (langSel && wikiLang === 'en') langSel.value = 'en';
       // Auto-set format to news
       const fmtSel = document.getElementById('reader-import-format');
       if (fmtSel) fmtSel.value = 'news';
@@ -3522,7 +3525,9 @@ async function readerTranslateWordAI(forceOrOptions = true) {
         context,
         instruction: sourceLang === 'zh'
           ? 'Return JSON only: {pos, lemma, surface, pinyin, ru, level, form_note, note}. For Chinese, give pinyin with tone marks and a short Russian meaning. No gender.'
-          : 'Return JSON only: {pos:"noun|verb|adjective|adverb|preposition|pronoun|other", lemma, infinitive, ru, gender:"m|f|", level:"A1|A2|B1|B2", tense, person, number, form_note, note}. For French conjugated verb forms, lemma and infinitive must be the infinitive; explain the selected surface form in form_note. For nouns, give gender.'
+          : sourceLang === 'en'
+            ? 'Return JSON only: {pos:"noun|verb|adjective|adverb|preposition|pronoun|other", lemma, ru, level:"A1|A2|B1|B2", form_note, note}. Give a short Russian meaning in ru. For verbs, lemma is the base/infinitive form. No gender needed.'
+            : 'Return JSON only: {pos:"noun|verb|adjective|adverb|preposition|pronoun|other", lemma, infinitive, ru, gender:"m|f|", level:"A1|A2|B1|B2", tense, person, number, form_note, note}. For French conjugated verb forms, lemma and infinitive must be the infinitive; explain the selected surface form in form_note. For nouns, give gender.'
       });
       if (!force) readerLexicalInFlight.set(inFlightKey, p);
       try { data = await p; }
@@ -3615,9 +3620,11 @@ export function showScreen(id) {
     loadNounsFromCloud().then(() => renderStats(VERBS, NOUNS)).catch(e => console.error(e));
   }
   if (id === 'dict') {
-    const isZhMode = (globalThis.AN2_LANG || 'fr') === 'zh';
-    if (isZhMode && typeof window.setDictType === 'function') {
-      window.setDictType('zh');
+    const curDictLang = globalThis.AN2_LANG || 'fr';
+    if (typeof window.setDictType === 'function') {
+      if (curDictLang === 'zh') window.setDictType('zh');
+      else if (curDictLang === 'en') window.setDictType('reader');
+      else { closeDictDetail(); window.renderDict(); }
     } else {
       closeDictDetail();
       window.renderDict();
@@ -4610,23 +4617,23 @@ export function startSRSReview() {
 
 // ── Переключение языка ──
 function setAppLang(lang) {
-  const allowed = ['fr', 'zh'];
+  const allowed = ['fr', 'zh', 'en'];
   if (!allowed.includes(lang)) return;
   globalThis.AN2_LANG = lang;
   try { localStorage.setItem('an2_lang', lang); } catch {}
   updateLangUI();
   // Reset dict to correct type for new language
   if (typeof window.setDictType === 'function') {
-    if (document.getElementById('screen-dict')?.classList.contains('active')) {
-      window.setDictType(lang === 'zh' ? 'zh' : 'verbs');
+    const dictScreenActive = document.getElementById('screen-dict')?.classList.contains('active');
+    const targetDictType = lang === 'zh' ? 'zh' : lang === 'en' ? 'reader' : 'verbs';
+    if (dictScreenActive) {
+      window.setDictType(targetDictType);
     } else {
-      // Reset quietly so next open starts on correct tab
-      if (lang === 'fr' && typeof dictType !== 'undefined') {
-        const tabsFr = document.getElementById('dict-tabs-fr');
-        const tabsZh = document.getElementById('dict-tabs-zh');
-        if (tabsFr) tabsFr.style.display = 'flex';
-        if (tabsZh) tabsZh.style.display = 'none';
-      }
+      // Reset tab visibility quietly so next open starts correctly
+      const tabsFr = document.getElementById('dict-tabs-fr');
+      const tabsZh = document.getElementById('dict-tabs-zh');
+      if (tabsFr) tabsFr.style.display = (lang === 'zh' || lang === 'en') ? 'none' : 'flex';
+      if (tabsZh) tabsZh.style.display = lang === 'zh' ? 'block' : 'none';
     }
   }
   // Re-render home if active
@@ -4638,11 +4645,14 @@ function setAppLang(lang) {
 function updateLangUI() {
   const lang = globalThis.AN2_LANG || 'fr';
   const isZh = lang === 'zh';
+  const isEn = lang === 'en';
 
   // Topbar buttons
   const btnFr = document.getElementById('hlb-fr');
+  const btnEn = document.getElementById('hlb-en');
   const btnZh = document.getElementById('hlb-zh');
-  if (btnFr) btnFr.classList.toggle('active', !isZh);
+  if (btnFr) btnFr.classList.toggle('active', lang === 'fr');
+  if (btnEn) btnEn.classList.toggle('active', isEn);
   if (btnZh) btnZh.classList.toggle('active', isZh);
 
   // 4th nav button
@@ -4654,8 +4664,12 @@ function updateLangUI() {
   // Sync dict tabs visibility without triggering a render
   const tabsFr = document.getElementById('dict-tabs-fr');
   const tabsZh = document.getElementById('dict-tabs-zh');
-  if (tabsFr) tabsFr.style.display = isZh ? 'none' : 'flex';
+  if (tabsFr) tabsFr.style.display = (isZh || isEn) ? 'none' : 'flex';
   if (tabsZh) tabsZh.style.display = isZh ? 'block' : 'none';
+
+  // Also sync import modal lang selector if open
+  const importLangSel = document.getElementById('reader-import-lang');
+  if (importLangSel && !importLangSel.dataset.userChanged) importLangSel.value = lang;
 }
 
 // 4th nav button action — depends on current lang
@@ -5546,7 +5560,8 @@ window.setDictType = function(type) {
   // Show/hide FR vs ZH tab bars
   const tabsFr = document.getElementById('dict-tabs-fr');
   const tabsZh = document.getElementById('dict-tabs-zh');
-  if (tabsFr) tabsFr.style.display = type === 'zh' ? 'none' : 'flex';
+  const curLangForDict = globalThis.AN2_LANG || 'fr';
+  if (tabsFr) tabsFr.style.display = (type === 'zh' || curLangForDict === 'en') ? 'none' : 'flex';
   if (tabsZh) tabsZh.style.display = type === 'zh' ? 'block' : 'none';
 
   // Update tabs — только видимые кнопки

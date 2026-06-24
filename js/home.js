@@ -19,8 +19,9 @@ export async function renderHome() {
   // ── Обновить UI переключателя языка ──
   if (typeof globalThis.updateLangUI === 'function') globalThis.updateLangUI();
   else {
-    const btnFr = $('hlb-fr'); const btnZh = $('hlb-zh');
-    if (btnFr) btnFr.classList.toggle('active', !isZh);
+    const btnFr = $('hlb-fr'); const btnEn = $('hlb-en'); const btnZh = $('hlb-zh');
+    if (btnFr) btnFr.classList.toggle('active', lang === 'fr');
+    if (btnEn) btnEn.classList.toggle('active', lang === 'en');
     if (btnZh) btnZh.classList.toggle('active', isZh);
     const icon = $('bn-practice-icon'); const label = $('bn-practice-label');
     if (icon) icon.textContent = isZh ? '🀄' : '⚡';

@@ -18,7 +18,8 @@ export function createReaderAudio({
     const clean = String(text || '').replace(/\s+/g, ' ').trim();
     if (!clean) return false;
     const chunk = clean.length > 900 ? clean.slice(0, 900) : clean;
-    const lang = String(opts.lang || getLang?.() || 'fr').toLowerCase().startsWith('zh') ? 'zh' : 'fr';
+    const rawLang = String(opts.lang || getLang?.() || 'fr').toLowerCase();
+    const lang = rawLang.startsWith('zh') ? 'zh' : rawLang.startsWith('en') ? 'en' : 'fr';
     const rate = opts.rate || (lang === 'zh' ? 0.92 : 0.9);
 
     stop(false);
