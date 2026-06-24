@@ -1,6 +1,7 @@
 // ════════════════════════════════════════════════
-// app.js — главный модуль, точка входа
+// app.js — главный модуль, точка входа — v72
 // ════════════════════════════════════════════════
+console.log('[app] v72 loaded');
 
 import { todayStr, addDays, profileKey, showToast, showLoading, hideLoading, toDateStr } from './utils.js';
 import { initSupabase, isSupabaseReady, sb, sbUser, setSbUser, sbSignIn, sbSignUp, sbSignOut,
