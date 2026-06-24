@@ -8,7 +8,7 @@ window.FIREBASE_CONFIG = window.FIREBASE_CONFIG || {
 };
 window.AN2_ADMIN_USERNAME = window.AN2_ADMIN_USERNAME || 'boikot5225';
 window.AN2_FIREBASE_FUNCTIONS_REGION = window.AN2_FIREBASE_FUNCTIONS_REGION || 'asia-southeast1';
-window.AN2_AUTH_BOOTSTRAP = 'reader-auth-v71.4';
+window.AN2_AUTH_BOOTSTRAP = 'reader-auth-v71.5';
 
 (function installImmediateFirebaseFallback() {
   const config = window.FIREBASE_CONFIG;
@@ -28,9 +28,12 @@ window.AN2_AUTH_BOOTSTRAP = 'reader-auth-v71.4';
   function databaseRef(path){const clean=String(path||'').replace(/^\/+|\/+$/g,'');const base=String(config.databaseURL).replace(/\/+$/,'');const request=async(method,payload)=>{const token=currentUser?await currentUser.getIdToken(false):'';const url=base+(clean?'/'+clean:'')+'.json'+(token?'?auth='+encodeURIComponent(token):'');const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:payload===undefined?undefined:JSON.stringify(payload)});const j=method==='DELETE'?null:await r.json().catch(()=>null);if(!r.ok||(j&&j.error))throw makeError(j,'permission-denied');return j;};return {async get(){const v=await request('GET');return {exists:()=>v!==null&&v!==undefined,val:()=>v};},set:v=>request('PUT',v),update:v=>request('PATCH',v),remove:()=>request('DELETE')};}
   const fallback={apps,initializeApp(){if(!apps.length)apps.push({name:'[DEFAULT]'});return apps[0];},app(){if(!apps.length)apps.push({name:'[DEFAULT]'});return apps[0];},auth,database:()=>({ref:databaseRef}),__an2RestFallback:true};
   window.__AN2_FALLBACK_FIREBASE=fallback;
-  function completeFirebase(x){return !!x&&Array.isArray(x.apps)&&typeof x.initializeApp==='function'&&typeof x.auth==='function'&&typeof x.database==='function';}
-  function repair(){if(!completeFirebase(window.firebase))window.firebase=fallback;}
-  repair();
-  let repairs=0;const timer=setInterval(()=>{repair();repairs++;if(repairs>=120)clearInterval(timer);},100);
+  window.firebase=fallback;
   window.an2FirebaseSdkReady=Promise.resolve({fallback:true,build:window.AN2_AUTH_BOOTSTRAP});
 })();
+
+// This module is encountered before app.js and runs after the CDN scripts.
+// It restores the stable adapter in case those scripts replaced it halfway.
+if (document.readyState === 'loading') {
+  document.write('<script type="module" src="js/firebase-force-fallback.js?v=71.5"><\/script>');
+}
