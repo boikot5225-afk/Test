@@ -22,6 +22,8 @@ import { createReaderLibraryStore } from './reader/library-store.js?v=1';
 import { createReaderDisplay } from './reader/display.js?v=1';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
+import { createReaderChapterRenderer } from './reader/chapter-render.js?v=1';
+
 
 
 import { splitTextToChapters as readerImportSplitTextToChapters, splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
@@ -2417,78 +2419,32 @@ function readerBackToLibrary() {
   renderReaderScreen();
 }
 
+const readerChapterRenderer = createReaderChapterRenderer({
+  getCurrentBook: readerCurrentBook,
+  getBookLang: readerBookLang,
+  canonicalLang: readerCanonicalLang,
+  ensureZhCoreLoaded: readerEnsureZhCoreJsonLoaded,
+  needsZhCoreLoad: () => !readerZhCoreJson && !readerZhCoreJsonPromise,
+  trackParagraphSeen: readerTrackParagraphIndexSeen,
+  getBookProgress: readerBookProgress,
+  langBadge: readerLangBadge,
+  getTranslationsHidden: () => readerTranslationsHidden,
+  updatePinyinButton: readerUpdatePinyinButton,
+  renderSongSection,
+  bindParagraphEvents: bindReaderParagraphEvents,
+  bindSongStropheEvents,
+  renderParagraphText: readerRenderParagraphText,
+  renderTranslationBlock: renderReaderTranslationBlock,
+  renderAnalysisBlock: renderReaderAnalysisBlock,
+  bindVisibleParagraphTracking: readerBindVisibleParagraphTracking,
+  saveBooks: saveReaderBooks,
+  schedulePrefetch: readerSchedulePrefetch,
+  openParagraphTimer: readerTimeParagraphOpen,
+});
+
 function renderReaderChapter() {
-  const book = readerCurrentBook(); if (!book) return;
-  const activeReaderLang = readerBookLang(book);
-  if (readerCanonicalLang(activeReaderLang) === 'zh' && !readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: true });
-  const readingView = document.getElementById('reader-reading-view');
-  if (readingView) readingView.dataset.readerLang = activeReaderLang;
-  const ci = Math.max(0, Math.min(book.currentChapter || 0, (book.chapters || []).length - 1));
-  book.currentChapter = ci;
-  const ch = book.chapters[ci];
-  const paragraphs = ch?.paragraphs || [];
-  const pi = Math.max(0, Math.min(book.currentParagraph || 0, Math.max(0, paragraphs.length - 1)));
-  book.currentParagraph = pi;
-  readerTrackParagraphIndexSeen(pi, { refresh: false });
-  const pct = readerBookProgress(book);
-  const titleEl = document.getElementById('reader-book-title');
-  const chTitleEl = document.getElementById('reader-chapter-title');
-  const bar = document.getElementById('reader-progress-bar');
-  const pt = document.getElementById('reader-progress-text');
-  const text = document.getElementById('reader-chapter-text');
-  if (titleEl) titleEl.textContent = book.title || 'Текст';
-  if (chTitleEl) {
-    if (book.format === 'news') {
-      const src = book.newsSource || '';
-      const dateStr = book.newsDate
-        ? new Date(book.newsDate).toLocaleDateString('ru-RU', {day:'numeric', month:'long'})
-        : '';
-      chTitleEl.textContent = (src ? '📰 ' + src : '📰') + (dateStr ? ' · ' + dateStr : '') + ` · абзац ${pi + 1}/${Math.max(1, paragraphs.length)}`;
-    } else {
-      chTitleEl.textContent = `${readerLangBadge(activeReaderLang)} · ${ch?.title || 'Глава'} · гл. ${ci + 1}/${(book.chapters || []).length} · абзац ${pi + 1}/${Math.max(1, paragraphs.length)}`;
-    }
-  }
-  if (bar) bar.style.width = pct + '%';
-  if (pt) pt.textContent = `${pct}% · абзац ${pi + 1} / ${Math.max(1, paragraphs.length)}`;
-  const comp = book.comprehension?.[ch.id];
-  const note = document.getElementById('reader-comprehension-note');
-  if (note) note.textContent = comp ? `Оценка понятности: ${comp}/5` : 'Оцени после чтения: это поможет выбирать уровень дальше.';
-  const helpBtn = document.getElementById('reader-help-btn');
-  if (helpBtn) helpBtn.classList.toggle('on', !readerTranslationsHidden);
-  readerUpdatePinyinButton(activeReaderLang);
-  if (text) {
-    text.dataset.lang = activeReaderLang;
-    const __sc = document.querySelector('#reader-reading-view .rd-scroll');
-    const __top = __sc ? __sc.scrollTop : 0;
-    const translations = book.readerTranslations || {};
-    if (book.format === 'song' && ch.songSection) {
-      // ── SONG RENDER ──
-      text.innerHTML = renderSongSection(book, ch, paragraphs, pi);
-      bindReaderParagraphEvents();
-      bindSongStropheEvents(book, ch);
-    } else {
-      // ── NORMAL RENDER ──
-      text.innerHTML = paragraphs.map((p, i) => {
-        const trKey = `${ch.id}:${i}`;
-        const tr = translations[trKey];
-        return `
-      <div class="reader-paragraph ${i===pi?'active':''}" data-p="${i}">
-        <div class="reader-paragraph-text">${readerRenderParagraphText(p, i)}</div>
-        ${i===pi && tr && !readerTranslationsHidden ? renderReaderTranslationBlock(tr) : ''}
-        ${i===pi && book.readerAnalyses?.[trKey] && !readerTranslationsHidden ? renderReaderAnalysisBlock(book.readerAnalyses[trKey]) : ''}
-
-      </div>`;
-      }).join('');
-      bindReaderParagraphEvents();
-      if (__sc) __sc.scrollTop = __top;
-      readerBindVisibleParagraphTracking(__sc);
-    }
-  }
-  saveReaderBooks();
-  readerSchedulePrefetch();
-  readerTimeParagraphOpen();
+  return readerChapterRenderer.render();
 }
-
 
 
 function bindReaderSwipe() {
