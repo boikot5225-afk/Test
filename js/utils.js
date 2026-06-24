@@ -90,3 +90,14 @@ export function hideLoading() {
 export function profileKey(suffix, currentProfile) {
   return 'conj_' + (currentProfile || '').toLowerCase() + '_' + suffix;
 }
+
+export function normalizeImportKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFC')
+    .replace(/\s+/g, '_')
+    .replace(/[.#$\[\]\/]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '') || ('item_' + Date.now());
+}
