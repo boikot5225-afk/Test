@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════
 // app.js — главный модуль, точка входа — v73
 // ════════════════════════════════════════════════
-console.log('[app] v74 loaded');
+console.log('[app] v75 loaded');
 
 import { todayStr, addDays, profileKey, showToast, showLoading, hideLoading, toDateStr } from './utils.js';
 import { initSupabase, isSupabaseReady, sb, sbUser, setSbUser, sbSignIn, sbSignUp, sbSignOut,
@@ -2873,6 +2873,57 @@ function readerNextChapter() {
 function readerPrevChapter() {
   return readerNavigation.previousChapter();
 }
+
+function readerOpenToc() {
+  const book = readerCurrentBook?.();
+  if (!book || !book.chapters?.length) { showToast('Нет оглавления'); return; }
+  const list = document.getElementById('reader-toc-list');
+  const back = document.getElementById('reader-toc-back');
+  const sheet = document.getElementById('reader-toc-sheet');
+  if (!list || !back || !sheet) return;
+  const curCh = book.currentChapter || 0;
+  list.innerHTML = book.chapters.map((ch, i) => {
+    const isCurrent = i === curCh;
+    const isDone = i < curCh;
+    const pCount = (ch.paragraphs || []).filter(p => !(p && typeof p === 'object' && p.type === 'image')).length;
+    const title = ch.title || `Глава ${i + 1}`;
+    const numStr = isDone ? '✓' : isCurrent ? '▶' : String(i + 1);
+    return `<button class="rd-toc-item${isCurrent ? ' current' : ''}${isDone ? ' done' : ''}" onclick="readerGoToChapter(${i});readerCloseToc()">
+      <span class="rd-toc-num">${numStr}</span>
+      <span class="rd-toc-title">${readerEscape(title)}</span>
+      <span class="rd-toc-count">${pCount} абз.</span>
+    </button>`;
+  }).join('');
+  back.classList.add('show');
+  sheet.classList.add('show');
+  setTimeout(() => {
+    const cur = list.querySelector('.current');
+    if (cur) cur.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, 120);
+}
+
+function readerCloseToc() {
+  document.getElementById('reader-toc-back')?.classList.remove('show');
+  document.getElementById('reader-toc-sheet')?.classList.remove('show');
+}
+
+function readerGoToChapter(index) {
+  const book = readerCurrentBook?.();
+  if (!book) return;
+  const chapters = book.chapters || [];
+  if (index < 0 || index >= chapters.length) return;
+  book.currentChapter = index;
+  const ch = chapters[index];
+  const paragraphs = ch?.paragraphs || [];
+  let firstText = 0;
+  while (firstText < paragraphs.length && paragraphs[firstText] && typeof paragraphs[firstText] === 'object' && paragraphs[firstText].type === 'image') firstText++;
+  book.currentParagraph = firstText;
+  book.updatedAt = new Date().toISOString();
+  saveReaderBooks();
+  renderReaderChapter();
+  readerScrollActiveParagraph();
+}
+
 function readerDeleteBook(id) {
   loadReaderBooks();
   const book = readerBooks.find(b => b.id === id); if (!book) return;
@@ -4883,6 +4934,9 @@ window.rdSetLH    = rdSetLH;
 window.rdSetTheme = rdSetTheme;
 window.readerNextChapter = readerNextChapter;
 window.readerPrevChapter = readerPrevChapter;
+window.readerOpenToc     = readerOpenToc;
+window.readerCloseToc    = readerCloseToc;
+window.readerGoToChapter = readerGoToChapter;
 window.readerPrevParagraph = readerPrevParagraph;
 window.readerNextParagraph = readerNextParagraph;
 window.readerSpeakParagraph = readerSpeakParagraph;
