@@ -437,7 +437,7 @@ window.an2AuthRescue = async function an2AuthRescue() {
     const session = sessionResult?.data?.session;
     if (!session?.user) throw new Error('Активной Firebase-сессии нет. Войди заново.');
     setSbUser(session.user);
-    setActiveProfileName(getCachedProfileName(session.user) || session.user.email?.split('@')[0] || 'user', session.user);
+    currentProfile = setActiveProfileName(getCachedProfileName(session.user) || session.user.email?.split('@')[0] || 'user', session.user);
     VERBS_LOADED = true;
     loginProfile(currentProfile);
     return { ok: true, user: session.user.email || session.user.uid };
@@ -889,7 +889,7 @@ function updateBottomNav(id) {
 // ── Авторизация ──
 export function loginProfile(name) {
   readerSwitchStorageOwner(isGuest ? 'guest' : ((typeof sbGetCurrentUserId === 'function' ? sbGetCurrentUserId() : null) || sbUser?.uid || sbUser?.id || name || 'anon'));
-  setActiveProfileName(String(name || 'user').toLowerCase(), sbUser || null);
+  currentProfile = setActiveProfileName(String(name || 'user').toLowerCase(), sbUser || null);
   const brand = document.querySelector('.nav-brand');
   if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + name + '</span>';
   document.getElementById('screen-profile').style.display = 'none';
@@ -1046,7 +1046,7 @@ export async function doLogin() {
 
     const cachedName = getCachedProfileName(user);
     const safeName = cachedName || email.split('@')[0] || 'user';
-    setActiveProfileName(safeName, user);
+    currentProfile = setActiveProfileName(safeName, user);
 
     // Если локального кэша нет — это нормально: v68 перешёл на пустые личные базы.
     // Не заставляем пользователя смотреть на экран регистрации из-за пустого /userdict.
@@ -1065,7 +1065,7 @@ export async function doLogin() {
       try {
         const profile = await ensureProfileForUser(user, email);
         if (profile?.username) {
-          setActiveProfileName(profile.username, user);
+          currentProfile = setActiveProfileName(profile.username, user);
           const brand = document.querySelector('.nav-brand');
           if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + currentProfile + '</span>';
         }
@@ -1121,7 +1121,7 @@ export async function doRegister() {
     // поэтому не оставляем пользователя висеть на вкладке регистрации.
     const user = await withDeadline(() => sbSignUp(email, password, username), AUTH_TIMEOUT_MS, 'Регистрация');
     setSbUser(user);
-    setActiveProfileName(username || email.split('@')[0] || 'user', user);
+    currentProfile = setActiveProfileName(username || email.split('@')[0] || 'user', user);
 
     VERBS.length = 0;
     VERBS_LOADED = true;
@@ -1327,7 +1327,7 @@ async function init() {
     setSbUser(data.session.user);
     const email = data.session.user.email || '';
     const cachedName = getCachedProfileName(data.session.user);
-    setActiveProfileName(cachedName || email.split('@')[0] || 'user', data.session.user);
+    currentProfile = setActiveProfileName(cachedName || email.split('@')[0] || 'user', data.session.user);
 
     if (!restoreVerbsFromCache()) {
       VERBS.length = 0;
@@ -1342,7 +1342,7 @@ async function init() {
       try {
         const profile = await ensureProfileForUser(data.session.user, email);
         if (profile?.username) {
-          setActiveProfileName(profile.username, user);
+          currentProfile = setActiveProfileName(profile.username, user);
           const brand = document.querySelector('.nav-brand');
           if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">' + currentProfile + '</span>';
         }

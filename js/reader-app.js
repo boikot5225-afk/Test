@@ -101,6 +101,7 @@ function setActiveProfileName(name, user = null) {
   const profile = String(name || '').trim() || 'user';
   setCurrentProfile(profile);
   setCachedProfileName(profile, user);
+  return profile;
 }
 
 function readerSwitchStorageOwner(owner = null) {
