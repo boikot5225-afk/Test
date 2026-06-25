@@ -101,3 +101,11 @@ export function normalizeImportKey(value) {
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '') || ('item_' + Date.now());
 }
+
+export function escapeHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+export function escapeAttr(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
