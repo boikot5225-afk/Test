@@ -93,7 +93,7 @@ function getCachedProfileName(user = null) {
 }
 function setCachedProfileName(name, user = null) {
   const clean = String(name || '').trim();
-  if (!clean) return;
+  if (!clean || clean === 'user') return;
   try { localStorage.setItem(profileNameStorageKey(user), clean); } catch {}
   try { window.an2CurrentProfileName = clean; } catch {}
 }
