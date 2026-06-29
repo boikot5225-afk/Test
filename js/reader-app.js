@@ -2466,6 +2466,7 @@ async function readerPrefillAddVerbFromPanel() {
 function readerMarkSelectedWordKnown() {
   if (!readerSelectedWord) return;
   readerMarkWordKnown(readerSelectedWord);
+  readerRefreshParagraphWordClasses(readerSelectedParagraphIndex);
   readerCloseWordPanel();
   renderReaderChapter();
   showToast('✓ Слово скрыто как изученное');
@@ -2480,6 +2481,7 @@ function readerMarkSelectedWordProblem() {
   st.status = 'problem';
   st.updatedAt = new Date().toISOString();
   saveReaderWordState();
+  readerRefreshParagraphWordClasses(readerSelectedParagraphIndex);
   readerCloseWordPanel();
   renderReaderChapter();
   showToast('⚠ Отмечено как проблемное');
@@ -2512,6 +2514,7 @@ async function readerSaveWord() {
         form_note: cached.form_note || cached.note || ''
       }, 'zh');
       readerMarkWordSaved(rawWord, lemma, 'zh', ru);
+      readerRefreshParagraphWordClasses(readerSelectedParagraphIndex);
       if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = '✅ Добавлено в китайские изучаемые слова'; }
       renderReaderChapter();
       showToast('＋ Китайское слово отмечено как изучаемое');
@@ -2552,6 +2555,7 @@ async function readerSaveWord() {
     const slim = { id, fr: lemma, ru, gender: record.gender, pos: record.pos, no_article: record.no_article, theme: 'reader' };
     if (oldIdx >= 0) NOUNS[oldIdx] = slim; else NOUNS.push(slim);
     readerMarkWordSaved(rawWord, lemma, null, ru);
+    readerRefreshParagraphWordClasses(readerSelectedParagraphIndex);
     try { Object.keys(localStorage).forEach(k => { if (k.startsWith('an2_cache_nouns')) localStorage.removeItem(k); }); } catch {}
     renderReaderChapter();
     if (st) { st.style.color = 'var(--good)'; st.textContent = '✅ Сохранено и выделено в тексте'; }
