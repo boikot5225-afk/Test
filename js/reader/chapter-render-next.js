@@ -155,6 +155,7 @@ export function createReaderChapterRenderer({
         chapterText.dataset.activeParagraph = String(paragraphIndex);
 
         bindReaderInteractions();
+        refreshWordClasses?.(paragraphIndex);
         if (scroller) scroller.scrollTop = scrollTop;
         bindVisibleParagraphTracking(scroller);
         loadEpubImages?.(chapterText);

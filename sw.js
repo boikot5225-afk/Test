@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.0-fix-word-colors';
+const CACHE_VERSION = 'v76.1-fix-word-colors-open';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
