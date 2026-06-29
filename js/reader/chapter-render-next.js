@@ -6,6 +6,7 @@ export function createReaderChapterRenderer({
   canonicalLang,
   ensureZhCoreLoaded,
   needsZhCoreLoad,
+  isZhCoreLoaded,
   trackParagraphSeen,
   getBookProgress,
   langBadge,
@@ -27,16 +28,21 @@ export function createReaderChapterRenderer({
   // Returns true if we successfully updated only active-paragraph state
   // without rebuilding all DOM. Falls back to false → full render.
   function tryFastNav(chapterText, chapterIndex, paragraphs, paragraphIndex, chapter, translations, book) {
-    const prevChIdx   = Number(chapterText.dataset.renderedChapter  ?? -1);
+    const prevChIdx    = Number(chapterText.dataset.renderedChapter  ?? -1);
     const prevParCount = Number(chapterText.dataset.renderedParCount ?? 0);
-    const prevHidden  = chapterText.dataset.renderedHidden;
-    const curHidden   = String(getTranslationsHidden());
+    const prevHidden   = chapterText.dataset.renderedHidden;
+    const curHidden    = String(getTranslationsHidden());
+    // Track whether zh-core JSON was loaded when this chapter was rendered.
+    // If it loads after the initial render, the paragraph tokenisation changes
+    // (individual chars → multi-char words), so we must do a full rebuild.
+    const prevZhCore   = chapterText.dataset.renderedZhCore;
+    const curZhCore    = String(!!(isZhCoreLoaded?.()));
 
-    // Fast path is only valid when DOM matches current chapter/state exactly
     if (
       prevChIdx !== chapterIndex ||
       prevParCount !== paragraphs.length ||
       prevHidden !== curHidden ||
+      prevZhCore !== curZhCore ||
       book.format === 'song'
     ) return false;
 
@@ -128,6 +134,7 @@ export function createReaderChapterRenderer({
         chapterText.dataset.renderedChapter = String(chapterIndex);
         chapterText.dataset.renderedParCount = String(paragraphs.length);
         chapterText.dataset.renderedHidden = String(getTranslationsHidden());
+        chapterText.dataset.renderedZhCore = String(!!(isZhCoreLoaded?.()));
         chapterText.dataset.activeParagraph = String(paragraphIndex);
         bindReaderInteractions();
         bindSongStropheEvents(book, chapter);
@@ -152,6 +159,7 @@ export function createReaderChapterRenderer({
         chapterText.dataset.renderedChapter = String(chapterIndex);
         chapterText.dataset.renderedParCount = String(paragraphs.length);
         chapterText.dataset.renderedHidden = String(getTranslationsHidden());
+        chapterText.dataset.renderedZhCore = String(!!(isZhCoreLoaded?.()));
         chapterText.dataset.activeParagraph = String(paragraphIndex);
 
         bindReaderInteractions();

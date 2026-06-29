@@ -23,7 +23,7 @@ import { createReaderLibraryStore } from './reader/library-store.js?v=1';
 import { createReaderDisplay } from './reader/display.js?v=1';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
-import { createReaderChapterRenderer } from './reader/chapter-render.js?v=2';
+import { createReaderChapterRenderer } from './reader/chapter-render.js?v=3';
 import { splitTextToChapters as readerImportSplitTextToChapters,
          splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
 
@@ -854,7 +854,15 @@ async function syncWordStateFromCloud() {
   }
   if (changed) {
     try { localStorage.setItem(readerWordStateStorageKey(), JSON.stringify(local)); } catch {}
+    readerWordStateCache = null; // force reload from updated localStorage on next access
     console.log('[word-state] merged', Object.keys(cloud).length, 'words from cloud');
+    // Refresh visible reader so cloud-synced word colors appear without page reload
+    try {
+      const readingView = document.getElementById('reader-reading-view');
+      if (readingView && readingView.style.display !== 'none') {
+        readerRefreshParagraphWordClasses();
+      }
+    } catch {}
   }
 }
 
@@ -1855,6 +1863,7 @@ const readerChapterRenderer = createReaderChapterRenderer({
   canonicalLang: readerCanonicalLang,
   ensureZhCoreLoaded: readerEnsureZhCoreJsonLoaded,
   needsZhCoreLoad: () => !readerZhCoreJson && !readerZhCoreJsonPromise,
+  isZhCoreLoaded: () => !!readerZhCoreJson,
   trackParagraphSeen: readerTrackParagraphIndexSeen,
   getBookProgress: readerBookProgress,
   langBadge: readerLangBadge,
