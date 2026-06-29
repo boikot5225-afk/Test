@@ -18,7 +18,6 @@ export function createReaderChapterRenderer({
   renderTranslationBlock,
   renderAnalysisBlock,
   bindVisibleParagraphTracking,
-  refreshWordClasses,
   saveBooks,
   schedulePrefetch,
   openParagraphTimer,
@@ -28,16 +27,16 @@ export function createReaderChapterRenderer({
   // Returns true if we successfully updated only active-paragraph state
   // without rebuilding all DOM. Falls back to false → full render.
   function tryFastNav(chapterText, chapterIndex, paragraphs, paragraphIndex, chapter, translations, book) {
-    const prevChIdx    = Number(chapterText.dataset.renderedChapter  ?? -1);
+    const prevChIdx   = Number(chapterText.dataset.renderedChapter  ?? -1);
     const prevParCount = Number(chapterText.dataset.renderedParCount ?? 0);
-    const prevHidden   = chapterText.dataset.renderedHidden;
-    const curHidden    = String(getTranslationsHidden());
-    // Track whether zh-core JSON was loaded when this chapter was rendered.
-    // If it loads after the initial render, the paragraph tokenisation changes
-    // (individual chars → multi-char words), so we must do a full rebuild.
-    const prevZhCore   = chapterText.dataset.renderedZhCore;
-    const curZhCore    = String(!!(isZhCoreLoaded?.()));
+    const prevHidden  = chapterText.dataset.renderedHidden;
+    const curHidden   = String(getTranslationsHidden());
+    // If zh-core JSON loaded after the initial render, tokenisation changes
+    // (individual chars → multi-char words) — must do a full rebuild.
+    const prevZhCore  = chapterText.dataset.renderedZhCore;
+    const curZhCore   = String(!!(isZhCoreLoaded?.()));
 
+    // Fast path is only valid when DOM matches current chapter/state exactly
     if (
       prevChIdx !== chapterIndex ||
       prevParCount !== paragraphs.length ||
@@ -62,7 +61,6 @@ export function createReaderChapterRenderer({
     if (!newEl) return false; // DOM mismatch — fall back to full render
 
     newEl.classList.add('active');
-    refreshWordClasses?.(paragraphIndex);
     if (!getTranslationsHidden()) {
       const translationKey = `${chapter?.id}:${paragraphIndex}`;
       const translation = translations[translationKey];
@@ -163,7 +161,6 @@ export function createReaderChapterRenderer({
         chapterText.dataset.activeParagraph = String(paragraphIndex);
 
         bindReaderInteractions();
-        refreshWordClasses?.(paragraphIndex);
         if (scroller) scroller.scrollTop = scrollTop;
         bindVisibleParagraphTracking(scroller);
         loadEpubImages?.(chapterText);

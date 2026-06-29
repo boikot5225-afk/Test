@@ -1876,7 +1876,6 @@ const readerChapterRenderer = createReaderChapterRenderer({
   renderTranslationBlock: renderReaderTranslationBlock,
   renderAnalysisBlock: renderReaderAnalysisBlock,
   bindVisibleParagraphTracking: readerBindVisibleParagraphTracking,
-  refreshWordClasses: readerRefreshParagraphWordClasses,
   saveBooks: saveReaderBooks,
   schedulePrefetch: readerSchedulePrefetch,
   openParagraphTimer: readerTimeParagraphOpen,
