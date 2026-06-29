@@ -159,9 +159,6 @@ export function createReaderChapterRenderer({
         if (scroller) scroller.scrollTop = scrollTop;
         bindVisibleParagraphTracking(scroller);
         loadEpubImages?.(chapterText);
-        // Deferred full refresh: fixes any stale colors across all paragraphs
-        // in case word-state wasn't fully resolved during the synchronous render.
-        requestAnimationFrame(() => refreshWordClasses?.());
       }
     }
 

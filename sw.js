@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.2-fix-word-colors-deferred';
+const CACHE_VERSION = 'v76.3-remove-heavy-raf';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
