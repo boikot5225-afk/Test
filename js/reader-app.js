@@ -2273,17 +2273,15 @@ async function readerOpenWordPanel(word, paragraphIndex = 0) {
   readerSelectedParagraphIndex = paragraphIndex;
   const activeLang = readerCurrentLang();
   readerMarkWordClicked(readerSelectedWord, activeLang);
-  // v68.26: partial class refresh was not reliable on the French reader: the DOM
-  // could keep the old yellow class until a later render, while Chinese happened to
-  // re-render after its lookup. Do both: paint the existing spans now, then rebuild
-  // the chapter on the next animation frame. This keeps every occurrence of the
-  // clicked word in sync immediately and preserves the reader scroll position.
-  readerRefreshParagraphWordClasses();
+  // Paint only the paragraph containing the clicked word immediately (cheap),
+  // then rebuild the full chapter on the next animation frame so every other
+  // occurrence of the word also gets the updated color without blocking the UI.
+  readerRefreshParagraphWordClasses(paragraphIndex);
   requestAnimationFrame(() => {
     try { renderReaderChapter(); }
     catch (e) {
       console.warn('[reader word repaint] chapter render failed; keeping direct refresh', e);
-      try { readerRefreshParagraphWordClasses(); } catch {}
+      try { readerRefreshParagraphWordClasses(paragraphIndex); } catch {}
     }
   });
   const panel = ensureReaderWordPanel();
