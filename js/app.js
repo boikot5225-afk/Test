@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════
 // app.js — главный модуль, точка входа — v73
 // ════════════════════════════════════════════════
-console.log('[app] v75.8-exercises-fr loaded');
+console.log('[app] v75.9-fast-reader-nav loaded');
 
 import { todayStr, addDays, profileKey, showToast, showLoading, hideLoading, toDateStr, normalizeImportKey, escapeAttr } from './utils.js';
 import { initSupabase, isSupabaseReady, sb, sbUser, setSbUser, sbSignIn, sbSignUp, sbSignOut,

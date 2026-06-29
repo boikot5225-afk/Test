@@ -22,6 +22,53 @@ export function createReaderChapterRenderer({
   openParagraphTimer,
   loadEpubImages,
 }) {
+  // ── Fast navigation helpers ──────────────────────────────────────
+  // Returns true if we successfully updated only active-paragraph state
+  // without rebuilding all DOM. Falls back to false → full render.
+  function tryFastNav(chapterText, chapterIndex, paragraphs, paragraphIndex, chapter, translations, book) {
+    const prevChIdx   = Number(chapterText.dataset.renderedChapter  ?? -1);
+    const prevParCount = Number(chapterText.dataset.renderedParCount ?? 0);
+    const prevHidden  = chapterText.dataset.renderedHidden;
+    const curHidden   = String(getTranslationsHidden());
+
+    // Fast path is only valid when DOM matches current chapter/state exactly
+    if (
+      prevChIdx !== chapterIndex ||
+      prevParCount !== paragraphs.length ||
+      prevHidden !== curHidden ||
+      book.format === 'song'
+    ) return false;
+
+    const prevActive = Number(chapterText.dataset.activeParagraph ?? -1);
+    if (prevActive === paragraphIndex) return true; // nothing to do
+
+    // Deactivate old paragraph
+    const oldEl = chapterText.querySelector(`.reader-paragraph[data-p="${prevActive}"]`);
+    if (oldEl) {
+      oldEl.classList.remove('active');
+      oldEl.querySelector('.reader-translation-block')?.remove();
+      oldEl.querySelector('.reader-analysis-block')?.remove();
+    }
+
+    // Activate new paragraph
+    const newEl = chapterText.querySelector(`.reader-paragraph[data-p="${paragraphIndex}"]`);
+    if (!newEl) return false; // DOM mismatch — fall back to full render
+
+    newEl.classList.add('active');
+    if (!getTranslationsHidden()) {
+      const translationKey = `${chapter?.id}:${paragraphIndex}`;
+      const translation = translations[translationKey];
+      const textDiv = newEl.querySelector('.reader-paragraph-text');
+      if (textDiv) {
+        if (translation) textDiv.insertAdjacentHTML('afterend', renderTranslationBlock(translation));
+        if (book.readerAnalyses?.[translationKey]) textDiv.insertAdjacentHTML('afterend', renderAnalysisBlock(book.readerAnalyses[translationKey]));
+      }
+    }
+
+    chapterText.dataset.activeParagraph = String(paragraphIndex);
+    return true;
+  }
+
   function render() {
     const book = getCurrentBook();
     if (!book) return;
@@ -72,20 +119,39 @@ export function createReaderChapterRenderer({
 
     if (chapterText) {
       chapterText.dataset.lang = activeReaderLang;
-      const scroller = document.querySelector('#reader-reading-view .rd-scroll');
-      const scrollTop = scroller ? scroller.scrollTop : 0;
       const translations = book.readerTranslations || {};
 
       if (book.format === 'song' && chapter?.songSection) {
         chapterText.innerHTML = renderSongSection(book, chapter, paragraphs, paragraphIndex);
+        chapterText.dataset.renderedChapter = String(chapterIndex);
+        chapterText.dataset.renderedParCount = String(paragraphs.length);
+        chapterText.dataset.renderedHidden = String(getTranslationsHidden());
+        chapterText.dataset.activeParagraph = String(paragraphIndex);
         bindReaderInteractions();
         bindSongStropheEvents(book, chapter);
       } else {
+        // ── Fast nav path: skip full DOM rebuild when only active paragraph changed ──
+        if (tryFastNav(chapterText, chapterIndex, paragraphs, paragraphIndex, chapter, translations, book)) {
+          saveBooks();
+          schedulePrefetch();
+          openParagraphTimer();
+          return;
+        }
+
+        // ── Full render ──
+        const scroller = document.querySelector('#reader-reading-view .rd-scroll');
+        const scrollTop = scroller ? scroller.scrollTop : 0;
         chapterText.innerHTML = paragraphs.map((paragraph, index) => {
           const translationKey = `${chapter?.id}:${index}`;
           const translation = translations[translationKey];
           return `<div class="reader-paragraph ${index === paragraphIndex ? 'active' : ''}" data-p="${index}"><div class="reader-paragraph-text">${renderParagraphText(paragraph, index)}</div>${index === paragraphIndex && translation && !getTranslationsHidden() ? renderTranslationBlock(translation) : ''}${index === paragraphIndex && book.readerAnalyses?.[translationKey] && !getTranslationsHidden() ? renderAnalysisBlock(book.readerAnalyses[translationKey]) : ''}</div>`;
         }).join('');
+
+        chapterText.dataset.renderedChapter = String(chapterIndex);
+        chapterText.dataset.renderedParCount = String(paragraphs.length);
+        chapterText.dataset.renderedHidden = String(getTranslationsHidden());
+        chapterText.dataset.activeParagraph = String(paragraphIndex);
+
         bindReaderInteractions();
         if (scroller) scroller.scrollTop = scrollTop;
         bindVisibleParagraphTracking(scroller);
