@@ -17,6 +17,7 @@ export function createReaderChapterRenderer({
   renderTranslationBlock,
   renderAnalysisBlock,
   bindVisibleParagraphTracking,
+  refreshWordClasses,
   saveBooks,
   schedulePrefetch,
   openParagraphTimer,
@@ -55,6 +56,7 @@ export function createReaderChapterRenderer({
     if (!newEl) return false; // DOM mismatch — fall back to full render
 
     newEl.classList.add('active');
+    refreshWordClasses?.(paragraphIndex);
     if (!getTranslationsHidden()) {
       const translationKey = `${chapter?.id}:${paragraphIndex}`;
       const translation = translations[translationKey];

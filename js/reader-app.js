@@ -23,7 +23,7 @@ import { createReaderLibraryStore } from './reader/library-store.js?v=1';
 import { createReaderDisplay } from './reader/display.js?v=1';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
-import { createReaderChapterRenderer } from './reader/chapter-render.js?v=1';
+import { createReaderChapterRenderer } from './reader/chapter-render.js?v=2';
 import { splitTextToChapters as readerImportSplitTextToChapters,
          splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
 
@@ -1867,6 +1867,7 @@ const readerChapterRenderer = createReaderChapterRenderer({
   renderTranslationBlock: renderReaderTranslationBlock,
   renderAnalysisBlock: renderReaderAnalysisBlock,
   bindVisibleParagraphTracking: readerBindVisibleParagraphTracking,
+  refreshWordClasses: readerRefreshParagraphWordClasses,
   saveBooks: saveReaderBooks,
   schedulePrefetch: readerSchedulePrefetch,
   openParagraphTimer: readerTimeParagraphOpen,
