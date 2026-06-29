@@ -873,8 +873,9 @@ let readerVisibleParagraphTimers = new Map();
 function readerRefreshParagraphWordClasses(index = null) {
   const root = document.getElementById('reader-chapter-text');
   if (!root) return;
-  const base = Number.isFinite(Number(index))
-    ? root.querySelectorAll(`.reader-paragraph[data-p="${Number(index)}"] .reader-word`)
+  const idx = index !== null && index !== undefined ? Number(index) : NaN;
+  const base = Number.isFinite(idx)
+    ? root.querySelectorAll(`.reader-paragraph[data-p="${idx}"] .reader-word`)
     : root.querySelectorAll('.reader-word');
   base.forEach(span => {
     const word = span.dataset.word || span.textContent || '';
