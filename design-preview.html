@@ -256,26 +256,26 @@ html, body { min-height: 100%; background: #2C2C2E; font-family: 'Inter', sans-s
 
 .reader-para {
   font-family: 'Noto Serif SC', 'Inter', serif;
-  font-size: 20px; line-height: 2.3;
-  color: var(--text); margin-bottom: 20px;
-  letter-spacing: 0.03em;
+  font-size: 22px; line-height: 1.9;
+  color: var(--text); margin-bottom: 18px;
+  letter-spacing: 0.05em;
 }
 .reader-para.active {
   background: var(--surface);
   border-radius: 10px;
   padding: 12px 14px;
-  margin: 0 -14px 20px;
+  margin: 0 -14px 18px;
   border: 1px solid var(--border);
   box-shadow: 0 2px 8px rgba(0,0,0,0.04);
 }
 
 ruby { display: inline; }
-rt { font-size: 11px; font-family: 'Inter', sans-serif; color: var(--text-dim); letter-spacing: 0; }
+rt { display: none; } /* pinyin hidden by default (拼 off) */
 
 .rw {
   display: inline;
   border-radius: 3px;
-  padding: 0 1px;
+  padding: 0 2px;
   cursor: pointer;
 }
 .rw-new      { color: var(--rw-new);      background: var(--rw-new-bg);      }
@@ -595,7 +595,7 @@ rt { font-size: 11px; font-family: 'Inter', sans-serif; color: var(--text-dim); 
       </div>
       <button class="reader-ctrl-btn active">👁</button>
       <button class="reader-ctrl-btn">Aa</button>
-      <button class="reader-ctrl-btn">拼</button>
+      <button class="reader-ctrl-btn" style="font-size:13px">拼</button>
     </div>
     <div class="reader-progress-bar"><div class="reader-progress-fill" style="width:15%"></div></div>
 
@@ -685,7 +685,7 @@ rt { font-size: 11px; font-family: 'Inter', sans-serif; color: var(--text-dim); 
       </div>
       <button class="reader-ctrl-btn active">👁</button>
       <button class="reader-ctrl-btn">Aa</button>
-      <button class="reader-ctrl-btn">拼</button>
+      <button class="reader-ctrl-btn" style="font-size:13px">拼</button>
     </div>
     <div class="reader-progress-bar"><div class="reader-progress-fill" style="width:15%"></div></div>
 
