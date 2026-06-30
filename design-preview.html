@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Reader AI — Design Preview</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Noto+Serif+SC:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:        #F7F3EE;
+  --surface:   #FFFFFF;
+  --surface2:  #F0EBE3;
+  --border:    #E4DDD3;
+  --text:      #1A1510;
+  --text-mid:  #6B6055;
+  --text-dim:  #A09488;
+  --accent:    #C0392B;
+  --accent-bg: #FDF0EE;
+  --blue:      #2C6FAC;
+  --blue-bg:   #EAF2FB;
+  --green:     #27795C;
+  --green-bg:  #E8F5F0;
+  --gold:      #B8860B;
+  --nav-h:     60px;
+  --top-h:     56px;
+  --radius:    14px;
+  --radius-sm: 8px;
+
+  /* word colours */
+  --rw-new:      #E8862A;
+  --rw-new-bg:   #FFF3E8;
+  --rw-looked:   #7C5CBF;
+  --rw-looked-bg:#F2EEFF;
+  --rw-learning: #2C6FAC;
+  --rw-learning-bg:#EAF2FB;
+  --rw-seen:     #B8860B;
+  --rw-seen-bg:  #FFF9E6;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; background: #ddd; font-family: 'Inter', sans-serif; }
+
+/* ── Телефон-контейнер ── */
+.phone-row {
+  display: flex; gap: 32px; padding: 40px;
+  justify-content: center; align-items: flex-start;
+  flex-wrap: wrap;
+}
+.phone {
+  width: 375px; height: 812px;
+  background: var(--bg);
+  border-radius: 40px;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.3), inset 0 0 0 1px rgba(0,0,0,0.08);
+  overflow: hidden;
+  position: relative;
+  display: flex; flex-direction: column;
+  flex-shrink: 0;
+}
+.screen { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+.screen.active { display: flex; }
+
+/* ── Статус-бар ── */
+.status-bar {
+  height: 44px; padding: 14px 20px 0;
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 12px; font-weight: 600; color: var(--text);
+  flex-shrink: 0;
+}
+.status-icons { display: flex; gap: 6px; align-items: center; }
+
+/* ── Верхняя панель ── */
+.top-bar {
+  height: var(--top-h); padding: 0 16px;
+  display: flex; align-items: center; gap: 12px;
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.top-bar h1 { font-size: 18px; font-weight: 600; color: var(--text); flex: 1; }
+.top-bar .subtitle { font-size: 13px; color: var(--text-dim); flex: 1; line-height: 1.3; }
+
+/* ── Контент ── */
+.scroll-area { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.scroll-area::-webkit-scrollbar { display: none; }
+
+/* ── Нижняя навигация ── */
+.bottom-nav {
+  height: var(--nav-h); background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex; align-items: stretch;
+  flex-shrink: 0;
+}
+.nav-item {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 3px;
+  color: var(--text-dim); font-size: 10px; font-weight: 500;
+  letter-spacing: 0.3px; cursor: pointer;
+  transition: color 0.15s;
+}
+.nav-item.active { color: var(--accent); }
+.nav-item svg { width: 22px; height: 22px; }
+
+
+/* ══════════════════════════════════════
+   ЭКРАН 1 — ГЛАВНАЯ
+══════════════════════════════════════ */
+.home-header {
+  padding: 8px 16px 16px;
+}
+.home-header .greeting { font-size: 22px; font-weight: 600; color: var(--text); }
+.home-header .date-line { font-size: 13px; color: var(--text-dim); margin-top: 2px; display: flex; align-items: center; gap: 8px; }
+.lang-pills { display: flex; gap: 6px; margin-left: auto; }
+.lang-pill {
+  padding: 3px 8px; border-radius: 20px; font-size: 12px; font-weight: 500;
+  border: 1.5px solid var(--border); color: var(--text-mid); background: var(--surface);
+  cursor: pointer;
+}
+.lang-pill.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.section-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.8px;
+  color: var(--text-dim); text-transform: uppercase;
+  padding: 0 16px; margin-bottom: 10px;
+}
+.section-gap { margin-top: 20px; }
+
+/* Продолжить — горизонтальный скролл */
+.continue-scroll {
+  display: flex; gap: 12px; padding: 0 16px 4px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+}
+.continue-scroll::-webkit-scrollbar { display: none; }
+
+.book-card-h {
+  width: 240px; flex-shrink: 0;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 14px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+.book-card-h .flag-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.book-card-h .flag-row span { font-size: 18px; }
+.book-card-h .flag-row .badge {
+  font-size: 10px; font-weight: 600; background: var(--surface2);
+  color: var(--text-mid); padding: 2px 6px; border-radius: 4px;
+  letter-spacing: 0.3px;
+}
+.book-card-h .title {
+  font-size: 14px; font-weight: 600; color: var(--text);
+  line-height: 1.35; margin-bottom: 4px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.book-card-h .meta { font-size: 11px; color: var(--text-dim); margin-bottom: 10px; }
+.progress-bar-wrap { height: 3px; background: var(--border); border-radius: 2px; margin-bottom: 10px; }
+.progress-bar-fill { height: 100%; border-radius: 2px; background: var(--accent); }
+.book-card-h .actions { display: flex; gap: 8px; }
+.btn-sm {
+  flex: 1; padding: 7px 0; border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 500; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+}
+.btn-primary-sm { background: var(--accent); color: #fff; }
+.btn-ghost-sm { background: var(--surface2); color: var(--text-mid); }
+
+/* Новости */
+.news-card {
+  margin: 0 16px 10px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px;
+  cursor: pointer;
+}
+.news-card .news-icon { font-size: 22px; flex-shrink: 0; }
+.news-card .news-title { font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.4; }
+.news-card .news-meta { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.news-card .news-chevron { margin-left: auto; color: var(--text-dim); font-size: 16px; }
+
+
+/* ══════════════════════════════════════
+   ЭКРАН 2 — БИБЛИОТЕКА
+══════════════════════════════════════ */
+.lib-top {
+  padding: 0 16px 12px;
+  display: flex; align-items: center; gap: 10px;
+}
+.lib-top h1 { font-size: 22px; font-weight: 600; color: var(--text); flex: 1; }
+.icon-btn {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-mid); font-size: 16px; cursor: pointer;
+}
+.add-btn {
+  padding: 0 14px; height: 36px; border-radius: 10px;
+  background: var(--accent); color: #fff;
+  border: none; font-size: 13px; font-weight: 600; cursor: pointer;
+  display: flex; align-items: center; gap: 6px;
+}
+
+.lib-tabs {
+  display: flex; padding: 0 16px; margin-bottom: 12px; gap: 4px;
+}
+.lib-tab {
+  padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 500;
+  cursor: pointer; color: var(--text-mid); background: transparent; border: none;
+}
+.lib-tab.active { background: var(--accent-bg); color: var(--accent); }
+
+.book-list-item {
+  margin: 0 16px 8px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+.book-list-item .row1 { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 6px; }
+.book-cover-placeholder {
+  width: 38px; height: 52px; border-radius: 6px;
+  background: linear-gradient(135deg, var(--surface2), var(--border));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; flex-shrink: 0;
+}
+.book-info { flex: 1; min-width: 0; }
+.book-list-title { font-size: 14px; font-weight: 600; color: var(--text); line-height: 1.3; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.book-list-author { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
+.book-list-chapter { display: inline-block; font-size: 11px; background: var(--surface2); color: var(--text-mid); padding: 2px 8px; border-radius: 4px; }
+.book-pct { font-size: 13px; font-weight: 600; color: var(--accent); flex-shrink: 0; }
+.book-list-actions { display: flex; gap: 8px; margin-top: 8px; }
+.book-act-btn {
+  flex: 1; padding: 7px 0; background: var(--surface2);
+  border: none; border-radius: var(--radius-sm); font-size: 12px;
+  font-weight: 500; color: var(--text-mid); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+}
+.book-act-btn.primary { background: var(--accent); color: #fff; }
+.book-act-icon { width: 28px; height: 28px; border-radius: 7px; background: var(--surface2); border: none; display: flex; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; }
+
+
+/* ══════════════════════════════════════
+   ЭКРАН 3 — РИДЕР
+══════════════════════════════════════ */
+.reader-screen { background: var(--bg); }
+
+.reader-topbar {
+  height: var(--top-h); padding: 0 12px;
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.reader-back {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: var(--surface2); border: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; cursor: pointer; color: var(--text-mid);
+}
+.reader-title-wrap { flex: 1; min-width: 0; }
+.reader-title { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reader-subtitle { font-size: 11px; color: var(--text-dim); }
+.reader-ctrl-btn {
+  width: 34px; height: 34px; border-radius: 9px;
+  background: var(--surface2); border: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; cursor: pointer; color: var(--text-mid);
+  font-weight: 600;
+}
+.reader-ctrl-btn.active { background: var(--accent); color: #fff; }
+
+/* Прогресс */
+.reader-progress-bar { height: 2px; background: var(--border); flex-shrink: 0; }
+.reader-progress-fill { height: 100%; background: var(--accent); width: 15%; transition: width 0.3s; }
+
+/* Текст */
+.reader-text-area {
+  flex: 1; overflow-y: auto; padding: 20px 18px 12px;
+  -webkit-overflow-scrolling: touch;
+}
+.reader-text-area::-webkit-scrollbar { display: none; }
+
+.reader-para {
+  font-family: 'Noto Serif SC', 'Inter', serif;
+  font-size: 22px; line-height: 2.0;
+  color: var(--text); margin-bottom: 24px;
+  letter-spacing: 0.02em;
+}
+.reader-para.active {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 14px;
+  margin: 0 -14px 24px;
+  border: 1px solid var(--border);
+}
+
+/* Ruby / pinyin */
+.rz { display: inline-block; text-align: center; }
+ruby { display: inline-block; }
+rt { font-size: 11px; font-family: 'Inter', sans-serif; color: var(--text-dim); letter-spacing: 0; line-height: 1; }
+
+/* Слова с цветами */
+.rw {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 0 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.rw-new     { color: var(--rw-new);      background: var(--rw-new-bg);      }
+.rw-looked  { color: var(--rw-looked);   background: var(--rw-looked-bg);   }
+.rw-learning{ color: var(--rw-learning); background: var(--rw-learning-bg); }
+.rw-seen    { color: var(--rw-seen);     background: var(--rw-seen-bg);     }
+.rw-known   { color: inherit; background: transparent; }
+
+/* Перевод в активном абзаце */
+.para-translation {
+  font-size: 13px; color: var(--text-mid); font-family: 'Inter', sans-serif;
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+  line-height: 1.6;
+}
+
+/* Нижняя панель ридера */
+.reader-bottom {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 10px 16px 16px;
+  flex-shrink: 0;
+}
+.reader-nav-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.nav-arrow {
+  width: 48px; height: 48px; border-radius: 12px;
+  background: var(--surface2); border: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; cursor: pointer; color: var(--text-mid);
+  flex-shrink: 0;
+}
+.reader-progress-text {
+  flex: 1; text-align: center; font-size: 12px; color: var(--text-dim);
+}
+.listen-btn {
+  flex: 2; padding: 0 16px; height: 48px; border-radius: 12px;
+  background: var(--accent); color: #fff;
+  border: none; font-size: 14px; font-weight: 600; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+
+/* ══════════════════════════════════════
+   ПАНЕЛЬ СЛОВА (bottom sheet)
+══════════════════════════════════════ */
+.word-panel {
+  position: absolute; bottom: var(--nav-h); left: 0; right: 0;
+  background: var(--surface);
+  border-top-left-radius: 20px; border-top-right-radius: 20px;
+  border-top: 1px solid var(--border);
+  padding: 0;
+  transform: translateY(0);
+  box-shadow: 0 -8px 32px rgba(0,0,0,0.12);
+}
+.word-panel-handle {
+  width: 36px; height: 4px; background: var(--border); border-radius: 2px;
+  margin: 10px auto 14px;
+}
+.word-panel-content { padding: 0 16px 16px; }
+.word-panel-word {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 28px; font-weight: 600; color: var(--text);
+  margin-bottom: 2px;
+}
+.word-pinyin { font-size: 14px; color: var(--text-dim); margin-bottom: 10px; }
+.word-meaning { font-size: 15px; color: var(--text); line-height: 1.5; margin-bottom: 14px; }
+.word-actions { display: flex; gap: 8px; }
+.word-act {
+  flex: 1; padding: 10px 0; border-radius: 10px;
+  font-size: 13px; font-weight: 600; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.word-act-save { background: var(--blue); color: #fff; }
+.word-act-know { background: var(--green-bg); color: var(--green); }
+.word-act-context { background: var(--surface2); color: var(--text-mid); }
+
+/* ══════════════════════════════════════
+   LABEL под экраном
+══════════════════════════════════════ */
+.phone-label {
+  text-align: center; margin-top: 12px;
+  font-family: 'Inter', sans-serif; font-size: 13px;
+  font-weight: 600; color: #888;
+}
+
+/* Разделитель абзацев */
+.para-sep { height: 1px; background: var(--border); margin: 4px 0 20px; opacity: 0.5; }
+</style>
+</head>
+<body>
+<div class="phone-row">
+
+<!-- ══ ТЕЛЕФОН 1: ГЛАВНАЯ ══ -->
+<div>
+<div class="phone">
+  <div class="status-bar">
+    <span>10:27</span>
+    <div class="status-icons">
+      <span>🔒</span><span>📶</span><span style="font-weight:700">19%</span>
+    </div>
+  </div>
+
+  <div class="screen active">
+    <div class="top-bar">
+      <div style="flex:1">
+        <div style="font-size:20px;font-weight:700;color:var(--text)">Главная</div>
+      </div>
+      <div class="lang-pills">
+        <div class="lang-pill">FR</div>
+        <div class="lang-pill">EN</div>
+        <div class="lang-pill active">ZH</div>
+      </div>
+    </div>
+
+    <div class="scroll-area">
+      <div class="section-gap"></div>
+      <div class="section-label">Продолжить чтение</div>
+      <div class="continue-scroll">
+        <!-- Card 1 -->
+        <div class="book-card-h">
+          <div class="flag-row">
+            <span>🇨🇳</span>
+            <div class="badge">ОРИГИНАЛ</div>
+            <div style="margin-left:auto;font-size:12px;font-weight:700;color:var(--accent)">2%</div>
+          </div>
+          <div class="title">死亡通知单：暗黑者</div>
+          <div class="meta">Гл. 1 · абзац 44/299</div>
+          <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:2%"></div></div>
+          <div class="actions">
+            <button class="btn-sm btn-primary-sm">📖 Читать</button>
+            <button class="btn-sm btn-ghost-sm">🎧 Слушать</button>
+          </div>
+        </div>
+        <!-- Card 2 -->
+        <div class="book-card-h">
+          <div class="flag-row">
+            <span>🇨🇳</span>
+            <div class="badge">B2</div>
+            <div style="margin-left:auto;font-size:12px;font-weight:700;color:var(--accent)">58%</div>
+          </div>
+          <div class="title">坏小孩 — B2辅助阅读版</div>
+          <div class="meta">Гл. 12 · абзац 1/26</div>
+          <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:58%"></div></div>
+          <div class="actions">
+            <button class="btn-sm btn-primary-sm">📖 Читать</button>
+            <button class="btn-sm btn-ghost-sm">🎧 Слушать</button>
+          </div>
+        </div>
+        <!-- Card 3 -->
+        <div class="book-card-h">
+          <div class="flag-row">
+            <span>🇫🇷</span>
+            <div class="badge">A2</div>
+            <div style="margin-left:auto;font-size:12px;font-weight:700;color:var(--accent)">35%</div>
+          </div>
+          <div class="title">Les Fantômes du chapelier</div>
+          <div class="meta">Chapitre 4 · 19/47</div>
+          <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:35%"></div></div>
+          <div class="actions">
+            <button class="btn-sm btn-primary-sm">📖 Читать</button>
+            <button class="btn-sm btn-ghost-sm">🎧 Слушать</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="text-align:center;padding:14px 0 4px;font-size:13px;color:var(--text-dim)">Все тексты (14) →</div>
+
+      <div class="section-gap"></div>
+      <div class="section-label">Новости</div>
+      <div class="news-card">
+        <div class="news-icon">🇨🇳</div>
+        <div>
+          <div class="news-title">百家号 — 最新科技动态</div>
+          <div class="news-meta">baijiahao.baidu.com · сегодня</div>
+        </div>
+        <div class="news-chevron">›</div>
+      </div>
+      <div class="news-card">
+        <div class="news-icon">🇨🇳</div>
+        <div>
+          <div class="news-title">新华社 — 国际新闻</div>
+          <div class="news-meta">xinhuanet.com · вчера</div>
+        </div>
+        <div class="news-chevron">›</div>
+      </div>
+      <div style="height:16px"></div>
+    </div>
+
+    <div class="bottom-nav">
+      <div class="nav-item active">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+        Главная
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+        Читать
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+        Слова
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        Профиль
+      </div>
+    </div>
+  </div>
+</div>
+<div class="phone-label">Главная</div>
+</div>
+
+
+<!-- ══ ТЕЛЕФОН 2: БИБЛИОТЕКА ══ -->
+<div>
+<div class="phone">
+  <div class="status-bar">
+    <span>10:27</span>
+    <div class="status-icons"><span>📶</span><span style="font-weight:700">20%</span></div>
+  </div>
+  <div class="screen active">
+    <div class="top-bar">
+      <div class="lib-top" style="padding:0;flex:1;align-items:center">
+        <h1 style="font-size:20px;font-weight:700;color:var(--text);flex:1">Библиотека</h1>
+        <button class="add-btn">＋ Добавить</button>
+        <div class="icon-btn" style="margin-left:6px">☁</div>
+      </div>
+    </div>
+
+    <div class="lib-tabs">
+      <button class="lib-tab active">📚 Книги (14)</button>
+      <button class="lib-tab">📰 Новости (1)</button>
+    </div>
+
+    <div class="scroll-area">
+      <!-- Book item 1 -->
+      <div class="book-list-item">
+        <div class="row1">
+          <div class="book-cover-placeholder">📖</div>
+          <div class="book-info">
+            <div class="book-list-title">死亡通知单：暗黑者</div>
+            <div class="book-list-author">周浩晖 · original</div>
+            <div class="book-list-chapter">第一章 · абзац 44/299</div>
+          </div>
+          <div class="book-pct">2%</div>
+        </div>
+        <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:2%"></div></div>
+        <div class="book-list-actions">
+          <button class="book-act-btn primary">📖 Читать</button>
+          <button class="book-act-btn">🎧</button>
+          <button class="book-act-icon">🗑</button>
+        </div>
+      </div>
+
+      <!-- Book item 2 -->
+      <div class="book-list-item">
+        <div class="row1">
+          <div class="book-cover-placeholder">📗</div>
+          <div class="book-info">
+            <div class="book-list-title">坏小孩 — B2辅助阅读版</div>
+            <div class="book-list-author">紫金陈 · B2 адаптация</div>
+            <div class="book-list-chapter">第十二章 · абзац 1/26</div>
+          </div>
+          <div class="book-pct">58%</div>
+        </div>
+        <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:58%"></div></div>
+        <div class="book-list-actions">
+          <button class="book-act-btn primary">📖 Читать</button>
+          <button class="book-act-btn">🎧</button>
+          <button class="book-act-icon">🗑</button>
+        </div>
+      </div>
+
+      <!-- Book item 3 -->
+      <div class="book-list-item">
+        <div class="row1">
+          <div class="book-cover-placeholder">📘</div>
+          <div class="book-info">
+            <div class="book-list-title">Les Fantômes du chapelier</div>
+            <div class="book-list-author">Georges Simenon · A2</div>
+            <div class="book-list-chapter">Chapitre 4 · 19/47</div>
+          </div>
+          <div class="book-pct">35%</div>
+        </div>
+        <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:35%"></div></div>
+        <div class="book-list-actions">
+          <button class="book-act-btn primary">📖 Читать</button>
+          <button class="book-act-btn">🎧</button>
+          <button class="book-act-icon">🗑</button>
+        </div>
+      </div>
+
+      <!-- Book item 4 -->
+      <div class="book-list-item">
+        <div class="row1">
+          <div class="book-cover-placeholder">📕</div>
+          <div class="book-info">
+            <div class="book-list-title">L'Affaire Saint-Fiacre</div>
+            <div class="book-list-author">Georges Simenon · A2</div>
+            <div class="book-list-chapter">✓ Прочитано</div>
+          </div>
+          <div class="book-pct" style="color:var(--green)">100%</div>
+        </div>
+        <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:100%;background:var(--green)"></div></div>
+        <div class="book-list-actions">
+          <button class="book-act-btn">📖 Снова</button>
+          <button class="book-act-btn">🎧</button>
+          <button class="book-act-icon">🗑</button>
+        </div>
+      </div>
+      <div style="height:16px"></div>
+    </div>
+
+    <div class="bottom-nav">
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+        Главная
+      </div>
+      <div class="nav-item active">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+        Читать
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+        Слова
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        Профиль
+      </div>
+    </div>
+  </div>
+</div>
+<div class="phone-label">Библиотека</div>
+</div>
+
+
+<!-- ══ ТЕЛЕФОН 3: РИДЕР ══ -->
+<div>
+<div class="phone">
+  <div class="status-bar">
+    <span>10:27</span>
+    <div class="status-icons"><span>📶</span><span style="font-weight:700">19%</span></div>
+  </div>
+  <div class="screen active reader-screen" style="position:relative">
+    <div class="reader-topbar">
+      <button class="reader-back">‹</button>
+      <div class="reader-title-wrap">
+        <div class="reader-title">死亡通知单：暗黑者</div>
+        <div class="reader-subtitle">🇨🇳 ZH · Гл.1 · абзац 44/299</div>
+      </div>
+      <button class="reader-ctrl-btn active" title="Перевод">👁</button>
+      <button class="reader-ctrl-btn" title="Шрифт">Aa</button>
+      <button class="reader-ctrl-btn" title="Пиньинь">拼</button>
+    </div>
+    <div class="reader-progress-bar"><div class="reader-progress-fill" style="width:15%"></div></div>
+
+    <div class="reader-text-area">
+      <!-- Абзац 1 (не активный) -->
+      <div class="reader-para">
+        <ruby class="rw rw-learning"><span>两个</span><rt>liǎng gè</rt></ruby>
+        <ruby class="rw rw-known"><span>人</span><rt>rén</rt></ruby>，
+        <ruby class="rw rw-new"><span>一个</span><rt>yī gè</rt></ruby>
+        <ruby class="rw rw-learning"><span>警察</span><rt>jǐng chá</rt></ruby>，
+        <ruby class="rw rw-known"><span>一个</span><rt></rt></ruby>
+        <ruby class="rw rw-new"><span>怪物</span><rt>guài wù</rt></ruby>。
+      </div>
+
+      <!-- Абзац 2 (активный) -->
+      <div class="reader-para active">
+        <ruby class="rw rw-known"><span>他们</span><rt>tā men</rt></ruby>
+        <ruby class="rw rw-known"><span>在</span><rt></rt></ruby>
+        <ruby class="rw rw-seen"><span>潇潇</span><rt>xiāo xiāo</rt></ruby>
+        <ruby class="rw rw-known"><span>的</span><rt></rt></ruby>
+        <ruby class="rw rw-new"><span>雨夜</span><rt>yǔ yè</rt></ruby>
+        <ruby class="rw rw-known"><span>中</span><rt></rt></ruby>
+        <ruby class="rw rw-looked"><span>对视</span><rt>duì shì</rt></ruby>
+        <ruby class="rw rw-known"><span>着</span><rt></rt></ruby>。
+        <div class="para-translation">Они смотрели друг на друга в шумную дождливую ночь.</div>
+      </div>
+
+      <!-- Абзац 3 -->
+      <div class="reader-para">
+        <ruby class="rw rw-known"><span>两个</span><rt></rt></ruby>
+        <ruby class="rw rw-known"><span>人</span><rt></rt></ruby>
+        <ruby class="rw rw-known"><span>的</span><rt></rt></ruby>
+        <ruby class="rw rw-new"><span>目光</span><rt>mù guāng</rt></ruby>
+        <ruby class="rw rw-new"><span>似乎</span><rt>sì hū</rt></ruby>
+        <ruby class="rw rw-known"><span>比</span><rt></rt></ruby>
+        <ruby class="rw rw-learning"><span>风雨</span><rt>fēng yǔ</rt></ruby>
+        <ruby class="rw rw-known"><span>更加</span><rt></rt></ruby>
+        <ruby class="rw rw-new"><span>寒冷</span><rt>hán lěng</rt></ruby>。
+      </div>
+
+      <div style="height:8px"></div>
+    </div>
+
+    <!-- Нижняя панель ридера -->
+    <div class="reader-bottom">
+      <div class="reader-nav-row">
+        <button class="nav-arrow">‹</button>
+        <div class="reader-progress-text">44 / 299</div>
+        <button class="listen-btn">🎧 Слушать</button>
+        <div class="reader-progress-text">15%</div>
+        <button class="nav-arrow">›</button>
+      </div>
+    </div>
+
+    <!-- Панель слова (bottom sheet) -->
+    <div class="word-panel">
+      <div class="word-panel-handle"></div>
+      <div class="word-panel-content">
+        <div class="word-panel-word">对视</div>
+        <div class="word-pinyin">duì shì</div>
+        <div class="word-meaning">смотреть друг на друга; глядеть в глаза</div>
+        <div class="word-actions">
+          <button class="word-act word-act-save">+ Изучить</button>
+          <button class="word-act word-act-know">✓ Знаю</button>
+          <button class="word-act word-act-context">⋯</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="phone-label">Ридер + панель слова</div>
+</div>
+
+</div><!-- phone-row -->
+
+<div style="text-align:center;padding:16px;font-size:12px;color:#aaa;font-family:Inter,sans-serif">
+  design-preview.html — концепт, не затрагивает рабочий код
+</div>
+</body>
+</html>
