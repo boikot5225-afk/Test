@@ -1,3 +1,10 @@
+const ZH_PINYIN_KEY = 'an2_reader_zh_pinyin_mode_v1';
+
+function zhPinyinOn() {
+  try { return (localStorage.getItem(ZH_PINYIN_KEY) || 'unknown') !== 'off'; }
+  catch { return true; }
+}
+
 export function createReaderDisplay({
   key = 'an2_reader_display_v1',
   readingViewId = 'reader-reading-view',
@@ -6,7 +13,7 @@ export function createReaderDisplay({
 }) {
   const defaults = {
     font: 'Playfair Display',
-    size: 17,
+    size: 20,
     lh: 182,
     theme: '',
   };
@@ -33,7 +40,11 @@ export function createReaderDisplay({
     if (!root) return;
     root.style.setProperty('--rd-font', fonts[settings.font] || fonts['Playfair Display']);
     root.style.setProperty('--rd-size', Number(settings.size) + 'px');
-    root.style.setProperty('--rd-lh', (Number(settings.lh) / 100).toFixed(2));
+    const lh = Number(settings.lh) / 100;
+    root.style.setProperty('--rd-lh', lh.toFixed(2));
+    // Chinese needs extra line-height when pinyin is visible above characters
+    const zhLh = zhPinyinOn() ? Math.max(lh, 1.85).toFixed(2) : lh.toFixed(2);
+    root.style.setProperty('--rd-zh-lh', zhLh);
     root.dataset.rdTheme = settings.theme || '';
   }
 

@@ -165,7 +165,11 @@ function readerZhPinyinMode() { return readerPinyinControls.mode(); }
 function readerZhPinyinModeLabel(mode = readerZhPinyinMode()) { return readerPinyinControls.label(mode); }
 function readerZhPinyinModeTitle(mode = readerZhPinyinMode()) { return readerPinyinControls.title(mode); }
 function readerUpdatePinyinButton(lang = readerCurrentLang()) { return readerPinyinControls.update(lang); }
-function readerCycleZhPinyinMode() { return readerPinyinControls.cycle(); }
+function readerCycleZhPinyinMode() {
+  const result = readerPinyinControls.cycle();
+  readerApplyDisplay(readerLoadDisplay());
+  return result;
+}
 
 let readerCloudLoadedOnce = false;
 let readerCloudSaveTimer = null;

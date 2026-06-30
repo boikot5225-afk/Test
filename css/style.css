@@ -2132,8 +2132,8 @@ input:-webkit-autofill:focus {
 /* v68.4 — Chinese reader readability + pinyin in word card */
 #reader-reading-view[data-reader-lang="zh"] .reader-paragraph{
   font-family:"Noto Serif SC","Noto Sans CJK SC","Microsoft YaHei","PingFang SC","Heiti SC",system-ui,sans-serif !important;
-  font-size:1.36rem !important;
-  line-height:2.05 !important;
+  font-size:var(--rd-size) !important;
+  line-height:var(--rd-zh-lh, 2.05) !important;
   letter-spacing:.035em !important;
 }
 #reader-reading-view[data-reader-lang="zh"] .reader-paragraph-text{
@@ -2179,8 +2179,8 @@ input:-webkit-autofill:focus {
 }
 @media (max-width:700px){
   #reader-reading-view[data-reader-lang="zh"] .reader-paragraph{
-    font-size:1.42rem !important;
-    line-height:2.08 !important;
+    font-size:var(--rd-size) !important;
+    line-height:var(--rd-zh-lh, 2.08) !important;
   }
   .reader-word-panel[data-lang="zh"] #reader-word-title,
   .reader-word-panel.zh-word-panel #reader-word-title{
