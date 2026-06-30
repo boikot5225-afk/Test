@@ -241,23 +241,32 @@ html, body { min-height: 100%; background: #2C2C2E; font-family: 'Inter', sans-s
 .reader-progress-fill { height: 100%; background: var(--accent); }
 
 .reader-text-area {
-  flex: 1; overflow-y: auto; padding: 20px 18px 12px;
+  flex: 1; overflow-y: auto; padding: 16px 20px 12px;
   -webkit-overflow-scrolling: touch;
 }
 .reader-text-area::-webkit-scrollbar { display: none; }
 
+.reader-chapter-title {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 16px; font-weight: 600; color: var(--text-mid);
+  text-align: center; margin-bottom: 20px;
+  padding-bottom: 16px; border-bottom: 1px solid var(--border);
+  letter-spacing: 0.05em;
+}
+
 .reader-para {
   font-family: 'Noto Serif SC', 'Inter', serif;
-  font-size: 22px; line-height: 2.2;
-  color: var(--text); margin-bottom: 24px;
-  letter-spacing: 0.02em;
+  font-size: 20px; line-height: 2.3;
+  color: var(--text); margin-bottom: 20px;
+  letter-spacing: 0.03em;
 }
 .reader-para.active {
   background: var(--surface);
-  border-radius: 12px;
-  padding: 14px;
-  margin: 0 -4px 24px;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 0 -14px 20px;
   border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
 }
 
 ruby { display: inline; }
@@ -591,10 +600,24 @@ rt { font-size: 11px; font-family: 'Inter', sans-serif; color: var(--text-dim); 
     <div class="reader-progress-bar"><div class="reader-progress-fill" style="width:15%"></div></div>
 
     <div class="reader-text-area">
+      <div class="reader-chapter-title">第一章 · 死亡通知单</div>
+
+      <div class="reader-para">
+        <ruby class="rw rw-new"><span>深夜</span><rt>shēn yè</rt></ruby>，
+        <ruby class="rw rw-known"><span>雨</span><rt></rt></ruby>
+        <ruby class="rw rw-new"><span>打在</span><rt>dǎ zài</rt></ruby>
+        <ruby class="rw rw-learning"><span>窗户</span><rt>chuāng hu</rt></ruby>
+        <ruby class="rw rw-known"><span>上</span><rt></rt></ruby>，
+        <ruby class="rw rw-new"><span>发出</span><rt>fā chū</rt></ruby>
+        <ruby class="rw rw-seen"><span>嗒嗒</span><rt>dā dā</rt></ruby>
+        <ruby class="rw rw-known"><span>的</span><rt></rt></ruby>
+        <ruby class="rw rw-new"><span>声音</span><rt>shēng yīn</rt></ruby>。
+      </div>
+
       <div class="reader-para">
         <ruby class="rw rw-learning"><span>两个</span><rt>liǎng gè</rt></ruby>
-        <ruby class="rw rw-known"><span>人</span><rt>rén</rt></ruby>，
-        <ruby class="rw rw-new"><span>一个</span><rt>yī gè</rt></ruby>
+        <ruby class="rw rw-known"><span>人</span><rt></rt></ruby>，
+        <ruby class="rw rw-known"><span>一个</span><rt></rt></ruby>
         <ruby class="rw rw-learning"><span>警察</span><rt>jǐng chá</rt></ruby>，
         <ruby class="rw rw-known"><span>一个</span><rt></rt></ruby>
         <ruby class="rw rw-new"><span>怪物</span><rt>guài wù</rt></ruby>。
@@ -628,11 +651,11 @@ rt { font-size: 11px; font-family: 'Inter', sans-serif; color: var(--text-dim); 
         <ruby class="rw rw-new"><span>黑暗</span><rt>hēi àn</rt></ruby>
         <ruby class="rw rw-known"><span>中</span><rt></rt></ruby>，
         <ruby class="rw rw-learning"><span>警察</span><rt>jǐng chá</rt></ruby>
-        <ruby class="rw rw-known"><span>的</span><rt></rt></ruby>
-        <ruby class="rw rw-new"><span>手枪</span><rt>shǒu qiāng</rt></ruby>
-        <ruby class="rw rw-known"><span>对准了</span><rt></rt></ruby>
-        <ruby class="rw rw-seen"><span>那个</span><rt>nà gè</rt></ruby>
-        <ruby class="rw rw-new"><span>怪物</span><rt>guài wù</rt></ruby>。
+        <ruby class="rw rw-known"><span>缓缓</span><rt></rt></ruby>
+        <ruby class="rw rw-known"><span>地</span><rt></rt></ruby>
+        <ruby class="rw rw-new"><span>举起</span><rt>jǔ qǐ</rt></ruby>
+        <ruby class="rw rw-known"><span>了</span><rt></rt></ruby>
+        <ruby class="rw rw-new"><span>手枪</span><rt>shǒu qiāng</rt></ruby>。
       </div>
     </div>
 
@@ -666,11 +689,13 @@ rt { font-size: 11px; font-family: 'Inter', sans-serif; color: var(--text-dim); 
     </div>
     <div class="reader-progress-bar"><div class="reader-progress-fill" style="width:15%"></div></div>
 
-    <div class="reader-text-area" style="padding-bottom:200px">
+    <div class="reader-text-area" style="padding-bottom:8px">
+      <div class="reader-chapter-title">第一章 · 死亡通知单</div>
+
       <div class="reader-para">
         <ruby class="rw rw-learning"><span>两个</span><rt>liǎng gè</rt></ruby>
-        <ruby class="rw rw-known"><span>人</span><rt>rén</rt></ruby>，
-        <ruby class="rw rw-new"><span>一个</span><rt>yī gè</rt></ruby>
+        <ruby class="rw rw-known"><span>人</span><rt></rt></ruby>，
+        <ruby class="rw rw-known"><span>一个</span><rt></rt></ruby>
         <ruby class="rw rw-learning"><span>警察</span><rt>jǐng chá</rt></ruby>，
         <ruby class="rw rw-known"><span>一个</span><rt></rt></ruby>
         <ruby class="rw rw-new"><span>怪物</span><rt>guài wù</rt></ruby>。
