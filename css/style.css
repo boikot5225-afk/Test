@@ -3114,6 +3114,16 @@ input:-webkit-autofill:focus {
   background: var(--border);
   border-radius: 8px;
 }
+.epub-img-missing {
+  margin: 8px auto;
+  padding: 8px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: .74rem;
+  color: var(--text-dim);
+  text-align: center;
+}
 .reader-paragraph:has(.epub-img) {
   cursor: default;
   pointer-events: none;

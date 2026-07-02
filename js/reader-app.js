@@ -1605,7 +1605,15 @@ async function readerLoadEpubImages(container) {
     if (cached) { img.src = cached; continue; }
     try {
       const blob = await imgStoreGet(key);
-      if (!blob) continue;
+      if (!blob) {
+        // Image blobs live in IndexedDB on the device that imported the EPUB;
+        // on other devices show a slim note instead of an empty placeholder box.
+        const note = document.createElement('div');
+        note.className = 'epub-img-missing';
+        note.textContent = '🖼 иллюстрация доступна на устройстве, где загружен EPUB';
+        img.replaceWith(note);
+        continue;
+      }
       const url = URL.createObjectURL(blob);
       readerEpubImgCache.set(key, url);
       // Anchor the active paragraph so layout shift doesn't scroll the view

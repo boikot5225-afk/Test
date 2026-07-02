@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.12-sheet-peek-fix';
+const CACHE_VERSION = 'v76.13-missing-img-note';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
