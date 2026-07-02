@@ -473,7 +473,14 @@
         <button id="reader-help-btn" class="rd-icon" onclick="toggleReaderTranslations()" title="Перевод и разбор" aria-label="Перевод и разбор">👁</button>
         <button class="rd-icon" onclick="readerToggleDisplayPanel()" title="Настройки текста" aria-label="Настройки текста" style="font-size:.82rem;font-family:'IBM Plex Sans',sans-serif;font-weight:600;letter-spacing:-.02em">Аа</button>
         <button id="reader-pinyin-btn" class="rd-icon rd-pinyin-btn" onclick="readerCycleZhPinyinMode()" title="Пиньинь" aria-label="Пиньинь" style="display:none">拼</button>
+        <button id="reader-orig-audio-btn" class="rd-icon" onclick="readerToggleOriginalAudioPlayer()" title="Оригинальная запись" aria-label="Оригинальная запись" style="display:none">🎧</button>
         <div class="rd-prog"><i id="reader-progress-bar"></i></div>
+      </div>
+
+      <!-- ORIGINAL AUDIO PLAYER (shown only for books imported from an audio recording) -->
+      <div id="reader-orig-audio-wrap" style="display:none">
+        <button id="reader-orig-audio-close" onclick="readerToggleOriginalAudioPlayer()" title="Скрыть" aria-label="Скрыть">×</button>
+        <audio id="reader-orig-audio-el" controls preload="none" style="width:100%"></audio>
       </div>
 
       <!-- DISPLAY SETTINGS PANEL -->

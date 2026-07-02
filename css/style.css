@@ -1929,6 +1929,23 @@ input:-webkit-autofill:focus {
 #reader-reading-view .rd-prog{position:absolute; left:0; right:0; bottom:0; height:3px; background:transparent;}
 #reader-reading-view .rd-prog > i{display:block; height:100%; width:0%; background:var(--accent); border-radius:0 3px 3px 0; transition:width .25s;}
 
+/* Original audio player — shown only for books imported from a recording */
+#reader-orig-audio-wrap{
+  flex:0 0 auto; position:relative;
+  display:flex; align-items:center; gap:8px;
+  padding:8px 40px 8px 12px;
+  background:color-mix(in srgb, var(--bg) 92%, transparent);
+  border-bottom:1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+#reader-orig-audio-wrap audio{ height:32px; }
+#reader-orig-audio-close{
+  position:absolute; right:8px; top:50%; transform:translateY(-50%);
+  width:26px; height:26px; border-radius:8px; border:1px solid var(--border);
+  background:var(--surface); color:var(--text-muted); font-size:1rem; line-height:1;
+  display:flex; align-items:center; justify-content:center; cursor:pointer;
+}
+#reader-orig-audio-close:hover{border-color:var(--accent); color:var(--accent);}
+
 /* READING SURFACE */
 #reader-reading-view .rd-scroll{
   flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch;

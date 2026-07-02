@@ -16,6 +16,7 @@ import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU1
          htmlToPlainText as epubHtmlToPlainText, htmlToParagraphs as epubHtmlToParagraphs,
          htmlToMixedItems as epubHtmlToMixedItems } from './reader/epub.js?v=2';
 import { imgStorePut, imgStoreGet, imgStoreDeleteBook } from './reader/image-store.js?v=1';
+import { audioStorePut, audioStoreGet, audioStoreDelete } from './reader/audio-store.js?v=1';
 import { createReaderWordPanel } from './reader/word-panel.js?v=1';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=1';
@@ -54,6 +55,9 @@ let readerAutoPlayAbort = false;
 let readerPendingImportChapters = null;
 let readerPendingImportSource = 'manual_text';
 let readerPendingImportBookId = null;
+let readerPendingImportHasAudio = false;
+let readerOriginalAudioUrl = null; // objectURL for the currently open book's original recording
+let readerOriginalAudioBookId = null;
 const readerEpubImgCache = new Map(); // key → blob URL (session-scoped, avoids repeated IndexedDB reads)
 let readerActiveOwnerId = null;
 let readerWordStateCache = null;
@@ -1669,6 +1673,9 @@ async function readerTranscribeAudioFile(event) {
   const textEl = document.getElementById('reader-import-text');
   const titleEl = document.getElementById('reader-import-title');
   const setStatus = (msg) => { if (statusEl) { statusEl.style.display = 'inline'; statusEl.textContent = msg; } };
+  // Assigned up front so the original recording can be stored under the same id
+  // saveReaderImport() will reuse for the book — same convention as EPUB import.
+  const pendingBookId = readerId();
 
   try {
     const lang = document.getElementById('reader-import-lang')?.value || 'fr';
@@ -1727,7 +1734,16 @@ async function readerTranscribeAudioFile(event) {
 
     if (textEl) textEl.value = cleaned.join('\n\n');
     if (titleEl && !titleEl.value.trim()) titleEl.value = file.name.replace(/\.[^.]+$/, '');
-    setStatus(`✅ Готово: ${cleaned.length} фрагмент(ов). Проверь текст перед сохранением.`);
+
+    try {
+      await audioStorePut(pendingBookId, file);
+      readerPendingImportBookId = pendingBookId;
+      readerPendingImportHasAudio = true;
+    } catch (e) {
+      console.warn('[reader audio] storing original recording failed:', e);
+    }
+
+    setStatus(`✅ Готово: ${cleaned.length} фрагмент(ов)${readerPendingImportHasAudio ? ' · аудио сохранено' : ''}. Проверь текст перед сохранением.`);
   } catch (e) {
     setStatus('❌ ' + (e?.message || 'Ошибка распознавания'));
   }
@@ -1960,6 +1976,7 @@ async function readerImportFromFile(event) {
   readerPendingImportChapters = null;
   readerPendingImportSource = 'manual_text';
   readerPendingImportBookId = null;
+  readerPendingImportHasAudio = false;
   if (file.name.toLowerCase().endsWith('.epub')) {
     try { await readerImportEpubFromFile(file); }
     catch(e) {
@@ -2007,6 +2024,8 @@ function saveReaderImport() {
   while (firstParaIdx < firstParas.length && firstParas[firstParaIdx] && typeof firstParas[firstParaIdx] === 'object') firstParaIdx++;
   const bookObj = { id: bookId, title, author: authorRaw, level, lang, sourceLang: lang, format, source: readerPendingImportSource || 'manual_text', createdAt: now, updatedAt: now, currentChapter: 0, currentParagraph: firstParaIdx, chapters };
   if (format === 'news') { bookObj.newsSource = newsSource || authorRaw || 'вставка'; bookObj.newsDate = newsDate; }
+  if (readerPendingImportHasAudio) bookObj.hasOriginalAudio = true;
+  readerPendingImportHasAudio = false;
   const book = bookObj;
   book.importKey = readerBookImportKey(book);
   const __dupe = (readerBooks || []).find(b => readerBookImportKey(b) === book.importKey);
@@ -2041,7 +2060,43 @@ function readerOpenBook(id) {
   readerStartWarm();
   // pull word marks made on other devices; repaints colors when merge changes something
   syncWordStateFromCloud().catch(() => {});
+
+  const audioBtn = document.getElementById('reader-orig-audio-btn');
+  if (audioBtn) audioBtn.style.display = book.hasOriginalAudio ? 'flex' : 'none';
+  const audioWrap = document.getElementById('reader-orig-audio-wrap');
+  if (audioWrap) audioWrap.style.display = 'none';
+  if (readerOriginalAudioBookId && readerOriginalAudioBookId !== id) {
+    if (readerOriginalAudioUrl) { try { URL.revokeObjectURL(readerOriginalAudioUrl); } catch {} }
+    readerOriginalAudioUrl = null;
+    readerOriginalAudioBookId = null;
+    const audioEl = document.getElementById('reader-orig-audio-el');
+    if (audioEl) { try { audioEl.pause(); } catch {} audioEl.removeAttribute('src'); audioEl.load(); }
+  }
 }
+
+async function readerToggleOriginalAudioPlayer() {
+  const book = readerCurrentBook();
+  if (!book?.hasOriginalAudio) return;
+  const wrap = document.getElementById('reader-orig-audio-wrap');
+  const audioEl = document.getElementById('reader-orig-audio-el');
+  if (!wrap || !audioEl) return;
+
+  const showing = wrap.style.display !== 'none';
+  if (showing) { wrap.style.display = 'none'; audioEl.pause(); return; }
+
+  if (readerOriginalAudioBookId !== book.id) {
+    let blob;
+    try { blob = await audioStoreGet(book.id); }
+    catch (e) { showToast('⚠️ Не удалось прочитать аудио: ' + (e?.message || e)); return; }
+    if (!blob) { showToast('⚠️ Аудио не найдено на этом устройстве (сохранялось только там, где импортировали)'); return; }
+    if (readerOriginalAudioUrl) { try { URL.revokeObjectURL(readerOriginalAudioUrl); } catch {} }
+    readerOriginalAudioUrl = URL.createObjectURL(blob);
+    readerOriginalAudioBookId = book.id;
+    audioEl.src = readerOriginalAudioUrl;
+  }
+  wrap.style.display = 'flex';
+}
+window.readerToggleOriginalAudioPlayer = readerToggleOriginalAudioPlayer;
 
 function readerBackToLibrary() {
   readerStopSpeech();
@@ -2439,6 +2494,12 @@ function readerDeleteBook(id) {
   readerBooks = readerBooks.filter(b => b.id !== id);
   saveReaderBooks();
   imgStoreDeleteBook(id).catch(() => {});
+  audioStoreDelete(id).catch(() => {});
+  if (readerOriginalAudioBookId === id) {
+    if (readerOriginalAudioUrl) { try { URL.revokeObjectURL(readerOriginalAudioUrl); } catch {} }
+    readerOriginalAudioUrl = null;
+    readerOriginalAudioBookId = null;
+  }
   const userId = readerCloudUserId();
   if (userId && isSupabaseReady?.()) {
     sb.from('reader_books').delete().eq('user_id', userId).eq('id', id)
