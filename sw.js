@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.8-reading-position';
+const CACHE_VERSION = 'v76.9-word-state-quota';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

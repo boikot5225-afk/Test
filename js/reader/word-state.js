@@ -3,7 +3,30 @@ export function createReaderWordState(opts) {
     getCache, setCache, storageKey, canonicalLang, currentLang, normalizeWord,
     normalizeImportKey, isCommonWord, seenAfter, fadeAfter, familiarAfter,
     getBookLang, tokenizeParagraph, findVerbByForm, log = console,
+    onSaveError = null,
+    onSaved = null,
   } = opts;
+
+  // places is only needed to count distinct paragraphs up to the fade threshold;
+  // without a cap it grows unbounded and eventually blows the localStorage quota.
+  const PLACES_CAP = 12;
+
+  const prunePlaces = (state) => {
+    const places = state?.places;
+    if (!places || typeof places !== 'object') return false;
+    const keys = Object.keys(places);
+    if (keys.length <= PLACES_CAP) return false;
+    state.seen = Math.max(state.seen || 0, keys.length);
+    state.places = {};
+    for (const k of keys.slice(-PLACES_CAP)) state.places[k] = true;
+    return true;
+  };
+
+  const pruneAll = (data) => {
+    let pruned = false;
+    for (const k of Object.keys(data)) pruned = prunePlaces(data[k]) || pruned;
+    return pruned;
+  };
 
   const cacheRead = () => {
     try { return getCache(); }
@@ -24,10 +47,29 @@ export function createReaderWordState(opts) {
     if (cached) return cached;
     let data = {};
     try { data = JSON.parse(localStorage.getItem(storageKey()) || '{}') || {}; } catch (_) {}
+    if (pruneAll(data)) {
+      try { localStorage.setItem(storageKey(), JSON.stringify(data)); } catch (_) {}
+    }
     cacheWrite(data);
     return data;
   };
-  const save = () => { try { localStorage.setItem(storageKey(), JSON.stringify(load())); } catch (e) { log.warn?.('[reader] state save', e); } };
+  const save = () => {
+    const data = load();
+    try {
+      localStorage.setItem(storageKey(), JSON.stringify(data));
+    } catch (e) {
+      // quota hit: shed legacy places bloat and retry once before giving up
+      pruneAll(data);
+      try {
+        localStorage.setItem(storageKey(), JSON.stringify(data));
+      } catch (e2) {
+        log.warn?.('[reader] state save', e2);
+        onSaveError?.(e2);
+      }
+    }
+    // schedule cloud sync even when localStorage failed — cloud works off the in-memory state
+    onSaved?.();
+  };
   const key = (word, lang = null) => {
     const language = canonicalLang(lang || currentLang());
     return `${language}:${normalizeImportKey(normalizeWord(word, language))}`;
@@ -44,8 +86,8 @@ export function createReaderWordState(opts) {
     let changed = false;
     new Set(tokenizeParagraph(text, language).map(x => normalizeWord(x, language)).filter(Boolean)).forEach(word => {
       const state = get(word, language); state.places ||= {};
-      if (!state.places[place]) { state.places[place] = true; changed = true; }
-      const seen = Object.keys(state.places).length;
+      if (!state.places[place] && Object.keys(state.places).length < PLACES_CAP) { state.places[place] = true; changed = true; }
+      const seen = Math.max(state.seen || 0, Object.keys(state.places).length);
       if (state.seen !== seen) { state.seen = seen; changed = true; }
       if (isCommonWord(word, language)) { state.known = true; state.status = 'known'; }
       state.updatedAt = new Date().toISOString();

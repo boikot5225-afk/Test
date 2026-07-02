@@ -824,7 +824,11 @@ function readerScheduleChineseSegmentation(text) {
 
 function loadReaderWordState() { return readerWordState.load(); }
 
-function saveReaderWordState() { return readerWordState.save(); scheduleWordStateCloudSync(); }
+function saveReaderWordState() {
+  const result = readerWordState.save();
+  scheduleWordStateCloudSync();
+  return result;
+}
 
 // ── Облачная синхронизация статусов слов ──
 let _wordStateSyncTimer = null;
@@ -2099,6 +2103,16 @@ const readerWordState = createReaderWordState({
   getBookLang: readerBookLang,
   tokenizeParagraph: readerTokenizeParagraph,
   findVerbByForm: readerFindVerbByForm,
+  onSaveError: (() => {
+    let lastWarnAt = 0;
+    return () => {
+      const now = Date.now();
+      if (now - lastWarnAt < 60000) return;
+      lastWarnAt = now;
+      showToast('⚠️ Хранилище переполнено: отметки слов могут не сохраниться');
+    };
+  })(),
+  onSaved: () => scheduleWordStateCloudSync(),
 });
 
 const readerWordLookup = createReaderWordLookup({
