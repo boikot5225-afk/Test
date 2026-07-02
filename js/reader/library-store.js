@@ -39,7 +39,22 @@ export function createReaderLibraryStore({
       localStorage.setItem(positionsKey(), JSON.stringify(positions));
     } catch (error) {
       onError('[reader] positions save failed', error);
+      onSaveError?.(error);
     }
+  }
+
+  // localStorage may hold a stale copy when quota blocks writes; never let it
+  // roll back books that are fresher in memory (e.g. reading position).
+  function mergeNewerFromMemory(fromStorage) {
+    const inMemory = getBooks();
+    if (!Array.isArray(inMemory) || !inMemory.length) return fromStorage;
+    const byId = new Map(fromStorage.map(book => [book.id, book]));
+    for (const mem of inMemory) {
+      if (!mem?.id) continue;
+      const stored = byId.get(mem.id);
+      if (stored && new Date(mem.updatedAt || 0) >= new Date(stored.updatedAt || 0)) byId.set(mem.id, mem);
+    }
+    return dedupeBooks([...byId.values()]);
   }
 
   function applyPositions(books) {
@@ -68,6 +83,7 @@ export function createReaderLibraryStore({
     } catch (_) {
       books = [];
     }
+    books = mergeNewerFromMemory(books);
     applyPositions(books);
     setBooks(books);
     return books;
@@ -81,7 +97,15 @@ export function createReaderLibraryStore({
       localStorage.setItem(storageKey(), JSON.stringify(books));
     } catch (error) {
       onError('[reader] save failed', error);
-      onSaveError?.(error);
+      // Quota is full: retry without per-book AI caches (translations/analyses are
+      // re-fetchable; reading position and word progress are not).
+      try {
+        const slim = books.map(({ readerAnalyses, readerTranslations, ...rest }) => rest);
+        localStorage.setItem(storageKey(), JSON.stringify(slim));
+        onError('[reader] saved slim library without AI caches');
+      } catch (retryError) {
+        onSaveError?.(retryError);
+      }
     }
     if (schedule) scheduleCloudSave();
     return books;
