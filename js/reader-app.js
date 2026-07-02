@@ -2734,9 +2734,12 @@ function renderReaderAnalysisBlock(data = {}) {
     <div class="ra2-summary"><span class="ra2-summary-label">суть</span>${readerEscape(summary)}</div>` : '';
 
   return `
-    <div class="reader-help-block reader-sentence-analysis ra2-block">
-      ${partsHTML}${whysHTML}${summaryHTML}
-    </div>`;
+    <details class="reader-help-block reader-sentence-analysis ra2-block">
+      <summary>🧩 разбор <span>показать</span></summary>
+      <div class="reader-help-body">
+        ${partsHTML}${whysHTML}${summaryHTML}
+      </div>
+    </details>`;
 }
 
 // ════════════════════════════════════════════════════════

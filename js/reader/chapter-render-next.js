@@ -53,7 +53,7 @@ export function createReaderChapterRenderer({
     if (oldEl) {
       oldEl.classList.remove('active');
       oldEl.querySelector('.reader-translation-block')?.remove();
-      oldEl.querySelector('.reader-analysis-block')?.remove();
+      oldEl.querySelector('.reader-sentence-analysis')?.remove(); // ra2/grammar-mini analysis top-level class
     }
 
     // Activate new paragraph

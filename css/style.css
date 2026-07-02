@@ -2368,9 +2368,11 @@ input:-webkit-autofill:focus {
    NEW ANALYSIS BLOCK  ra2-*  (v69)
    ════════════════════════════════════════════════════════ */
 .ra2-block {
-  display: flex; flex-direction: column; gap: 7px;
   margin: 8px 2px 4px;
   font-family: 'IBM Plex Sans', sans-serif;
+}
+.ra2-block .reader-help-body {
+  display: flex; flex-direction: column; gap: 7px;
 }
 
 /* Map: из чего состоит */
