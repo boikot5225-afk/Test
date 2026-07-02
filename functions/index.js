@@ -583,8 +583,11 @@ exports.transcribeAudio = onRequest(
 // as a normal audio file — the client then feeds it through the exact same
 // decode/chunk/transcribe/cleanup pipeline used for uploaded files.
 // ────────────────────────────────────────────────────────────────
-const RADIO_MAX_RECORD_SECONDS = 900; // 15 min clip cap — this is for transcription, not full-show archiving
-const RADIO_MAX_RECORD_BYTES = 20 * 1024 * 1024; // hard safety cap regardless of the station's bitrate
+// These aren't product choices, they're the actual platform ceiling: Cloud Run
+// (2nd gen Firebase Functions) hard-caps a single HTTP request/response at 32MB
+// and a function invocation at 3600s. Stay just under both.
+const RADIO_MAX_RECORD_SECONDS = 3540; // 59 min — leaves headroom under the 3600s invocation ceiling
+const RADIO_MAX_RECORD_BYTES = 28 * 1024 * 1024; // leaves headroom under the 32MB response ceiling
 
 function isHttpUrl(raw) {
   try {
@@ -598,7 +601,7 @@ function isHttpUrl(raw) {
 exports.recordRadioStream = onRequest(
   {
     region: 'asia-southeast1',
-    timeoutSeconds: 960, // a bit above RADIO_MAX_RECORD_SECONDS to allow for connect/flush time
+    timeoutSeconds: 3600, // Cloud Run's actual max for 2nd gen HTTP functions
     memory: '512MiB',
     cors: true,
   },

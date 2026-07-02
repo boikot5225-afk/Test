@@ -1509,16 +1509,27 @@ function showReaderImportModal(mode) {
           <input type="file" id="reader-import-audio" accept="audio/*,video/*" onchange="readerTranscribeAudioFile(event)" style="display:none">
           <span id="reader-import-audio-status" style="display:none;font-size:.78rem;color:var(--text-muted)"></span>
         </div>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:10px">
-          <span style="font-size:.78rem;color:var(--text-muted);white-space:nowrap">📻 Радио:</span>
-          <input id="reader-radio-url" placeholder="https://прямая-ссылка-на-поток.mp3" style="flex:1;min-width:180px;box-sizing:border-box;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.86rem">
-          <select id="reader-radio-minutes" class="select-control" style="min-width:80px">
-            <option value="2">2 мин</option>
-            <option value="5" selected>5 мин</option>
-            <option value="10">10 мин</option>
-            <option value="15">15 мин</option>
-          </select>
-          <button onclick="readerRecordRadioStream()" class="btn btn-secondary" style="white-space:nowrap">🔴 Записать</button>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:10px">
+          <span style="font-size:.78rem;color:var(--text-muted)">📻 Радио (эфир записывается на сервере, лимитов почти нет)</span>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <select id="reader-radio-preset" class="select-control" style="min-width:150px" onchange="readerApplyRadioPreset(this.value)">
+              <option value="">— свой URL —</option>
+              <option value="https://icecast.radiofrance.fr/franceinter-midfi.mp3">🇫🇷 France Inter</option>
+              <option value="https://icecast.radiofrance.fr/franceinfo-midfi.mp3">🇫🇷 France Info</option>
+            </select>
+            <input id="reader-radio-url" placeholder="https://прямая-ссылка-на-поток.mp3" style="flex:1;min-width:180px;box-sizing:border-box;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.86rem">
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <select id="reader-radio-minutes" class="select-control" style="min-width:80px">
+              <option value="2">2 мин</option>
+              <option value="5" selected>5 мин</option>
+              <option value="10">10 мин</option>
+              <option value="15">15 мин</option>
+              <option value="30">30 мин</option>
+              <option value="59">59 мин</option>
+            </select>
+            <button onclick="readerRecordRadioStream()" class="btn btn-secondary" style="white-space:nowrap">🔴 Записать</button>
+          </div>
         </div>
         <textarea id="reader-import-text" rows="14" placeholder="Вставь сюда главу или текст. Пустая строка = новый абзац." style="width:100%;box-sizing:border-box;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:.94rem;line-height:1.55;resize:vertical;margin-bottom:12px"></textarea>
         <div id="reader-import-status" style="display:none;font-size:.8rem;padding:8px;border-radius:8px;background:var(--surface2);margin-bottom:10px"></div>
@@ -1786,13 +1797,23 @@ function cloudRecordRadioUrl() {
   return `https://${region}-${projectId}.cloudfunctions.net/recordRadioStream`;
 }
 
+function readerApplyRadioPreset(url) {
+  const urlEl = document.getElementById('reader-radio-url');
+  if (!url || !urlEl) return;
+  urlEl.value = url;
+  // Both current presets are French-language stations.
+  const langSel = document.getElementById('reader-import-lang');
+  if (langSel) langSel.value = 'fr';
+}
+window.readerApplyRadioPreset = readerApplyRadioPreset;
+
 async function readerRecordRadioStream() {
   const urlEl = document.getElementById('reader-radio-url');
   const minutesEl = document.getElementById('reader-radio-minutes');
   const statusEl = document.getElementById('reader-import-audio-status');
   const setStatus = (msg) => { if (statusEl) { statusEl.style.display = 'inline'; statusEl.textContent = msg; } };
   const streamUrl = urlEl?.value.trim() || '';
-  const minutes = Math.max(1, Math.min(15, Number(minutesEl?.value) || 5));
+  const minutes = Math.max(1, Math.min(59, Number(minutesEl?.value) || 5));
   if (!streamUrl || !/^https?:\/\//i.test(streamUrl)) {
     setStatus('⚠ Вставь прямую ссылку на аудиопоток (http/https)');
     return;
