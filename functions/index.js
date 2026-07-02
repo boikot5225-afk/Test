@@ -574,3 +574,100 @@ exports.transcribeAudio = onRequest(
   }
 );
 
+// ────────────────────────────────────────────────────────────────
+// Live radio stream capture proxy: Firebase Auth → Firebase Function → stream URL.
+// Recording programmatically in the browser needs the stream server to send
+// permissive CORS headers, and most icecast/shoutcast stations don't. A
+// server-to-server fetch has no CORS restriction at all, so the function reads
+// the stream itself for a bounded duration and hands the captured bytes back
+// as a normal audio file — the client then feeds it through the exact same
+// decode/chunk/transcribe/cleanup pipeline used for uploaded files.
+// ────────────────────────────────────────────────────────────────
+const RADIO_MAX_RECORD_SECONDS = 900; // 15 min clip cap — this is for transcription, not full-show archiving
+const RADIO_MAX_RECORD_BYTES = 20 * 1024 * 1024; // hard safety cap regardless of the station's bitrate
+
+function isHttpUrl(raw) {
+  try {
+    const u = new URL(raw);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+
+exports.recordRadioStream = onRequest(
+  {
+    region: 'asia-southeast1',
+    timeoutSeconds: 960, // a bit above RADIO_MAX_RECORD_SECONDS to allow for connect/flush time
+    memory: '512MiB',
+    cors: true,
+  },
+  async (req, res) => {
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'method_not_allowed', message: 'Use POST.' });
+    }
+
+    let user;
+    try {
+      user = await verifyTtsRequest(req);
+    } catch (error) {
+      return res.status(401).json({ error: 'unauthenticated', message: error?.message || 'Нужно войти в приложение.' });
+    }
+
+    const streamUrl = typeof req.body?.streamUrl === 'string' ? req.body.streamUrl.trim() : '';
+    if (!streamUrl || !isHttpUrl(streamUrl)) {
+      return res.status(400).json({ error: 'invalid_url', message: 'Передай корректную http(s) ссылку на аудиопоток.' });
+    }
+    const requestedSeconds = Number(req.body?.durationSeconds) || 300;
+    const durationSeconds = Math.max(10, Math.min(RADIO_MAX_RECORD_SECONDS, requestedSeconds));
+
+    let upstream;
+    try {
+      upstream = await fetch(streamUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; An2Reader/1.0)' } });
+    } catch (error) {
+      return res.status(503).json({ error: 'stream_unavailable', message: `Не удалось подключиться к потоку: ${error?.message || String(error)}` });
+    }
+    if (!upstream.ok || !upstream.body) {
+      return res.status(502).json({ error: 'stream_http_error', message: `Поток вернул HTTP ${upstream.status}` });
+    }
+
+    const contentType = upstream.headers.get('content-type') || 'audio/mpeg';
+    const chunks = [];
+    let totalBytes = 0;
+    const deadline = Date.now() + durationSeconds * 1000;
+    const reader = upstream.body.getReader();
+
+    try {
+      while (Date.now() < deadline && totalBytes < RADIO_MAX_RECORD_BYTES) {
+        const { done, value } = await reader.read();
+        if (done) break; // stream ended on its own (e.g. a finite clip, not a live loop)
+        chunks.push(Buffer.from(value));
+        totalBytes += value.byteLength;
+      }
+    } catch (error) {
+      if (!totalBytes) {
+        return res.status(502).json({ error: 'stream_read_failed', message: `Ошибка чтения потока: ${error?.message || String(error)}` });
+      }
+      // Partial capture is still useful — fall through and return what we got.
+    } finally {
+      try { await reader.cancel(); } catch (_) {}
+    }
+
+    if (!totalBytes) {
+      return res.status(502).json({ error: 'empty_stream', message: 'Поток не отдал ни одного байта за отведённое время.' });
+    }
+
+    const audio = Buffer.concat(chunks, totalBytes);
+    try {
+      await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/radio_record_bytes`).transaction((current) => Number(current || 0) + audio.length);
+    } catch (_) {}
+
+    res.set({
+      'Content-Type': contentType,
+      'Cache-Control': 'no-store',
+      'X-Radio-Seconds-Captured': String(Math.round((Date.now() - (deadline - durationSeconds * 1000)) / 1000)),
+    });
+    return res.status(200).send(audio);
+  }
+);
+

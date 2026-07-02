@@ -1504,10 +1504,21 @@ function showReaderImportModal(mode) {
           <div id="reader-import-url-status" style="display:none;font-size:.74rem;color:var(--text-muted);margin-top:4px"></div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px"><option value="fr" selected>🇫🇷 Français</option><option value="en">🇬🇧 English</option><option value="zh">🇨🇳 中文</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option><option value="news">📰 Новость</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
           <label for="reader-import-audio" class="btn btn-secondary" style="cursor:pointer;white-space:nowrap">🎙 Из аудио/видео</label>
           <input type="file" id="reader-import-audio" accept="audio/*,video/*" onchange="readerTranscribeAudioFile(event)" style="display:none">
           <span id="reader-import-audio-status" style="display:none;font-size:.78rem;color:var(--text-muted)"></span>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:10px">
+          <span style="font-size:.78rem;color:var(--text-muted);white-space:nowrap">📻 Радио:</span>
+          <input id="reader-radio-url" placeholder="https://прямая-ссылка-на-поток.mp3" style="flex:1;min-width:180px;box-sizing:border-box;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.86rem">
+          <select id="reader-radio-minutes" class="select-control" style="min-width:80px">
+            <option value="2">2 мин</option>
+            <option value="5" selected>5 мин</option>
+            <option value="10">10 мин</option>
+            <option value="15">15 мин</option>
+          </select>
+          <button onclick="readerRecordRadioStream()" class="btn btn-secondary" style="white-space:nowrap">🔴 Записать</button>
         </div>
         <textarea id="reader-import-text" rows="14" placeholder="Вставь сюда главу или текст. Пустая строка = новый абзац." style="width:100%;box-sizing:border-box;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:.94rem;line-height:1.55;resize:vertical;margin-bottom:12px"></textarea>
         <div id="reader-import-status" style="display:none;font-size:.8rem;padding:8px;border-radius:8px;background:var(--surface2);margin-bottom:10px"></div>
@@ -1666,103 +1677,151 @@ function readerChunkTranscriptForCleanup(text, maxLen = 3500) {
   return chunks;
 }
 
-async function readerTranscribeAudioFile(event) {
-  const file = event?.target?.files?.[0];
-  if (!file) return;
-  const statusEl = document.getElementById('reader-import-audio-status');
+// Shared pipeline: decode -> chunk -> Whisper -> DeepSeek cleanup -> textarea + original blob storage.
+// Used both by file uploads (readerTranscribeAudioFile) and by radio stream captures
+// (readerRecordRadioStream) — the two only differ in how they obtain `blob`.
+async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = false, setStatus }) {
+  const lang = document.getElementById('reader-import-lang')?.value || 'fr';
   const textEl = document.getElementById('reader-import-text');
   const titleEl = document.getElementById('reader-import-title');
-  const setStatus = (msg) => { if (statusEl) { statusEl.style.display = 'inline'; statusEl.textContent = msg; } };
+  if (!globalThis.firebase?.auth?.().currentUser) throw new Error('Нужно войти в приложение.');
+  const token = await globalThis.firebase.auth().currentUser.getIdToken(false);
   // Assigned up front so the original recording can be stored under the same id
   // saveReaderImport() will reuse for the book — same convention as EPUB import.
   const pendingBookId = readerId();
 
+  if (blob.size > 350 * 1024 * 1024) {
+    setStatus('⚠️ Файл очень большой (' + (blob.size / 1024 / 1024).toFixed(0) + ' МБ), декодирование может быть медленным или не хватить памяти браузера...');
+  } else {
+    setStatus(isVideo ? '⏳ Извлекаю звук из видео (браузер)...' : '⏳ Разбираю аудио (браузер)...');
+  }
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) throw new Error('Этот браузер не поддерживает Web Audio API.');
+  const audioCtx = new AudioCtor();
+  let decoded;
   try {
-    const lang = document.getElementById('reader-import-lang')?.value || 'fr';
-    if (!globalThis.firebase?.auth?.().currentUser) throw new Error('Нужно войти в приложение.');
-    const token = await globalThis.firebase.auth().currentUser.getIdToken(false);
-    const isVideo = file.type.startsWith('video/') || /\.(mp4|mov|webm|mkv|avi)$/i.test(file.name);
+    decoded = await audioCtx.decodeAudioData(await blob.arrayBuffer());
+  } catch (e) {
+    throw new Error(
+      (isVideo
+        ? 'Не удалось извлечь звук из видео. Попробуй пересохранить его в MP4 (H.264 + AAC) или вытащить дорожку в MP3: '
+        : 'Не удалось декодировать аудио. Попробуй сохранить файл в MP3 или WAV: ')
+      + (e?.message || e)
+    );
+  } finally {
+    try { audioCtx.close(); } catch {}
+  }
 
-    // decodeAudioData needs the whole file in memory just to pull the audio track —
-    // fine for audio files, but a long high-res video can be huge. Warn instead of
-    // silently hanging/crashing on very large uploads.
-    if (file.size > 350 * 1024 * 1024) {
-      setStatus('⚠️ Файл очень большой (' + (file.size / 1024 / 1024).toFixed(0) + ' МБ), декодирование может быть медленным или не хватить памяти браузера...');
-    } else {
-      setStatus(isVideo ? '⏳ Извлекаю звук из видео (браузер)...' : '⏳ Разбираю аудио (браузер)...');
+  const totalSec = decoded.duration;
+  const chunkCount = Math.max(1, Math.ceil(totalSec / READER_STT_CHUNK_SECONDS));
+  const rawParts = [];
+  for (let i = 0; i < chunkCount; i++) {
+    const startSec = i * READER_STT_CHUNK_SECONDS;
+    const durationSec = Math.min(READER_STT_CHUNK_SECONDS, totalSec - startSec);
+    setStatus(`⏳ Распознаю фрагмент ${i + 1}/${chunkCount} (Whisper)...`);
+    const wavBlob = await readerRenderAudioChunkWav(decoded, startSec, durationSec);
+    const audioBase64 = await readerFileToBase64(wavBlob);
+    const resp = await fetch(cloudTranscribeAudioUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ audioBase64, format: 'wav', lang }),
+    });
+    if (!resp.ok) {
+      const detail = await resp.json().catch(() => ({}));
+      throw new Error(detail?.message || `Распознавание фрагмента ${i + 1}/${chunkCount}: HTTP ${resp.status}`);
     }
-    const AudioCtor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioCtor) throw new Error('Этот браузер не поддерживает Web Audio API.');
-    const audioCtx = new AudioCtor();
-    let decoded;
+    const { text } = await resp.json();
+    if (text) rawParts.push(text);
+  }
+  const rawTranscript = rawParts.join(' ');
+  if (!rawTranscript) throw new Error('Пустой транскрипт');
+
+  const chunks = readerChunkTranscriptForCleanup(rawTranscript);
+  const cleaned = [];
+  for (let i = 0; i < chunks.length; i++) {
+    setStatus(`⏳ DeepSeek чистит текст... (${i + 1}/${chunks.length})`);
     try {
-      decoded = await audioCtx.decodeAudioData(await file.arrayBuffer());
+      const d = await readerAI({ task: 'clean_transcript', text: chunks[i], sourceLang: lang });
+      cleaned.push(d?.text || chunks[i]);
     } catch (e) {
-      throw new Error(
-        (isVideo
-          ? 'Не удалось извлечь звук из видео. Попробуй пересохранить его в MP4 (H.264 + AAC) или вытащить дорожку в MP3: '
-          : 'Не удалось декодировать аудио. Попробуй сохранить файл в MP3 или WAV: ')
-        + (e?.message || e)
-      );
-    } finally {
-      try { audioCtx.close(); } catch {}
+      // Keep the raw chunk rather than losing it if DeepSeek fails mid-way.
+      cleaned.push(chunks[i]);
     }
+  }
 
-    const totalSec = decoded.duration;
-    const chunkCount = Math.max(1, Math.ceil(totalSec / READER_STT_CHUNK_SECONDS));
-    const rawParts = [];
-    for (let i = 0; i < chunkCount; i++) {
-      const startSec = i * READER_STT_CHUNK_SECONDS;
-      const durationSec = Math.min(READER_STT_CHUNK_SECONDS, totalSec - startSec);
-      setStatus(`⏳ Распознаю фрагмент ${i + 1}/${chunkCount} (Whisper)...`);
-      const wavBlob = await readerRenderAudioChunkWav(decoded, startSec, durationSec);
-      const audioBase64 = await readerFileToBase64(wavBlob);
-      const resp = await fetch(cloudTranscribeAudioUrl(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ audioBase64, format: 'wav', lang }),
-      });
-      if (!resp.ok) {
-        const detail = await resp.json().catch(() => ({}));
-        throw new Error(detail?.message || `Распознавание фрагмента ${i + 1}/${chunkCount}: HTTP ${resp.status}`);
-      }
-      const { text } = await resp.json();
-      if (text) rawParts.push(text);
-    }
-    const rawTranscript = rawParts.join(' ');
-    if (!rawTranscript) throw new Error('Пустой транскрипт');
+  if (textEl) textEl.value = cleaned.join('\n\n');
+  if (titleEl && !titleEl.value.trim()) titleEl.value = filenameHint.replace(/\.[^.]+$/, '');
 
-    const chunks = readerChunkTranscriptForCleanup(rawTranscript);
-    const cleaned = [];
-    for (let i = 0; i < chunks.length; i++) {
-      setStatus(`⏳ DeepSeek чистит текст... (${i + 1}/${chunks.length})`);
-      try {
-        const d = await readerAI({ task: 'clean_transcript', text: chunks[i], sourceLang: lang });
-        cleaned.push(d?.text || chunks[i]);
-      } catch (e) {
-        // Keep the raw chunk rather than losing it if DeepSeek fails mid-way.
-        cleaned.push(chunks[i]);
-      }
-    }
+  let hasAudio = false;
+  try {
+    await audioStorePut(pendingBookId, blob);
+    readerPendingImportBookId = pendingBookId;
+    readerPendingImportHasAudio = true;
+    hasAudio = true;
+  } catch (e) {
+    console.warn('[reader audio] storing original recording failed:', e);
+  }
 
-    if (textEl) textEl.value = cleaned.join('\n\n');
-    if (titleEl && !titleEl.value.trim()) titleEl.value = file.name.replace(/\.[^.]+$/, '');
+  setStatus(`✅ Готово: ${cleaned.length} фрагмент(ов)${hasAudio ? ' · аудио сохранено' : ''}. Проверь текст перед сохранением.`);
+}
 
-    try {
-      await audioStorePut(pendingBookId, file);
-      readerPendingImportBookId = pendingBookId;
-      readerPendingImportHasAudio = true;
-    } catch (e) {
-      console.warn('[reader audio] storing original recording failed:', e);
-    }
-
-    setStatus(`✅ Готово: ${cleaned.length} фрагмент(ов)${readerPendingImportHasAudio ? ' · аудио сохранено' : ''}. Проверь текст перед сохранением.`);
+async function readerTranscribeAudioFile(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+  const statusEl = document.getElementById('reader-import-audio-status');
+  const setStatus = (msg) => { if (statusEl) { statusEl.style.display = 'inline'; statusEl.textContent = msg; } };
+  const isVideo = file.type.startsWith('video/') || /\.(mp4|mov|webm|mkv|avi)$/i.test(file.name);
+  try {
+    await readerTranscribeBlob(file, { filenameHint: file.name, isVideo, setStatus });
   } catch (e) {
     setStatus('❌ ' + (e?.message || 'Ошибка распознавания'));
   }
   event.target.value = '';
 }
 window.readerTranscribeAudioFile = readerTranscribeAudioFile;
+
+function cloudRecordRadioUrl() {
+  const projectId = String(globalThis.FIREBASE_CONFIG?.projectId || 'french-da79a').trim();
+  const region = readerFunctionRegion();
+  return `https://${region}-${projectId}.cloudfunctions.net/recordRadioStream`;
+}
+
+async function readerRecordRadioStream() {
+  const urlEl = document.getElementById('reader-radio-url');
+  const minutesEl = document.getElementById('reader-radio-minutes');
+  const statusEl = document.getElementById('reader-import-audio-status');
+  const setStatus = (msg) => { if (statusEl) { statusEl.style.display = 'inline'; statusEl.textContent = msg; } };
+  const streamUrl = urlEl?.value.trim() || '';
+  const minutes = Math.max(1, Math.min(15, Number(minutesEl?.value) || 5));
+  if (!streamUrl || !/^https?:\/\//i.test(streamUrl)) {
+    setStatus('⚠ Вставь прямую ссылку на аудиопоток (http/https)');
+    return;
+  }
+
+  try {
+    if (!globalThis.firebase?.auth?.().currentUser) throw new Error('Нужно войти в приложение.');
+    const token = await globalThis.firebase.auth().currentUser.getIdToken(false);
+    setStatus(`🔴 Записываю эфир (${minutes} мин)...`);
+    const resp = await fetch(cloudRecordRadioUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ streamUrl, durationSeconds: minutes * 60 }),
+    });
+    if (!resp.ok) {
+      const detail = await resp.json().catch(() => ({}));
+      throw new Error(detail?.message || `Запись эфира: HTTP ${resp.status}`);
+    }
+    const blob = await resp.blob();
+    if (!blob || blob.size < 1000) throw new Error('Эфир не записался (пустой ответ).');
+
+    let host = 'radio';
+    try { host = new URL(streamUrl).hostname.replace('www.', ''); } catch {}
+    await readerTranscribeBlob(blob, { filenameHint: host, isVideo: false, setStatus });
+  } catch (e) {
+    setStatus('❌ ' + (e?.message || 'Ошибка записи эфира'));
+  }
+}
+window.readerRecordRadioStream = readerRecordRadioStream;
 
 
 function readerReadFileAsArrayBuffer(file) { return epubReadFileAsArrayBuffer(file); }
