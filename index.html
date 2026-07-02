@@ -101,12 +101,15 @@
   position:absolute;left:0;right:0;bottom:0;z-index:25;
   background:var(--surface);border-top:1px solid var(--border);border-radius:18px 18px 0 0;
   padding:14px 0 calc(16px + env(safe-area-inset-bottom));
-  transform:translateY(110%);transition:transform .24s cubic-bezier(.2,.8,.2,1);
+  /* hide distance must cover own height + bottom offset + shadow, otherwise a
+     short sheet peeks above the bottom bar on tablet/desktop */
+  transform:translateY(calc(100% + 140px));visibility:hidden;
+  transition:transform .24s cubic-bezier(.2,.8,.2,1),visibility 0s .24s;
   box-shadow:0 -14px 40px rgba(40,30,15,.28);max-height:88%;display:flex;flex-direction:column;
 }
-#reader-toc-sheet.show{transform:none;}
+#reader-toc-sheet.show{transform:none;visibility:visible;transition:transform .24s cubic-bezier(.2,.8,.2,1),visibility 0s 0s;}
 @media(min-width:760px){
-  #reader-toc-sheet{left:50%;right:auto;transform:translate(-50%,110%);width:460px;border-radius:18px;bottom:80px;}
+  #reader-toc-sheet{left:50%;right:auto;transform:translate(-50%,calc(100% + 140px));width:460px;border-radius:18px;bottom:80px;}
   #reader-toc-sheet.show{transform:translate(-50%,0);}
 }
 #reader-toc-header{
