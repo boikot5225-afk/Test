@@ -1530,6 +1530,7 @@ function showReaderImportModal(mode) {
             </select>
             <button onclick="readerRecordRadioStream()" class="btn btn-secondary" style="white-space:nowrap">🔴 Записать</button>
           </div>
+          <audio id="reader-radio-live-player" controls style="width:100%;display:none;margin-top:2px"></audio>
         </div>
         <textarea id="reader-import-text" rows="14" placeholder="Вставь сюда главу или текст. Пустая строка = новый абзац." style="width:100%;box-sizing:border-box;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:.94rem;line-height:1.55;resize:vertical;margin-bottom:12px"></textarea>
         <div id="reader-import-status" style="display:none;font-size:.8rem;padding:8px;border-radius:8px;background:var(--surface2);margin-bottom:10px"></div>
@@ -1811,6 +1812,7 @@ async function readerRecordRadioStream() {
   const urlEl = document.getElementById('reader-radio-url');
   const minutesEl = document.getElementById('reader-radio-minutes');
   const statusEl = document.getElementById('reader-import-audio-status');
+  const liveEl = document.getElementById('reader-radio-live-player');
   const setStatus = (msg) => { if (statusEl) { statusEl.style.display = 'inline'; statusEl.textContent = msg; } };
   const streamUrl = urlEl?.value.trim() || '';
   const minutes = Math.max(1, Math.min(59, Number(minutesEl?.value) || 5));
@@ -1819,10 +1821,21 @@ async function readerRecordRadioStream() {
     return;
   }
 
+  // Live playback and server-side capture are two independent things hitting the
+  // same URL: <audio> just plays it for your ears, the fetch() below separately
+  // asks the Cloud Function to read and buffer the stream in the background.
+  // Listening does not feed the recording (nor vice versa) — one doesn't need
+  // the other to work, so plain playback works with no CORS requirement at all.
+  if (liveEl) {
+    liveEl.src = streamUrl;
+    liveEl.style.display = 'block';
+    liveEl.play().catch(() => {}); // autoplay can be blocked until a user gesture; the click that got us here counts
+  }
+
   try {
     if (!globalThis.firebase?.auth?.().currentUser) throw new Error('Нужно войти в приложение.');
     const token = await globalThis.firebase.auth().currentUser.getIdToken(false);
-    setStatus(`🔴 Записываю эфир (${minutes} мин)...`);
+    setStatus(`🔴 Записываю эфир (${minutes} мин) — можно слушать, пока идёт запись...`);
     const resp = await fetch(cloudRecordRadioUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
