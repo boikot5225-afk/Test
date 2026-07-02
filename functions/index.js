@@ -214,6 +214,17 @@ STROPHE:
 ${body.text || ''}`;
   }
 
+  if (task === 'clean_transcript') {
+    return `You are cleaning up a raw speech-to-text transcript of spoken ${langName} for a language-learning reader app. Fix ASR mistakes (misheard homophones, wrong characters/words, missing punctuation), and split the text into natural paragraphs matching sentence/topic boundaries. Do NOT translate, summarize, or change the meaning — only clean up recognition errors and add punctuation/paragraph breaks.
+Return ONLY valid JSON:
+{
+  "text": "cleaned transcript here, with paragraphs separated by a blank line (\\n\\n)"
+}
+
+RAW TRANSCRIPT:
+${body.text || ''}`;
+  }
+
   if (task === 'generate_verb') {
     return `Generate a complete French verb card for a Russian-speaking learner.
 Return ONLY valid JSON:
@@ -254,6 +265,7 @@ function maxTokensForTask(task) {
   if (task === 'generate_verb') return 1400;
   if (task === 'analyze_sentence') return 900;
   if (task === 'song_strophe') return 500;
+  if (task === 'clean_transcript') return 4000;
   if (task === 'fetch_url') return 0; // not an AI task
   return 450;
 }
@@ -479,6 +491,86 @@ exports.ttsAudio = onRequest(
       'X-Generation-Id': upstream.headers.get('x-generation-id') || '',
     });
     return res.status(200).send(audio);
+  }
+);
+
+// ────────────────────────────────────────────────────────────────
+// Audio transcription proxy: Firebase Auth → Firebase Function → OpenRouter (Whisper)
+// Client sends base64 audio; OPENROUTER_API_KEY never reaches the browser.
+// ────────────────────────────────────────────────────────────────
+const STT_MODEL = 'openai/whisper-large-v3';
+// Raw audio must stay well under OpenRouter/Whisper's 25MB cap; base64 adds ~33% overhead.
+const STT_MAX_BASE64_CHARS = 30_000_000; // ~22MB raw audio
+
+exports.transcribeAudio = onRequest(
+  {
+    region: 'asia-southeast1',
+    timeoutSeconds: 180,
+    memory: '512MiB',
+    secrets: [OPENROUTER_API_KEY],
+    cors: true,
+  },
+  async (req, res) => {
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'method_not_allowed', message: 'Use POST.' });
+    }
+
+    let user;
+    try {
+      user = await verifyTtsRequest(req);
+    } catch (error) {
+      return res.status(401).json({ error: 'unauthenticated', message: error?.message || 'Нужно войти в приложение.' });
+    }
+
+    const audioBase64 = typeof req.body?.audioBase64 === 'string' ? req.body.audioBase64 : '';
+    const format = typeof req.body?.format === 'string' && req.body.format.trim() ? req.body.format.trim() : 'mp3';
+    const lang = typeof req.body?.lang === 'string' ? req.body.lang.trim().toLowerCase() : '';
+    if (!audioBase64) return res.status(400).json({ error: 'missing_audio', message: 'Передай audioBase64.' });
+    if (audioBase64.length > STT_MAX_BASE64_CHARS) {
+      return res.status(400).json({ error: 'audio_too_large', message: 'Файл слишком большой (лимит ~20 МБ). Сожми битрейт или обрежь файл.' });
+    }
+
+    const key = OPENROUTER_API_KEY.value();
+    if (!key) {
+      return res.status(500).json({ error: 'missing_openrouter_key', message: 'В Firebase Secret Manager не задан OPENROUTER_API_KEY.' });
+    }
+
+    let upstream;
+    try {
+      upstream = await fetch('https://openrouter.ai/api/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: STT_MODEL,
+          input_audio: { data: audioBase64, format },
+          ...(lang ? { language: lang } : {}),
+        }),
+      });
+    } catch (error) {
+      return res.status(503).json({ error: 'openrouter_unavailable', message: `OpenRouter network error: ${error?.message || String(error)}` });
+    }
+
+    if (!upstream.ok) {
+      const detail = await upstream.text().catch(() => '');
+      return res.status(502).json({
+        error: 'openrouter_stt_failed',
+        message: `OpenRouter STT HTTP ${upstream.status}`,
+        detail: detail.slice(0, 1000),
+      });
+    }
+
+    const data = await upstream.json().catch(() => ({}));
+    const text = data?.text || data?.transcript || data?.transcription || '';
+    if (!text) return res.status(502).json({ error: 'empty_transcript', message: 'OpenRouter вернул пустой транскрипт.' });
+
+    try {
+      await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/transcribe_audio_chars`).transaction((current) => Number(current || 0) + text.length);
+    } catch (_) {}
+
+    return res.status(200).json({ text });
   }
 );
 

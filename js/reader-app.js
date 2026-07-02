@@ -1500,6 +1500,11 @@ function showReaderImportModal(mode) {
           <div id="reader-import-url-status" style="display:none;font-size:.74rem;color:var(--text-muted);margin-top:4px"></div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px"><option value="fr" selected>🇫🇷 Français</option><option value="en">🇬🇧 English</option><option value="zh">🇨🇳 中文</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option><option value="news">📰 Новость</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+          <label for="reader-import-audio" class="btn btn-secondary" style="cursor:pointer;white-space:nowrap">🎙 Из аудио</label>
+          <input type="file" id="reader-import-audio" accept="audio/*" onchange="readerTranscribeAudioFile(event)" style="display:none">
+          <span id="reader-import-audio-status" style="display:none;font-size:.78rem;color:var(--text-muted)"></span>
+        </div>
         <textarea id="reader-import-text" rows="14" placeholder="Вставь сюда главу или текст. Пустая строка = новый абзац." style="width:100%;box-sizing:border-box;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:.94rem;line-height:1.55;resize:vertical;margin-bottom:12px"></textarea>
         <div id="reader-import-status" style="display:none;font-size:.8rem;padding:8px;border-radius:8px;background:var(--surface2);margin-bottom:10px"></div>
         <div style="display:flex;gap:8px"><button onclick="closeReaderImportModal()" class="btn btn-secondary" style="flex:1">Отмена</button><button onclick="saveReaderImport()" class="btn btn-primary" style="flex:1">Сохранить</button></div>
@@ -1579,6 +1584,93 @@ async function readerFetchFromUrl() {
   if (btn) { btn.disabled = false; btn.textContent = '⬇ Загрузить'; }
 }
 window.readerFetchFromUrl = readerFetchFromUrl;
+
+function cloudTranscribeAudioUrl() {
+  const projectId = String(globalThis.FIREBASE_CONFIG?.projectId || 'french-da79a').trim();
+  const region = readerFunctionRegion();
+  return `https://${region}-${projectId}.cloudfunctions.net/transcribeAudio`;
+}
+
+function readerFileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error || new Error('Не удалось прочитать файл'));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Splits raw transcript into chunks small enough for a single DeepSeek cleanup
+// call, breaking on sentence boundaries so no sentence is cut mid-way.
+function readerChunkTranscriptForCleanup(text, maxLen = 3500) {
+  const sentences = readerSplitIntoSentences(String(text || ''));
+  if (!sentences.length) return [];
+  const chunks = [];
+  let cur = '';
+  for (const s of sentences) {
+    if (!cur) cur = s;
+    else if ((cur + ' ' + s).length <= maxLen) cur += ' ' + s;
+    else { chunks.push(cur); cur = s; }
+  }
+  if (cur) chunks.push(cur);
+  return chunks;
+}
+
+async function readerTranscribeAudioFile(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+  const statusEl = document.getElementById('reader-import-audio-status');
+  const textEl = document.getElementById('reader-import-text');
+  const titleEl = document.getElementById('reader-import-title');
+  const setStatus = (msg) => { if (statusEl) { statusEl.style.display = 'inline'; statusEl.textContent = msg; } };
+
+  try {
+    setStatus('⏳ Читаю файл...');
+    const audioBase64 = await readerFileToBase64(file);
+    const format = (file.name.split('.').pop() || 'mp3').toLowerCase();
+    const lang = document.getElementById('reader-import-lang')?.value || 'fr';
+
+    setStatus('⏳ Распознаю речь (Whisper)...');
+    if (!globalThis.firebase?.auth?.().currentUser) throw new Error('Нужно войти в приложение.');
+    const token = await globalThis.firebase.auth().currentUser.getIdToken(false);
+    const resp = await fetch(cloudTranscribeAudioUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ audioBase64, format, lang }),
+    });
+    if (!resp.ok) {
+      const detail = await resp.json().catch(() => ({}));
+      throw new Error(detail?.message || `Распознавание: HTTP ${resp.status}`);
+    }
+    const { text: rawTranscript } = await resp.json();
+    if (!rawTranscript) throw new Error('Пустой транскрипт');
+
+    const chunks = readerChunkTranscriptForCleanup(rawTranscript);
+    const cleaned = [];
+    for (let i = 0; i < chunks.length; i++) {
+      setStatus(`⏳ DeepSeek чистит текст... (${i + 1}/${chunks.length})`);
+      try {
+        const d = await readerAI({ task: 'clean_transcript', text: chunks[i], sourceLang: lang });
+        cleaned.push(d?.text || chunks[i]);
+      } catch (e) {
+        // Keep the raw chunk rather than losing it if DeepSeek fails mid-way.
+        cleaned.push(chunks[i]);
+      }
+    }
+
+    if (textEl) textEl.value = cleaned.join('\n\n');
+    if (titleEl && !titleEl.value.trim()) titleEl.value = file.name.replace(/\.[^.]+$/, '');
+    setStatus(`✅ Готово: ${cleaned.length} фрагмент(ов). Проверь текст перед сохранением.`);
+  } catch (e) {
+    setStatus('❌ ' + (e?.message || 'Ошибка распознавания'));
+  }
+  event.target.value = '';
+}
+window.readerTranscribeAudioFile = readerTranscribeAudioFile;
 
 
 function readerReadFileAsArrayBuffer(file) { return epubReadFileAsArrayBuffer(file); }

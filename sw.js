@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.15-wordstate-merge-sync';
+const CACHE_VERSION = 'v76.16-audio-transcribe';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
