@@ -18,7 +18,44 @@ export function createReaderLibraryStore({
   setCloudSaveTimer,
   getCurrentBookId,
   onError = console.warn,
+  onSaveError = null,
 }) {
+  // Reading positions live in a tiny sidecar key so they survive even when the
+  // main library JSON outgrows the localStorage quota and its writes start failing.
+  function positionsKey() { return storageKey() + '_pos'; }
+
+  function loadPositions() {
+    try { return JSON.parse(localStorage.getItem(positionsKey()) || '{}') || {}; }
+    catch { return {}; }
+  }
+
+  function savePositions(books) {
+    try {
+      const positions = {};
+      for (const book of books) {
+        if (!book?.id) continue;
+        positions[book.id] = { c: book.currentChapter || 0, p: book.currentParagraph || 0, t: book.updatedAt || '' };
+      }
+      localStorage.setItem(positionsKey(), JSON.stringify(positions));
+    } catch (error) {
+      onError('[reader] positions save failed', error);
+    }
+  }
+
+  function applyPositions(books) {
+    const positions = loadPositions();
+    for (const book of books) {
+      const pos = positions[book?.id];
+      if (!pos) continue;
+      if (new Date(pos.t || 0) > new Date(book.updatedAt || 0)) {
+        book.currentChapter = pos.c || 0;
+        book.currentParagraph = pos.p || 0;
+        book.updatedAt = pos.t;
+      }
+    }
+    return books;
+  }
+
   function load() {
     let books = [];
     try {
@@ -31,6 +68,7 @@ export function createReaderLibraryStore({
     } catch (_) {
       books = [];
     }
+    applyPositions(books);
     setBooks(books);
     return books;
   }
@@ -38,10 +76,12 @@ export function createReaderLibraryStore({
   function save({ schedule = true } = {}) {
     let books = dedupeBooks(getBooks() || []);
     setBooks(books);
+    savePositions(books);
     try {
       localStorage.setItem(storageKey(), JSON.stringify(books));
     } catch (error) {
       onError('[reader] save failed', error);
+      onSaveError?.(error);
     }
     if (schedule) scheduleCloudSave();
     return books;
@@ -71,6 +111,7 @@ export function createReaderLibraryStore({
         }
       }
       const merged = dedupeBooks([...byId.values()]);
+      applyPositions(merged);
       setBooks(merged);
       localStorage.setItem(storageKey(), JSON.stringify(merged));
       setCloudLoadedOnce(true);

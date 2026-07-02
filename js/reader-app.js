@@ -2073,6 +2073,15 @@ const readerLibrary = createReaderLibraryStore({
   getCloudSaveTimer: () => readerCloudSaveTimer,
   setCloudSaveTimer: (value) => { readerCloudSaveTimer = value; },
   getCurrentBookId: () => readerCurrentBookId,
+  onSaveError: (() => {
+    let lastWarnAt = 0;
+    return () => {
+      const now = Date.now();
+      if (now - lastWarnAt < 60000) return;
+      lastWarnAt = now;
+      showToast('⚠️ Хранилище переполнено: прогресс чтения сохраняется отдельно, но библиотека не обновляется');
+    };
+  })(),
 });
 
 const readerWordState = createReaderWordState({
