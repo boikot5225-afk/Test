@@ -1505,8 +1505,8 @@ function showReaderImportModal(mode) {
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px"><option value="fr" selected>🇫🇷 Français</option><option value="en">🇬🇧 English</option><option value="zh">🇨🇳 中文</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option><option value="news">📰 Новость</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-          <label for="reader-import-audio" class="btn btn-secondary" style="cursor:pointer;white-space:nowrap">🎙 Из аудио</label>
-          <input type="file" id="reader-import-audio" accept="audio/*" onchange="readerTranscribeAudioFile(event)" style="display:none">
+          <label for="reader-import-audio" class="btn btn-secondary" style="cursor:pointer;white-space:nowrap">🎙 Из аудио/видео</label>
+          <input type="file" id="reader-import-audio" accept="audio/*,video/*" onchange="readerTranscribeAudioFile(event)" style="display:none">
           <span id="reader-import-audio-status" style="display:none;font-size:.78rem;color:var(--text-muted)"></span>
         </div>
         <textarea id="reader-import-text" rows="14" placeholder="Вставь сюда главу или текст. Пустая строка = новый абзац." style="width:100%;box-sizing:border-box;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:.94rem;line-height:1.55;resize:vertical;margin-bottom:12px"></textarea>
@@ -1681,8 +1681,16 @@ async function readerTranscribeAudioFile(event) {
     const lang = document.getElementById('reader-import-lang')?.value || 'fr';
     if (!globalThis.firebase?.auth?.().currentUser) throw new Error('Нужно войти в приложение.');
     const token = await globalThis.firebase.auth().currentUser.getIdToken(false);
+    const isVideo = file.type.startsWith('video/') || /\.(mp4|mov|webm|mkv|avi)$/i.test(file.name);
 
-    setStatus('⏳ Разбираю аудио (браузер)...');
+    // decodeAudioData needs the whole file in memory just to pull the audio track —
+    // fine for audio files, but a long high-res video can be huge. Warn instead of
+    // silently hanging/crashing on very large uploads.
+    if (file.size > 350 * 1024 * 1024) {
+      setStatus('⚠️ Файл очень большой (' + (file.size / 1024 / 1024).toFixed(0) + ' МБ), декодирование может быть медленным или не хватить памяти браузера...');
+    } else {
+      setStatus(isVideo ? '⏳ Извлекаю звук из видео (браузер)...' : '⏳ Разбираю аудио (браузер)...');
+    }
     const AudioCtor = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtor) throw new Error('Этот браузер не поддерживает Web Audio API.');
     const audioCtx = new AudioCtor();
@@ -1690,7 +1698,12 @@ async function readerTranscribeAudioFile(event) {
     try {
       decoded = await audioCtx.decodeAudioData(await file.arrayBuffer());
     } catch (e) {
-      throw new Error('Не удалось декодировать аудио. Попробуй сохранить файл в MP3 или WAV: ' + (e?.message || e));
+      throw new Error(
+        (isVideo
+          ? 'Не удалось извлечь звук из видео. Попробуй пересохранить его в MP4 (H.264 + AAC) или вытащить дорожку в MP3: '
+          : 'Не удалось декодировать аудио. Попробуй сохранить файл в MP3 или WAV: ')
+        + (e?.message || e)
+      );
     } finally {
       try { audioCtx.close(); } catch {}
     }
