@@ -842,6 +842,30 @@ async function syncWordStateToCloud() {
   if (!uid || !isSupabaseReady?.()) return;
   const state = loadReaderWordState();
   if (!state || !Object.keys(state).length) return;
+  // fbSaveWordState replaces the whole cloud node (set), so a device with stale
+  // state would wipe marks made elsewhere. Merge cloud in first: per word,
+  // newer updatedAt wins — upload is then a superset of both devices.
+  try {
+    const cloud = await fbLoadWordState(uid);
+    if (cloud && typeof cloud === 'object') {
+      let changed = false;
+      for (const [k, v] of Object.entries(cloud)) {
+        if (!v || !v.word) continue;
+        const mine = state[k];
+        if (!mine || new Date(v.updatedAt || 0) > new Date(mine.updatedAt || 0)) {
+          state[k] = v;
+          changed = true;
+        }
+      }
+      if (changed) {
+        try { localStorage.setItem(readerWordStateStorageKey(), JSON.stringify(state)); } catch {}
+        try {
+          const readingView = document.getElementById('reader-reading-view');
+          if (readingView && readingView.style.display !== 'none') readerRefreshParagraphWordClasses();
+        } catch {}
+      }
+    }
+  } catch {}
   await fbSaveWordState(uid, state);
 }
 
@@ -1860,6 +1884,8 @@ function readerOpenBook(id) {
   readerScrollActiveParagraph();
   installReaderSelectionTranslate();
   readerStartWarm();
+  // pull word marks made on other devices; repaints colors when merge changes something
+  syncWordStateFromCloud().catch(() => {});
 }
 
 function readerBackToLibrary() {
