@@ -1604,6 +1604,48 @@ function readerFileToBase64(file) {
   });
 }
 
+// Cloud Run (Firebase Functions) hard-caps request bodies at 32MB, which base64
+// audio blows past for anything beyond a few minutes. Instead of asking the user
+// to trim/compress the file by hand, decode it client-side with Web Audio,
+// resample to 16kHz mono (Whisper's native rate — also shrinks it drastically)
+// and slice it into WAV chunks small enough to always clear that limit.
+const READER_STT_CHUNK_SECONDS = 480; // 8 min ≈ 14.6MB raw WAV ≈ 19.5MB base64 — safe margin under 32MB
+const READER_STT_SAMPLE_RATE = 16000;
+
+function readerAudioBufferToWavBlob(audioBuffer) {
+  const samples = audioBuffer.getChannelData(0);
+  const bytesPerSample = 2;
+  const dataSize = samples.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  const writeStr = (offset, str) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
+  writeStr(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); writeStr(8, 'WAVE');
+  writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true); view.setUint32(24, audioBuffer.sampleRate, true);
+  view.setUint32(28, audioBuffer.sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true); view.setUint16(34, 16, true);
+  writeStr(36, 'data'); view.setUint32(40, dataSize, true);
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    offset += 2;
+  }
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+async function readerRenderAudioChunkWav(sourceBuffer, startSec, durationSec) {
+  const OfflineCtor = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const frameCount = Math.max(1, Math.round(durationSec * READER_STT_SAMPLE_RATE));
+  const offlineCtx = new OfflineCtor(1, frameCount, READER_STT_SAMPLE_RATE);
+  const src = offlineCtx.createBufferSource();
+  src.buffer = sourceBuffer;
+  src.connect(offlineCtx.destination);
+  src.start(0, startSec, durationSec);
+  const rendered = await offlineCtx.startRendering();
+  return readerAudioBufferToWavBlob(rendered);
+}
+
 // Splits raw transcript into chunks small enough for a single DeepSeek cleanup
 // call, breaking on sentence boundaries so no sentence is cut mid-way.
 function readerChunkTranscriptForCleanup(text, maxLen = 3500) {
@@ -1629,24 +1671,45 @@ async function readerTranscribeAudioFile(event) {
   const setStatus = (msg) => { if (statusEl) { statusEl.style.display = 'inline'; statusEl.textContent = msg; } };
 
   try {
-    setStatus('⏳ Читаю файл...');
-    const audioBase64 = await readerFileToBase64(file);
-    const format = (file.name.split('.').pop() || 'mp3').toLowerCase();
     const lang = document.getElementById('reader-import-lang')?.value || 'fr';
-
-    setStatus('⏳ Распознаю речь (Whisper)...');
     if (!globalThis.firebase?.auth?.().currentUser) throw new Error('Нужно войти в приложение.');
     const token = await globalThis.firebase.auth().currentUser.getIdToken(false);
-    const resp = await fetch(cloudTranscribeAudioUrl(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ audioBase64, format, lang }),
-    });
-    if (!resp.ok) {
-      const detail = await resp.json().catch(() => ({}));
-      throw new Error(detail?.message || `Распознавание: HTTP ${resp.status}`);
+
+    setStatus('⏳ Разбираю аудио (браузер)...');
+    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtor) throw new Error('Этот браузер не поддерживает Web Audio API.');
+    const audioCtx = new AudioCtor();
+    let decoded;
+    try {
+      decoded = await audioCtx.decodeAudioData(await file.arrayBuffer());
+    } catch (e) {
+      throw new Error('Не удалось декодировать аудио. Попробуй сохранить файл в MP3 или WAV: ' + (e?.message || e));
+    } finally {
+      try { audioCtx.close(); } catch {}
     }
-    const { text: rawTranscript } = await resp.json();
+
+    const totalSec = decoded.duration;
+    const chunkCount = Math.max(1, Math.ceil(totalSec / READER_STT_CHUNK_SECONDS));
+    const rawParts = [];
+    for (let i = 0; i < chunkCount; i++) {
+      const startSec = i * READER_STT_CHUNK_SECONDS;
+      const durationSec = Math.min(READER_STT_CHUNK_SECONDS, totalSec - startSec);
+      setStatus(`⏳ Распознаю фрагмент ${i + 1}/${chunkCount} (Whisper)...`);
+      const wavBlob = await readerRenderAudioChunkWav(decoded, startSec, durationSec);
+      const audioBase64 = await readerFileToBase64(wavBlob);
+      const resp = await fetch(cloudTranscribeAudioUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ audioBase64, format: 'wav', lang }),
+      });
+      if (!resp.ok) {
+        const detail = await resp.json().catch(() => ({}));
+        throw new Error(detail?.message || `Распознавание фрагмента ${i + 1}/${chunkCount}: HTTP ${resp.status}`);
+      }
+      const { text } = await resp.json();
+      if (text) rawParts.push(text);
+    }
+    const rawTranscript = rawParts.join(' ');
     if (!rawTranscript) throw new Error('Пустой транскрипт');
 
     const chunks = readerChunkTranscriptForCleanup(rawTranscript);
