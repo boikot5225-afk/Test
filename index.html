@@ -519,9 +519,9 @@
       <!-- BOTTOM BAR -->
       <div class="rd-bot">
         <button class="rd-nav" onclick="readerPrevParagraph()" title="Назад" aria-label="Назад">◀</button>
-        <button class="rd-desk" onclick="readerAction(event,'translate',null)">🌐 Перевод</button>
+        <button class="rd-desk" onclick="readerAction(event,'translate',null)">🌐 <span class="rd-desk-label">Перевод</span></button>
         <button id="reader-listen-btn" class="rd-listen" onclick="readerListenToggle()">🔊 Слушать</button>
-        <button class="rd-desk" onclick="readerAction(event,'analyze',null)">🧩 Разбор</button>
+        <button class="rd-desk" onclick="readerAction(event,'analyze',null)">🧩 <span class="rd-desk-label">Разбор</span></button>
         <button class="rd-more" onclick="readerOpenMoreSheet()" title="Ещё" aria-label="Ещё">⋯</button>
         <button class="rd-nav" onclick="readerNextParagraph()" title="Дальше" aria-label="Дальше">▶</button>
       </div>
