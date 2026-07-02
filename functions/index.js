@@ -621,8 +621,10 @@ exports.recordRadioStream = onRequest(
     if (!streamUrl || !isHttpUrl(streamUrl)) {
       return res.status(400).json({ error: 'invalid_url', message: 'Передай корректную http(s) ссылку на аудиопоток.' });
     }
-    const requestedSeconds = Number(req.body?.durationSeconds) || 300;
-    const durationSeconds = Math.max(10, Math.min(RADIO_MAX_RECORD_SECONDS, requestedSeconds));
+    // No client-chosen duration anymore — the normal way to end a recording is the
+    // client aborting this request (its "stop" button). This is just a backstop so
+    // a forgotten tab doesn't run (and bill) forever.
+    const durationSeconds = RADIO_MAX_RECORD_SECONDS;
 
     let upstream;
     try {
@@ -635,42 +637,36 @@ exports.recordRadioStream = onRequest(
     }
 
     const contentType = upstream.headers.get('content-type') || 'audio/mpeg';
-    const chunks = [];
+    res.set({ 'Content-Type': contentType, 'Cache-Control': 'no-store' });
+    res.flushHeaders?.();
+
     let totalBytes = 0;
+    let clientGone = false;
+    // Fires when the client aborts its fetch (our "stop" button) — lets us stop
+    // reading upstream immediately instead of burning the full backstop duration.
+    req.on('close', () => { clientGone = true; });
+
     const deadline = Date.now() + durationSeconds * 1000;
     const reader = upstream.body.getReader();
-
     try {
-      while (Date.now() < deadline && totalBytes < RADIO_MAX_RECORD_BYTES) {
+      while (!clientGone && Date.now() < deadline && totalBytes < RADIO_MAX_RECORD_BYTES) {
         const { done, value } = await reader.read();
         if (done) break; // stream ended on its own (e.g. a finite clip, not a live loop)
-        chunks.push(Buffer.from(value));
         totalBytes += value.byteLength;
+        res.write(Buffer.from(value));
       }
-    } catch (error) {
-      if (!totalBytes) {
-        return res.status(502).json({ error: 'stream_read_failed', message: `Ошибка чтения потока: ${error?.message || String(error)}` });
-      }
-      // Partial capture is still useful — fall through and return what we got.
+    } catch (_) {
+      // client aborted mid-read, or upstream hiccuped — we already streamed
+      // whatever arrived before this, which is exactly what "stop" should keep.
     } finally {
       try { await reader.cancel(); } catch (_) {}
     }
 
-    if (!totalBytes) {
-      return res.status(502).json({ error: 'empty_stream', message: 'Поток не отдал ни одного байта за отведённое время.' });
-    }
-
-    const audio = Buffer.concat(chunks, totalBytes);
     try {
-      await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/radio_record_bytes`).transaction((current) => Number(current || 0) + audio.length);
+      await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/radio_record_bytes`).transaction((current) => Number(current || 0) + totalBytes);
     } catch (_) {}
 
-    res.set({
-      'Content-Type': contentType,
-      'Cache-Control': 'no-store',
-      'X-Radio-Seconds-Captured': String(Math.round((Date.now() - (deadline - durationSeconds * 1000)) / 1000)),
-    });
-    return res.status(200).send(audio);
+    if (!res.writableEnded) res.end();
   }
 );
 

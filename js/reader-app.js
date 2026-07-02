@@ -1510,7 +1510,7 @@ function showReaderImportModal(mode) {
           <span id="reader-import-audio-status" style="display:none;font-size:.78rem;color:var(--text-muted)"></span>
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:10px">
-          <span style="font-size:.78rem;color:var(--text-muted)">📻 Радио (эфир записывается на сервере, лимитов почти нет)</span>
+          <span style="font-size:.78rem;color:var(--text-muted)">📻 Радио — слушай и жми «Стоп», когда хватит</span>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <select id="reader-radio-preset" class="select-control" style="min-width:150px" onchange="readerApplyRadioPreset(this.value)">
               <option value="">— свой URL —</option>
@@ -1518,17 +1518,7 @@ function showReaderImportModal(mode) {
               <option value="https://icecast.radiofrance.fr/franceinfo-midfi.mp3">🇫🇷 France Info</option>
             </select>
             <input id="reader-radio-url" placeholder="https://прямая-ссылка-на-поток.mp3" style="flex:1;min-width:180px;box-sizing:border-box;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.86rem">
-          </div>
-          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <select id="reader-radio-minutes" class="select-control" style="min-width:80px">
-              <option value="2">2 мин</option>
-              <option value="5" selected>5 мин</option>
-              <option value="10">10 мин</option>
-              <option value="15">15 мин</option>
-              <option value="30">30 мин</option>
-              <option value="59">59 мин</option>
-            </select>
-            <button onclick="readerRecordRadioStream()" class="btn btn-secondary" style="white-space:nowrap">🔴 Записать</button>
+            <button id="reader-radio-record-btn" onclick="readerToggleRadioRecording()" class="btn btn-secondary" style="white-space:nowrap">🔴 Начать запись</button>
           </div>
           <audio id="reader-radio-live-player" controls style="width:100%;display:none;margin-top:2px"></audio>
         </div>
@@ -1808,54 +1798,113 @@ function readerApplyRadioPreset(url) {
 }
 window.readerApplyRadioPreset = readerApplyRadioPreset;
 
-async function readerRecordRadioStream() {
+let readerRadioSession = null; // { controller, chunks, contentType, startedAt, timer, readDone, host }
+
+function readerRadioElapsedLabel(startedAt) {
+  const sec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+  const m = String(Math.floor(sec / 60)).padStart(2, '0');
+  const s = String(sec % 60).padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+// Manual start/stop instead of a pre-chosen duration: the server streams the
+// captured bytes progressively (see recordRadioStream) instead of buffering the
+// whole thing and returning it at the end, so aborting this fetch on "Стоп" both
+// ends the client-side read AND tells the server to stop reading upstream —
+// whatever arrived up to that moment is what gets transcribed.
+async function readerToggleRadioRecording() {
+  const btn = document.getElementById('reader-radio-record-btn');
   const urlEl = document.getElementById('reader-radio-url');
-  const minutesEl = document.getElementById('reader-radio-minutes');
-  const statusEl = document.getElementById('reader-import-audio-status');
   const liveEl = document.getElementById('reader-radio-live-player');
+  const statusEl = document.getElementById('reader-import-audio-status');
   const setStatus = (msg) => { if (statusEl) { statusEl.style.display = 'inline'; statusEl.textContent = msg; } };
+
+  if (readerRadioSession) {
+    // ── STOP ──
+    const session = readerRadioSession;
+    readerRadioSession = null;
+    clearInterval(session.timer);
+    if (btn) { btn.textContent = '⏳ Обрабатываю...'; btn.disabled = true; }
+    session.controller.abort();
+    try { await session.readDone; } catch {}
+    if (btn) { btn.textContent = '🔴 Начать запись'; btn.disabled = false; }
+
+    setStatus('⏳ Собираю запись...');
+    try {
+      const blob = new Blob(session.chunks, { type: session.contentType });
+      if (!blob || blob.size < 1000) throw new Error('Эфир не записался (пустой файл).');
+      await readerTranscribeBlob(blob, { filenameHint: session.host, isVideo: false, setStatus });
+    } catch (e) {
+      setStatus('❌ ' + (e?.message || 'Ошибка обработки записи'));
+    }
+    return;
+  }
+
+  // ── START ──
   const streamUrl = urlEl?.value.trim() || '';
-  const minutes = Math.max(1, Math.min(59, Number(minutesEl?.value) || 5));
   if (!streamUrl || !/^https?:\/\//i.test(streamUrl)) {
     setStatus('⚠ Вставь прямую ссылку на аудиопоток (http/https)');
     return;
   }
+  if (!globalThis.firebase?.auth?.().currentUser) { setStatus('⚠ Нужно войти в приложение.'); return; }
 
   // Live playback and server-side capture are two independent things hitting the
-  // same URL: <audio> just plays it for your ears, the fetch() below separately
-  // asks the Cloud Function to read and buffer the stream in the background.
-  // Listening does not feed the recording (nor vice versa) — one doesn't need
-  // the other to work, so plain playback works with no CORS requirement at all.
+  // same URL: <audio> just plays it for your ears, the fetch below separately
+  // asks the Cloud Function to read the stream. Listening doesn't feed the
+  // recording (nor vice versa), so plain playback needs no CORS cooperation.
   if (liveEl) {
     liveEl.src = streamUrl;
     liveEl.style.display = 'block';
-    liveEl.play().catch(() => {}); // autoplay can be blocked until a user gesture; the click that got us here counts
+    liveEl.play().catch(() => {});
   }
 
+  let host = 'radio';
+  try { host = new URL(streamUrl).hostname.replace('www.', ''); } catch {}
+
+  const controller = new AbortController();
+  const startedAt = Date.now();
+  const chunks = [];
+
   try {
-    if (!globalThis.firebase?.auth?.().currentUser) throw new Error('Нужно войти в приложение.');
     const token = await globalThis.firebase.auth().currentUser.getIdToken(false);
-    setStatus(`🔴 Записываю эфир (${minutes} мин) — можно слушать, пока идёт запись...`);
     const resp = await fetch(cloudRecordRadioUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ streamUrl, durationSeconds: minutes * 60 }),
+      body: JSON.stringify({ streamUrl }),
+      signal: controller.signal,
     });
-    if (!resp.ok) {
+    if (!resp.ok || !resp.body) {
       const detail = await resp.json().catch(() => ({}));
       throw new Error(detail?.message || `Запись эфира: HTTP ${resp.status}`);
     }
-    const blob = await resp.blob();
-    if (!blob || blob.size < 1000) throw new Error('Эфир не записался (пустой ответ).');
+    const contentType = resp.headers.get('content-type') || 'audio/mpeg';
+    const reader = resp.body.getReader();
 
-    let host = 'radio';
-    try { host = new URL(streamUrl).hostname.replace('www.', ''); } catch {}
-    await readerTranscribeBlob(blob, { filenameHint: host, isVideo: false, setStatus });
+    const readDone = (async () => {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+      } catch (_) {
+        // aborted on manual stop — expected, chunks collected so far are kept
+      }
+    })();
+
+    const timer = setInterval(
+      () => setStatus(`🔴 Запись: ${readerRadioElapsedLabel(startedAt)} — жми «Остановить», когда хватит`),
+      1000
+    );
+    readerRadioSession = { controller, chunks, contentType, startedAt, timer, readDone, host };
+    if (btn) btn.textContent = '⏹ Остановить и распознать';
+    setStatus('🔴 Запись: 00:00 — жми «Остановить», когда хватит');
   } catch (e) {
-    setStatus('❌ ' + (e?.message || 'Ошибка записи эфира'));
+    if (liveEl) liveEl.pause();
+    setStatus('❌ ' + (e?.message || 'Не удалось начать запись'));
   }
 }
-window.readerRecordRadioStream = readerRecordRadioStream;
+window.readerToggleRadioRecording = readerToggleRadioRecording;
 
 
 function readerReadFileAsArrayBuffer(file) { return epubReadFileAsArrayBuffer(file); }
