@@ -2066,60 +2066,87 @@ async function readerImportEpubFromFile(file) {
   const importLang = readerCanonicalLang(document.getElementById('reader-import-lang')?.value || 'fr');
   let importChars = 0;
   const diagnostics = [];
+  // Runs the structured extractor + image resolution over one HTML string.
+  async function processChapterHtml(sourceHtml, chapterBase) {
+    const items = readerHtmlToMixedItems(sourceHtml, importLang, chapterBase);
+    const resolvedItems = [];
+    for (const item of items) {
+      if (typeof item === 'string') {
+        resolvedItems.push(item);
+      } else if (item.type === 'image' && entries.has(item.path)) {
+        const key = pendingBookId + '::' + item.path;
+        if (!imageBlobs.has(key)) {
+          const bytes = await entries.get(item.path).bytes();
+          const ext = item.path.split('.').pop().toLowerCase();
+          const mime = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' }[ext] || 'image/jpeg';
+          imageBlobs.set(key, new Blob([bytes], { type: mime }));
+        }
+        resolvedItems.push({ type: 'image', key: pendingBookId + '::' + item.path, alt: item.alt });
+      }
+    }
+    const textOnly = resolvedItems.filter(it => typeof it === 'string');
+    const chars = textOnly.join('').replace(/\s+/g, '').length;
+    return { resolvedItems, textOnly, chars };
+  }
+
+  // Some converters store chapter markup with HTML entities encoded (the file
+  // literally contains &lt;p&gt; instead of <p>, sometimes doubly so) — the
+  // parser then sees one giant text node and no elements. Decode entities up
+  // to a few passes until real tags appear.
+  function decodeEntityEncodedHtml(sourceHtml) {
+    let out = String(sourceHtml || '');
+    for (let pass = 0; pass < 3; pass++) {
+      if (/<\s*(p|div|h[1-6]|section|blockquote|li)\b/i.test(out)) break;
+      if (!/&(?:amp|lt|gt|quot|#\d+|#x[0-9a-f]+);/i.test(out)) break;
+      const ta = document.createElement('textarea');
+      ta.innerHTML = out;
+      out = ta.value;
+    }
+    return out;
+  }
+
   for (let i = 0; i < htmlPaths.length; i++) {
     const p = htmlPaths[i];
     try {
       const chapterBase = p.split('/').slice(0, -1).join('/');
       const html = await entries.get(p).text();
-      const items = readerHtmlToMixedItems(html, importLang, chapterBase);
+      let best = await processChapterHtml(html, chapterBase);
+      let usedHtml = html;
+      let note = '';
 
-      // Resolve image items: check entry exists, collect blobs keyed by bookId::path
-      const resolvedItems = [];
-      for (const item of items) {
-        if (typeof item === 'string') {
-          resolvedItems.push(item);
-        } else if (item.type === 'image' && entries.has(item.path)) {
-          const key = pendingBookId + '::' + item.path;
-          if (!imageBlobs.has(key)) {
-            const bytes = await entries.get(item.path).bytes();
-            const ext = item.path.split('.').pop().toLowerCase();
-            const mime = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' }[ext] || 'image/jpeg';
-            imageBlobs.set(key, new Blob([bytes], { type: mime }));
-          }
-          resolvedItems.push({ type: 'image', key: pendingBookId + '::' + item.path, alt: item.alt });
+      if (best.chars <= 20) {
+        // Try entity-decoding first: it recovers full structure (paragraphs,
+        // headings, images) instead of the flat text the plain fallback gives.
+        const decoded = decodeEntityEncodedHtml(html);
+        if (decoded !== html) {
+          const fromDecoded = await processChapterHtml(decoded, chapterBase);
+          if (fromDecoded.chars > best.chars) { best = fromDecoded; usedHtml = decoded; note = ' (раскодирован)'; }
         }
       }
 
-      let textOnly = resolvedItems.filter(it => typeof it === 'string');
-      let chars = textOnly.join('').replace(/\s+/g, '').length;
-      let finalItems = resolvedItems;
-      // Some converters put chapter text outside any block tag the structured
-      // extractor looks for (bare text/spans directly in <body>, exotic
-      // wrappers) — every file then yields "0 зн." even though the text is
-      // right there. Fall back to a tag-stripping plain-text pass, split on
-      // blank lines, before giving up on the file.
-      if (chars <= 20) {
+      if (best.chars <= 20) {
+        // Last resort: bare text/spans directly in <body> with no block tags —
+        // strip tags, split on blank lines, chunk long paragraphs as usual.
         const isZhImport = readerCanonicalLang(importLang) === 'zh';
-        const plainParas = readerHtmlToPlainTextFallback(html)
+        const plainParas = readerHtmlToPlainTextFallback(usedHtml)
           .split(/\n\s*\n+/)
           .map(s => s.replace(/\s+/g, ' ').trim())
           .filter(Boolean)
           .flatMap(para => readerChunkLongParagraph(para, isZhImport ? 150 : 420));
         const plainChars = plainParas.join('').replace(/\s+/g, '').length;
-        if (plainChars > 20) {
-          const images = resolvedItems.filter(it => typeof it !== 'string');
-          finalItems = [...images, ...plainParas];
-          textOnly = plainParas;
-          chars = plainChars;
-          diagnostics.push(`${p}: ${chars} зн. (запасной парсер)`);
+        if (plainChars > best.chars) {
+          const images = best.resolvedItems.filter(it => typeof it !== 'string');
+          best = { resolvedItems: [...images, ...plainParas], textOnly: plainParas, chars: plainChars };
+          note = ' (запасной парсер)';
         }
       }
-      if (finalItems === resolvedItems) diagnostics.push(`${p}: ${chars} зн.`);
-      if (textOnly.length && chars > 20) {
-        importChars += chars;
-        const doc = new DOMParser().parseFromString(html, 'text/html');
+
+      diagnostics.push(`${p}: ${best.chars} зн.${note}`);
+      if (best.textOnly.length && best.chars > 20) {
+        importChars += best.chars;
+        const doc = new DOMParser().parseFromString(usedHtml, 'text/html');
         const h = (doc.querySelector('h1,h2,h3,title')?.textContent || '').replace(/\s+/g, ' ').trim();
-        chapters.push({ id: 'ch_' + chapters.length, title: h || `Глава ${chapters.length + 1}`, paragraphs: finalItems });
+        chapters.push({ id: 'ch_' + chapters.length, title: h || `Глава ${chapters.length + 1}`, paragraphs: best.resolvedItems });
       }
     } catch(e) { console.warn('[epub] skipped', p, e); diagnostics.push(`${p}: ошибка ${e?.message || e}`); }
   }

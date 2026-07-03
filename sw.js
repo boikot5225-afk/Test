@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.52-epub-plaintext-fallback';
+const CACHE_VERSION = 'v76.53-epub-entity-decode';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
