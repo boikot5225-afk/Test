@@ -2,6 +2,8 @@
 // home.js — reader-first главный экран v70.1
 // ════════════════════════════════════════════════
 
+import { libraryIdbGet } from './reader/library-idb-store.js?v=1';
+
 export async function renderHome() {
   const $ = (id) => document.getElementById(id);
   const setText = (id, val) => { const el = $(id); if (el) el.textContent = val; };
@@ -44,6 +46,26 @@ export async function renderHome() {
     books = JSON.parse(localStorage.getItem(scopedKey('an2_reader_books_v1')) || '[]') || [];
   } catch { books = []; }
   if (!Array.isArray(books)) books = [];
+
+  // Same recovery the reader library itself does: a past localStorage quota
+  // failure can silently drop books from this snapshot (this reads localStorage
+  // directly, not through readerLibrary's hydrate) even though they're still
+  // safe in IndexedDB — merge them back in so the home screen doesn't undercount
+  // books the reader can still open just fine.
+  try {
+    const fromIdb = await libraryIdbGet(scopedKey('an2_reader_books_v1'));
+    if (Array.isArray(fromIdb) && fromIdb.length) {
+      const byId = new Map(books.map(b => [b.id, b]));
+      for (const idbBook of fromIdb) {
+        if (!idbBook?.id) continue;
+        const local = byId.get(idbBook.id);
+        if (!local || new Date(idbBook.updatedAt || 0) > new Date(local.updatedAt || 0)) {
+          byId.set(idbBook.id, idbBook);
+        }
+      }
+      books = [...byId.values()];
+    }
+  } catch (_) {}
 
   // Фильтрация по текущему языку
   const langBooks = books.filter(b => {

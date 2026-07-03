@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.44-no-french-verb-gen-for-en';
+const CACHE_VERSION = 'v76.45-home-library-idb-fallback';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
