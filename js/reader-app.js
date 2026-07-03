@@ -1369,6 +1369,25 @@ function readerSplitTextToChapters(rawText, fallbackTitle = 'Текст') {
   return readerImportSplitTextToChapters(rawText, fallbackTitle, readerChunkLongParagraph);
 }
 
+// readerSplitTextToChapters re-chunks every blank-line-separated block through
+// chunkLongParagraph(text, 380) again, on top of the sentence-grouping already
+// done when building the timestamped groups in readerTranscribeBlob (up to 400
+// chars, or 150 for zh) — DeepSeek's cleanup pass often nudges a group just over
+// 380 chars, so that second pass silently splits one more paragraph than there
+// are timestamp entries, and saveReaderImport's length check then drops every
+// timestamp for the whole book. This split matches the "\n\n"-joined textarea
+// 1:1 with readerPendingImportTimestamps as long as the user didn't add/remove
+// a blank line while editing.
+function readerSplitAudioTranscriptToParagraphs(rawText, fallbackTitle = 'Аудио') {
+  const paragraphs = String(rawText || '')
+    .replace(/\r/g, '')
+    .split(/\n\s*\n+/)
+    .map(item => item.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  if (!paragraphs.length) return [];
+  return [{ id: 'ch_0', title: fallbackTitle, paragraphs }];
+}
+
 function readerSplitSongToChapters(rawText, fallbackTitle = 'Песня') {
   return readerImportSplitSongToChapters(rawText, fallbackTitle);
 }
@@ -2258,7 +2277,9 @@ function saveReaderImport() {
     ? readerPendingImportChapters
     : format === 'song'
       ? readerSplitSongToChapters(raw, title)
-      : readerSplitTextToChapters(raw, title);
+      : readerPendingImportTimestamps
+        ? readerSplitAudioTranscriptToParagraphs(raw, title)
+        : readerSplitTextToChapters(raw, title);
   if (!chapters.length) { if (st) { st.style.display = 'block'; st.style.color = 'var(--bad)'; st.textContent = 'Текст пустой или не получилось разбить на абзацы.'; } return; }
   const now = new Date().toISOString();
   const urlVal = document.getElementById('reader-import-url')?.value.trim() || '';
