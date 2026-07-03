@@ -2267,12 +2267,25 @@ function saveReaderImport() {
   // (stable across merges) instead of trusting book.id survived the save.
   const savedBooks = saveReaderBooks();
   const finalBook = (savedBooks || []).find(b => b.importKey === book.importKey) || book;
+  // TEMP DIAGNOSTIC (v76.28) — will remove once "Текст не найден" is root-caused.
+  console.warn('[reader DEBUG save]', {
+    generatedId: book.id,
+    importKey: book.importKey,
+    savedBooksCount: savedBooks?.length,
+    finalBookId: finalBook.id,
+    finalBookInSavedBooks: !!(savedBooks || []).find(b => b.id === finalBook.id),
+  });
   closeReaderImportModal(); showToast('📖 Текст добавлен'); renderReaderScreen(); readerOpenBook(finalBook.id);
 }
 
 function readerOpenBook(id) {
   loadReaderBooks();
   const book = readerBooks.find(b => b.id === id);
+  if (!book) {
+    // TEMP DIAGNOSTIC (v76.28) — visible on-device without devtools.
+    const sample = readerBooks.slice(0, 6).map(b => `${b.id} :: ${(b.title||'').slice(0,24)}`).join('\n');
+    alert(`DEBUG readerOpenBook\nищем id: ${id}\nвсего книг: ${readerBooks.length}\nпервые:\n${sample}`);
+  }
   if (!book) { showToast('⚠️ Текст не найден'); return; }
   readerCurrentBookId = id;
   const cleanChanged = readerCleanCorruptedImageParagraphs(book);
