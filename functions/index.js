@@ -4,12 +4,12 @@ const admin = require('firebase-admin');
 
 const DEEPSEEK_API_KEY = defineSecret('DEEPSEEK_API_KEY');
 const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');
-// OpenAI direct (not via OpenRouter) — OpenRouter's unified /audio/transcriptions
+// Groq direct (not via OpenRouter) — OpenRouter's unified /audio/transcriptions
 // endpoint accepts response_format/timestamp_granularities without error but
 // silently never returns segments (confirmed empirically), regardless of model
-// or provider routing. OpenAI's own native Whisper endpoint has always supported
-// verbose_json + segment timestamps, which paragraph-to-audio sync needs.
-const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
+// or provider routing. Groq's own native (OpenAI-compatible) Whisper endpoint
+// reliably supports verbose_json + segment timestamps per their docs.
+const GROQ_API_KEY = defineSecret('GROQ_API_KEY');
 
 const DATABASE_URL = process.env.FIREBASE_DATABASE_URL || 'https://french-da79a-default-rtdb.asia-southeast1.firebasedatabase.app';
 if (!admin.apps.length) {
@@ -504,13 +504,13 @@ exports.ttsAudio = onRequest(
 );
 
 // ────────────────────────────────────────────────────────────────
-// Audio transcription proxy: Firebase Auth → Firebase Function → OpenAI (Whisper).
-// Direct to OpenAI, not via OpenRouter: OpenRouter's unified JSON endpoint
+// Audio transcription proxy: Firebase Auth → Firebase Function → Groq (Whisper).
+// Direct to Groq, not via OpenRouter: OpenRouter's unified JSON endpoint
 // accepts response_format/timestamp_granularities without error but never
 // actually returns segments (confirmed empirically), regardless of model or
-// provider routing — OpenAI's native endpoint is the only one that reliably
-// gives per-segment timestamps, which paragraph-to-audio sync needs.
-// Client sends base64 audio; OPENAI_API_KEY never reaches the browser.
+// provider routing — Groq's own (OpenAI-compatible) endpoint reliably gives
+// per-segment timestamps, which paragraph-to-audio sync needs.
+// Client sends base64 audio; GROQ_API_KEY never reaches the browser.
 // ────────────────────────────────────────────────────────────────
 // Raw audio must stay well under Whisper's 25MB cap; base64 adds ~33% overhead.
 const STT_MAX_BASE64_CHARS = 30_000_000; // ~22MB raw audio
@@ -520,7 +520,7 @@ exports.transcribeAudio = onRequest(
     region: 'asia-southeast1',
     timeoutSeconds: 180,
     memory: '512MiB',
-    secrets: [OPENAI_API_KEY],
+    secrets: [GROQ_API_KEY],
     cors: true,
   },
   async (req, res) => {
@@ -543,43 +543,43 @@ exports.transcribeAudio = onRequest(
       return res.status(400).json({ error: 'audio_too_large', message: 'Файл слишком большой (лимит ~20 МБ). Сожми битрейт или обрежь файл.' });
     }
 
-    const key = OPENAI_API_KEY.value();
+    const key = GROQ_API_KEY.value();
     if (!key) {
-      return res.status(500).json({ error: 'missing_openai_key', message: 'В Firebase Secret Manager не задан OPENAI_API_KEY.' });
+      return res.status(500).json({ error: 'missing_groq_key', message: 'В Firebase Secret Manager не задан GROQ_API_KEY.' });
     }
 
-    // OpenAI's transcription endpoint takes multipart/form-data, not JSON —
+    // Groq's transcription endpoint takes multipart/form-data, not JSON —
     // that's a different shape than OpenRouter's unified API used elsewhere here.
     const form = new FormData();
     form.append('file', new Blob([Buffer.from(audioBase64, 'base64')], { type: `audio/${format}` }), `audio.${format}`);
-    form.append('model', 'whisper-1');
+    form.append('model', 'whisper-large-v3');
     form.append('response_format', 'verbose_json');
     form.append('timestamp_granularities[]', 'segment');
     if (lang) form.append('language', lang);
 
     let upstream;
     try {
-      upstream = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      upstream = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${key}` },
         body: form,
       });
     } catch (error) {
-      return res.status(503).json({ error: 'openai_unavailable', message: `OpenAI network error: ${error?.message || String(error)}` });
+      return res.status(503).json({ error: 'groq_unavailable', message: `Groq network error: ${error?.message || String(error)}` });
     }
 
     if (!upstream.ok) {
       const detail = await upstream.text().catch(() => '');
       return res.status(502).json({
-        error: 'openai_stt_failed',
-        message: `OpenAI STT HTTP ${upstream.status}`,
+        error: 'groq_stt_failed',
+        message: `Groq STT HTTP ${upstream.status}`,
         detail: detail.slice(0, 1000),
       });
     }
 
     const data = await upstream.json().catch(() => ({}));
     const text = data?.text || '';
-    if (!text) return res.status(502).json({ error: 'empty_transcript', message: 'OpenAI вернул пустой транскрипт.' });
+    if (!text) return res.status(502).json({ error: 'empty_transcript', message: 'Groq вернул пустой транскрипт.' });
 
     const segments = (Array.isArray(data?.segments) ? data.segments : [])
       .map(s => ({ start: Number(s.start) || 0, end: Number(s.end) || 0, text: String(s.text || '').trim() }))
