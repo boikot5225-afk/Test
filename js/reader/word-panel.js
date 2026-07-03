@@ -115,6 +115,7 @@ export function createReaderWordPanel({
     const isNoun = filled.pos === 'noun';
     const pinyin = isChinese ? (extractPinyin(data) || String(data.form_note || '').trim()) : '';
     const zhNote = isChinese ? String(data.note || data.form_note || '').trim() : '';
+    const zhChars = isChinese ? String(data.chars || '').trim() : '';
 
     if (known) {
       known.textContent = source === 'local'
@@ -136,6 +137,7 @@ export function createReaderWordPanel({
           <div class="reader-analysis-ru">${escape(ru)}</div>
           ${lemmaLine}
           <div class="reader-analysis-meta">${escape(filled.level)}${zhNote && zhNote !== pinyin ? ' · ' + escape(zhNote) : ''}</div>
+          ${zhChars ? `<div class="reader-analysis-chars">${escape(zhChars)}</div>` : ''}
         </div>`;
       return;
     }

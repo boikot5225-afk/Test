@@ -3399,7 +3399,7 @@ async function readerTranslateWordAI(forceOrOptions = true) {
         surface: word,
         context,
         instruction: sourceLang === 'zh'
-          ? 'Return JSON only: {pos, lemma, surface, pinyin, ru, level, form_note, note}. For Chinese, give pinyin with tone marks and a short Russian meaning. No gender.'
+          ? 'Return JSON only: {pos, lemma, surface, pinyin, ru, level, form_note, note, chars}. For Chinese, give pinyin with tone marks and a short Russian meaning. "chars" is a compact per-character breakdown for 2+ character words (empty for single characters). No gender.'
           : sourceLang === 'en'
             ? 'Return JSON only: {pos:"noun|verb|adjective|adverb|preposition|pronoun|other", lemma, ru, level:"A1|A2|B1|B2", form_note, note}. Give a short Russian meaning in ru. For verbs, lemma is the base/infinitive form. No gender needed.'
             : 'Return JSON only: {pos:"noun|verb|adjective|adverb|preposition|pronoun|other", lemma, infinitive, ru, gender:"m|f|", level:"A1|A2|B1|B2", tense, person, number, form_note, note}. For French conjugated verb forms, lemma and infinitive must be the infinitive; explain the selected surface form in form_note. For nouns, give gender.'

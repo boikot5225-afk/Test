@@ -1055,6 +1055,12 @@ input:-webkit-autofill:focus {
   font-size: .76rem;
   color: var(--text-muted);
 }
+.reader-analysis-chars {
+  font-size: .72rem;
+  color: var(--text-muted);
+  margin-top: 3px;
+  opacity: .85;
+}
 .reader-gender-chip {
   display: inline-flex;
   align-items: center;

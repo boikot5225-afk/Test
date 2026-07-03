@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.41-quiet-quota-warnings';
+const CACHE_VERSION = 'v76.42-zh-char-etymology';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
