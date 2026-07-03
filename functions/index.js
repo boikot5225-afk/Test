@@ -556,6 +556,11 @@ exports.transcribeAudio = onRequest(
           // which is what lets the reader seek its audio player to a paragraph.
           response_format: 'verbose_json',
           timestamp_granularities: ['segment'],
+          // Groq runs the same open-weight whisper-large-v3 (not a different model
+          // id — it's an OpenRouter *provider* option) but reliably honors
+          // verbose_json/segments, unlike whatever OpenAI-routed backend silently
+          // ignored those params on the previous test.
+          provider: { only: ['Groq'] },
         }),
       });
     } catch (error) {
