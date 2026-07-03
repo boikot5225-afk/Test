@@ -1552,32 +1552,16 @@ function showReaderImportModal(mode) {
           <div><label style="font-size:.74rem;color:var(--text-muted);display:block;margin-bottom:5px">Название</label><input id="reader-import-title" placeholder="Bel-Ami, chapitre 1" style="width:100%;box-sizing:border-box;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text)"></div>
           <div><label style="font-size:.74rem;color:var(--text-muted);display:block;margin-bottom:5px">Автор / пометка</label><input id="reader-import-author" placeholder="Maupassant · A2" style="width:100%;box-sizing:border-box;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text)"></div>
         </div>
-        <div style="margin-bottom:10px">
-          <label style="font-size:.74rem;color:var(--text-muted);display:block;margin-bottom:5px">URL страницы (необязательно)</label>
-          <div style="display:flex;gap:6px">
-            <input id="reader-import-url" placeholder="https://..." style="flex:1;box-sizing:border-box;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:.9rem">
-            <button onclick="readerFetchFromUrl()" class="btn btn-secondary" style="white-space:nowrap">⬇ Загрузить</button>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px"><option value="" selected disabled>Язык — выбери</option><option value="fr">🇫🇷 Français</option><option value="en">🇬🇧 English</option><option value="zh">🇨🇳 中文</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option><option value="news">📰 Новость</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding:12px;background:var(--surface2);border:1px solid var(--accent);border-radius:10px">
+          <span style="font-size:.82rem;font-weight:700;color:var(--text)">🎙 Аудио/видео → текст</span>
+          <span style="font-size:.74rem;color:var(--text-muted)">Сначала выбери язык записи в списке выше — иначе распознавание может перепутать язык (например принять китайский за французский).</span>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label for="reader-import-audio" class="btn btn-secondary" style="cursor:pointer;white-space:nowrap">🎙 Из аудио/видео</label>
+            <input type="file" id="reader-import-audio" accept="audio/*,video/*" onchange="readerTranscribeAudioFile(event)" style="display:none">
+            <button id="reader-audio-stop-btn" onclick="readerCancelTranscription()" class="btn btn-secondary" style="display:none;white-space:nowrap">⏹ Стоп</button>
+            <span id="reader-import-audio-status" style="display:none;font-size:.78rem;color:var(--text-muted)"></span>
           </div>
-          <div id="reader-import-url-status" style="display:none;font-size:.74rem;color:var(--text-muted);margin-top:4px"></div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px"><option value="fr" selected>🇫🇷 Français</option><option value="en">🇬🇧 English</option><option value="zh">🇨🇳 中文</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option><option value="news">📰 Новость</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-          <label for="reader-import-audio" class="btn btn-secondary" style="cursor:pointer;white-space:nowrap">🎙 Из аудио/видео</label>
-          <input type="file" id="reader-import-audio" accept="audio/*,video/*" onchange="readerTranscribeAudioFile(event)" style="display:none">
-          <span id="reader-import-audio-status" style="display:none;font-size:.78rem;color:var(--text-muted)"></span>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:10px">
-          <span style="font-size:.78rem;color:var(--text-muted)">📻 Радио — слушай и жми «Стоп», когда хватит</span>
-          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <select id="reader-radio-preset" class="select-control" style="min-width:150px" onchange="readerApplyRadioPreset(this.value)">
-              <option value="">— свой URL —</option>
-              <option value="https://icecast.radiofrance.fr/franceinter-midfi.mp3">🇫🇷 France Inter</option>
-              <option value="https://icecast.radiofrance.fr/franceinfo-midfi.mp3">🇫🇷 France Info</option>
-            </select>
-            <input id="reader-radio-url" placeholder="https://прямая-ссылка-на-поток.mp3" style="flex:1;min-width:180px;box-sizing:border-box;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.86rem">
-            <button id="reader-radio-record-btn" onclick="readerToggleRadioRecording()" class="btn btn-secondary" style="white-space:nowrap">🔴 Начать запись</button>
-          </div>
-          <audio id="reader-radio-live-player" controls style="width:100%;display:none;margin-top:2px"></audio>
         </div>
         <textarea id="reader-import-text" rows="14" placeholder="Вставь сюда главу или текст. Пустая строка = новый абзац." style="width:100%;box-sizing:border-box;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:.94rem;line-height:1.55;resize:vertical;margin-bottom:12px"></textarea>
         <div id="reader-import-status" style="display:none;font-size:.8rem;padding:8px;border-radius:8px;background:var(--surface2);margin-bottom:10px"></div>
@@ -1600,64 +1584,6 @@ function showReaderImportModal(mode) {
 
 function closeReaderImportModal() { const modal = document.getElementById('reader-import-modal'); if (modal) modal.style.display = 'none'; }
 
-async function readerFetchFromUrl() {
-  const urlEl  = document.getElementById('reader-import-url');
-  const textEl = document.getElementById('reader-import-text');
-  const titleEl = document.getElementById('reader-import-title');
-  const st = document.getElementById('reader-import-url-status');
-  const btn = document.querySelector('[onclick="readerFetchFromUrl()"]');
-  const url = urlEl?.value.trim();
-  if (!url || !url.startsWith('http')) {
-    if (st) { st.style.display = 'block'; st.textContent = '⚠ Введи корректный URL'; }
-    return;
-  }
-  if (st) { st.style.display = 'block'; st.textContent = '⏳ Загружаю…'; }
-  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
-  try {
-    // ── Wikipedia detection ──
-    const wikiMatch = url.match(/([a-z]{2,3})\.wikipedia\.org\/wiki\/(.+)/);
-    if (wikiMatch) {
-      const wikiLang = wikiMatch[1];
-      const wikiTitle = decodeURIComponent(wikiMatch[2].replace(/_/g,' '));
-      const apiUrl = `https://${wikiLang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiTitle)}`;
-      const resp = await fetch(apiUrl);
-      if (!resp.ok) throw new Error('Wikipedia API: ' + resp.status);
-      const data = await resp.json();
-      const extract = data.extract || '';
-      if (!extract) throw new Error('Статья пустая или не найдена');
-      if (textEl) textEl.value = extract;
-      if (titleEl && !titleEl.value.trim()) titleEl.value = data.title || wikiTitle;
-      // Auto-set lang from wikipedia domain
-      const langSel = document.getElementById('reader-import-lang');
-      if (langSel && wikiLang === 'zh') langSel.value = 'zh';
-      else if (langSel && wikiLang === 'en') langSel.value = 'en';
-      // Auto-set format to news
-      const fmtSel = document.getElementById('reader-import-format');
-      if (fmtSel) fmtSel.value = 'news';
-      if (st) { st.style.display = 'block'; st.textContent = `✅ Wikipedia: «${data.title}» — ${extract.length} зн.`; }
-    } else {
-      // Regular URL fetch via Firebase
-      const result = await readerAI({ task: 'fetch_url', url });
-      const fetchedText = result?.text || '';
-      if (!fetchedText) throw new Error('Пустой ответ');
-      if (textEl) textEl.value = fetchedText;
-      if (titleEl && !titleEl.value.trim()) {
-        try {
-          const host = new URL(url).hostname.replace('www.', '');
-          titleEl.value = host;
-        } catch {}
-      }
-      // Auto-set format to news
-      const fmtSel = document.getElementById('reader-import-format');
-      if (fmtSel && fmtSel.value === 'text') fmtSel.value = 'news';
-      if (st) { st.style.display = 'block'; st.textContent = `✅ Загружено ${fetchedText.length} символов`; }
-    }
-  } catch(e) {
-    if (st) { st.style.display = 'block'; st.textContent = '❌ ' + (e?.message || 'Ошибка загрузки'); }
-  }
-  if (btn) { btn.disabled = false; btn.textContent = '⬇ Загрузить'; }
-}
-window.readerFetchFromUrl = readerFetchFromUrl;
 
 function cloudTranscribeAudioUrl() {
   const projectId = String(globalThis.FIREBASE_CONFIG?.projectId || 'french-da79a').trim();
@@ -1825,11 +1751,16 @@ function readerAssignParagraphTimestampsByPauses(texts, totalDuration, pauseTime
   return texts.map((_, i) => ({ start: boundaries[i], end: boundaries[i + 1] }));
 }
 
+// Thrown by readerTranscribeBlob when `signal` fires — lets callers show a
+// neutral "cancelled" status instead of treating it as a real failure.
+class ReaderTranscribeCancelled extends Error {
+  constructor() { super('Отменено'); this.name = 'ReaderTranscribeCancelled'; }
+}
+
 // Shared pipeline: decode -> chunk -> Whisper -> DeepSeek cleanup -> textarea + original blob storage.
-// Used both by file uploads (readerTranscribeAudioFile) and by radio stream captures
-// (readerRecordRadioStream) — the two only differ in how they obtain `blob`.
-async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = false, setStatus }) {
-  const lang = document.getElementById('reader-import-lang')?.value || 'fr';
+async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = false, setStatus, signal }) {
+  const lang = document.getElementById('reader-import-lang')?.value || '';
+  if (!lang) throw new Error('Сначала выбери язык записи в списке выше.');
   const textEl = document.getElementById('reader-import-text');
   const titleEl = document.getElementById('reader-import-title');
   if (!globalThis.firebase?.auth?.().currentUser) throw new Error('Нужно войти в приложение.');
@@ -1859,21 +1790,30 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
   } finally {
     try { audioCtx.close(); } catch {}
   }
+  if (signal?.aborted) throw new ReaderTranscribeCancelled();
 
   const totalSec = decoded.duration;
   const chunkCount = Math.max(1, Math.ceil(totalSec / READER_STT_CHUNK_SECONDS));
   const rawParts = [];
   for (let i = 0; i < chunkCount; i++) {
+    if (signal?.aborted) throw new ReaderTranscribeCancelled();
     const startSec = i * READER_STT_CHUNK_SECONDS;
     const durationSec = Math.min(READER_STT_CHUNK_SECONDS, totalSec - startSec);
     setStatus(`⏳ Распознаю фрагмент ${i + 1}/${chunkCount} (Whisper)...`);
     const wavBlob = await readerRenderAudioChunkWav(decoded, startSec, durationSec);
     const audioBase64 = await readerFileToBase64(wavBlob);
-    const resp = await fetch(cloudTranscribeAudioUrl(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ audioBase64, format: 'wav', lang }),
-    });
+    let resp;
+    try {
+      resp = await fetch(cloudTranscribeAudioUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ audioBase64, format: 'wav', lang }),
+        signal,
+      });
+    } catch (e) {
+      if (e?.name === 'AbortError') throw new ReaderTranscribeCancelled();
+      throw e;
+    }
     if (!resp.ok) {
       const detail = await resp.json().catch(() => ({}));
       throw new Error(detail?.message || `Распознавание фрагмента ${i + 1}/${chunkCount}: HTTP ${resp.status}`);
@@ -1888,6 +1828,7 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
 
   const cleaned = [];
   for (let i = 0; i < groups.length; i++) {
+    if (signal?.aborted) throw new ReaderTranscribeCancelled();
     setStatus(`⏳ DeepSeek чистит текст... (${i + 1}/${groups.length})`);
     try {
       const d = await readerAI({ task: 'clean_transcript', text: groups[i].text, sourceLang: lang });
@@ -1932,145 +1873,38 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
   setStatus(`✅ Готово: ${cleaned.length} фрагмент(ов)${hasAudio ? ' · аудио сохранено' : ''}${useTimestamps ? ' · тайм-коды (приблизительно)' : ''}. Проверь текст перед сохранением.`);
 }
 
+let readerTranscribeController = null;
+
+function readerCancelTranscription() {
+  readerTranscribeController?.abort();
+}
+window.readerCancelTranscription = readerCancelTranscription;
+
 async function readerTranscribeAudioFile(event) {
   const file = event?.target?.files?.[0];
   if (!file) return;
   const statusEl = document.getElementById('reader-import-audio-status');
   const setStatus = (msg) => { if (statusEl) { statusEl.style.display = 'inline'; statusEl.textContent = msg; } };
-  const isVideo = file.type.startsWith('video/') || /\.(mp4|mov|webm|mkv|avi)$/i.test(file.name);
-  try {
-    await readerTranscribeBlob(file, { filenameHint: file.name, isVideo, setStatus });
-  } catch (e) {
-    setStatus('❌ ' + (e?.message || 'Ошибка распознавания'));
+  const stopBtn = document.getElementById('reader-audio-stop-btn');
+  if (!document.getElementById('reader-import-lang')?.value) {
+    setStatus('⚠ Сначала выбери язык записи в списке выше.');
+    event.target.value = '';
+    return;
   }
+  const isVideo = file.type.startsWith('video/') || /\.(mp4|mov|webm|mkv|avi)$/i.test(file.name);
+  const controller = new AbortController();
+  readerTranscribeController = controller;
+  if (stopBtn) stopBtn.style.display = 'inline-flex';
+  try {
+    await readerTranscribeBlob(file, { filenameHint: file.name, isVideo, setStatus, signal: controller.signal });
+  } catch (e) {
+    setStatus(e?.name === 'ReaderTranscribeCancelled' ? '⏹ Отменено' : '❌ ' + (e?.message || 'Ошибка распознавания'));
+  }
+  readerTranscribeController = null;
+  if (stopBtn) stopBtn.style.display = 'none';
   event.target.value = '';
 }
 window.readerTranscribeAudioFile = readerTranscribeAudioFile;
-
-function cloudRecordRadioUrl() {
-  const projectId = String(globalThis.FIREBASE_CONFIG?.projectId || 'french-da79a').trim();
-  const region = readerFunctionRegion();
-  return `https://${region}-${projectId}.cloudfunctions.net/recordRadioStream`;
-}
-
-function readerApplyRadioPreset(url) {
-  const urlEl = document.getElementById('reader-radio-url');
-  if (!url || !urlEl) return;
-  urlEl.value = url;
-  // Both current presets are French-language stations.
-  const langSel = document.getElementById('reader-import-lang');
-  if (langSel) langSel.value = 'fr';
-}
-window.readerApplyRadioPreset = readerApplyRadioPreset;
-
-let readerRadioSession = null; // { controller, chunks, contentType, startedAt, timer, readDone, host }
-
-function readerRadioElapsedLabel(startedAt) {
-  const sec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
-  const m = String(Math.floor(sec / 60)).padStart(2, '0');
-  const s = String(sec % 60).padStart(2, '0');
-  return `${m}:${s}`;
-}
-
-// Manual start/stop instead of a pre-chosen duration: the server streams the
-// captured bytes progressively (see recordRadioStream) instead of buffering the
-// whole thing and returning it at the end, so aborting this fetch on "Стоп" both
-// ends the client-side read AND tells the server to stop reading upstream —
-// whatever arrived up to that moment is what gets transcribed.
-async function readerToggleRadioRecording() {
-  const btn = document.getElementById('reader-radio-record-btn');
-  const urlEl = document.getElementById('reader-radio-url');
-  const liveEl = document.getElementById('reader-radio-live-player');
-  const statusEl = document.getElementById('reader-import-audio-status');
-  const setStatus = (msg) => { if (statusEl) { statusEl.style.display = 'inline'; statusEl.textContent = msg; } };
-
-  if (readerRadioSession) {
-    // ── STOP ──
-    const session = readerRadioSession;
-    readerRadioSession = null;
-    clearInterval(session.timer);
-    if (btn) { btn.textContent = '⏳ Обрабатываю...'; btn.disabled = true; }
-    session.controller.abort();
-    try { await session.readDone; } catch {}
-    if (btn) { btn.textContent = '🔴 Начать запись'; btn.disabled = false; }
-
-    setStatus('⏳ Собираю запись...');
-    try {
-      const blob = new Blob(session.chunks, { type: session.contentType });
-      if (!blob || blob.size < 1000) throw new Error('Эфир не записался (пустой файл).');
-      await readerTranscribeBlob(blob, { filenameHint: session.host, isVideo: false, setStatus });
-    } catch (e) {
-      setStatus('❌ ' + (e?.message || 'Ошибка обработки записи'));
-    }
-    return;
-  }
-
-  // ── START ──
-  const streamUrl = urlEl?.value.trim() || '';
-  if (!streamUrl || !/^https?:\/\//i.test(streamUrl)) {
-    setStatus('⚠ Вставь прямую ссылку на аудиопоток (http/https)');
-    return;
-  }
-  if (!globalThis.firebase?.auth?.().currentUser) { setStatus('⚠ Нужно войти в приложение.'); return; }
-
-  // Live playback and server-side capture are two independent things hitting the
-  // same URL: <audio> just plays it for your ears, the fetch below separately
-  // asks the Cloud Function to read the stream. Listening doesn't feed the
-  // recording (nor vice versa), so plain playback needs no CORS cooperation.
-  if (liveEl) {
-    liveEl.src = streamUrl;
-    liveEl.style.display = 'block';
-    liveEl.play().catch(() => {});
-  }
-
-  let host = 'radio';
-  try { host = new URL(streamUrl).hostname.replace('www.', ''); } catch {}
-
-  const controller = new AbortController();
-  const startedAt = Date.now();
-  const chunks = [];
-
-  try {
-    const token = await globalThis.firebase.auth().currentUser.getIdToken(false);
-    const resp = await fetch(cloudRecordRadioUrl(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ streamUrl }),
-      signal: controller.signal,
-    });
-    if (!resp.ok || !resp.body) {
-      const detail = await resp.json().catch(() => ({}));
-      throw new Error(detail?.message || `Запись эфира: HTTP ${resp.status}`);
-    }
-    const contentType = resp.headers.get('content-type') || 'audio/mpeg';
-    const reader = resp.body.getReader();
-
-    const readDone = (async () => {
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-        }
-      } catch (_) {
-        // aborted on manual stop — expected, chunks collected so far are kept
-      }
-    })();
-
-    const timer = setInterval(
-      () => setStatus(`🔴 Запись: ${readerRadioElapsedLabel(startedAt)} — жми «Остановить», когда хватит`),
-      1000
-    );
-    readerRadioSession = { controller, chunks, contentType, startedAt, timer, readDone, host };
-    if (btn) btn.textContent = '⏹ Остановить и распознать';
-    setStatus('🔴 Запись: 00:00 — жми «Остановить», когда хватит');
-  } catch (e) {
-    if (liveEl) liveEl.pause();
-    setStatus('❌ ' + (e?.message || 'Не удалось начать запись'));
-  }
-}
-window.readerToggleRadioRecording = readerToggleRadioRecording;
-
 
 function readerReadFileAsArrayBuffer(file) { return epubReadFileAsArrayBuffer(file); }
 
@@ -2321,11 +2155,16 @@ function saveReaderImport() {
   loadReaderBooks();
   const title = document.getElementById('reader-import-title')?.value.trim() || 'Без названия';
   const authorRaw = document.getElementById('reader-import-author')?.value.trim() || '';
-  const lang = readerCanonicalLang(document.getElementById('reader-import-lang')?.value || 'fr');
+  const st = document.getElementById('reader-import-status');
+  const langRaw = document.getElementById('reader-import-lang')?.value || '';
+  if (!langRaw) {
+    if (st) { st.style.display = 'block'; st.style.color = 'var(--bad)'; st.textContent = 'Выбери язык текста перед сохранением.'; }
+    return;
+  }
+  const lang = readerCanonicalLang(langRaw);
   const level = document.getElementById('reader-import-level')?.value || 'A2';
   const format = document.getElementById('reader-import-format')?.value || 'text';
   const raw = document.getElementById('reader-import-text')?.value || '';
-  const st = document.getElementById('reader-import-status');
   const chapters = Array.isArray(readerPendingImportChapters) && readerPendingImportChapters.length
     ? readerPendingImportChapters
     : format === 'song'
@@ -2335,10 +2174,6 @@ function saveReaderImport() {
         : readerSplitTextToChapters(raw, title);
   if (!chapters.length) { if (st) { st.style.display = 'block'; st.style.color = 'var(--bad)'; st.textContent = 'Текст пустой или не получилось разбить на абзацы.'; } return; }
   const now = new Date().toISOString();
-  const urlVal = document.getElementById('reader-import-url')?.value.trim() || '';
-  const newsSource = format === 'news' && urlVal
-    ? (() => { try { return new URL(urlVal).hostname.replace('www.',''); } catch { return ''; } })()
-    : '';
   const newsDate = format === 'news' ? now : undefined;
   const bookId = readerPendingImportBookId || readerId();
   readerPendingImportBookId = null;
@@ -2346,7 +2181,7 @@ function saveReaderImport() {
   let firstParaIdx = 0;
   while (firstParaIdx < firstParas.length && firstParas[firstParaIdx] && typeof firstParas[firstParaIdx] === 'object') firstParaIdx++;
   const bookObj = { id: bookId, title, author: authorRaw, level, lang, sourceLang: lang, format, source: readerPendingImportSource || 'manual_text', createdAt: now, updatedAt: now, currentChapter: 0, currentParagraph: firstParaIdx, chapters };
-  if (format === 'news') { bookObj.newsSource = newsSource || authorRaw || 'вставка'; bookObj.newsDate = newsDate; }
+  if (format === 'news') { bookObj.newsSource = authorRaw || 'вставка'; bookObj.newsDate = newsDate; }
   if (readerPendingImportHasAudio) bookObj.hasOriginalAudio = true;
   readerPendingImportHasAudio = false;
   // Only trust the timestamps if the paragraph count in the (possibly hand-edited)
@@ -4635,7 +4470,7 @@ export {
   showReaderViewedWords, closeReaderViewedWords,
   readerMarkSelectedWordKnown, readerMarkSelectedWordProblem,
   readerCycleZhPinyinMode, readerLookupChineseWord, readerEnsureZhCoreJsonLoaded, readerZhCoreJsonCount,
-  readerSetLibTab, readerSetLibFilter, readerFetchFromUrl,
+  readerSetLibTab, readerSetLibFilter,
   readerImportFromFile, saveReaderImport, showReaderImportModal, closeReaderImportModal,
   readerToggleDisplayPanel, readerCloseDisplayPanel, rdSetFont, rdSetSize, rdSetLH, rdSetTheme,
   readerToggleSongMeaning,
