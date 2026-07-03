@@ -501,7 +501,7 @@ exports.ttsAudio = onRequest(
 // Audio transcription proxy: Firebase Auth → Firebase Function → OpenRouter (Whisper)
 // Client sends base64 audio; OPENROUTER_API_KEY never reaches the browser.
 // ────────────────────────────────────────────────────────────────
-const STT_MODEL = 'openai/whisper-large-v3';
+const STT_MODEL = 'openai/gpt-4o-transcribe';
 // Raw audio must stay well under OpenRouter/Whisper's 25MB cap; base64 adds ~33% overhead.
 const STT_MAX_BASE64_CHARS = 30_000_000; // ~22MB raw audio
 
