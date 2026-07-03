@@ -320,6 +320,71 @@ async function writeProfileBestEffort(user, username, email) {
   }
 }
 
+// The compat SDK writes over its realtime (websocket) connection, and when that
+// connection can't be established (some mobile networks/proxies silently block
+// it) the update() promise never settles — no error, just an infinite hang,
+// while plain HTTPS fetches (Cloud Functions, etc.) keep working fine on the
+// same device. So: race the SDK write against a short deadline, and on timeout
+// finish the exact same multi-path update over the RTDB REST API (plain HTTPS).
+// If the SDK write later lands too, it's the identical data — harmless.
+async function rootUpdateViaRest(updates) {
+  const config = getFirebaseConfig();
+  const base = String(config?.databaseURL || '').replace(/\/+$/, '');
+  if (!base) throw new Error('Не настроен databaseURL в FIREBASE_CONFIG');
+  const token = await getIdTokenSafe(false);
+  const response = await fetch(`${base}/.json${token ? `?auth=${encodeURIComponent(token)}` : ''}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.error || `Firebase REST HTTP ${response.status}`);
+  }
+}
+
+async function resilientRootUpdate(updates, sdkTimeoutMs = 6000) {
+  const timedOut = Symbol('sdk-write-timeout');
+  const winner = await Promise.race([
+    fbDb.ref().update(updates),
+    new Promise((resolve) => setTimeout(() => resolve(timedOut), sdkTimeoutMs)),
+  ]);
+  if (winner === timedOut) {
+    console.warn('[firebase] realtime write stalled, retrying over REST');
+    await rootUpdateViaRest(updates);
+  }
+}
+
+// Same websocket-stall guard for single-path set() writes (see rootUpdateViaRest).
+async function pathSetViaRest(path, value) {
+  const config = getFirebaseConfig();
+  const base = String(config?.databaseURL || '').replace(/\/+$/, '');
+  if (!base) throw new Error('Не настроен databaseURL в FIREBASE_CONFIG');
+  const token = await getIdTokenSafe(false);
+  const clean = String(path || '').replace(/^\/+|\/+$/g, '');
+  const response = await fetch(`${base}/${clean}.json${token ? `?auth=${encodeURIComponent(token)}` : ''}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(value),
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.error || `Firebase REST HTTP ${response.status}`);
+  }
+}
+
+async function resilientPathSet(path, value, sdkTimeoutMs = 6000) {
+  const timedOut = Symbol('sdk-write-timeout');
+  const winner = await Promise.race([
+    fbDb.ref(path).set(value),
+    new Promise((resolve) => setTimeout(() => resolve(timedOut), sdkTimeoutMs)),
+  ]);
+  if (winner === timedOut) {
+    console.warn('[firebase] realtime set stalled, retrying over REST:', path);
+    await pathSetViaRest(path, value);
+  }
+}
+
 class FirebaseQueryBuilder {
   constructor(table) {
     this.table = table;
@@ -451,7 +516,7 @@ class FirebaseQueryBuilder {
       const path = recordPath(this.table, row);
       updates[path] = normalizeRecordForWrite(this.table, row);
     }
-    if (Object.keys(updates).length) await fbDb.ref().update(updates);
+    if (Object.keys(updates).length) await resilientRootUpdate(updates);
     return { data: Array.isArray(this._writePayload) ? rows : rows[0] || null, error: null };
   }
 
@@ -475,7 +540,7 @@ class FirebaseQueryBuilder {
     if (tableNeedsAuth(this.table)) await ensureAuthenticatedForPrivatePath(rows[0]?.user_id || rows[0]?.id || sbUser?.id || sbUser?.uid || null, 8000);
     const updates = {};
     for (const row of rows) updates[recordPath(this.table, row)] = null;
-    if (Object.keys(updates).length) await fbDb.ref().update(updates);
+    if (Object.keys(updates).length) await resilientRootUpdate(updates);
     return { data: null, error: null };
   }
 
@@ -775,7 +840,7 @@ export async function fbLoadTable(table, orderField = null) {
 export async function fbSaveWordState(uid, state) {
   if (!fbDb || !uid || !state) return false;
   try {
-    await fbDb.ref(`reader_word_state/${uid}`).set(state);
+    await resilientPathSet(`reader_word_state/${uid}`, state);
     return true;
   } catch (e) {
     console.warn('[word-state cloud] save failed:', e?.message);

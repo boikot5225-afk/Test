@@ -3041,7 +3041,9 @@ async function readerSaveWord() {
       created_at: new Date().toISOString(),
       custom: true
     };
-    const { error } = await readerWithDeadline(() => sb.from('nouns').upsert(record), 12000, 'Сохранение слова');
+    // 20s outer guard: the write itself now falls back to REST after a 6s
+    // websocket stall (see resilientRootUpdate), so give that path room to run.
+    const { error } = await readerWithDeadline(() => sb.from('nouns').upsert(record), 20000, 'Сохранение слова');
     if (error) throw error;
 
     const oldIdx = NOUNS.findIndex(n => String(n.id) === id);

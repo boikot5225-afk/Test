@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.46-word-save-timeout';
+const CACHE_VERSION = 'v76.47-rest-fallback-writes';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
