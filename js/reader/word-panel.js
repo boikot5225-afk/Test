@@ -124,7 +124,11 @@ export function createReaderWordPanel({
           ? 'разобрано через DeepSeek'
           : 'готово';
     }
-    if (saveButton) saveButton.textContent = isChinese ? '＋ В китайский словарь' : (isVerb ? '＋ Добавить глагол' : '＋ В словарь');
+    // French-only: the verb-conjugation database (groups/aux/tense tables) is
+    // French-specific, so only route French verbs to "Добавить глагол" — English
+    // (and any other non-French) verbs just save as a regular vocabulary word.
+    const isFrVerb = isVerb && lang === 'fr';
+    if (saveButton) saveButton.textContent = isChinese ? '＋ В китайский словарь' : (isFrVerb ? '＋ Добавить глагол' : '＋ В словарь');
     if (!box) return;
 
     if (isChinese) {

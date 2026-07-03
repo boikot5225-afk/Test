@@ -19,7 +19,7 @@ import { imgStorePut, imgStoreGet, imgStoreDeleteBook } from './reader/image-sto
 import { audioStorePut, audioStoreGet, audioStoreDelete } from './reader/audio-store.js?v=1';
 import { libraryIdbPut, libraryIdbGet } from './reader/library-idb-store.js?v=1';
 import { wordStateIdbPut, wordStateIdbGet } from './reader/word-state-idb-store.js?v=1';
-import { createReaderWordPanel } from './reader/word-panel.js?v=2';
+import { createReaderWordPanel } from './reader/word-panel.js?v=3';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=2';
 import { createReaderLibraryStore } from './reader/library-store.js?v=2';
@@ -3011,7 +3011,10 @@ async function readerSaveWord() {
       return;
     }
 
-    if (pos === 'verb') {
+    // The verb-conjugation database (groups/aux/tense tables, generate_verb AI
+    // task) is French-specific — English verbs just save as a regular
+    // vocabulary word below, same as nouns/adjectives.
+    if (pos === 'verb' && activeLang === 'fr') {
       const known = VERBS.find(v => readerNormalizeWord(v.inf) === readerNormalizeWord(lemma));
       if (known) {
         if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = `✅ Это форма глагола ${known.inf}. В словарь слов не сохраняю.`; }
