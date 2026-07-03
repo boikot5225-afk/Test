@@ -385,6 +385,30 @@ async function resilientPathSet(path, value, sdkTimeoutMs = 6000) {
   }
 }
 
+// Same guard for remove(): a silently-stalled delete is worse than a stalled
+// write — the cloud copy survives and the "deleted" record resurrects on the
+// next cloud merge.
+async function resilientPathRemove(path, sdkTimeoutMs = 6000) {
+  const timedOut = Symbol('sdk-write-timeout');
+  const winner = await Promise.race([
+    fbDb.ref(path).remove(),
+    new Promise((resolve) => setTimeout(() => resolve(timedOut), sdkTimeoutMs)),
+  ]);
+  if (winner === timedOut) {
+    console.warn('[firebase] realtime remove stalled, retrying over REST:', path);
+    const config = getFirebaseConfig();
+    const base = String(config?.databaseURL || '').replace(/\/+$/, '');
+    if (!base) throw new Error('Не настроен databaseURL в FIREBASE_CONFIG');
+    const token = await getIdTokenSafe(false);
+    const clean = String(path || '').replace(/^\/+|\/+$/g, '');
+    const response = await fetch(`${base}/${clean}.json${token ? `?auth=${encodeURIComponent(token)}` : ''}`, { method: 'DELETE' });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => null);
+      throw new Error(detail?.error || `Firebase REST HTTP ${response.status}`);
+    }
+  }
+}
+
 class FirebaseQueryBuilder {
   constructor(table) {
     this.table = table;
@@ -525,12 +549,12 @@ class FirebaseQueryBuilder {
     const idFilter = this._filters.find((f) => f.field === 'id');
     if (this.table === 'reader_books' && uidFilter?.value && idFilter?.value) {
       await ensureAuthenticatedForPrivatePath(uidFilter.value, 8000);
-      await fbDb.ref(`reader_books/${uidFilter.value}/${safeFirebaseKey(idFilter.value)}`).remove();
+      await resilientPathRemove(`reader_books/${uidFilter.value}/${safeFirebaseKey(idFilter.value)}`);
       return { data: null, error: null };
     }
     if (['stats', 'srs', 'meta', 'reader_books'].includes(this.table) && uidFilter?.value) {
       await ensureAuthenticatedForPrivatePath(uidFilter.value, 8000);
-      await fbDb.ref(`${this.table}/${uidFilter.value}`).remove();
+      await resilientPathRemove(`${this.table}/${uidFilter.value}`);
       return { data: null, error: null };
     }
 
