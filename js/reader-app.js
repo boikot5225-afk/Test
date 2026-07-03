@@ -2150,10 +2150,15 @@ async function readerImportEpubFromFile(file) {
     return out;
   }
 
-  // ≥3 encoded-entity hits in extracted "text" means we scooped up markup,
-  // not prose — the decode pass should get a chance even though chars > 20.
-  function looksEntityEncoded(text) {
-    return (String(text || '').match(/&(?:lt|gt|quot|amp|#\d+);/gi) || []).length >= 3;
+  // Markup scooped up as "text" instead of prose — the decode pass should get
+  // a chance even though chars > 20. Two shapes: leftover entities (&lt;p&gt;,
+  // happens with double-encoded files) AND real-looking tags (<p class="p1">,
+  // happens with single-encoded files: DOMParser already decoded the entities
+  // while extracting, so the tags in the text have real angle brackets).
+  function looksLikeMarkupSoup(text) {
+    const s = String(text || '');
+    if ((s.match(/&(?:lt|gt|quot|amp|#\d+);/gi) || []).length >= 3) return true;
+    return (s.match(/<\/?[a-z][^<>]{0,200}>/gi) || []).length >= 3;
   }
 
   for (let i = 0; i < htmlPaths.length; i++) {
@@ -2166,13 +2171,13 @@ async function readerImportEpubFromFile(file) {
       let note = '';
 
       // Decode when the structured pass found nothing — OR when what it found
-      // is itself entity-encoded markup (happens when the encoded soup sits
-      // inside a real block tag, so chars > 20 but it's tags, not prose).
-      if (best.chars <= 20 || looksEntityEncoded(best.textOnly.join(' '))) {
+      // is markup soup rather than prose (encoded soup sitting inside a real
+      // block tag: chars > 20 but it's tags, not text).
+      if (best.chars <= 20 || looksLikeMarkupSoup(best.textOnly.join(' '))) {
         const decoded = decodeEntityEncodedHtml(html);
         if (decoded !== html) {
           const fromDecoded = await processChapterHtml(decoded, chapterBase);
-          const decodedClean = fromDecoded.chars > 20 && !looksEntityEncoded(fromDecoded.textOnly.join(' '));
+          const decodedClean = fromDecoded.chars > 20 && !looksLikeMarkupSoup(fromDecoded.textOnly.join(' '));
           if (decodedClean || fromDecoded.chars > best.chars) { best = fromDecoded; usedHtml = decoded; note = ' (раскодирован)'; }
         }
       }
