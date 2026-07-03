@@ -2270,17 +2270,44 @@ function saveReaderImport() {
   const byImportKey = (savedBooks || []).find(b => b.importKey === book.importKey);
   const byId = (savedBooks || []).find(b => b.id === book.id);
   const finalBook = byImportKey || byId || book;
-  // TEMP DIAGNOSTIC (v76.29) — will remove once "Текст не найден" is root-caused.
+  // TEMP DIAGNOSTIC (v76.30) — verify what actually landed on disk, not just in memory.
+  // save()'s localStorage.setItem can throw silently on quota, and the slim-retry
+  // can ALSO throw — if both fail, the in-memory array (what we just checked above)
+  // looks fine while the disk still holds the pre-save snapshot.
+  let onDiskCount = 'exception';
+  let onDiskHasBook = false;
+  let rawLen = 'n/a';
+  let totalLsChars = 0;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      totalLsChars += (k?.length || 0) + (localStorage.getItem(k)?.length || 0);
+    }
+  } catch (_) {}
+  try {
+    const raw = localStorage.getItem(readerBooksStorageKey());
+    rawLen = raw?.length ?? 0;
+    const onDisk = JSON.parse(raw || '[]');
+    onDiskCount = Array.isArray(onDisk) ? onDisk.length : 'not-array';
+    onDiskHasBook = Array.isArray(onDisk) && onDisk.some(b => b.id === book.id);
+  } catch (e) {
+    onDiskCount = 'parse error: ' + (e?.message || e);
+  }
   alert(
     'DEBUG saveReaderImport\n' +
     'book.id: ' + book.id + '\n' +
     'importKey: ' + book.importKey + '\n' +
     'chapters is array: ' + Array.isArray(book.chapters) + ', len: ' + book.chapters?.length + '\n' +
     'preSave in readerBooks: ' + preSaveHasId + '\n' +
-    'savedBooks count: ' + (savedBooks?.length ?? 'null') + '\n' +
+    'savedBooks (in-memory) count: ' + (savedBooks?.length ?? 'null') + '\n' +
     'found byImportKey: ' + !!byImportKey + (byImportKey ? ' (id=' + byImportKey.id + ')' : '') + '\n' +
     'found byId: ' + !!byId + '\n' +
-    'finalBook.id: ' + finalBook.id
+    'finalBook.id: ' + finalBook.id + '\n' +
+    '--- ON DISK (localStorage) ---\n' +
+    'raw length (chars): ' + rawLen + '\n' +
+    'on-disk book count: ' + onDiskCount + '\n' +
+    'on-disk has our book: ' + onDiskHasBook + '\n' +
+    'total localStorage chars (~5-10M is typical quota): ' + totalLsChars
   );
   closeReaderImportModal(); showToast('📖 Текст добавлен'); renderReaderScreen(); readerOpenBook(finalBook.id);
 }
