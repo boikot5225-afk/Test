@@ -1235,6 +1235,53 @@ function readerCleanCorruptedImageParagraphs(book) {
   return changed;
 }
 
+// Books imported while the EPUB entity-soup bug was live (v76.52–.53) have
+// literal tags (</p><p class="p1">) and/or encoded entities (&lt;p&gt;,
+// &quot;) baked into their SAVED paragraphs. Heal them when the book is
+// opened, so nothing has to be deleted and re-imported. One-shot per book.
+function readerCleanEntitySoupParagraphs(book) {
+  if (!book || book._v76SoupClean) return false;
+  book._v76SoupClean = true;
+  const tagRe = /<\/?(?:p|div|span|a|link|html|body|head|h[1-6]|br|img|section|blockquote|li|ul|ol|title|style|meta)\b[^>]*\/?\s*>/gi;
+  const entityRe = /&(?:lt|gt|quot|amp|#\d+|#x[0-9a-f]+);/i;
+  const hasSoup = (text) => { tagRe.lastIndex = 0; return tagRe.test(text) || entityRe.test(text); };
+  const cleanText = (raw) => {
+    let text = String(raw || '');
+    // Decode entities first (possibly double-encoded) — textarea parsing is
+    // RCDATA, so any REAL tags already present stay literal text, untouched.
+    for (let i = 0; i < 3 && entityRe.test(text); i++) {
+      const ta = document.createElement('textarea');
+      ta.innerHTML = text;
+      text = ta.value;
+    }
+    tagRe.lastIndex = 0;
+    return text.replace(tagRe, ' ').replace(/\s+/g, ' ').trim();
+  };
+  const isZh = readerCanonicalLang(book.lang || book.sourceLang || 'fr') === 'zh';
+  let changed = false;
+  for (const ch of (book.chapters || [])) {
+    const paragraphs = ch.paragraphs || [];
+    if (!paragraphs.some(p => typeof p === 'string' && hasSoup(p))) continue;
+    changed = true;
+    if (Array.isArray(ch.paragraphTimestamps) && ch.paragraphTimestamps.length === paragraphs.length) {
+      // Audio-synced chapter: clean in place, never split/drop, so the
+      // paragraph↔timestamp mapping stays 1:1.
+      ch.paragraphs = paragraphs.map(p => (typeof p === 'string' && hasSoup(p)) ? (cleanText(p) || p) : p);
+    } else {
+      const next = [];
+      for (const p of paragraphs) {
+        if (typeof p !== 'string' || !hasSoup(p)) { next.push(p); continue; }
+        const text = cleanText(p);
+        if (text) next.push(...readerChunkLongParagraph(text, isZh ? 150 : 420));
+      }
+      ch.paragraphs = next;
+    }
+  }
+  if (changed && typeof book.title === 'string' && hasSoup(book.title)) book.title = cleanText(book.title) || book.title;
+  return changed;
+}
+window.readerCleanEntitySoupParagraphs = readerCleanEntitySoupParagraphs;
+
 function readerNormalizeBookChunks(book) {
   const isZh = readerCanonicalLang(book?.lang || book?.sourceLang || 'fr') === 'zh';
   const doneFlag = isZh ? '_v70ZhChunks' : '_v43SentenceChunks';
@@ -2312,7 +2359,8 @@ function readerOpenBook(id) {
   if (!book) { showToast('⚠️ Текст не найден'); return; }
   readerCurrentBookId = id;
   const cleanChanged = readerCleanCorruptedImageParagraphs(book);
-  if (readerNormalizeBookChunks(book) || cleanChanged) {
+  const soupChanged = readerCleanEntitySoupParagraphs(book);
+  if (readerNormalizeBookChunks(book) || cleanChanged || soupChanged) {
     book.currentParagraph = Math.min(book.currentParagraph || 0, book.chapters?.[book.currentChapter || 0]?.paragraphs?.length || 0);
     book.updatedAt = new Date().toISOString();
     saveReaderBooks();
