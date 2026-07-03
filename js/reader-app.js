@@ -18,6 +18,7 @@ import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU1
 import { imgStorePut, imgStoreGet, imgStoreDeleteBook } from './reader/image-store.js?v=1';
 import { audioStorePut, audioStoreGet, audioStoreDelete } from './reader/audio-store.js?v=1';
 import { libraryIdbPut, libraryIdbGet } from './reader/library-idb-store.js?v=1';
+import { wordStateIdbPut, wordStateIdbGet } from './reader/word-state-idb-store.js?v=1';
 import { createReaderWordPanel } from './reader/word-panel.js?v=1';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=1';
@@ -1404,6 +1405,9 @@ async function renderReaderScreen() {
   // Runs before the library list below is built, so a recovered book shows up
   // immediately without needing a second render pass.
   try { await hydrateReaderBooksFromIndexedDB(); } catch {}
+  // Same recovery for word colors/status — a quota failure there silently drops
+  // marks the same way it used to drop whole books.
+  try { await readerWordState.hydrateFromIndexedDB(); } catch {}
   try { await loadReaderBooksFromCloud(false); } catch {}
   try { if (!NOUNS_LOADED) await loadNounsFromCloud(); } catch {}
 
@@ -2729,6 +2733,8 @@ const readerWordState = createReaderWordState({
     };
   })(),
   onSaved: () => scheduleWordStateCloudSync(),
+  idbGet: wordStateIdbGet,
+  idbPut: wordStateIdbPut,
 });
 
 const readerWordLookup = createReaderWordLookup({

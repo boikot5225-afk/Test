@@ -5,6 +5,14 @@ export function createReaderWordState(opts) {
     getBookLang, tokenizeParagraph, findVerbByForm, log = console,
     onSaveError = null,
     onSaved = null,
+    // localStorage caps out around 5MB/origin — a large enough vocabulary across
+    // languages/books can exceed it, and the write below then fails silently,
+    // quietly discarding word marks made since the last snapshot that fit.
+    // IndexedDB has a much larger practical quota, so it's used as the durable
+    // backing store; idbGet/idbPut are optional so this module still works
+    // (minus the durability) if they aren't wired up.
+    idbGet = async () => null,
+    idbPut = async () => {},
   } = opts;
 
   // places is only needed to count distinct paragraphs up to the fade threshold;
@@ -67,8 +75,36 @@ export function createReaderWordState(opts) {
         onSaveError?.(e2);
       }
     }
+    // Durable copy: fires regardless of whether the localStorage write above
+    // succeeded, since IndexedDB doesn't share that 5MB-ish ceiling.
+    idbPut(storageKey(), data).catch(e => log.warn?.('[reader] word-state IndexedDB backup failed', e));
     // schedule cloud sync even when localStorage failed — cloud works off the in-memory state
     onSaved?.();
+  };
+
+  // Call once when the reader UI opens to recover any word marks a past
+  // localStorage quota failure silently dropped. Newer-wins merge by
+  // updatedAt, same rule used for the Firebase cloud sync.
+  const hydrateFromIndexedDB = async () => {
+    let fromIdb;
+    try { fromIdb = await idbGet(storageKey()); }
+    catch (e) { log.warn?.('[reader] word-state IndexedDB hydrate failed', e); return false; }
+    if (!fromIdb || typeof fromIdb !== 'object') return false;
+
+    const current = load();
+    let changed = false;
+    for (const [k, v] of Object.entries(fromIdb)) {
+      if (!v || !v.word) continue;
+      const local = current[k];
+      if (!local || new Date(v.updatedAt || 0) > new Date(local.updatedAt || 0)) {
+        current[k] = v;
+        changed = true;
+      }
+    }
+    if (!changed) return false;
+    cacheWrite(current);
+    try { localStorage.setItem(storageKey(), JSON.stringify(current)); } catch (_) {}
+    return true;
   };
   const key = (word, lang = null) => {
     const language = canonicalLang(lang || currentLang());
@@ -120,5 +156,5 @@ export function createReaderWordState(opts) {
     if (!state) return 'новое'; const seen = Number(state.seen || 0);
     if (state.known || state.status === 'known') return 'изучено'; if (state.status === 'problem' || state.status === 'hard') return 'проблемное'; if (state.status === 'learning') return 'изучаю'; if (state.status === 'familiar') return 'закрепляется'; if (state.saved) return 'в словаре'; if ((state.clicked || 0) > 0 || state.status === 'looked') return 'просмотрено'; if (seen >= fadeAfter) return `видел ${seen} — подсветка скрыта`; if (seen >= seenAfter) return `часто встречалось: ${seen}`; return seen > 0 ? `видел ${seen}` : 'новое';
   };
-  return { load, save, key, get, touch, trackParagraph, markClicked, markSaved, markKnown, visual, statusRu };
+  return { load, save, hydrateFromIndexedDB, key, get, touch, trackParagraph, markClicked, markSaved, markKnown, visual, statusRu };
 }
