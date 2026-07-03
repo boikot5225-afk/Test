@@ -1242,13 +1242,38 @@ function readerNormalizeBookChunks(book) {
   let changed = false;
   for (const ch of (book.chapters || [])) {
     const next = [];
-    for (const p of (ch.paragraphs || [])) {
-      if (p && typeof p === 'object') { next.push(p); continue; }
+    // Kept in lockstep with `next` so a paragraph split into K pieces still has
+    // K timestamp entries afterwards — otherwise every paragraph after the
+    // first split point points at the wrong (or missing) audio timestamp.
+    const nextTs = ch.paragraphTimestamps ? [] : null;
+    const paragraphs = ch.paragraphs || [];
+    for (let i = 0; i < paragraphs.length; i++) {
+      const p = paragraphs[i];
+      const ts = ch.paragraphTimestamps?.[i] || null;
+      if (p && typeof p === 'object') { next.push(p); if (nextTs) nextTs.push(ts); continue; }
       const chunks = readerChunkLongParagraph(p, maxLen);
       if (chunks.length !== 1 || chunks[0] !== p) changed = true;
       next.push(...chunks);
+      if (nextTs) {
+        if (chunks.length <= 1 || !ts || !Number.isFinite(ts.start) || !Number.isFinite(ts.end)) {
+          for (let k = 0; k < chunks.length; k++) nextTs.push(ts);
+        } else {
+          // Split the original span proportionally by each chunk's share of
+          // the total split text length — an even split would drift on
+          // uneven sentence lengths.
+          const totalLen = chunks.reduce((sum, c) => sum + c.length, 0) || 1;
+          const span = ts.end - ts.start;
+          let cursor = ts.start;
+          for (const c of chunks) {
+            const dur = span * (c.length / totalLen);
+            nextTs.push({ start: cursor, end: cursor + dur });
+            cursor += dur;
+          }
+        }
+      }
     }
     ch.paragraphs = next;
+    if (nextTs) ch.paragraphTimestamps = nextTs;
   }
   book[doneFlag] = true;
   return changed;

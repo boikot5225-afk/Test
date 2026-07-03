@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.34-openai-direct-stt';
+const CACHE_VERSION = 'v76.35-fix-timestamp-chunk-align';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
