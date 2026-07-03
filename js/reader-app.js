@@ -1748,30 +1748,77 @@ function readerChunkTranscriptForCleanup(text, maxLen = 3500) {
   return chunks;
 }
 
-// Groups Whisper's per-segment timestamps into paragraph-sized pieces before
-// DeepSeek cleanup, so each resulting paragraph keeps a {start,end} time in the
-// original recording — that's what lets the reader seek its audio player to a
-// paragraph. Segments are never split, only grouped, so the boundary times stay
-// exact even though DeepSeek is free to rewrite the text inside each group.
-function readerGroupSegmentsForCleanup(segments, lang) {
-  const isZh = readerCanonicalLang(lang) === 'zh';
-  const maxLen = isZh ? 150 : 400;
-  const sep = isZh ? '' : ' ';
-  const groups = [];
-  let cur = null;
-  for (const seg of segments) {
-    if (!cur) {
-      cur = { text: seg.text, start: seg.start, end: seg.end };
-    } else if ((cur.text + sep + seg.text).length <= maxLen) {
-      cur.text += sep + seg.text;
-      cur.end = seg.end;
-    } else {
-      groups.push(cur);
-      cur = { text: seg.text, start: seg.start, end: seg.end };
+// No STT provider we use actually returns per-segment timestamps in practice
+// (OpenRouter never does; the one provider that does — Groq — was dropped by
+// request), so paragraph timing is approximated locally instead: scan the
+// decoded recording for quiet gaps (likely sentence/breath pauses) and treat
+// them as candidate paragraph boundaries. Coarser than a real forced
+// alignment, but needs nothing beyond the audio buffer already in memory.
+function readerDetectPauseTimes(audioBuffer, { windowSec = 0.02, minSilenceSec = 0.35 } = {}) {
+  const sampleRate = audioBuffer.sampleRate;
+  const windowSize = Math.max(1, Math.round(windowSec * sampleRate));
+  const channels = [];
+  for (let c = 0; c < audioBuffer.numberOfChannels; c++) channels.push(audioBuffer.getChannelData(c));
+  const totalSamples = audioBuffer.length;
+  const windowCount = Math.ceil(totalSamples / windowSize);
+  const rms = new Float32Array(windowCount);
+  let maxRms = 0;
+  for (let w = 0; w < windowCount; w++) {
+    const start = w * windowSize;
+    const end = Math.min(totalSamples, start + windowSize);
+    let sum = 0;
+    let n = 0;
+    for (const data of channels) {
+      for (let i = start; i < end; i++) { sum += data[i] * data[i]; n++; }
+    }
+    rms[w] = n ? Math.sqrt(sum / n) : 0;
+    if (rms[w] > maxRms) maxRms = rms[w];
+  }
+  if (!maxRms) return [];
+  const threshold = maxRms * 0.08; // quiet relative to the loudest window in this recording
+  const minSilenceWindows = Math.max(1, Math.round(minSilenceSec / windowSec));
+
+  const pauses = [];
+  let runStart = -1;
+  for (let w = 0; w < windowCount; w++) {
+    if (rms[w] < threshold) {
+      if (runStart < 0) runStart = w;
+    } else if (runStart >= 0) {
+      if (w - runStart >= minSilenceWindows) pauses.push((runStart + w) / 2 * windowSec);
+      runStart = -1;
     }
   }
-  if (cur) groups.push(cur);
-  return groups;
+  if (runStart >= 0 && windowCount - runStart >= minSilenceWindows) {
+    pauses.push((runStart + windowCount) / 2 * windowSec);
+  }
+  return pauses;
+}
+
+// Maps cleaned paragraph texts onto [0, totalDuration] by character-count
+// proportion, then snaps each computed boundary to the nearest detected pause
+// if one falls close enough — real speech pauses rarely land exactly at the
+// proportional split point, but are usually near it.
+function readerAssignParagraphTimestampsByPauses(texts, totalDuration, pauseTimes) {
+  const totalChars = texts.reduce((sum, t) => sum + t.length, 0) || 1;
+  const snapToleranceSec = Math.max(2, (totalDuration / texts.length) * 0.5);
+  const boundaries = [0];
+  let cumulative = 0;
+  for (let i = 0; i < texts.length - 1; i++) {
+    cumulative += texts[i].length;
+    const expected = (cumulative / totalChars) * totalDuration;
+    let best = expected;
+    let bestDist = Infinity;
+    for (const p of pauseTimes) {
+      const dist = Math.abs(p - expected);
+      if (dist < bestDist) { bestDist = dist; best = p; }
+    }
+    boundaries.push(bestDist <= snapToleranceSec ? best : expected);
+  }
+  boundaries.push(totalDuration);
+  for (let i = 1; i < boundaries.length; i++) {
+    if (boundaries[i] < boundaries[i - 1]) boundaries[i] = boundaries[i - 1];
+  }
+  return texts.map((_, i) => ({ start: boundaries[i], end: boundaries[i + 1] }));
 }
 
 // Shared pipeline: decode -> chunk -> Whisper -> DeepSeek cleanup -> textarea + original blob storage.
@@ -1812,8 +1859,6 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
   const totalSec = decoded.duration;
   const chunkCount = Math.max(1, Math.ceil(totalSec / READER_STT_CHUNK_SECONDS));
   const rawParts = [];
-  const allSegments = [];
-  let segmentsAvailable = true;
   for (let i = 0; i < chunkCount; i++) {
     const startSec = i * READER_STT_CHUNK_SECONDS;
     const durationSec = Math.min(READER_STT_CHUNK_SECONDS, totalSec - startSec);
@@ -1829,42 +1874,46 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
       const detail = await resp.json().catch(() => ({}));
       throw new Error(detail?.message || `Распознавание фрагмента ${i + 1}/${chunkCount}: HTTP ${resp.status}`);
     }
-    const { text, segments } = await resp.json();
+    const { text } = await resp.json();
     if (text) rawParts.push(text);
-    if (Array.isArray(segments) && segments.length) {
-      // Chunk-local times -> absolute time in the whole original recording.
-      for (const seg of segments) allSegments.push({ start: startSec + seg.start, end: startSec + seg.end, text: seg.text });
-    } else {
-      segmentsAvailable = false; // this chunk had none — a partial timeline can't be trusted
-    }
   }
   const rawTranscript = rawParts.join(' ');
   if (!rawTranscript) throw new Error('Пустой транскрипт');
 
-  // With per-segment timestamps, clean text in time-ordered groups instead of
-  // arbitrary character chunks, so each resulting paragraph keeps a start/end
-  // time — that's what lets the reader seek its audio player to a paragraph.
-  // Falls back to plain chunking if the model didn't return timestamps.
-  const useTimestamps = segmentsAvailable && allSegments.length > 0;
-  const groups = useTimestamps
-    ? readerGroupSegmentsForCleanup(allSegments, lang)
-    : readerChunkTranscriptForCleanup(rawTranscript).map(text => ({ text, start: null, end: null }));
+  const groups = readerChunkTranscriptForCleanup(rawTranscript).map(text => ({ text }));
 
   const cleaned = [];
   for (let i = 0; i < groups.length; i++) {
     setStatus(`⏳ DeepSeek чистит текст... (${i + 1}/${groups.length})`);
     try {
       const d = await readerAI({ task: 'clean_transcript', text: groups[i].text, sourceLang: lang });
-      cleaned.push({ text: d?.text || groups[i].text, start: groups[i].start, end: groups[i].end });
+      cleaned.push({ text: d?.text || groups[i].text });
     } catch (e) {
       // Keep the raw group rather than losing it if DeepSeek fails mid-way.
-      cleaned.push({ text: groups[i].text, start: groups[i].start, end: groups[i].end });
+      cleaned.push({ text: groups[i].text });
     }
   }
 
   if (textEl) textEl.value = cleaned.map(c => c.text).join('\n\n');
   if (titleEl && !titleEl.value.trim()) titleEl.value = filenameHint.replace(/\.[^.]+$/, '');
-  readerPendingImportTimestamps = useTimestamps ? cleaned.map(c => ({ start: c.start, end: c.end })) : null;
+
+  // No STT provider we use returns real per-segment timestamps, so paragraph
+  // timing is only ever an approximation from local pause detection — needs
+  // at least two paragraphs to mean anything (one paragraph spans the whole
+  // recording trivially, no boundary to place).
+  let useTimestamps = false;
+  if (cleaned.length > 1) {
+    try {
+      const pauses = readerDetectPauseTimes(decoded);
+      readerPendingImportTimestamps = readerAssignParagraphTimestampsByPauses(cleaned.map(c => c.text), totalSec, pauses);
+      useTimestamps = true;
+    } catch (e) {
+      console.warn('[reader audio] pause-based timestamp estimation failed:', e);
+      readerPendingImportTimestamps = null;
+    }
+  } else {
+    readerPendingImportTimestamps = null;
+  }
 
   let hasAudio = false;
   try {
@@ -1876,7 +1925,7 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
     console.warn('[reader audio] storing original recording failed:', e);
   }
 
-  setStatus(`✅ Готово: ${cleaned.length} фрагмент(ов)${hasAudio ? ' · аудио сохранено' : ''}${useTimestamps ? ' · тайм-коды готовы' : ''}. Проверь текст перед сохранением.`);
+  setStatus(`✅ Готово: ${cleaned.length} фрагмент(ов)${hasAudio ? ' · аудио сохранено' : ''}${useTimestamps ? ' · тайм-коды (приблизительно)' : ''}. Проверь текст перед сохранением.`);
 }
 
 async function readerTranscribeAudioFile(event) {
