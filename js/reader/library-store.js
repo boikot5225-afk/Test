@@ -52,7 +52,12 @@ export function createReaderLibraryStore({
   }
 
   // localStorage may hold a stale copy when quota blocks writes; never let it
-  // roll back books that are fresher in memory (e.g. reading position).
+  // roll back books that are fresher in memory (e.g. reading position) — and
+  // never DROP memory books the snapshot doesn't contain at all. That drop was
+  // how the library kept shrinking on every tab switch: the IndexedDB hydrate
+  // restored the full list to memory, its localStorage write-back silently
+  // failed on quota, and the next load() truncated memory right back to the
+  // stale snapshot's subset.
   function mergeNewerFromMemory(fromStorage) {
     const inMemory = getBooks();
     if (!Array.isArray(inMemory) || !inMemory.length) return fromStorage;
@@ -60,7 +65,7 @@ export function createReaderLibraryStore({
     for (const mem of inMemory) {
       if (!mem?.id) continue;
       const stored = byId.get(mem.id);
-      if (stored && new Date(mem.updatedAt || 0) >= new Date(stored.updatedAt || 0)) byId.set(mem.id, mem);
+      if (!stored || new Date(mem.updatedAt || 0) >= new Date(stored.updatedAt || 0)) byId.set(mem.id, mem);
     }
     return dedupeBooks([...byId.values()]);
   }

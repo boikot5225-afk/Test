@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.49-idb-merge-epub-lang-idioms';
+const CACHE_VERSION = 'v76.50-keep-memory-books-on-load';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

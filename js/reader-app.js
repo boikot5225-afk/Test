@@ -22,7 +22,7 @@ import { wordStateIdbPut, wordStateIdbGet } from './reader/word-state-idb-store.
 import { createReaderWordPanel } from './reader/word-panel.js?v=3';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=2';
-import { createReaderLibraryStore } from './reader/library-store.js?v=4';
+import { createReaderLibraryStore } from './reader/library-store.js?v=5';
 import { createReaderDisplay } from './reader/display.js?v=1';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
