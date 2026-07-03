@@ -69,7 +69,7 @@ import {
   readerMarkSelectedWordKnown, readerMarkSelectedWordProblem,
   readerCycleZhPinyinMode, readerLookupChineseWord, readerEnsureZhCoreJsonLoaded, readerZhCoreJsonCount,
   readerZhCoreJson, readerZhCoreJsonPromise,
-  readerSetLibTab, readerSetLibFilter, readerFetchFromUrl,
+  readerSetLibTab, readerSetLibFilter,
   readerImportFromFile, saveReaderImport, showReaderImportModal, closeReaderImportModal,
   readerToggleDisplayPanel, readerCloseDisplayPanel, rdSetFont, rdSetSize, rdSetLH, rdSetTheme,
   readerToggleSongMeaning,
