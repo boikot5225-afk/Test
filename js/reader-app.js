@@ -2265,16 +2265,23 @@ function saveReaderImport() {
   // side has more reading progress, which is usually the older book, discarding
   // our just-generated id entirely. Resolve the book to open by importKey
   // (stable across merges) instead of trusting book.id survived the save.
+  const preSaveHasId = readerBooks.some(b => b.id === book.id);
   const savedBooks = saveReaderBooks();
-  const finalBook = (savedBooks || []).find(b => b.importKey === book.importKey) || book;
-  // TEMP DIAGNOSTIC (v76.28) — will remove once "Текст не найден" is root-caused.
-  console.warn('[reader DEBUG save]', {
-    generatedId: book.id,
-    importKey: book.importKey,
-    savedBooksCount: savedBooks?.length,
-    finalBookId: finalBook.id,
-    finalBookInSavedBooks: !!(savedBooks || []).find(b => b.id === finalBook.id),
-  });
+  const byImportKey = (savedBooks || []).find(b => b.importKey === book.importKey);
+  const byId = (savedBooks || []).find(b => b.id === book.id);
+  const finalBook = byImportKey || byId || book;
+  // TEMP DIAGNOSTIC (v76.29) — will remove once "Текст не найден" is root-caused.
+  alert(
+    'DEBUG saveReaderImport\n' +
+    'book.id: ' + book.id + '\n' +
+    'importKey: ' + book.importKey + '\n' +
+    'chapters is array: ' + Array.isArray(book.chapters) + ', len: ' + book.chapters?.length + '\n' +
+    'preSave in readerBooks: ' + preSaveHasId + '\n' +
+    'savedBooks count: ' + (savedBooks?.length ?? 'null') + '\n' +
+    'found byImportKey: ' + !!byImportKey + (byImportKey ? ' (id=' + byImportKey.id + ')' : '') + '\n' +
+    'found byId: ' + !!byId + '\n' +
+    'finalBook.id: ' + finalBook.id
+  );
   closeReaderImportModal(); showToast('📖 Текст добавлен'); renderReaderScreen(); readerOpenBook(finalBook.id);
 }
 
