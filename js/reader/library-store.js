@@ -19,6 +19,14 @@ export function createReaderLibraryStore({
   getCurrentBookId,
   onError = console.warn,
   onSaveError = null,
+  // localStorage caps out around 5MB/origin — a library with enough transcripts
+  // and cached AI translations/analyses can exceed that, and both the normal and
+  // slim-retry writes below then fail silently, quietly rolling everything back
+  // to the last snapshot that fit. IndexedDB has a much larger practical quota,
+  // so it's used as the durable backing store; idbGet/idbPut are optional so this
+  // module still works (minus the durability) if they aren't wired up.
+  idbGet = async () => null,
+  idbPut = async () => {},
 }) {
   // Reading positions live in a tiny sidecar key so they survive even when the
   // main library JSON outgrows the localStorage quota and its writes start failing.
@@ -107,8 +115,45 @@ export function createReaderLibraryStore({
         onSaveError?.(retryError);
       }
     }
+    // Durable copy: fires regardless of whether the localStorage write above
+    // succeeded, since IndexedDB doesn't share that 5MB-ish ceiling. Best-effort,
+    // never blocks the (synchronous) caller.
+    idbPut(storageKey(), books).catch(error => onError('[reader] IndexedDB backup save failed', error));
     if (schedule) scheduleCloudSave();
     return books;
+  }
+
+  // Call once when the reader UI opens (or on app start) to recover from a
+  // localStorage snapshot that's stale or missing books due to a past quota
+  // failure. Newer-wins merge by updatedAt, same rule used for cloud sync.
+  async function hydrateFromIndexedDB() {
+    let fromIdb;
+    try {
+      fromIdb = await idbGet(storageKey());
+    } catch (error) {
+      onError('[reader] IndexedDB hydrate read failed', error);
+      return false;
+    }
+    if (!Array.isArray(fromIdb) || !fromIdb.length) return false;
+
+    const current = getBooks() || [];
+    const byId = new Map(current.map(book => [book.id, book]));
+    let changed = false;
+    for (const idbBook of fromIdb) {
+      if (!idbBook?.id) continue;
+      const local = byId.get(idbBook.id);
+      if (!local || new Date(idbBook.updatedAt || 0) > new Date(local.updatedAt || 0)) {
+        byId.set(idbBook.id, idbBook);
+        changed = true;
+      }
+    }
+    if (!changed) return false;
+
+    const merged = dedupeBooks([...byId.values()]);
+    applyPositions(merged);
+    setBooks(merged);
+    try { localStorage.setItem(storageKey(), JSON.stringify(merged)); } catch (_) {}
+    return true;
   }
 
   async function loadFromCloud(force = false) {
@@ -226,6 +271,7 @@ export function createReaderLibraryStore({
     load,
     save,
     loadFromCloud,
+    hydrateFromIndexedDB,
     scheduleCloudSave,
     saveToCloud,
     currentBook,

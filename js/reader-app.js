@@ -17,6 +17,7 @@ import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU1
          htmlToMixedItems as epubHtmlToMixedItems } from './reader/epub.js?v=2';
 import { imgStorePut, imgStoreGet, imgStoreDeleteBook } from './reader/image-store.js?v=1';
 import { audioStorePut, audioStoreGet, audioStoreDelete } from './reader/audio-store.js?v=1';
+import { libraryIdbPut, libraryIdbGet } from './reader/library-idb-store.js?v=1';
 import { createReaderWordPanel } from './reader/word-panel.js?v=1';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=1';
@@ -1323,6 +1324,8 @@ function readerCloudUserId() {
 
 async function loadReaderBooksFromCloud(force = false) { return readerLibrary.loadFromCloud(force); }
 
+async function hydrateReaderBooksFromIndexedDB() { return readerLibrary.hydrateFromIndexedDB(); }
+
 function scheduleReaderCloudSave() { return readerLibrary.scheduleCloudSave(); }
 
 async function saveReaderBooksToCloud(options = {}) { return readerLibrary.saveToCloud(options); }
@@ -1352,6 +1355,11 @@ function readerContinueBook() { return readerLibrary.continueBook(); }
 async function renderReaderScreen() {
   loadReaderBooks();
   applyReaderTranslationVisibility();
+  // Recovers any book a past localStorage quota failure silently dropped —
+  // IndexedDB doesn't share that ~5MB ceiling, so it's the durable source of truth.
+  // Runs before the library list below is built, so a recovered book shows up
+  // immediately without needing a second render pass.
+  try { await hydrateReaderBooksFromIndexedDB(); } catch {}
   try { await loadReaderBooksFromCloud(false); } catch {}
   try { if (!NOUNS_LOADED) await loadNounsFromCloud(); } catch {}
 
@@ -2265,60 +2273,26 @@ function saveReaderImport() {
   // side has more reading progress, which is usually the older book, discarding
   // our just-generated id entirely. Resolve the book to open by importKey
   // (stable across merges) instead of trusting book.id survived the save.
-  const preSaveHasId = readerBooks.some(b => b.id === book.id);
   const savedBooks = saveReaderBooks();
-  const byImportKey = (savedBooks || []).find(b => b.importKey === book.importKey);
-  const byId = (savedBooks || []).find(b => b.id === book.id);
-  const finalBook = byImportKey || byId || book;
-  // TEMP DIAGNOSTIC (v76.30) — verify what actually landed on disk, not just in memory.
-  // save()'s localStorage.setItem can throw silently on quota, and the slim-retry
-  // can ALSO throw — if both fail, the in-memory array (what we just checked above)
-  // looks fine while the disk still holds the pre-save snapshot.
-  let onDiskCount = 'exception';
-  let onDiskHasBook = false;
-  let rawLen = 'n/a';
-  let totalLsChars = 0;
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      totalLsChars += (k?.length || 0) + (localStorage.getItem(k)?.length || 0);
-    }
-  } catch (_) {}
-  try {
-    const raw = localStorage.getItem(readerBooksStorageKey());
-    rawLen = raw?.length ?? 0;
-    const onDisk = JSON.parse(raw || '[]');
-    onDiskCount = Array.isArray(onDisk) ? onDisk.length : 'not-array';
-    onDiskHasBook = Array.isArray(onDisk) && onDisk.some(b => b.id === book.id);
-  } catch (e) {
-    onDiskCount = 'parse error: ' + (e?.message || e);
-  }
-  alert(
-    'DEBUG saveReaderImport\n' +
-    'book.id: ' + book.id + '\n' +
-    'importKey: ' + book.importKey + '\n' +
-    'chapters is array: ' + Array.isArray(book.chapters) + ', len: ' + book.chapters?.length + '\n' +
-    'preSave in readerBooks: ' + preSaveHasId + '\n' +
-    'savedBooks (in-memory) count: ' + (savedBooks?.length ?? 'null') + '\n' +
-    'found byImportKey: ' + !!byImportKey + (byImportKey ? ' (id=' + byImportKey.id + ')' : '') + '\n' +
-    'found byId: ' + !!byId + '\n' +
-    'finalBook.id: ' + finalBook.id + '\n' +
-    '--- ON DISK (localStorage) ---\n' +
-    'raw length (chars): ' + rawLen + '\n' +
-    'on-disk book count: ' + onDiskCount + '\n' +
-    'on-disk has our book: ' + onDiskHasBook + '\n' +
-    'total localStorage chars (~5-10M is typical quota): ' + totalLsChars
-  );
+  const finalBook = (savedBooks || []).find(b => b.importKey === book.importKey)
+    || (savedBooks || []).find(b => b.id === book.id)
+    || book;
   closeReaderImportModal(); showToast('📖 Текст добавлен'); renderReaderScreen(); readerOpenBook(finalBook.id);
 }
 
 function readerOpenBook(id) {
+  // Keep the pre-reload reference: if a localStorage quota failure silently
+  // dropped the write moments ago (e.g. right after saveReaderImport), the
+  // reload below would overwrite the in-memory array with the stale disk
+  // snapshot and lose the book we just added — even though it's still sitting
+  // right here in memory.
+  const preLoadBook = readerBooks.find(b => b.id === id);
   loadReaderBooks();
-  const book = readerBooks.find(b => b.id === id);
-  if (!book) {
-    // TEMP DIAGNOSTIC (v76.28) — visible on-device without devtools.
-    const sample = readerBooks.slice(0, 6).map(b => `${b.id} :: ${(b.title||'').slice(0,24)}`).join('\n');
-    alert(`DEBUG readerOpenBook\nищем id: ${id}\nвсего книг: ${readerBooks.length}\nпервые:\n${sample}`);
+  let book = readerBooks.find(b => b.id === id);
+  if (!book && preLoadBook) {
+    readerBooks.unshift(preLoadBook);
+    book = preLoadBook;
+    saveReaderBooks(); // retry persisting now that IndexedDB backup is also in play
   }
   if (!book) { showToast('⚠️ Текст не найден'); return; }
   readerCurrentBookId = id;
@@ -2631,6 +2605,8 @@ const readerLibrary = createReaderLibraryStore({
       showToast('⚠️ Хранилище переполнено: прогресс чтения сохраняется отдельно, но библиотека не обновляется');
     };
   })(),
+  idbGet: libraryIdbGet,
+  idbPut: libraryIdbPut,
 });
 
 const readerWordState = createReaderWordState({

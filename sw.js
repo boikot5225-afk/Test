@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.30-debug-disk-verify';
+const CACHE_VERSION = 'v76.31-idb-library-backup';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
@@ -9,7 +9,7 @@ const CORE_ASSETS = [
   'js/phrases.js', 'js/srs.js', 'js/state.js', 'js/stats.js', 'js/storage.js',
   'js/study.js', 'js/supabase.js', 'js/firebase-config.js', 'js/firebase-sdk-loader.js', 'js/firebase-db.js',
   'js/trainer.js', 'js/tts.js', 'js/utils.js', 'js/reader-app.js', 'js/dict-render.js', 'js/exercises-fr.js',
-  'js/reader/image-store.js', 'js/reader/audio-store.js',
+  'js/reader/image-store.js', 'js/reader/audio-store.js', 'js/reader/library-idb-store.js',
   'js/lang-separation.js', 'js/lang-core.js', 'js/lang-reader.js', 'js/lang-personal-verbs.js',
   'firebase-test.html', 'tts-test.html', 'firebase-import.html',
   'firebase/firebase-rules.json', 'firebase/firebase-seed-root.json', 'firebase/seed-verbs.json'
