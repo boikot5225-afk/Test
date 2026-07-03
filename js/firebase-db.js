@@ -237,7 +237,7 @@ async function readTableValue(table) {
   if (isDictTable(table)) {
     const base = dictBasePath(table);
     if (!base) return { path: table, value: null };       // гость / не вошёл → пустая база
-    const snap = await fbDb.ref(base).get();
+    const snap = await refGetResilient(base);
     return { path: base, value: snap.exists() ? snap.val() : null };
   }
 
@@ -246,7 +246,7 @@ async function readTableValue(table) {
 
   for (const path of paths) {
     try {
-      const snap = await fbDb.ref(path).get();
+      const snap = await refGetResilient(path);
       if (snap.exists()) {
         if (path !== table) console.warn(`[firebase] using legacy uppercase path /${path}. Лучше переимпортировать данные в /${table}.`);
         return { path, value: snap.val() };
@@ -385,6 +385,32 @@ async function resilientPathSet(path, value, sdkTimeoutMs = 6000) {
   }
 }
 
+// Same guard for get(): reads over the realtime channel stall exactly like
+// writes on networks that block the websocket — and a hanging read keeps
+// whole screens (library, dictionaries) waiting on a promise that never
+// settles. Fall back to a plain REST GET of the same path.
+async function refGetResilient(path, sdkTimeoutMs = 6000) {
+  const timedOut = Symbol('sdk-read-timeout');
+  const winner = await Promise.race([
+    fbDb.ref(path).get(),
+    new Promise((resolve) => setTimeout(() => resolve(timedOut), sdkTimeoutMs)),
+  ]);
+  if (winner !== timedOut) return winner;
+  console.warn('[firebase] realtime get stalled, retrying over REST:', path);
+  const config = getFirebaseConfig();
+  const base = String(config?.databaseURL || '').replace(/\/+$/, '');
+  if (!base) throw new Error('Не настроен databaseURL в FIREBASE_CONFIG');
+  const token = await getIdTokenSafe(false);
+  const clean = String(path || '').replace(/^\/+|\/+$/g, '');
+  const response = await fetch(`${base}/${clean}.json${token ? `?auth=${encodeURIComponent(token)}` : ''}`);
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.error || `Firebase REST HTTP ${response.status}`);
+  }
+  const value = await response.json();
+  return { exists: () => value !== null && value !== undefined, val: () => value };
+}
+
 // Same guard for remove(): a silently-stalled delete is worse than a stalled
 // write — the cloud copy survives and the "deleted" record resurrects on the
 // next cloud merge.
@@ -488,7 +514,7 @@ class FirebaseQueryBuilder {
     // the old Supabase-style query asks for eq('user_id', uid).
     if (userFilter && ['stats', 'srs', 'meta', 'reader_books'].includes(this.table)) {
       await ensureAuthenticatedForPrivatePath(userFilter.value, 8000);
-      const snap = await fbDb.ref(`${this.table}/${userFilter.value}`).get();
+      const snap = await refGetResilient(`${this.table}/${userFilter.value}`);
       const value = snap.exists() ? snap.val() : null;
       if (this.table === 'meta') {
         rows = value ? [{ user_id: userFilter.value, ...value }] : [];
@@ -875,7 +901,7 @@ export async function fbSaveWordState(uid, state) {
 export async function fbLoadWordState(uid) {
   if (!fbDb || !uid) return null;
   try {
-    const snap = await fbDb.ref(`reader_word_state/${uid}`).get();
+    const snap = await refGetResilient(`reader_word_state/${uid}`);
     return snap.exists() ? snap.val() : null;
   } catch (e) {
     console.warn('[word-state cloud] load failed:', e?.message);

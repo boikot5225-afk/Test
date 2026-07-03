@@ -1464,8 +1464,19 @@ async function renderReaderScreen() {
   // Same recovery for word colors/status — a quota failure there silently drops
   // marks the same way it used to drop whole books.
   try { await readerWordState.hydrateFromIndexedDB(); } catch {}
-  try { await loadReaderBooksFromCloud(false); } catch {}
-  try { if (!NOUNS_LOADED) await loadNounsFromCloud(); } catch {}
+  // Cloud merge runs in the BACKGROUND: local stores (localStorage + IndexedDB)
+  // already have the books, and awaiting the cloud here left the library blank
+  // for as long as the network took. When the merge actually changes something,
+  // re-render once — cloudLoadedOnce makes the second pass skip the cloud, so
+  // this can't loop.
+  try {
+    if (!readerCloudLoadedOnce) {
+      loadReaderBooksFromCloud(false)
+        .then((loaded) => { if (loaded) renderReaderScreen(); })
+        .catch(() => {});
+    }
+  } catch {}
+  try { if (!NOUNS_LOADED) loadNounsFromCloud().catch(() => {}); } catch {}
 
   // Heal entity-soup books right where their cards are about to be shown —
   // waiting until each book is opened left the library cards (chapter titles)
