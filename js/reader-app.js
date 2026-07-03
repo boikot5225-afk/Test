@@ -2090,14 +2090,36 @@ async function readerImportEpubFromFile(file) {
         }
       }
 
-      const textOnly = resolvedItems.filter(it => typeof it === 'string');
-      const chars = textOnly.join('').replace(/\s+/g, '').length;
-      diagnostics.push(`${p}: ${chars} зн.`);
+      let textOnly = resolvedItems.filter(it => typeof it === 'string');
+      let chars = textOnly.join('').replace(/\s+/g, '').length;
+      let finalItems = resolvedItems;
+      // Some converters put chapter text outside any block tag the structured
+      // extractor looks for (bare text/spans directly in <body>, exotic
+      // wrappers) — every file then yields "0 зн." even though the text is
+      // right there. Fall back to a tag-stripping plain-text pass, split on
+      // blank lines, before giving up on the file.
+      if (chars <= 20) {
+        const isZhImport = readerCanonicalLang(importLang) === 'zh';
+        const plainParas = readerHtmlToPlainTextFallback(html)
+          .split(/\n\s*\n+/)
+          .map(s => s.replace(/\s+/g, ' ').trim())
+          .filter(Boolean)
+          .flatMap(para => readerChunkLongParagraph(para, isZhImport ? 150 : 420));
+        const plainChars = plainParas.join('').replace(/\s+/g, '').length;
+        if (plainChars > 20) {
+          const images = resolvedItems.filter(it => typeof it !== 'string');
+          finalItems = [...images, ...plainParas];
+          textOnly = plainParas;
+          chars = plainChars;
+          diagnostics.push(`${p}: ${chars} зн. (запасной парсер)`);
+        }
+      }
+      if (finalItems === resolvedItems) diagnostics.push(`${p}: ${chars} зн.`);
       if (textOnly.length && chars > 20) {
         importChars += chars;
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const h = (doc.querySelector('h1,h2,h3,title')?.textContent || '').replace(/\s+/g, ' ').trim();
-        chapters.push({ id: 'ch_' + chapters.length, title: h || `Глава ${chapters.length + 1}`, paragraphs: resolvedItems });
+        chapters.push({ id: 'ch_' + chapters.length, title: h || `Глава ${chapters.length + 1}`, paragraphs: finalItems });
       }
     } catch(e) { console.warn('[epub] skipped', p, e); diagnostics.push(`${p}: ошибка ${e?.message || e}`); }
   }
