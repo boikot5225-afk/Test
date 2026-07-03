@@ -580,25 +580,29 @@ exports.transcribeAudio = onRequest(
     const text = data?.text || data?.transcript || data?.transcription || '';
     if (!text) return res.status(502).json({ error: 'empty_transcript', message: 'OpenRouter вернул пустой транскрипт.' });
 
-    // TEMP DIAGNOSTIC (v76.27): find out why segments aren't coming back —
-    // logs the response shape without dumping the full transcript text.
-    console.log('[transcribeAudio debug] top-level keys:', Object.keys(data || {}));
-    console.log('[transcribeAudio debug] segments is array:', Array.isArray(data?.segments), 'length:', data?.segments?.length);
-    if (data?.segments?.[0]) console.log('[transcribeAudio debug] first segment sample:', JSON.stringify(data.segments[0]).slice(0, 300));
-
     // Not every provider/model actually honors timestamp_granularities — degrade
     // gracefully to plain text (no sync) rather than fail the whole request.
-    const segments = Array.isArray(data?.segments)
-      ? data.segments
-        .map(s => ({ start: Number(s.start) || 0, end: Number(s.end) || 0, text: String(s.text || '').trim() }))
-        .filter(s => s.text)
-      : [];
+    const rawSegments = Array.isArray(data?.segments) ? data.segments : [];
+    const segments = rawSegments
+      .map(s => ({ start: Number(s.start) || 0, end: Number(s.end) || 0, text: String(s.text || '').trim() }))
+      .filter(s => s.text);
 
     try {
       await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/transcribe_audio_chars`).transaction((current) => Number(current || 0) + text.length);
     } catch (_) {}
 
-    return res.status(200).json({ text, segments });
+    // TEMP DIAGNOSTIC (v76.33): surface the raw upstream shape to the client —
+    // Cloud Function logs aren't easy to read on-device. Remove once root-caused.
+    const debugRaw = {
+      topLevelKeys: Object.keys(data || {}),
+      rawSegmentsIsArray: Array.isArray(data?.segments),
+      rawSegmentsType: typeof data?.segments,
+      rawSegmentsLength: rawSegments.length,
+      rawFirstSegment: rawSegments[0] ? JSON.stringify(rawSegments[0]).slice(0, 300) : null,
+      afterFilterLength: segments.length,
+    };
+
+    return res.status(200).json({ text, segments, debugRaw });
   }
 );
 

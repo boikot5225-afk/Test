@@ -1794,14 +1794,17 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
     } else {
       segmentsAvailable = false; // this chunk had none — a partial timeline can't be trusted
     }
-    // TEMP DIAGNOSTIC (v76.32) — see exactly what transcribeAudio returned.
+    // TEMP DIAGNOSTIC (v76.33) — see the raw upstream shape before any filtering.
     if (i === 0) {
+      const d = responseJson.debugRaw || {};
       alert(
-        'DEBUG transcribeAudio response (chunk 1)\n' +
-        'top-level keys: ' + Object.keys(responseJson || {}).join(', ') + '\n' +
-        'segments is array: ' + Array.isArray(segments) + '\n' +
-        'segments length: ' + (segments?.length ?? 'n/a') + '\n' +
-        'first segment: ' + (segments?.[0] ? JSON.stringify(segments[0]).slice(0, 200) : 'none')
+        'DEBUG transcribeAudio raw (chunk 1)\n' +
+        'top-level keys: ' + (d.topLevelKeys || []).join(', ') + '\n' +
+        'raw segments is array: ' + d.rawSegmentsIsArray + '\n' +
+        'raw segments type: ' + d.rawSegmentsType + '\n' +
+        'raw segments length: ' + d.rawSegmentsLength + '\n' +
+        'raw first segment: ' + (d.rawFirstSegment || 'none') + '\n' +
+        'after filter length: ' + d.afterFilterLength
       );
     }
   }
