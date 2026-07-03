@@ -274,5 +274,7 @@ export function extractEpubMeta(opfText, fallbackTitle) {
     const match = String(opfText || '').match(pattern);
     return match ? match[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '';
   };
-  return { title: get('title') || fallbackTitle, author: get('creator') || '' };
+  // dc:language is e.g. "en", "fr-FR", "zh-CN" — keep just the primary subtag.
+  const lang = get('language').toLowerCase().split(/[-_]/)[0] || '';
+  return { title: get('title') || fallbackTitle, author: get('creator') || '', lang };
 }

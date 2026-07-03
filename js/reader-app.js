@@ -14,7 +14,7 @@ import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU1
          readZipEntries as epubReadZipEntries, resolveEpubPath as epubResolvePath,
          cleanEpubText as epubCleanText, looksLikeEpubBoilerplate as epubLooksLikeBoilerplate,
          htmlToPlainText as epubHtmlToPlainText, htmlToParagraphs as epubHtmlToParagraphs,
-         htmlToMixedItems as epubHtmlToMixedItems } from './reader/epub.js?v=2';
+         htmlToMixedItems as epubHtmlToMixedItems } from './reader/epub.js?v=3';
 import { imgStorePut, imgStoreGet, imgStoreDeleteBook } from './reader/image-store.js?v=1';
 import { audioStorePut, audioStoreGet, audioStoreDelete } from './reader/audio-store.js?v=1';
 import { libraryIdbPut, libraryIdbGet } from './reader/library-idb-store.js?v=1';
@@ -22,7 +22,7 @@ import { wordStateIdbPut, wordStateIdbGet } from './reader/word-state-idb-store.
 import { createReaderWordPanel } from './reader/word-panel.js?v=3';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=2';
-import { createReaderLibraryStore } from './reader/library-store.js?v=3';
+import { createReaderLibraryStore } from './reader/library-store.js?v=4';
 import { createReaderDisplay } from './reader/display.js?v=1';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
@@ -2019,7 +2019,9 @@ function readerExtractEpubMeta(opfText, fallbackTitle) {
     const m = opfText.match(re);
     return m ? m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '';
   };
-  return { title: get('title') || fallbackTitle, author: get('creator') || '' };
+  // dc:language is e.g. "en", "fr-FR", "zh-CN" — keep just the primary subtag.
+  const lang = get('language').toLowerCase().split(/[-_]/)[0] || '';
+  return { title: get('title') || fallbackTitle, author: get('creator') || '', lang };
 }
 
 async function readerImportEpubFromFile(file) {
@@ -2041,6 +2043,12 @@ async function readerImportEpubFromFile(file) {
   const opf = await entries.get(opfPath).text();
   const base = opfPath.split('/').slice(0, -1).join('/');
   const meta = readerExtractEpubMeta(opf, file.name.replace(/\.epub$/i, ''));
+
+  // The language select starts unselected on purpose (see saveReaderImport
+  // guard) — but EPUBs usually declare their language themselves (dc:language),
+  // so fill it in from the file when the user hasn't picked one yet.
+  const langSel = document.getElementById('reader-import-lang');
+  if (langSel && !langSel.value && ['fr', 'en', 'zh'].includes(meta.lang)) langSel.value = meta.lang;
 
   const { spine, allHtml } = readerExtractEpubManifestAndSpine(opf, base);
   const seenPaths = new Set();
@@ -2158,7 +2166,12 @@ function saveReaderImport() {
   const st = document.getElementById('reader-import-status');
   const langRaw = document.getElementById('reader-import-lang')?.value || '';
   if (!langRaw) {
-    if (st) { st.style.display = 'block'; st.style.color = 'var(--bad)'; st.textContent = 'Выбери язык текста перед сохранением.'; }
+    if (st) {
+      st.style.display = 'block'; st.style.color = 'var(--bad)';
+      st.textContent = 'Выбери язык текста перед сохранением (список над полем текста).';
+      try { st.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+    }
+    showToast('⚠️ Сначала выбери язык текста');
     return;
   }
   const lang = readerCanonicalLang(langRaw);

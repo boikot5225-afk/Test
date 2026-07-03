@@ -131,12 +131,39 @@ export function createReaderLibraryStore({
     }
     // The durable write. Only when BOTH this and localStorage fail is the data
     // actually at risk (in-memory + cloud only) — that's the case worth a toast.
-    idbPut(storageKey(), books).catch(error => {
+    writeThroughToIndexedDB(books).catch(error => {
       onError('[reader] library IndexedDB save failed', error);
       if (!localOk) onSaveError?.(error);
     });
     if (schedule) scheduleCloudSave();
     return books;
+  }
+
+  // Until hydrateFromIndexedDB has merged the durable copy into memory once,
+  // a blind put() would overwrite IndexedDB's full library with whatever
+  // subset this session happens to hold (e.g. a save firing right after boot
+  // from a quota-truncated localStorage snapshot) — that's exactly how books
+  // were "randomly disappearing" and only coming back when cloud sync ran.
+  // Before hydration: read-merge-write (newer-wins by updatedAt, same rule as
+  // hydrate/cloud). After hydration memory is a superset, plain put is safe.
+  let idbHydratedOnce = false;
+  async function writeThroughToIndexedDB(books) {
+    if (!idbHydratedOnce) {
+      let existing = null;
+      try { existing = await idbGet(storageKey()); } catch (_) {}
+      if (Array.isArray(existing) && existing.length) {
+        const byId = new Map(books.map(book => [book.id, book]));
+        for (const idbBook of existing) {
+          if (!idbBook?.id) continue;
+          const mine = byId.get(idbBook.id);
+          if (!mine || new Date(idbBook.updatedAt || 0) > new Date(mine.updatedAt || 0)) {
+            byId.set(idbBook.id, idbBook);
+          }
+        }
+        books = dedupeBooks([...byId.values()]);
+      }
+    }
+    await idbPut(storageKey(), books);
   }
 
   // Call once when the reader UI opens (or on app start) to recover from a
@@ -150,6 +177,7 @@ export function createReaderLibraryStore({
       onError('[reader] IndexedDB hydrate read failed', error);
       return false;
     }
+    idbHydratedOnce = true;
     if (!Array.isArray(fromIdb) || !fromIdb.length) return false;
 
     const current = getBooks() || [];
@@ -198,7 +226,10 @@ export function createReaderLibraryStore({
       const merged = dedupeBooks([...byId.values()]);
       applyPositions(merged);
       setBooks(merged);
-      localStorage.setItem(storageKey(), JSON.stringify(merged));
+      try { localStorage.setItem(storageKey(), JSON.stringify(merged)); } catch (_) {}
+      // Persist the cloud-recovered list durably too, so books restored from
+      // the cloud survive the next offline start instead of vanishing again.
+      writeThroughToIndexedDB(merged).catch(error => onError('[reader] IndexedDB save after cloud load failed', error));
       setCloudLoadedOnce(true);
 
       if (merged.length !== byId.size) {
