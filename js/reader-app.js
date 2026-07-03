@@ -1240,8 +1240,10 @@ function readerCleanCorruptedImageParagraphs(book) {
 // &quot;) baked into their SAVED paragraphs. Heal them when the book is
 // opened, so nothing has to be deleted and re-imported. One-shot per book.
 function readerCleanEntitySoupParagraphs(book) {
-  if (!book || book._v76SoupClean) return false;
-  book._v76SoupClean = true;
+  // v2 flag: the first heal version missed chapter titles — rerun once on
+  // books it already touched.
+  if (!book || book._v76SoupClean2) return false;
+  book._v76SoupClean2 = true;
   const tagRe = /<\/?(?:p|div|span|a|link|html|body|head|h[1-6]|br|img|section|blockquote|li|ul|ol|title|style|meta)\b[^>]*\/?\s*>/gi;
   const entityRe = /&(?:lt|gt|quot|amp|#\d+|#x[0-9a-f]+);/i;
   const hasSoup = (text) => { tagRe.lastIndex = 0; return tagRe.test(text) || entityRe.test(text); };
@@ -1260,6 +1262,13 @@ function readerCleanEntitySoupParagraphs(book) {
   const isZh = readerCanonicalLang(book.lang || book.sourceLang || 'fr') === 'zh';
   let changed = false;
   for (const ch of (book.chapters || [])) {
+    // Chapter titles are what the library card displays — they were built from
+    // the same soup and must be healed too, not just the paragraphs.
+    if (typeof ch.title === 'string' && hasSoup(ch.title)) {
+      const cleanTitle = cleanText(ch.title).slice(0, 120);
+      ch.title = cleanTitle || 'Глава';
+      changed = true;
+    }
     const paragraphs = ch.paragraphs || [];
     if (!paragraphs.some(p => typeof p === 'string' && hasSoup(p))) continue;
     changed = true;
@@ -1457,6 +1466,17 @@ async function renderReaderScreen() {
   try { await readerWordState.hydrateFromIndexedDB(); } catch {}
   try { await loadReaderBooksFromCloud(false); } catch {}
   try { if (!NOUNS_LOADED) await loadNounsFromCloud(); } catch {}
+
+  // Heal entity-soup books right where their cards are about to be shown —
+  // waiting until each book is opened left the library cards (chapter titles)
+  // showing tag garbage indefinitely.
+  try {
+    let healedAny = false;
+    for (const b of (readerBooks || [])) {
+      if (readerCleanEntitySoupParagraphs(b)) { b.updatedAt = new Date().toISOString(); healedAny = true; }
+    }
+    if (healedAny) saveReaderBooks();
+  } catch (e) { console.warn('[reader] library soup heal skipped:', e?.message || e); }
 
   const library = document.getElementById('reader-library-list');
   if (!library) return;
