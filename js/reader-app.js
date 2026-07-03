@@ -2101,7 +2101,12 @@ async function readerImportEpubFromFile(file) {
       }
     } catch(e) { console.warn('[epub] skipped', p, e); diagnostics.push(`${p}: ошибка ${e?.message || e}`); }
   }
-  if (!chapters.length) throw new Error('Не получилось извлечь текст из EPUB.');
+  if (!chapters.length) {
+    // The per-file diagnostics used to hide in st.title, which is invisible on
+    // mobile — surface them in the error itself so a failing book says WHY.
+    const detail = diagnostics.slice(0, 6).join(' · ') || `главы не найдены (файлов в архиве: ${entries.size})`;
+    throw new Error(('Не получилось извлечь текст из EPUB. ' + detail).slice(0, 400));
+  }
 
   // Store images in IndexedDB
   if (imageBlobs.size) {
