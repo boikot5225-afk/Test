@@ -1785,27 +1785,13 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
       const detail = await resp.json().catch(() => ({}));
       throw new Error(detail?.message || `Распознавание фрагмента ${i + 1}/${chunkCount}: HTTP ${resp.status}`);
     }
-    const responseJson = await resp.json();
-    const { text, segments } = responseJson;
+    const { text, segments } = await resp.json();
     if (text) rawParts.push(text);
     if (Array.isArray(segments) && segments.length) {
       // Chunk-local times -> absolute time in the whole original recording.
       for (const seg of segments) allSegments.push({ start: startSec + seg.start, end: startSec + seg.end, text: seg.text });
     } else {
       segmentsAvailable = false; // this chunk had none — a partial timeline can't be trusted
-    }
-    // TEMP DIAGNOSTIC (v76.33) — see the raw upstream shape before any filtering.
-    if (i === 0) {
-      const d = responseJson.debugRaw || {};
-      alert(
-        'DEBUG transcribeAudio raw (chunk 1)\n' +
-        'top-level keys: ' + (d.topLevelKeys || []).join(', ') + '\n' +
-        'raw segments is array: ' + d.rawSegmentsIsArray + '\n' +
-        'raw segments type: ' + d.rawSegmentsType + '\n' +
-        'raw segments length: ' + d.rawSegmentsLength + '\n' +
-        'raw first segment: ' + (d.rawFirstSegment || 'none') + '\n' +
-        'after filter length: ' + d.afterFilterLength
-      );
     }
   }
   const rawTranscript = rawParts.join(' ');

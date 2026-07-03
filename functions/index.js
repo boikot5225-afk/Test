@@ -4,6 +4,12 @@ const admin = require('firebase-admin');
 
 const DEEPSEEK_API_KEY = defineSecret('DEEPSEEK_API_KEY');
 const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');
+// OpenAI direct (not via OpenRouter) — OpenRouter's unified /audio/transcriptions
+// endpoint accepts response_format/timestamp_granularities without error but
+// silently never returns segments (confirmed empirically), regardless of model
+// or provider routing. OpenAI's own native Whisper endpoint has always supported
+// verbose_json + segment timestamps, which paragraph-to-audio sync needs.
+const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
 
 const DATABASE_URL = process.env.FIREBASE_DATABASE_URL || 'https://french-da79a-default-rtdb.asia-southeast1.firebasedatabase.app';
 if (!admin.apps.length) {
@@ -498,13 +504,15 @@ exports.ttsAudio = onRequest(
 );
 
 // ────────────────────────────────────────────────────────────────
-// Audio transcription proxy: Firebase Auth → Firebase Function → OpenRouter (Whisper)
-// Client sends base64 audio; OPENROUTER_API_KEY never reaches the browser.
+// Audio transcription proxy: Firebase Auth → Firebase Function → OpenAI (Whisper).
+// Direct to OpenAI, not via OpenRouter: OpenRouter's unified JSON endpoint
+// accepts response_format/timestamp_granularities without error but never
+// actually returns segments (confirmed empirically), regardless of model or
+// provider routing — OpenAI's native endpoint is the only one that reliably
+// gives per-segment timestamps, which paragraph-to-audio sync needs.
+// Client sends base64 audio; OPENAI_API_KEY never reaches the browser.
 // ────────────────────────────────────────────────────────────────
-// whisper-large-v3, not gpt-4o-transcribe: only classic Whisper returns
-// segment-level timestamps (verbose_json), which paragraph-to-audio sync needs.
-const STT_MODEL = 'openai/whisper-large-v3';
-// Raw audio must stay well under OpenRouter/Whisper's 25MB cap; base64 adds ~33% overhead.
+// Raw audio must stay well under Whisper's 25MB cap; base64 adds ~33% overhead.
 const STT_MAX_BASE64_CHARS = 30_000_000; // ~22MB raw audio
 
 exports.transcribeAudio = onRequest(
@@ -512,7 +520,7 @@ exports.transcribeAudio = onRequest(
     region: 'asia-southeast1',
     timeoutSeconds: 180,
     memory: '512MiB',
-    secrets: [OPENROUTER_API_KEY],
+    secrets: [OPENAI_API_KEY],
     cors: true,
   },
   async (req, res) => {
@@ -535,55 +543,45 @@ exports.transcribeAudio = onRequest(
       return res.status(400).json({ error: 'audio_too_large', message: 'Файл слишком большой (лимит ~20 МБ). Сожми битрейт или обрежь файл.' });
     }
 
-    const key = OPENROUTER_API_KEY.value();
+    const key = OPENAI_API_KEY.value();
     if (!key) {
-      return res.status(500).json({ error: 'missing_openrouter_key', message: 'В Firebase Secret Manager не задан OPENROUTER_API_KEY.' });
+      return res.status(500).json({ error: 'missing_openai_key', message: 'В Firebase Secret Manager не задан OPENAI_API_KEY.' });
     }
+
+    // OpenAI's transcription endpoint takes multipart/form-data, not JSON —
+    // that's a different shape than OpenRouter's unified API used elsewhere here.
+    const form = new FormData();
+    form.append('file', new Blob([Buffer.from(audioBase64, 'base64')], { type: `audio/${format}` }), `audio.${format}`);
+    form.append('model', 'whisper-1');
+    form.append('response_format', 'verbose_json');
+    form.append('timestamp_granularities[]', 'segment');
+    if (lang) form.append('language', lang);
 
     let upstream;
     try {
-      upstream = await fetch('https://openrouter.ai/api/v1/audio/transcriptions', {
+      upstream = await fetch('https://api.openai.com/v1/audio/transcriptions', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${key}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: STT_MODEL,
-          input_audio: { data: audioBase64, format },
-          ...(lang ? { language: lang } : {}),
-          // verbose_json + segment granularity gives per-segment start/end times,
-          // which is what lets the reader seek its audio player to a paragraph.
-          response_format: 'verbose_json',
-          timestamp_granularities: ['segment'],
-          // Groq runs the same open-weight whisper-large-v3 (not a different model
-          // id — it's an OpenRouter *provider* option) but reliably honors
-          // verbose_json/segments, unlike whatever OpenAI-routed backend silently
-          // ignored those params on the previous test.
-          provider: { only: ['Groq'] },
-        }),
+        headers: { Authorization: `Bearer ${key}` },
+        body: form,
       });
     } catch (error) {
-      return res.status(503).json({ error: 'openrouter_unavailable', message: `OpenRouter network error: ${error?.message || String(error)}` });
+      return res.status(503).json({ error: 'openai_unavailable', message: `OpenAI network error: ${error?.message || String(error)}` });
     }
 
     if (!upstream.ok) {
       const detail = await upstream.text().catch(() => '');
       return res.status(502).json({
-        error: 'openrouter_stt_failed',
-        message: `OpenRouter STT HTTP ${upstream.status}`,
+        error: 'openai_stt_failed',
+        message: `OpenAI STT HTTP ${upstream.status}`,
         detail: detail.slice(0, 1000),
       });
     }
 
     const data = await upstream.json().catch(() => ({}));
-    const text = data?.text || data?.transcript || data?.transcription || '';
-    if (!text) return res.status(502).json({ error: 'empty_transcript', message: 'OpenRouter вернул пустой транскрипт.' });
+    const text = data?.text || '';
+    if (!text) return res.status(502).json({ error: 'empty_transcript', message: 'OpenAI вернул пустой транскрипт.' });
 
-    // Not every provider/model actually honors timestamp_granularities — degrade
-    // gracefully to plain text (no sync) rather than fail the whole request.
-    const rawSegments = Array.isArray(data?.segments) ? data.segments : [];
-    const segments = rawSegments
+    const segments = (Array.isArray(data?.segments) ? data.segments : [])
       .map(s => ({ start: Number(s.start) || 0, end: Number(s.end) || 0, text: String(s.text || '').trim() }))
       .filter(s => s.text);
 
@@ -591,18 +589,7 @@ exports.transcribeAudio = onRequest(
       await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/transcribe_audio_chars`).transaction((current) => Number(current || 0) + text.length);
     } catch (_) {}
 
-    // TEMP DIAGNOSTIC (v76.33): surface the raw upstream shape to the client —
-    // Cloud Function logs aren't easy to read on-device. Remove once root-caused.
-    const debugRaw = {
-      topLevelKeys: Object.keys(data || {}),
-      rawSegmentsIsArray: Array.isArray(data?.segments),
-      rawSegmentsType: typeof data?.segments,
-      rawSegmentsLength: rawSegments.length,
-      rawFirstSegment: rawSegments[0] ? JSON.stringify(rawSegments[0]).slice(0, 300) : null,
-      afterFilterLength: segments.length,
-    };
-
-    return res.status(200).json({ text, segments, debugRaw });
+    return res.status(200).json({ text, segments });
   }
 );
 
