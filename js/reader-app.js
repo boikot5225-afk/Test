@@ -1785,13 +1785,24 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
       const detail = await resp.json().catch(() => ({}));
       throw new Error(detail?.message || `Распознавание фрагмента ${i + 1}/${chunkCount}: HTTP ${resp.status}`);
     }
-    const { text, segments } = await resp.json();
+    const responseJson = await resp.json();
+    const { text, segments } = responseJson;
     if (text) rawParts.push(text);
     if (Array.isArray(segments) && segments.length) {
       // Chunk-local times -> absolute time in the whole original recording.
       for (const seg of segments) allSegments.push({ start: startSec + seg.start, end: startSec + seg.end, text: seg.text });
     } else {
       segmentsAvailable = false; // this chunk had none — a partial timeline can't be trusted
+    }
+    // TEMP DIAGNOSTIC (v76.32) — see exactly what transcribeAudio returned.
+    if (i === 0) {
+      alert(
+        'DEBUG transcribeAudio response (chunk 1)\n' +
+        'top-level keys: ' + Object.keys(responseJson || {}).join(', ') + '\n' +
+        'segments is array: ' + Array.isArray(segments) + '\n' +
+        'segments length: ' + (segments?.length ?? 'n/a') + '\n' +
+        'first segment: ' + (segments?.[0] ? JSON.stringify(segments[0]).slice(0, 200) : 'none')
+      );
     }
   }
   const rawTranscript = rawParts.join(' ');
