@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.23-radio-manual-stop';
+const CACHE_VERSION = 'v76.24-transcript-paragraphs-zh';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

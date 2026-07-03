@@ -1665,12 +1665,28 @@ async function readerRenderAudioChunkWav(sourceBuffer, startSec, durationSec) {
 
 // Splits raw transcript into chunks small enough for a single DeepSeek cleanup
 // call, breaking on sentence boundaries so no sentence is cut mid-way.
+function readerHardSliceText(text, maxLen) {
+  const slices = [];
+  for (let i = 0; i < text.length; i += maxLen) slices.push(text.slice(i, i + maxLen));
+  return slices;
+}
+
 function readerChunkTranscriptForCleanup(text, maxLen = 3500) {
   const sentences = readerSplitIntoSentences(String(text || ''));
   if (!sentences.length) return [];
   const chunks = [];
   let cur = '';
   for (const s of sentences) {
+    // Whisper's Chinese output has no punctuation at all, so readerSplitIntoSentences
+    // finds no delimiter and returns the ENTIRE transcript as one "sentence" — without
+    // this fallback that whole thing goes to DeepSeek as a single undifferentiated
+    // block, which tends to come back with no paragraph breaks at all. Hard-slice
+    // anything longer than maxLen instead of ever sending it as one giant chunk.
+    if (s.length > maxLen) {
+      if (cur) { chunks.push(cur); cur = ''; }
+      chunks.push(...readerHardSliceText(s, maxLen));
+      continue;
+    }
     if (!cur) cur = s;
     else if ((cur + ' ' + s).length <= maxLen) cur += ' ' + s;
     else { chunks.push(cur); cur = s; }
