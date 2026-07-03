@@ -2160,7 +2160,8 @@ async function readerImportEpubFromFile(file) {
     // The per-file diagnostics used to hide in st.title, which is invisible on
     // mobile — surface them in the error itself so a failing book says WHY.
     const detail = diagnostics.slice(0, 6).join(' · ') || `главы не найдены (файлов в архиве: ${entries.size})`;
-    throw new Error(('Не получилось извлечь текст из EPUB. ' + detail).slice(0, 400));
+    const buildStamp = document.getElementById('build-label')?.textContent || '?';
+    throw new Error((`Не получилось извлечь текст из EPUB [${buildStamp}]. ` + detail).slice(0, 400));
   }
 
   // Store images in IndexedDB
@@ -2189,7 +2190,10 @@ async function readerImportEpubFromFile(file) {
   }
   const totalPara = chapters.reduce((n, ch) => n + (ch.paragraphs?.length || 0), 0);
   const imgCount = imageBlobs.size;
-  if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = `✅ EPUB загружен: ${chapters.length} глав · ${totalPara} абз.${imgCount ? ' · ' + imgCount + ' фото' : ''} · ${importChars} зн. Нажми «Сохранить».`; st.title = diagnostics.slice(0, 80).join('\n'); }
+  // The build stamp + first diagnostic make every import screenshot
+  // self-identifying: which code ran and which parser path each file took.
+  const buildStamp = document.getElementById('build-label')?.textContent || '?';
+  if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = `✅ EPUB загружен: ${chapters.length} глав · ${totalPara} абз.${imgCount ? ' · ' + imgCount + ' фото' : ''} · ${importChars} зн. [${diagnostics[0] || ''} · ${buildStamp}] Нажми «Сохранить».`; st.title = diagnostics.slice(0, 80).join('\n'); }
 }
 
 async function readerImportFromFile(event) {
@@ -2200,6 +2204,10 @@ async function readerImportFromFile(event) {
   readerPendingImportBookId = null;
   readerPendingImportHasAudio = false;
   readerPendingImportTimestamps = null;
+  // A fresh file replaces whatever the previous import left in the preview —
+  // stale (possibly garbage) preview text otherwise survives failed attempts.
+  const previewEl = document.getElementById('reader-import-text');
+  if (previewEl) previewEl.value = '';
   if (file.name.toLowerCase().endsWith('.epub')) {
     try { await readerImportEpubFromFile(file); }
     catch(e) {
