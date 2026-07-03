@@ -22,7 +22,7 @@ import { wordStateIdbPut, wordStateIdbGet } from './reader/word-state-idb-store.
 import { createReaderWordPanel } from './reader/word-panel.js?v=3';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=2';
-import { createReaderLibraryStore } from './reader/library-store.js?v=2';
+import { createReaderLibraryStore } from './reader/library-store.js?v=3';
 import { createReaderDisplay } from './reader/display.js?v=1';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
@@ -2530,13 +2530,14 @@ const readerLibrary = createReaderLibraryStore({
   getCloudSaveTimer: () => readerCloudSaveTimer,
   setCloudSaveTimer: (value) => { readerCloudSaveTimer = value; },
   getCurrentBookId: () => readerCurrentBookId,
+  // Both local stores failed — genuinely rare. Warn once per session with the
+  // actual error so it's debuggable, instead of nagging on every save.
   onSaveError: (() => {
-    let lastWarnAt = 0;
-    return () => {
-      const now = Date.now();
-      if (now - lastWarnAt < 60000) return;
-      lastWarnAt = now;
-      showToast('⚠️ Хранилище переполнено: прогресс чтения сохраняется отдельно, но библиотека не обновляется');
+    let warned = false;
+    return (error) => {
+      if (warned) return;
+      warned = true;
+      showToast('⚠️ Библиотека не сохраняется локально (' + (error?.message || error) + '). Данные уходят в облако.');
     };
   })(),
   idbGet: libraryIdbGet,
@@ -2559,12 +2560,11 @@ const readerWordState = createReaderWordState({
   tokenizeParagraph: readerTokenizeParagraph,
   findVerbByForm: readerFindVerbByForm,
   onSaveError: (() => {
-    let lastWarnAt = 0;
-    return () => {
-      const now = Date.now();
-      if (now - lastWarnAt < 60000) return;
-      lastWarnAt = now;
-      showToast('⚠️ Хранилище переполнено: отметки слов могут не сохраниться');
+    let warned = false;
+    return (error) => {
+      if (warned) return;
+      warned = true;
+      showToast('⚠️ Отметки слов не сохраняются локально (' + (error?.message || error) + '). Данные уходят в облако.');
     };
   })(),
   onSaved: () => scheduleWordStateCloudSync(),

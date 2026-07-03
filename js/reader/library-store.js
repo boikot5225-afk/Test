@@ -118,6 +118,15 @@ export function createReaderLibraryStore({
       } catch (retryError) {
         localOk = false;
         onError('[reader] slim retry also failed (IndexedDB still holds the data)', retryError);
+        // Even the slim copy doesn't fit — this multi-MB key is exactly what
+        // starves every OTHER localStorage write (word colors, positions,
+        // caches) of quota, while the library itself is already durable in
+        // IndexedDB + cloud. Drop it: load() falls back to memory + the
+        // IndexedDB hydrate, and the rest of the app gets its quota back.
+        try {
+          localStorage.removeItem(storageKey());
+          onError('[reader] removed oversized library key from localStorage to free quota');
+        } catch (_) {}
       }
     }
     // The durable write. Only when BOTH this and localStorage fail is the data
