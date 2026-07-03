@@ -3041,7 +3041,7 @@ async function readerSaveWord() {
       created_at: new Date().toISOString(),
       custom: true
     };
-    const { error } = await sb.from('nouns').upsert(record);
+    const { error } = await readerWithDeadline(() => sb.from('nouns').upsert(record), 12000, 'Сохранение слова');
     if (error) throw error;
 
     const oldIdx = NOUNS.findIndex(n => String(n.id) === id);
@@ -3076,6 +3076,16 @@ async function readerReadApiResponse(res, label = 'DeepSeek') {
 
 function readerFunctionRegion() {
   return String(globalThis.AN2_FIREBASE_FUNCTIONS_REGION || 'asia-southeast1').trim() || 'asia-southeast1';
+}
+
+function readerWithDeadline(work, ms, label = 'Операция') {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} не ответила за ${Math.round(ms / 1000)} сек. Проверь сеть.`)), ms);
+    Promise.resolve().then(work).then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); }
+    );
+  });
 }
 
 function readerCallableWithTimeout(callable, payload, timeoutMs = LONG_REQUEST_TIMEOUT_MS) {
