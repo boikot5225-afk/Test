@@ -2259,7 +2259,15 @@ function saveReaderImport() {
   }
   readerPendingImportChapters = null; readerPendingImportSource = 'manual_text';
   readerBooks.unshift(book);
-  saveReaderBooks(); closeReaderImportModal(); showToast('📖 Текст добавлен'); renderReaderScreen(); readerOpenBook(book.id);
+  // save() runs the full dedupe pass again over the whole list, which can MERGE
+  // our freshly-generated book with an existing one sharing the same importKey
+  // (same lang/title/author/paragraph+char count) — the merge keeps whichever
+  // side has more reading progress, which is usually the older book, discarding
+  // our just-generated id entirely. Resolve the book to open by importKey
+  // (stable across merges) instead of trusting book.id survived the save.
+  const savedBooks = saveReaderBooks();
+  const finalBook = (savedBooks || []).find(b => b.importKey === book.importKey) || book;
+  closeReaderImportModal(); showToast('📖 Текст добавлен'); renderReaderScreen(); readerOpenBook(finalBook.id);
 }
 
 function readerOpenBook(id) {
