@@ -1557,7 +1557,9 @@ async function renderReaderScreen() {
     const ch = book.chapters?.[book.currentChapter || 0];
     const pi = book.currentParagraph || 0;
     const totalP = ch?.paragraphs?.length || 0;
-    const chInfo = ch ? `${readerEscape(ch.title || `Гл. ${(book.currentChapter||0)+1}`)} · ${pi+1}/${totalP}` : '';
+    // No escaping here — chInfo goes through readerEscape at the point of use
+    // below; escaping twice showed clean "&"/"'" as literal &amp;/&#39;.
+    const chInfo = ch ? `${ch.title || `Гл. ${(book.currentChapter||0)+1}`} · ${pi+1}/${totalP}` : '';
     return `
       <div class="lib-book-card ${done ? 'done' : ''}">
         <div class="lib-book-main" onclick="readerOpenBook('${readerEscape(book.id)}')">

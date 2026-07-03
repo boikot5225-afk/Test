@@ -108,11 +108,13 @@ export async function renderHome() {
         <div class="home-section-label">продолжить</div>
         ${recent.map((book, idx) => {
           const pct = bookProgress(book);
+          // No escape() here — chInfo is escaped once at the point of use below;
+          // escaping twice showed clean "&"/"'" as literal &amp;/&#39;.
           const chInfo = (() => {
             const ch = book.chapters?.[book.currentChapter || 0];
             const pi = book.currentParagraph || 0;
             const total = ch?.paragraphs?.length || 0;
-            return ch ? `${escape(ch.title || `Гл. ${(book.currentChapter||0)+1}`)} · абзац ${pi+1}/${total}` : '';
+            return ch ? `${ch.title || `Гл. ${(book.currentChapter||0)+1}`} · абзац ${pi+1}/${total}` : '';
           })();
           const isPrimary = idx === 0;
           return `
