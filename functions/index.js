@@ -501,7 +501,9 @@ exports.ttsAudio = onRequest(
 // Audio transcription proxy: Firebase Auth → Firebase Function → OpenRouter (Whisper)
 // Client sends base64 audio; OPENROUTER_API_KEY never reaches the browser.
 // ────────────────────────────────────────────────────────────────
-const STT_MODEL = 'openai/gpt-4o-transcribe';
+// whisper-large-v3, not gpt-4o-transcribe: only classic Whisper returns
+// segment-level timestamps (verbose_json), which paragraph-to-audio sync needs.
+const STT_MODEL = 'openai/whisper-large-v3';
 // Raw audio must stay well under OpenRouter/Whisper's 25MB cap; base64 adds ~33% overhead.
 const STT_MAX_BASE64_CHARS = 30_000_000; // ~22MB raw audio
 
@@ -550,6 +552,10 @@ exports.transcribeAudio = onRequest(
           model: STT_MODEL,
           input_audio: { data: audioBase64, format },
           ...(lang ? { language: lang } : {}),
+          // verbose_json + segment granularity gives per-segment start/end times,
+          // which is what lets the reader seek its audio player to a paragraph.
+          response_format: 'verbose_json',
+          timestamp_granularities: ['segment'],
         }),
       });
     } catch (error) {
@@ -569,11 +575,19 @@ exports.transcribeAudio = onRequest(
     const text = data?.text || data?.transcript || data?.transcription || '';
     if (!text) return res.status(502).json({ error: 'empty_transcript', message: 'OpenRouter вернул пустой транскрипт.' });
 
+    // Not every provider/model actually honors timestamp_granularities — degrade
+    // gracefully to plain text (no sync) rather than fail the whole request.
+    const segments = Array.isArray(data?.segments)
+      ? data.segments
+        .map(s => ({ start: Number(s.start) || 0, end: Number(s.end) || 0, text: String(s.text || '').trim() }))
+        .filter(s => s.text)
+      : [];
+
     try {
       await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/transcribe_audio_chars`).transaction((current) => Number(current || 0) + text.length);
     } catch (_) {}
 
-    return res.status(200).json({ text });
+    return res.status(200).json({ text, segments });
   }
 );
 

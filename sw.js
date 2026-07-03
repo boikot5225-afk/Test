@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.25-gpt4o-transcribe';
+const CACHE_VERSION = 'v76.26-audio-paragraph-sync';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

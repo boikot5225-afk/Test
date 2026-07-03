@@ -56,6 +56,7 @@ let readerPendingImportChapters = null;
 let readerPendingImportSource = 'manual_text';
 let readerPendingImportBookId = null;
 let readerPendingImportHasAudio = false;
+let readerPendingImportTimestamps = null; // per-paragraph {start,end} seconds in the original recording
 let readerOriginalAudioUrl = null; // objectURL for the currently open book's original recording
 let readerOriginalAudioBookId = null;
 const readerEpubImgCache = new Map(); // key → blob URL (session-scoped, avoids repeated IndexedDB reads)
@@ -1695,6 +1696,32 @@ function readerChunkTranscriptForCleanup(text, maxLen = 3500) {
   return chunks;
 }
 
+// Groups Whisper's per-segment timestamps into paragraph-sized pieces before
+// DeepSeek cleanup, so each resulting paragraph keeps a {start,end} time in the
+// original recording — that's what lets the reader seek its audio player to a
+// paragraph. Segments are never split, only grouped, so the boundary times stay
+// exact even though DeepSeek is free to rewrite the text inside each group.
+function readerGroupSegmentsForCleanup(segments, lang) {
+  const isZh = readerCanonicalLang(lang) === 'zh';
+  const maxLen = isZh ? 150 : 400;
+  const sep = isZh ? '' : ' ';
+  const groups = [];
+  let cur = null;
+  for (const seg of segments) {
+    if (!cur) {
+      cur = { text: seg.text, start: seg.start, end: seg.end };
+    } else if ((cur.text + sep + seg.text).length <= maxLen) {
+      cur.text += sep + seg.text;
+      cur.end = seg.end;
+    } else {
+      groups.push(cur);
+      cur = { text: seg.text, start: seg.start, end: seg.end };
+    }
+  }
+  if (cur) groups.push(cur);
+  return groups;
+}
+
 // Shared pipeline: decode -> chunk -> Whisper -> DeepSeek cleanup -> textarea + original blob storage.
 // Used both by file uploads (readerTranscribeAudioFile) and by radio stream captures
 // (readerRecordRadioStream) — the two only differ in how they obtain `blob`.
@@ -1733,6 +1760,8 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
   const totalSec = decoded.duration;
   const chunkCount = Math.max(1, Math.ceil(totalSec / READER_STT_CHUNK_SECONDS));
   const rawParts = [];
+  const allSegments = [];
+  let segmentsAvailable = true;
   for (let i = 0; i < chunkCount; i++) {
     const startSec = i * READER_STT_CHUNK_SECONDS;
     const durationSec = Math.min(READER_STT_CHUNK_SECONDS, totalSec - startSec);
@@ -1748,27 +1777,42 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
       const detail = await resp.json().catch(() => ({}));
       throw new Error(detail?.message || `Распознавание фрагмента ${i + 1}/${chunkCount}: HTTP ${resp.status}`);
     }
-    const { text } = await resp.json();
+    const { text, segments } = await resp.json();
     if (text) rawParts.push(text);
+    if (Array.isArray(segments) && segments.length) {
+      // Chunk-local times -> absolute time in the whole original recording.
+      for (const seg of segments) allSegments.push({ start: startSec + seg.start, end: startSec + seg.end, text: seg.text });
+    } else {
+      segmentsAvailable = false; // this chunk had none — a partial timeline can't be trusted
+    }
   }
   const rawTranscript = rawParts.join(' ');
   if (!rawTranscript) throw new Error('Пустой транскрипт');
 
-  const chunks = readerChunkTranscriptForCleanup(rawTranscript);
+  // With per-segment timestamps, clean text in time-ordered groups instead of
+  // arbitrary character chunks, so each resulting paragraph keeps a start/end
+  // time — that's what lets the reader seek its audio player to a paragraph.
+  // Falls back to plain chunking if the model didn't return timestamps.
+  const useTimestamps = segmentsAvailable && allSegments.length > 0;
+  const groups = useTimestamps
+    ? readerGroupSegmentsForCleanup(allSegments, lang)
+    : readerChunkTranscriptForCleanup(rawTranscript).map(text => ({ text, start: null, end: null }));
+
   const cleaned = [];
-  for (let i = 0; i < chunks.length; i++) {
-    setStatus(`⏳ DeepSeek чистит текст... (${i + 1}/${chunks.length})`);
+  for (let i = 0; i < groups.length; i++) {
+    setStatus(`⏳ DeepSeek чистит текст... (${i + 1}/${groups.length})`);
     try {
-      const d = await readerAI({ task: 'clean_transcript', text: chunks[i], sourceLang: lang });
-      cleaned.push(d?.text || chunks[i]);
+      const d = await readerAI({ task: 'clean_transcript', text: groups[i].text, sourceLang: lang });
+      cleaned.push({ text: d?.text || groups[i].text, start: groups[i].start, end: groups[i].end });
     } catch (e) {
-      // Keep the raw chunk rather than losing it if DeepSeek fails mid-way.
-      cleaned.push(chunks[i]);
+      // Keep the raw group rather than losing it if DeepSeek fails mid-way.
+      cleaned.push({ text: groups[i].text, start: groups[i].start, end: groups[i].end });
     }
   }
 
-  if (textEl) textEl.value = cleaned.join('\n\n');
+  if (textEl) textEl.value = cleaned.map(c => c.text).join('\n\n');
   if (titleEl && !titleEl.value.trim()) titleEl.value = filenameHint.replace(/\.[^.]+$/, '');
+  readerPendingImportTimestamps = useTimestamps ? cleaned.map(c => ({ start: c.start, end: c.end })) : null;
 
   let hasAudio = false;
   try {
@@ -1780,7 +1824,7 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
     console.warn('[reader audio] storing original recording failed:', e);
   }
 
-  setStatus(`✅ Готово: ${cleaned.length} фрагмент(ов)${hasAudio ? ' · аудио сохранено' : ''}. Проверь текст перед сохранением.`);
+  setStatus(`✅ Готово: ${cleaned.length} фрагмент(ов)${hasAudio ? ' · аудио сохранено' : ''}${useTimestamps ? ' · тайм-коды готовы' : ''}. Проверь текст перед сохранением.`);
 }
 
 async function readerTranscribeAudioFile(event) {
@@ -2148,6 +2192,7 @@ async function readerImportFromFile(event) {
   readerPendingImportSource = 'manual_text';
   readerPendingImportBookId = null;
   readerPendingImportHasAudio = false;
+  readerPendingImportTimestamps = null;
   if (file.name.toLowerCase().endsWith('.epub')) {
     try { await readerImportEpubFromFile(file); }
     catch(e) {
@@ -2197,6 +2242,13 @@ function saveReaderImport() {
   if (format === 'news') { bookObj.newsSource = newsSource || authorRaw || 'вставка'; bookObj.newsDate = newsDate; }
   if (readerPendingImportHasAudio) bookObj.hasOriginalAudio = true;
   readerPendingImportHasAudio = false;
+  // Only trust the timestamps if the paragraph count in the (possibly hand-edited)
+  // textarea still matches what was recognized — if the user added/removed a blank
+  // line, the mapping would silently point at the wrong paragraph, so drop it instead.
+  if (readerPendingImportTimestamps && chapters[0]?.paragraphs?.length === readerPendingImportTimestamps.length) {
+    chapters[0].paragraphTimestamps = readerPendingImportTimestamps;
+  }
+  readerPendingImportTimestamps = null;
   const book = bookObj;
   book.importKey = readerBookImportKey(book);
   const __dupe = (readerBooks || []).find(b => readerBookImportKey(b) === book.importKey);
@@ -2266,6 +2318,7 @@ async function readerToggleOriginalAudioPlayer() {
     audioEl.src = readerOriginalAudioUrl;
   }
   wrap.style.display = 'flex';
+  readerSyncOriginalAudioToCurrentParagraph();
 }
 window.readerToggleOriginalAudioPlayer = readerToggleOriginalAudioPlayer;
 
@@ -2443,8 +2496,26 @@ function installReaderActionDelegation() {
 }
 installReaderActionDelegation();
 
+// If the original-recording player is open and the current chapter has
+// per-paragraph timestamps (audio/radio imports only), keep it seeked to
+// whatever paragraph is currently active — this is what "jump to the
+// matching part of the audio" actually means in practice.
+function readerSyncOriginalAudioToCurrentParagraph() {
+  const wrap = document.getElementById('reader-orig-audio-wrap');
+  const audioEl = document.getElementById('reader-orig-audio-el');
+  if (!wrap || !audioEl || wrap.style.display === 'none') return;
+  const book = readerCurrentBook();
+  const chapter = book?.chapters?.[book.currentChapter || 0];
+  const ts = chapter?.paragraphTimestamps?.[book?.currentParagraph || 0];
+  if (ts && Number.isFinite(ts.start)) {
+    try { audioEl.currentTime = ts.start; } catch {}
+  }
+}
+
 function readerSelectParagraph(index) {
-  return readerNavigation.selectParagraph(index);
+  const result = readerNavigation.selectParagraph(index);
+  readerSyncOriginalAudioToCurrentParagraph();
+  return result;
 }
 
 function readerScrollActiveParagraph() {
@@ -2455,11 +2526,15 @@ function readerScrollActiveParagraph() {
 }
 
 function readerNextParagraph() {
-  return readerNavigation.nextParagraph();
+  const result = readerNavigation.nextParagraph();
+  readerSyncOriginalAudioToCurrentParagraph();
+  return result;
 }
 
 function readerPrevParagraph() {
-  return readerNavigation.previousParagraph();
+  const result = readerNavigation.previousParagraph();
+  readerSyncOriginalAudioToCurrentParagraph();
+  return result;
 }
 
 function readerCurrentParagraphText(index = null) {
