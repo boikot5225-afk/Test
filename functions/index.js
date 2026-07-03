@@ -575,6 +575,12 @@ exports.transcribeAudio = onRequest(
     const text = data?.text || data?.transcript || data?.transcription || '';
     if (!text) return res.status(502).json({ error: 'empty_transcript', message: 'OpenRouter вернул пустой транскрипт.' });
 
+    // TEMP DIAGNOSTIC (v76.27): find out why segments aren't coming back —
+    // logs the response shape without dumping the full transcript text.
+    console.log('[transcribeAudio debug] top-level keys:', Object.keys(data || {}));
+    console.log('[transcribeAudio debug] segments is array:', Array.isArray(data?.segments), 'length:', data?.segments?.length);
+    if (data?.segments?.[0]) console.log('[transcribeAudio debug] first segment sample:', JSON.stringify(data.segments[0]).slice(0, 300));
+
     // Not every provider/model actually honors timestamp_granularities — degrade
     // gracefully to plain text (no sync) rather than fail the whole request.
     const segments = Array.isArray(data?.segments)
