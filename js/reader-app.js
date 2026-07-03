@@ -2090,19 +2090,23 @@ async function readerImportEpubFromFile(file) {
   }
 
   // Some converters store chapter markup with HTML entities encoded (the file
-  // literally contains &lt;p&gt; instead of <p>, sometimes doubly so) — the
-  // parser then sees one giant text node and no elements. Decode entities up
-  // to a few passes until real tags appear.
+  // literally contains &lt;p&gt; instead of <p>, sometimes doubly so, and
+  // sometimes wrapped inside REAL tags) — the parser then sees the markup as
+  // text. Decode while encoded-tag sequences (&lt;p, &amp;lt;div, ...) remain.
   function decodeEntityEncodedHtml(sourceHtml) {
     let out = String(sourceHtml || '');
-    for (let pass = 0; pass < 3; pass++) {
-      if (/<\s*(p|div|h[1-6]|section|blockquote|li)\b/i.test(out)) break;
-      if (!/&(?:amp|lt|gt|quot|#\d+|#x[0-9a-f]+);/i.test(out)) break;
+    for (let pass = 0; pass < 3 && /&(?:amp;)*lt;\s*\/?\s*[a-z]/i.test(out); pass++) {
       const ta = document.createElement('textarea');
       ta.innerHTML = out;
       out = ta.value;
     }
     return out;
+  }
+
+  // ≥3 encoded-entity hits in extracted "text" means we scooped up markup,
+  // not prose — the decode pass should get a chance even though chars > 20.
+  function looksEntityEncoded(text) {
+    return (String(text || '').match(/&(?:lt|gt|quot|amp|#\d+);/gi) || []).length >= 3;
   }
 
   for (let i = 0; i < htmlPaths.length; i++) {
@@ -2114,13 +2118,15 @@ async function readerImportEpubFromFile(file) {
       let usedHtml = html;
       let note = '';
 
-      if (best.chars <= 20) {
-        // Try entity-decoding first: it recovers full structure (paragraphs,
-        // headings, images) instead of the flat text the plain fallback gives.
+      // Decode when the structured pass found nothing — OR when what it found
+      // is itself entity-encoded markup (happens when the encoded soup sits
+      // inside a real block tag, so chars > 20 but it's tags, not prose).
+      if (best.chars <= 20 || looksEntityEncoded(best.textOnly.join(' '))) {
         const decoded = decodeEntityEncodedHtml(html);
         if (decoded !== html) {
           const fromDecoded = await processChapterHtml(decoded, chapterBase);
-          if (fromDecoded.chars > best.chars) { best = fromDecoded; usedHtml = decoded; note = ' (раскодирован)'; }
+          const decodedClean = fromDecoded.chars > 20 && !looksEntityEncoded(fromDecoded.textOnly.join(' '));
+          if (decodedClean || fromDecoded.chars > best.chars) { best = fromDecoded; usedHtml = decoded; note = ' (раскодирован)'; }
         }
       }
 
