@@ -101,10 +101,14 @@ export function createReaderLibraryStore({
     let books = dedupeBooks(getBooks() || []);
     setBooks(books);
     savePositions(books);
+    // localStorage is only the fast in-session cache now — IndexedDB below is
+    // the durable store (no ~5MB ceiling) and cloud sync mirrors it. A quota
+    // failure here alone doesn't endanger the data, so it's logged, not surfaced.
+    let localOk = true;
     try {
       localStorage.setItem(storageKey(), JSON.stringify(books));
     } catch (error) {
-      onError('[reader] save failed', error);
+      onError('[reader] library localStorage cache write failed', error);
       // Quota is full: retry without per-book AI caches (translations/analyses are
       // re-fetchable; reading position and word progress are not).
       try {
@@ -112,13 +116,16 @@ export function createReaderLibraryStore({
         localStorage.setItem(storageKey(), JSON.stringify(slim));
         onError('[reader] saved slim library without AI caches');
       } catch (retryError) {
-        onSaveError?.(retryError);
+        localOk = false;
+        onError('[reader] slim retry also failed (IndexedDB still holds the data)', retryError);
       }
     }
-    // Durable copy: fires regardless of whether the localStorage write above
-    // succeeded, since IndexedDB doesn't share that 5MB-ish ceiling. Best-effort,
-    // never blocks the (synchronous) caller.
-    idbPut(storageKey(), books).catch(error => onError('[reader] IndexedDB backup save failed', error));
+    // The durable write. Only when BOTH this and localStorage fail is the data
+    // actually at risk (in-memory + cloud only) — that's the case worth a toast.
+    idbPut(storageKey(), books).catch(error => {
+      onError('[reader] library IndexedDB save failed', error);
+      if (!localOk) onSaveError?.(error);
+    });
     if (schedule) scheduleCloudSave();
     return books;
   }

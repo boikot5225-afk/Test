@@ -63,6 +63,10 @@ export function createReaderWordState(opts) {
   };
   const save = () => {
     const data = load();
+    // localStorage is only the fast in-session cache now — IndexedDB below is
+    // the durable store (no ~5MB ceiling) and cloud sync mirrors it. A quota
+    // failure here alone doesn't endanger the data, so it's logged, not surfaced.
+    let localOk = true;
     try {
       localStorage.setItem(storageKey(), JSON.stringify(data));
     } catch (e) {
@@ -71,14 +75,17 @@ export function createReaderWordState(opts) {
       try {
         localStorage.setItem(storageKey(), JSON.stringify(data));
       } catch (e2) {
-        log.warn?.('[reader] state save', e2);
-        onSaveError?.(e2);
+        localOk = false;
+        log.warn?.('[reader] word-state localStorage cache write failed (IndexedDB still holds the data)', e2);
       }
     }
-    // Durable copy: fires regardless of whether the localStorage write above
-    // succeeded, since IndexedDB doesn't share that 5MB-ish ceiling.
-    idbPut(storageKey(), data).catch(e => log.warn?.('[reader] word-state IndexedDB backup failed', e));
-    // schedule cloud sync even when localStorage failed — cloud works off the in-memory state
+    // The durable write. Only when BOTH this and localStorage fail is the data
+    // actually at risk (in-memory + cloud only) — that's the case worth a toast.
+    idbPut(storageKey(), data).catch(e => {
+      log.warn?.('[reader] word-state IndexedDB save failed', e);
+      if (!localOk) onSaveError?.(e);
+    });
+    // schedule cloud sync even when local writes failed — cloud works off the in-memory state
     onSaved?.();
   };
 
