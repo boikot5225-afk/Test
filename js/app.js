@@ -52,7 +52,7 @@ import {
   readerBookProgress, readerContinueBook,
   loadReaderWordState, saveReaderWordState, loadReaderLexicalCache, saveReaderLexicalCache,
   readerGetWordState, readerWordVisual, readerWordStateKey, readerMarkWordSaved, readerTouchWordState,
-  readerRefreshParagraphWordClasses, readerTimeToday,
+  readerRefreshParagraphWordClasses, readerTimeToday, readerTimeParagraphClose,
   readerCurrentLang, readerBookLang, readerTokenizeParagraph,
   renderReaderScreen, readerOpenBook, readerBackToLibrary,
   readerNextParagraph, readerPrevParagraph, readerNextChapter, readerPrevChapter,
@@ -808,7 +808,15 @@ export function showScreen(id) {
 
   document.querySelectorAll('.screen').forEach(s => { s.classList.remove('active'); s.style.display = 'none'; });
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-  if (id !== 'reader') document.body.classList.remove('reader-mode');
+  if (id !== 'reader') {
+    document.body.classList.remove('reader-mode');
+    // Reading-time tracking only ever got closed via the reader's own back
+    // button (readerBackToLibrary) — leaving through the bottom nav (Главная/
+    // Слова/Профиль) while a paragraph timer was running skipped that call
+    // entirely, silently discarding that whole reading interval. Safe to call
+    // unconditionally: it's a no-op when no paragraph timer is running.
+    try { readerTimeParagraphClose(); } catch (_) {}
+  }
   const target = document.getElementById('screen-' + id);
   if (target) { target.classList.add('active'); target.style.display = ''; }
   // Reset scroll to top on every screen change — prevents landing in empty

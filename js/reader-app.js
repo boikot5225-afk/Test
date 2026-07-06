@@ -4654,6 +4654,19 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
     clearTimeout(_wordStateSyncTimer);
     syncWordStateToCloud().catch(() => {});
+    // Reading-time tracker: close the open paragraph timer when the phone
+    // locks / the app backgrounds mid-paragraph, same as leaving the reader
+    // screen outright — otherwise resuming later and turning the page counts
+    // the whole backgrounded stretch as reading time (closeParagraph() would
+    // normally just discard it for exceeding the 300s cap, silently losing
+    // whatever genuine reading happened before backgrounding too).
+    if (document.getElementById('reader-reading-view')?.style.display !== 'none') {
+      readerTimeParagraphClose();
+    }
+  } else if (document.visibilityState === 'visible') {
+    if (document.getElementById('reader-reading-view')?.style.display !== 'none') {
+      readerTimeParagraphOpen();
+    }
   }
 });
 
@@ -4724,7 +4737,7 @@ export {
   readerGetWordState, readerWordVisual, readerWordStateKey, readerMarkWordSaved,
   readerRefreshParagraphWordClasses,
   // Time tracking
-  readerTimeToday,
+  readerTimeToday, readerTimeParagraphClose,
   // Language helpers (used by app.js + window)
   readerCurrentLang, readerBookLang, readerTokenizeParagraph,
   // UI functions exposed to window
