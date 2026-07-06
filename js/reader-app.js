@@ -2406,6 +2406,7 @@ function readerOpenBook(id) {
   // v66: immersive reading handled by fixed #reader-reading-view layout (no old reader-mode chrome hacks)
   document.getElementById('reader-library-view').style.display = 'none';
   document.getElementById('reader-reading-view').style.display = 'flex';
+  readerInitCalmChrome();
   readerInitDisplay();
   renderReaderChapter();
   readerScrollActiveParagraph();
@@ -2902,6 +2903,65 @@ function readerSendParagraphToPhrase(i) {
     if (window.showAddPhraseModal) window.showAddPhraseModal();
     setTimeout(() => { const fr = document.getElementById('manual-ph-fr'); if (fr) { fr.value = text; fr.focus(); } showToast('Абзац вставлен в черновик фразы. Сделай пропуск ___ и выбери глагол.'); }, 150);
   }, 150);
+}
+
+// ── v76.62 calm reader: word-mark mode + auto-hiding chrome ──
+const READER_MARKS_KEY = 'an2_reader_marks_on';
+
+function readerApplyWordMarksState() {
+  const view = document.getElementById('reader-reading-view');
+  const btn = document.getElementById('reader-marks-btn');
+  const on = localStorage.getItem(READER_MARKS_KEY) === '1';
+  if (view) view.classList.toggle('rd-marks-on', on);
+  if (btn) btn.classList.toggle('on', on);
+}
+
+function readerToggleWordMarks() {
+  const on = localStorage.getItem(READER_MARKS_KEY) === '1';
+  try { localStorage.setItem(READER_MARKS_KEY, on ? '0' : '1'); } catch (_) {}
+  readerApplyWordMarksState();
+}
+window.readerToggleWordMarks = readerToggleWordMarks;
+
+// Bars hide on scroll-down, return on scroll-up or on a tap in the empty
+// area outside paragraphs. Bound once; re-run per book open only to reset
+// visibility and re-measure bar heights (safe-area can change on rotate).
+let readerChromeBound = false;
+function readerInitCalmChrome() {
+  const view = document.getElementById('reader-reading-view');
+  const scroll = view?.querySelector('.rd-scroll');
+  if (!view || !scroll) return;
+
+  view.classList.remove('rd-chrome-hidden');
+  readerApplyWordMarksState();
+  const measure = () => {
+    const top = view.querySelector('.rd-top');
+    const bot = view.querySelector('.rd-bot');
+    if (top) view.style.setProperty('--rd-top-h', top.offsetHeight + 'px');
+    if (bot) view.style.setProperty('--rd-bot-h', bot.offsetHeight + 'px');
+  };
+  measure();
+
+  if (readerChromeBound) return;
+  readerChromeBound = true;
+  window.addEventListener('resize', measure);
+
+  let lastY = scroll.scrollTop;
+  scroll.addEventListener('scroll', () => {
+    const y = scroll.scrollTop;
+    const delta = y - lastY;
+    // small dead zone so selection-driven micro-scrolls don't flicker the bars
+    if (delta > 12 && y > 80) view.classList.add('rd-chrome-hidden');
+    else if (delta < -12 || y < 40) view.classList.remove('rd-chrome-hidden');
+    lastY = y;
+  }, { passive: true });
+
+  scroll.addEventListener('click', (e) => {
+    // Word taps open the panel, paragraph taps select — only a genuinely
+    // empty area (or the spacer below the text) toggles the chrome.
+    if (e.target.closest('.reader-word, .reader-paragraph, button, a, details, summary, input, textarea, select, audio')) return;
+    view.classList.toggle('rd-chrome-hidden');
+  });
 }
 
 function ensureReaderWordPanel() { return readerWordPanel.ensure(); }

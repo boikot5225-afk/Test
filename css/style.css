@@ -2008,6 +2008,61 @@ input:-webkit-autofill:focus {
 @keyframes rd-listen-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 40%,transparent);}50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 0%,transparent);}}
 #reader-reading-view .rd-desk{display:none;}
 
+/* ── v76.62 calm reader ──
+   1) Quiet text by default: word-status colors only show in the explicit
+      "marks" mode (🖍). Outside it, saved/learning words keep a thin dotted
+      underline and problem words a solid one — everything else is plain text.
+      !important is needed to beat the per-status rules and zh-specific
+      overrides regardless of their specificity. */
+#reader-reading-view:not(.rd-marks-on) .reader-word{
+  background:transparent !important;
+  border-bottom-color:transparent !important;
+}
+#reader-reading-view:not(.rd-marks-on) .reader-word.rw-saved,
+#reader-reading-view:not(.rd-marks-on) .reader-word.rw-learning,
+#reader-reading-view:not(.rd-marks-on) .reader-word.rw-familiar{
+  border-bottom:1.5px dotted color-mix(in srgb, var(--accent) 65%, transparent) !important;
+}
+#reader-reading-view:not(.rd-marks-on) .reader-word.rw-problem{
+  border-bottom:2px solid rgba(255,69,58,.65) !important;
+}
+#reader-reading-view:not(.rd-marks-on) .reader-word:hover,
+#reader-reading-view:not(.rd-marks-on) .reader-word.rw-sel{
+  background:rgba(166,42,33,.14) !important;
+}
+/* quieter active paragraph in calm mode: thin rule, no tinted card */
+#reader-reading-view:not(.rd-marks-on) .reader-paragraph.active{
+  background:transparent;
+  border-left-color:var(--accent);
+}
+
+/* 2) Auto-hiding chrome: bars collapse via negative margins (measured by JS
+      into the --rd-top-h / --rd-bot-h vars) so the text area grows smoothly. */
+#reader-reading-view .rd-top{
+  transition:margin-top .28s ease, opacity .22s ease;
+}
+#reader-reading-view .rd-bot{
+  transition:margin-bottom .28s ease, opacity .22s ease;
+}
+#reader-reading-view.rd-chrome-hidden .rd-top{
+  margin-top:calc(-1 * var(--rd-top-h, 64px));
+  opacity:0; pointer-events:none;
+}
+#reader-reading-view.rd-chrome-hidden .rd-bot{
+  margin-bottom:calc(-1 * var(--rd-bot-h, 70px));
+  opacity:0; pointer-events:none;
+}
+/* keep the chapter progress line visible even with hidden chrome */
+#reader-reading-view .rd-free-prog{
+  position:absolute; top:0; left:0; right:0; height:3px; z-index:30;
+  pointer-events:none; opacity:0; transition:opacity .25s;
+}
+#reader-reading-view .rd-free-prog > i{
+  display:block; height:100%; width:0%;
+  background:var(--accent); border-radius:0 3px 3px 0; transition:width .25s;
+}
+#reader-reading-view.rd-chrome-hidden .rd-free-prog{opacity:1;}
+
 /* desktop: roomier column + a couple of inline actions */
 @media (min-width:760px){
   #reader-reading-view .rd-top{padding-left:max(14px,calc((100% - 720px)/2)); padding-right:max(14px,calc((100% - 720px)/2));}

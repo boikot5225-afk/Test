@@ -224,7 +224,7 @@
           📡 Проверить связь с сервером
         </button>
         <div id="health-result" style="display:none;margin-top:10px;font-size:0.78rem;line-height:1.5;padding:8px 12px;border-radius:8px;"></div>
-        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v76.61-instant-library</span></div>
+        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v76.62-calm-reader-phase1</span></div>
       </div>
     </div>
 
@@ -463,6 +463,8 @@
     </div>
 
     <div id="reader-reading-view" style="display:none;">
+      <!-- thin progress line that stays visible when the chrome auto-hides -->
+      <div class="rd-free-prog"><i id="rd-free-prog-fill"></i></div>
       <!-- TOP BAR -->
       <div class="rd-top">
         <button class="rd-icon" onclick="readerBackToLibrary()" title="Библиотека" aria-label="Библиотека">←</button>
@@ -470,6 +472,7 @@
           <div id="reader-book-title" class="rd-book"></div>
           <div id="reader-chapter-title" class="rd-chap"></div>
         </div>
+        <button id="reader-marks-btn" class="rd-icon" onclick="readerToggleWordMarks()" title="Подсветка слов" aria-label="Подсветка слов">🖍</button>
         <button id="reader-help-btn" class="rd-icon" onclick="toggleReaderTranslations()" title="Перевод и разбор" aria-label="Перевод и разбор">👁</button>
         <button class="rd-icon" onclick="readerToggleDisplayPanel()" title="Настройки текста" aria-label="Настройки текста" style="font-size:.82rem;font-family:'IBM Plex Sans',sans-serif;font-weight:600;letter-spacing:-.02em">Аа</button>
         <button id="reader-pinyin-btn" class="rd-icon rd-pinyin-btn" onclick="readerCycleZhPinyinMode()" title="Пиньинь" aria-label="Пиньинь" style="display:none">拼</button>

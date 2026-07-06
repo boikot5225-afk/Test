@@ -113,6 +113,10 @@ export function createReaderChapterRenderer({
     }
 
     if (progressBar) progressBar.style.width = progress + '%';
+    // Mirror into the always-on-top line that stays visible when the reader
+    // chrome auto-hides (calm-reader mode).
+    const freeProg = document.getElementById('rd-free-prog-fill');
+    if (freeProg) freeProg.style.width = progress + '%';
     if (progressText) progressText.textContent = `${progress}% · абзац ${paragraphIndex + 1} / ${Math.max(1, paragraphs.length)}`;
 
     const comprehension = book.comprehension?.[chapter?.id];
