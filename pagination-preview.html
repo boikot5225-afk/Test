@@ -67,17 +67,13 @@ body {
 }
 
 /* the page currently animating away sits on top */
-#pFront { z-index:3; }
+#pFront { z-index:3; transform:rotateY(0deg); }
 #pBehind { z-index:1; }
 #pFront.flip-fwd {
   transition:transform .46s cubic-bezier(.4,.05,.2,1);
   transform:rotateY(-160deg);
 }
 #pFront.flip-fwd .fold-shade { transition:opacity .46s; opacity:1; }
-#pFront.flip-back {
-  transition:transform .46s cubic-bezier(.4,.05,.2,1);
-  transform:rotateY(0deg);
-}
 
 /* subtle static page-edge shadow so the book looks like it has depth even at rest */
 .page::after {
@@ -203,42 +199,50 @@ function renderStatic() {
 renderStatic();
 
 let animating = false;
-function goNext() {
-  if (animating || cur >= pages.length - 1) { flash(); return; }
+
+// Runs `handler` once, whichever comes first: the real transitionend event or
+// a fallback timer — a device that for whatever reason never fires
+// transitionend (backgrounded tab, dropped frame, etc.) would otherwise leave
+// `animating` stuck true forever and every future tap would silently no-op.
+function onceTransitionOrTimeout(el, handler, timeoutMs = 600) {
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    el.removeEventListener('transitionend', onEnd);
+    clearTimeout(timer);
+    handler();
+  };
+  const onEnd = (e) => { if (e.target === el && e.propertyName === 'transform') finish(); };
+  el.addEventListener('transitionend', onEnd);
+  const timer = setTimeout(finish, timeoutMs);
+}
+
+// Both directions use the exact same mechanism: pFront (always showing the
+// CURRENT page at rest) peels away to reveal pBehind (holding whichever page
+// we're turning TO — next or previous, doesn't matter which), then pFront's
+// content is swapped to that page and its rotation reset to resting, instantly
+// and invisibly, ready for the next turn. Trying to give "back" a mirrored
+// reverse animation (peel the other way) was the earlier, buggier version —
+// it needed an inline style to fake a starting pose, and that inline style
+// permanently outranked the CSS class's transform in the cascade, silently
+// killing the animation. One direction for both ways is simpler and reliable.
+function turn(targetIndex) {
+  if (animating || targetIndex < 0 || targetIndex >= pages.length) { flash(); return; }
   animating = true;
-  pBehindInner.innerHTML = pageHtml(cur + 1);
+  pBehindInner.innerHTML = pageHtml(targetIndex);
   pFront.classList.add('flip-fwd');
-  pFront.addEventListener('transitionend', function done() {
-    pFront.removeEventListener('transitionend', done);
-    cur += 1;
+  onceTransitionOrTimeout(pFront, () => {
+    cur = targetIndex;
     pFront.classList.remove('flip-fwd');
     pFrontInner.innerHTML = pageHtml(cur);
     pBehindInner.innerHTML = '';
     updateChrome();
     animating = false;
-  }, { once: true });
+  });
 }
-function goBack() {
-  if (animating || cur <= 0) { flash(); return; }
-  animating = true;
-  cur -= 1;
-  pBehindInner.innerHTML = pageHtml(cur + 1);
-  pFrontInner.innerHTML = pageHtml(cur);
-  pFront.style.transition = 'none';
-  pFront.style.transform = 'rotateY(-160deg)';
-  // force reflow so the browser applies the "pre-flipped" state before we animate back
-  void pFront.offsetHeight;
-  pFront.style.transition = '';
-  pFront.classList.add('flip-back');
-  pFront.addEventListener('transitionend', function done() {
-    pFront.removeEventListener('transitionend', done);
-    pFront.classList.remove('flip-back');
-    pFront.style.transform = '';
-    pBehindInner.innerHTML = '';
-    updateChrome();
-    animating = false;
-  }, { once: true });
-}
+function goNext() { turn(cur + 1); }
+function goBack() { turn(cur - 1); }
 
 let noteTimer = null;
 function flash() {
