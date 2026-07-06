@@ -218,7 +218,14 @@ ${body.text || ''}`;
     const zhNote = lang === 'zh'
       ? ` The raw transcript has NO punctuation at all (Whisper does not add any for Chinese) — you must add standard Chinese punctuation (。，！？、) based on meaning and natural pauses, not just copy it as one block. Whisper also randomly mixes Traditional and Simplified characters within the same transcript (it has no fixed script mode) — normalize ALL output to Simplified Chinese (简体字), converting any Traditional characters you see.`
       : '';
-    return `You are cleaning up a raw speech-to-text transcript of spoken ${langName} for a language-learning reader app. Fix ASR mistakes (misheard homophones, wrong characters/words, missing punctuation), and split the text into natural paragraphs of roughly 2-5 sentences each — do this even if the raw text has no punctuation or paragraph cues at all; use topic shifts and natural pauses in meaning to decide where a paragraph ends. Never return the whole input as a single unbroken block.${zhNote} Do NOT translate, summarize, or change the meaning — only clean up recognition errors and add punctuation/paragraph breaks.
+    // English ASR-specific quirks Whisper reliably gets wrong that the generic
+    // "fix ASR mistakes" instruction alone wasn't reliably catching: spoken
+    // filler/disfluency clutter (especially thick in podcasts/talk audio) and
+    // classic homophone confusions.
+    const enNote = lang === 'en'
+      ? ` This is spoken English (often casual — podcasts, interviews, talk audio), so also: remove pure filler/disfluency words and false starts (um, uh, "you know", "like" used as a verbal tic, stuttered word repeats such as "I- I- I think") that add no meaning — but keep genuine repetition used for emphasis (e.g. "no, no, no" as a real reaction). Fix classic English ASR homophone mix-ups (their/there/they're, its/it's, your/you're, to/too/two, effect/affect) based on context. Capitalize proper nouns and sentence starts correctly.`
+      : '';
+    return `You are cleaning up a raw speech-to-text transcript of spoken ${langName} for a language-learning reader app. Fix ASR mistakes (misheard homophones, wrong characters/words, missing punctuation), and split the text into natural paragraphs of roughly 2-5 sentences each — do this even if the raw text has no punctuation or paragraph cues at all; use topic shifts and natural pauses in meaning to decide where a paragraph ends. Never return the whole input as a single unbroken block.${zhNote}${enNote} Do NOT translate, summarize, or change the meaning — only clean up recognition errors and add punctuation/paragraph breaks.
 Return ONLY valid JSON:
 {
   "text": "cleaned transcript here, with paragraphs separated by a blank line (\\n\\n)"
