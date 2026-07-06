@@ -84,54 +84,42 @@ export async function renderHome() {
   };
 
   const langFlag = (l) => ({ fr: '🇫🇷', zh: '🇨🇳', en: '🇬🇧', de: '🇩🇪', es: '🇪🇸' }[String(l || 'fr').slice(0,2)] || '🌐');
-  const formatIcon = (book) => book.format === 'song' ? '🎵' : '📖';
 
   const sorted = [...langBooks].sort((a, b) =>
     new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
-  const recent = sorted.slice(0, 3);
+  const primary = sorted[0] || null;
+  const coverClass = (book) => {
+    const l = String(book.lang || book.sourceLang || 'fr').slice(0, 2);
+    return ['fr', 'en', 'zh'].includes(l) ? l : 'de';
+  };
 
   const section = $('home-continue-section');
   if (section) {
-    if (!recent.length) {
+    if (!primary) {
       // Nothing to continue — the persistent "Добавить текст" button below
       // already covers this case, no need for a second add prompt here.
       section.innerHTML = '';
     } else {
+      const pct = bookProgress(primary);
+      const chInfo = (() => {
+        const ch = primary.chapters?.[primary.currentChapter || 0];
+        const pi = primary.currentParagraph || 0;
+        const total = ch?.paragraphs?.length || 0;
+        return ch ? `${escape(ch.title || `Гл. ${(primary.currentChapter||0)+1}`)} · абзац ${pi+1}/${total}` : `${pct}%`;
+      })();
+      const letter = escape((primary.title || '?').trim().slice(0, 1).toUpperCase());
       section.innerHTML = `
         <div class="home-section-label">продолжить</div>
-        ${recent.map((book, idx) => {
-          const pct = bookProgress(book);
-          // No escape() here — chInfo is escaped once at the point of use below;
-          // escaping twice showed clean "&"/"'" as literal &amp;/&#39;.
-          const chInfo = (() => {
-            const ch = book.chapters?.[book.currentChapter || 0];
-            const pi = book.currentParagraph || 0;
-            const total = ch?.paragraphs?.length || 0;
-            return ch ? `${ch.title || `Гл. ${(book.currentChapter||0)+1}`} · абзац ${pi+1}/${total}` : '';
-          })();
-          const isPrimary = idx === 0;
-          return `
-          <div class="home-continue-card-v2 ${isPrimary ? 'primary' : ''}">
-            <div class="hcc-top">
-              <div class="hcc-icon">${formatIcon(book)} ${langFlag(book.lang || book.sourceLang)}</div>
-              <div class="hcc-meta">
-                <div class="hcc-title">${escape(book.title || 'Текст')}</div>
-                <div class="hcc-sub">${escape(book.author ? book.author + ' · ' : '')}${escape(chInfo)}</div>
-              </div>
-              <div class="hcc-pct">${pct}%</div>
-            </div>
-            <div class="hcc-bar"><div class="hcc-fill" style="width:${pct}%"></div></div>
-            <div class="hcc-actions">
-              <button class="hcc-btn primary" onclick="showScreen('reader');setTimeout(()=>readerOpenBook('${escape(book.id)}'),120)">
-                📖 Читать
-              </button>
-              <button class="hcc-btn" onclick="showScreen('reader');setTimeout(()=>{readerOpenBook('${escape(book.id)}');setTimeout(()=>readerListenToggle(),300)},120)">
-                🔊 Слушать
-              </button>
-            </div>
-          </div>`;
-        }).join('')}
-        ${langBooks.length > 3 ? `
+        <div class="lib-cont-card">
+          <div class="lib-cover lib-cover-${coverClass(primary)}">${letter}</div>
+          <div class="lib-cont-body" onclick="showScreen('reader');setTimeout(()=>readerOpenBook('${escape(primary.id)}'),120)">
+            <div class="lib-cont-title">${escape(primary.title || 'Текст')}</div>
+            <div class="lib-cont-meta">${langFlag(primary.lang || primary.sourceLang)} ${escape(chInfo)}</div>
+            <div class="lib-prog-bar"><div class="lib-prog-fill" style="width:${pct}%"></div></div>
+          </div>
+          <button class="lib-cont-go" onclick="showScreen('reader');setTimeout(()=>readerOpenBook('${escape(primary.id)}'),120)">Читать</button>
+        </div>
+        ${langBooks.length > 1 ? `
           <button class="home-lib-link" onclick="showScreen('reader')">
             Все тексты (${langBooks.length}) →
           </button>` : ''}`;

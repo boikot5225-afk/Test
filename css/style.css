@@ -2693,51 +2693,6 @@ input:-webkit-autofill:focus {
 }
 
 /* Continue cards */
-.home-continue-card-v2 {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 13px 14px;
-  margin-bottom: 9px;
-}
-.home-continue-card-v2.primary {
-  border-color: rgba(196,151,58,.35);
-  background: rgba(196,151,58,.05);
-}
-.hcc-top {
-  display: flex; align-items: flex-start; gap: 10px; margin-bottom: 9px;
-}
-.hcc-icon { font-size: 1.25rem; flex-shrink: 0; line-height: 1.3; }
-.hcc-meta { flex: 1; min-width: 0; }
-.hcc-title {
-  font-size: .95rem; font-weight: 600;
-  color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.hcc-sub { font-size: .72rem; color: var(--text-muted); margin-top: 2px; }
-.hcc-pct {
-  font-size: .75rem; color: var(--accent);
-  font-family: 'IBM Plex Mono', monospace; flex-shrink: 0;
-}
-.hcc-bar {
-  height: 3px; background: var(--border); border-radius: 2px;
-  overflow: hidden; margin-bottom: 10px;
-}
-.hcc-fill { height: 100%; background: var(--accent); border-radius: 2px; }
-.hcc-actions { display: flex; gap: 7px; }
-.hcc-btn {
-  flex: 1; padding: 8px 6px; border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--surface2); color: var(--text-muted);
-  font-size: .78rem; cursor: pointer; font-family: inherit;
-  transition: all .15s;
-}
-.hcc-btn:hover { border-color: var(--accent); color: var(--accent); }
-.hcc-btn.primary {
-  background: rgba(196,151,58,.12);
-  border-color: rgba(196,151,58,.35); color: var(--accent); font-weight: 500;
-}
-
 /* Add card */
 .home-add-card {
   width: 100%; display: flex; align-items: center; gap: 14px;
