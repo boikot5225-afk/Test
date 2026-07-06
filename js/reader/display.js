@@ -30,6 +30,20 @@ export function createReaderDisplay({
     'IBM Plex Sans': "'IBM Plex Sans', sans-serif",
   };
 
+  // None of the Аа fonts above have Chinese glyphs — the browser always falls
+  // through to whatever CJK font it finds, so picking "Lora" vs "Georgia"
+  // never visibly changed Chinese text (the actual bug: this looked like the
+  // font picker "doesn't work" while reading Chinese). Map each pick onto a
+  // real CJK counterpart of the same character (serif ↔ Noto Serif SC, the
+  // one sans option ↔ Noto Sans SC) so choosing a font does something for zh.
+  const zhFonts = {
+    'Playfair Display': '"Noto Serif SC","Noto Serif TC",serif',
+    'Lora': '"Noto Serif SC","Noto Serif TC",serif',
+    'Source Serif 4': '"Noto Serif SC","Noto Serif TC",serif',
+    'Georgia': '"Noto Serif SC","Noto Serif TC",serif',
+    'IBM Plex Sans': '"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif',
+  };
+
   // Old theme names map onto the calm-reader trio so saved settings keep
   // working: parchment was the warm light look (→ paper), night the dark one
   // (→ ink); the old dark "sepia" becomes ink too — the new sepia is light.
@@ -55,6 +69,7 @@ export function createReaderDisplay({
     const root = document.getElementById(readingViewId);
     if (!root) return;
     root.style.setProperty('--rd-font', fonts[settings.font] || fonts['Playfair Display']);
+    root.style.setProperty('--rd-font-zh', zhFonts[settings.font] || zhFonts['Lora']);
     root.style.setProperty('--rd-size', Number(settings.size) + 'px');
     const lh = Number(settings.lh) / 100;
     root.style.setProperty('--rd-lh', lh.toFixed(2));
@@ -62,6 +77,24 @@ export function createReaderDisplay({
     const zhLh = zhPinyinOn() ? Math.max(lh, 1.85).toFixed(2) : lh.toFixed(2);
     root.style.setProperty('--rd-zh-lh', zhLh);
     root.dataset.rdTheme = normalizeTheme(settings.theme);
+  }
+
+  // Dragging the size/line-height sliders fires 'input' far faster than once
+  // per frame, and each apply() forces a reflow of the whole chapter — brutal
+  // on Chinese text specifically, where every character is its own
+  // inline-block span with a ruby annotation, i.e. thousands of boxes to
+  // relayout. Coalesce bursts into one apply() (and one localStorage write)
+  // per animation frame instead of one per input event.
+  let pendingSettings = null;
+  let rafScheduled = false;
+  function applyThrottled(settings) {
+    pendingSettings = settings;
+    if (rafScheduled) return;
+    rafScheduled = true;
+    requestAnimationFrame(() => {
+      rafScheduled = false;
+      if (pendingSettings) { apply(pendingSettings); save(pendingSettings); }
+    });
   }
 
   function init() {
@@ -105,8 +138,7 @@ export function createReaderDisplay({
   function setSize(input) {
     const settings = load();
     settings.size = Number(input.value);
-    save(settings);
-    apply(settings);
+    applyThrottled(settings);
     const value = document.getElementById('rd-dp-size-val');
     if (value) value.textContent = settings.size;
   }
@@ -114,8 +146,7 @@ export function createReaderDisplay({
   function setLineHeight(input) {
     const settings = load();
     settings.lh = Number(input.value);
-    save(settings);
-    apply(settings);
+    applyThrottled(settings);
     const value = document.getElementById('rd-dp-lh-val');
     if (value) value.textContent = (settings.lh / 100).toFixed(2);
   }

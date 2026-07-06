@@ -2214,7 +2214,11 @@ input:-webkit-autofill:focus {
 
 /* v68.4 — Chinese reader readability + pinyin in word card */
 #reader-reading-view[data-reader-lang="zh"] .reader-paragraph{
-  font-family:"Noto Serif SC","Noto Sans CJK SC","Microsoft YaHei","PingFang SC","Heiti SC",system-ui,sans-serif !important;
+  /* No Аа font has CJK glyphs, so the picker used to have zero visible effect
+     on Chinese text — --rd-font-zh (set in display.js) maps each pick onto a
+     real serif/sans CJK counterpart instead, so choosing a font actually
+     changes something here too. */
+  font-family:var(--rd-font-zh, "Noto Serif SC"),"Noto Sans CJK SC","Microsoft YaHei","PingFang SC","Heiti SC",system-ui,sans-serif !important;
   font-size:var(--rd-size) !important;
   line-height:var(--rd-zh-lh, 2.05) !important;
   letter-spacing:.035em !important;
