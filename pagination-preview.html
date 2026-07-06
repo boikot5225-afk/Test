@@ -20,13 +20,16 @@ body {
   overflow:hidden;
 }
 
-/* ── top bar (static chrome, same idea as the real reader) ── */
+/* ── top bar (static chrome, same idea as the real reader) ──
+   No backdrop-filter here: blurring a large fixed element every frame while
+   a 3D transform animates underneath is expensive on mid-range Android GPUs
+   and was very likely most of the "тормозит" — a solid near-opaque
+   background reads almost the same visually for a lot less compositing cost. */
 #top {
   position:fixed; top:0; left:0; right:0; z-index:20;
   display:flex; align-items:center; gap:10px;
   padding:12px 16px 10px;
-  background:color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter:blur(14px);
+  background:color-mix(in srgb, var(--bg) 97%, transparent);
   border-bottom:1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 #top .back { font-size:1.05rem; color:var(--text-mid); background:none; border:none; }
@@ -41,6 +44,12 @@ body {
 #book {
   position:fixed; inset:0; padding-top:66px; padding-bottom:52px;
   perspective:1800px;
+  /* Tells the browser upfront that horizontal gestures here are ours —
+     without it, the browser's own gesture recognizer spends the first
+     several pixels of movement deciding whether this is a scroll/zoom,
+     delaying (or on some devices dropping) our touchend handling, which is
+     a very plausible cause of "листается не всегда". */
+  touch-action:pan-y;
 }
 .page-slot {
   position:absolute; inset:66px 0 52px;
@@ -52,6 +61,11 @@ body {
   overflow:hidden;
   backface-visibility:hidden;
   transform-origin:right center;
+  /* Promote to its own compositor layer up front instead of the browser
+     deciding mid-gesture — that decision + the layer-creation cost is real
+     work, and doing it for the first time exactly when a finger is already
+     down is a classic source of a janky first frame. */
+  will-change:transform;
 }
 .page .inner {
   max-width:640px; margin:0 auto; height:100%;
@@ -82,18 +96,12 @@ body {
   pointer-events:none;
 }
 
-/* tap zones for turning pages (left third = back, right two-thirds = forward) */
-.zone { position:absolute; top:66px; bottom:52px; z-index:5; }
-.zone.l { left:0; width:30%; }
-.zone.r { right:0; width:70%; }
-
 /* ── bottom bar ── */
 #bottom {
   position:fixed; left:0; right:0; bottom:0; z-index:20;
   display:flex; align-items:center; justify-content:center; gap:14px;
   padding:10px 16px 14px;
-  background:color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter:blur(14px);
+  background:color-mix(in srgb, var(--bg) 97%, transparent);
   border-top:1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 #bottom .page-dots { font-family:'IBM Plex Mono',monospace; font-size:.78rem; color:var(--text-dim); }
@@ -134,8 +142,6 @@ body {
     <div class="page" id="pBehind"><div class="inner" id="pBehindInner"></div></div>
     <div class="page" id="pFront"><div class="inner" id="pFrontInner"></div><div class="fold-shade"></div></div>
   </div>
-  <div class="zone l" id="zoneBack"></div>
-  <div class="zone r" id="zoneFwd"></div>
 </div>
 
 <div id="scrollMode"><div class="inner" id="scrollInner"></div></div>
@@ -252,23 +258,42 @@ function flash() {
   noteTimer = setTimeout(() => n.classList.remove('show'), 1400);
 }
 
-document.getElementById('zoneFwd').addEventListener('click', () => { if (!scrollMode) goNext(); });
-document.getElementById('zoneBack').addEventListener('click', () => { if (!scrollMode) goBack(); });
 document.addEventListener('keydown', (e) => {
   if (scrollMode) return;
   if (e.key === 'ArrowRight') goNext();
   if (e.key === 'ArrowLeft') goBack();
 });
 
-// swipe
-let touchStartX = null;
-document.getElementById('book').addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; }, { passive: true });
-document.getElementById('book').addEventListener('touchend', (e) => {
-  if (touchStartX == null) return;
-  const dx = e.changedTouches[0].clientX - touchStartX;
-  if (Math.abs(dx) > 50) { dx < 0 ? goNext() : goBack(); }
-  touchStartX = null;
+// One handler for both tap and swipe, instead of a separate 'click' on the
+// zones plus a separate touchstart/touchend swipe listener. Splitting them
+// left a dead zone: a real finger tap almost always drifts a few pixels,
+// which is often enough for the browser to decide "this isn't a click" (so
+// no click event fires) but not enough to cross the swipe's 50px threshold —
+// so neither handler fired and the page silently didn't turn. Now every
+// touch is classified once, by its own total movement: small movement = tap
+// (use where it started to pick a side), larger = swipe (use direction).
+const bookEl0 = document.getElementById('book');
+let touchStartX = null, touchStartY = null;
+bookEl0.addEventListener('touchstart', (e) => {
+  touchStartX = e.touches[0].clientX;
+  touchStartY = e.touches[0].clientY;
 }, { passive: true });
+bookEl0.addEventListener('touchend', (e) => {
+  if (scrollMode || touchStartX == null) return;
+  const endX = e.changedTouches[0].clientX;
+  const dx = endX - touchStartX;
+  const dy = e.changedTouches[0].clientY - touchStartY;
+  touchStartX = null;
+  if (Math.abs(dy) > Math.abs(dx) * 1.5) return; // vertical drift — not a page-turn gesture
+  if (Math.abs(dx) > 18) { dx < 0 ? goNext() : goBack(); return; }
+  // Treated as a tap: which third of the screen it landed in decides direction.
+  endX < window.innerWidth * 0.3 ? goBack() : goNext();
+}, { passive: true });
+// Desktop/mouse fallback (no touch events) — click still works there.
+bookEl0.addEventListener('click', (e) => {
+  if (scrollMode || 'ontouchstart' in window) return;
+  e.clientX < window.innerWidth * 0.3 ? goBack() : goNext();
+});
 
 // scroll-mode toggle, for an honest side-by-side comparison
 const modeBtn = document.getElementById('modeBtn');
