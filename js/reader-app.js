@@ -3068,8 +3068,16 @@ async function readerOpenWordPanel(word, paragraphIndex = 0) {
       // CC-CEDICT/lang_dictionary может дать только pinyin/английскую gloss-запись.
       // Если русского смысла нет — сразу добираем человеческое русское объяснение через DeepSeek.
       const hasRu = readerHasRussianMeaning(found);
+      // Same idea for English: cached/local entries saved before the IPA field
+      // existed have no transcription. readerTranslateWordAI's own cache-hit
+      // shortcut only checks for a Russian meaning (always present here), so
+      // it would just re-render the same incomplete cache — force:true skips
+      // that shortcut and genuinely re-queries DeepSeek instead.
+      const hasIpa = String(found?.ipa || '').trim().length > 0;
       if (activeLang === 'zh' && !hasRu) {
         await readerTranslateWordAI({ force: false, skipLocal: true });
+      } else if (activeLang === 'en' && !hasIpa) {
+        await readerTranslateWordAI({ force: true, skipLocal: true });
       }
       if (activeLang === 'zh') setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
       return;
