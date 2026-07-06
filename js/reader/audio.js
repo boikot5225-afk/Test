@@ -19,7 +19,7 @@ export function createReaderAudio({
     if (!clean) return false;
     const chunk = clean.length > 900 ? clean.slice(0, 900) : clean;
     const rawLang = String(opts.lang || getLang?.() || 'fr').toLowerCase();
-    const lang = rawLang.startsWith('zh') ? 'zh' : rawLang.startsWith('en') ? 'en' : 'fr';
+    const lang = rawLang.startsWith('zh') ? 'zh' : rawLang.startsWith('en') ? 'en' : rawLang.startsWith('es') ? 'es' : 'fr';
     const rate = opts.rate || (lang === 'zh' ? 0.92 : 0.9);
 
     stop(false);

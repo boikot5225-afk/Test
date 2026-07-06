@@ -5,9 +5,9 @@
 import { sb, sbUser, sbGetCurrentUserId, isSupabaseReady, fbSaveWordState, fbLoadWordState,
          LONG_REQUEST_TIMEOUT_MS, initSupabase } from './supabase.js';
 import { isGuest, VERBS, NOUNS, setCurrentProfile } from './state.js';
-import { speak, stopSpeak } from './tts.js?v=68.32-firebase-tts';
+import { speak, stopSpeak } from './tts.js?v=68.33-spanish-voice';
 import { showToast, showLoading, hideLoading, normalizeImportKey } from './utils.js';
-import { createReaderAudio } from './reader/audio.js?v=1';
+import { createReaderAudio } from './reader/audio.js?v=2';
 import { createReaderNavigation } from './reader/navigation.js?v=1';
 import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16,
          zipU32 as epubZipU32, inflateZipData as epubInflateZipData,

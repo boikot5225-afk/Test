@@ -20,6 +20,7 @@ function normalizeLang(lang = 'fr') {
   const raw = String(lang || 'fr').trim().toLowerCase();
   if (raw === 'zh' || raw.startsWith('zh') || raw === 'cn' || raw === 'chinese') return 'zh';
   if (raw === 'en' || raw.startsWith('en-') || raw === 'english') return 'en';
+  if (raw === 'es' || raw.startsWith('es-') || raw === 'spanish') return 'es';
   return 'fr';
 }
 
@@ -207,7 +208,7 @@ async function playAudioBuffer(buffer, mimeType = 'audio/mpeg', token = ++ttsTok
 
 function pickBrowserVoice(lang = 'fr') {
   const n = normalizeLang(lang);
-  const prefix = n === 'zh' ? 'zh' : n === 'en' ? 'en' : 'fr';
+  const prefix = n === 'zh' ? 'zh' : n === 'en' ? 'en' : n === 'es' ? 'es' : 'fr';
   const voices = window.speechSynthesis?.getVoices?.() || [];
   return voices.find((v) => v.lang.toLowerCase().startsWith(prefix) && v.localService)
     || voices.find((v) => v.lang.toLowerCase().startsWith(prefix))
@@ -221,7 +222,7 @@ function speakViaWebSpeech(text, { lang = 'fr', rate = 1 } = {}) {
   if (!prepared) return Promise.resolve(false);
   window.speechSynthesis.cancel();
   const utt = new SpeechSynthesisUtterance(prepared);
-  utt.lang = normalizedLang === 'zh' ? 'zh-CN' : normalizedLang === 'en' ? 'en-US' : 'fr-FR';
+  utt.lang = normalizedLang === 'zh' ? 'zh-CN' : normalizedLang === 'en' ? 'en-US' : normalizedLang === 'es' ? 'es-ES' : 'fr-FR';
   utt.rate = Math.max(0.65, Math.min(1.25, Number(rate) || 1));
   const voice = pickBrowserVoice(normalizedLang);
   if (voice) utt.voice = voice;

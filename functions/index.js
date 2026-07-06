@@ -428,12 +428,14 @@ const TTS_VOICES = Object.freeze({
   fr: 'ff_siwis',
   zh: 'zf_xiaobei',
   en: 'af_heart',
+  es: 'ef_dora',
 });
 
 function ttsLang(raw) {
   const v = String(raw || 'fr').trim().toLowerCase();
   if (v === 'zh' || v.startsWith('zh') || v === 'cn' || v === 'chinese') return 'zh';
   if (v === 'en' || v.startsWith('en-') || v === 'english') return 'en';
+  if (v === 'es' || v.startsWith('es-') || v === 'spanish') return 'es';
   return 'fr';
 }
 
