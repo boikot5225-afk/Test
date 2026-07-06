@@ -2316,28 +2316,31 @@ input:-webkit-autofill:focus {
   line-height: var(--rd-lh)   !important;
 }
 
-/* --- Themes --- */
+/* --- Themes (calm reader): Бумага / Сепия / Чернила ---
+   Legacy saved names (parchment/night/'') are normalized to these three in
+   display.js, so only the new palettes live here. One accent per theme. */
+#reader-reading-view[data-rd-theme="paper"] {
+  --bg: #FAF6F0; --text: #241E17; --surface: #FFFFFF;
+  --surface2: #F1EBE2; --surface3: #E9E1D4;
+  --border: #E5DDD1; --text-muted: #6E6356;
+  --text-dim: #9C9184; --accent: #8A4B2D;
+}
 #reader-reading-view[data-rd-theme="sepia"] {
-  --bg: #2a2016; --text: #d4c4a0; --surface: #241c12;
-  --surface2: #2e2518; --surface3: #342b1e;
-  --border: rgba(180,140,60,.22); --text-muted: #806a4a;
-  --text-dim: #6a5a3a; --accent: #b08030;
+  --bg: #EFE6D8; --text: #332A1F; --surface: #F7F0E4;
+  --surface2: #E6DBC8; --surface3: #DDD0B9;
+  --border: #D8CBB4; --text-muted: #71634F;
+  --text-dim: #98896F; --accent: #7A5232;
 }
-#reader-reading-view[data-rd-theme="parchment"] {
-  --bg: #f5efe0; --text: #2a2018; --surface: #ede4cf;
-  --surface2: #e0d4b8; --surface3: #d4c8a8;
-  --border: rgba(160,120,40,.22); --text-muted: #7a6040;
-  --text-dim: #9a8060; --accent: #9a7a20;
+#reader-reading-view[data-rd-theme="ink"] {
+  --bg: #14120F; --text: #E8E2D8; --surface: #1D1A16;
+  --surface2: #26221D; --surface3: #2E2922;
+  --border: #37322A; --text-muted: #A79D8F;
+  --text-dim: #7A7164; --accent: #D9A15F;
 }
-#reader-reading-view[data-rd-theme="parchment"] .rd-top,
-#reader-reading-view[data-rd-theme="parchment"] .rd-bot {
-  background: color-mix(in srgb, #f5efe0 94%, transparent);
-}
-#reader-reading-view[data-rd-theme="night"] {
-  --bg: #0e0e12; --text: #c8c8d8; --surface: #141418;
-  --surface2: #1a1a20; --surface3: #1e1e26;
-  --border: rgba(100,100,160,.22); --text-muted: #606070;
-  --text-dim: #484858; --accent: #7070bb;
+/* dark theme: accent-on-dark needs dark label text on filled controls */
+#reader-reading-view[data-rd-theme="ink"] .rd-listen.playing,
+#reader-reading-view[data-rd-theme="ink"] .rd-icon.on {
+  color: #14120F;
 }
 
 /* Word panel buttons — explicit contrast in all themes */

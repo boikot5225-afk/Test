@@ -30,9 +30,21 @@ export function createReaderDisplay({
     'IBM Plex Sans': "'IBM Plex Sans', sans-serif",
   };
 
+  // Old theme names map onto the calm-reader trio so saved settings keep
+  // working: parchment was the warm light look (→ paper), night the dark one
+  // (→ ink); the old dark "sepia" becomes ink too — the new sepia is light.
+  // '' (the old default) also becomes paper.
+  function normalizeTheme(theme) {
+    const map = { '': 'paper', parchment: 'paper', night: 'ink', sepia: 'sepia', paper: 'paper', ink: 'ink' };
+    return map[String(theme || '')] ?? 'paper';
+  }
+
   function load() {
-    try { return { ...defaults, ...JSON.parse(localStorage.getItem(key) || '{}') }; }
-    catch { return { ...defaults }; }
+    let settings;
+    try { settings = { ...defaults, ...JSON.parse(localStorage.getItem(key) || '{}') }; }
+    catch { settings = { ...defaults }; }
+    settings.theme = normalizeTheme(settings.theme);
+    return settings;
   }
 
   function save(settings) {
@@ -49,7 +61,7 @@ export function createReaderDisplay({
     // Chinese needs extra line-height when pinyin is visible above characters
     const zhLh = zhPinyinOn() ? Math.max(lh, 1.85).toFixed(2) : lh.toFixed(2);
     root.style.setProperty('--rd-zh-lh', zhLh);
-    root.dataset.rdTheme = settings.theme || '';
+    root.dataset.rdTheme = normalizeTheme(settings.theme);
   }
 
   function init() {
@@ -58,7 +70,7 @@ export function createReaderDisplay({
     const panel = document.getElementById(panelId);
     if (!panel) return settings;
     panel.querySelectorAll('.rd-dp-font').forEach(button => button.classList.toggle('rd-dp-active', button.dataset.font === settings.font));
-    panel.querySelectorAll('.rd-dp-theme').forEach(button => button.classList.toggle('rd-dp-active', button.dataset.theme === (settings.theme || '')));
+    panel.querySelectorAll('.rd-dp-theme').forEach(button => button.classList.toggle('rd-dp-active', button.dataset.theme === normalizeTheme(settings.theme)));
     const size = panel.querySelector('#rd-dp-size');
     const lineHeight = panel.querySelector('#rd-dp-lh');
     if (size) { size.value = settings.size; panel.querySelector('#rd-dp-size-val').textContent = settings.size; }
