@@ -3306,3 +3306,52 @@ input:-webkit-autofill:focus {
 @media (min-width:701px){
   .reader-word-panel .rwp-grab{ display:none; }
 }
+
+/* ── calm reader phase 4: library — continue card + colored covers + compact rows ── */
+.lib-cover{
+  flex:none; width:40px; height:56px; border-radius:8px;
+  display:flex; align-items:center; justify-content:center;
+  font-family:'Lora',serif; font-size:1.15rem; font-weight:600; color:#fff;
+}
+.lib-cover-fr{ background:linear-gradient(160deg,#4C6285,#2E3F58); }
+.lib-cover-en{ background:linear-gradient(160deg,#7A4C85,#4A2E58); }
+.lib-cover-zh{ background:linear-gradient(160deg,#A84C3F,#6E2A22); }
+.lib-cover-de,.lib-cover-es{ background:linear-gradient(160deg,#4C8570,#2E5842); }
+
+.lib-cont-card{
+  display:flex; gap:14px; align-items:center;
+  background:var(--surface); border:1px solid var(--border); border-radius:16px;
+  padding:12px; box-shadow:0 6px 20px rgba(0,0,0,.06);
+}
+.lib-cont-card .lib-cover{ width:52px; height:72px; font-size:1.4rem; }
+.lib-cont-body{ flex:1; min-width:0; cursor:pointer; }
+.lib-cont-title{
+  font-family:'Lora',serif; font-size:1rem; font-weight:600; color:var(--text);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.lib-cont-meta{ font-size:.74rem; color:var(--text-dim); margin:2px 0 8px; }
+.lib-cont-go{
+  flex:none; border:none; background:var(--accent); color:var(--bg,#fff);
+  font-family:inherit; font-weight:600; font-size:.82rem;
+  padding:10px 16px; border-radius:99px; cursor:pointer;
+}
+
+/* rows instead of bordered cards: cover + text + slim ghost icon actions */
+.lib-book-card{
+  background:transparent; border:none; border-radius:0;
+  border-bottom:1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.lib-book-card:hover{ border-color:color-mix(in srgb, var(--border) 60%, transparent); }
+.lib-book-card:last-child{ border-bottom:none; }
+.lib-book-main{ padding:10px 2px; align-items:center; gap:12px; }
+.lib-book-title{ font-family:'Lora',serif; font-weight:500; font-size:.94rem; }
+.lib-book-meta{ margin-bottom:6px; }
+.lib-book-pct{ align-self:center; }
+.lib-book-actions{
+  border-top:none; justify-content:flex-end; gap:2px; padding:0 2px 8px;
+}
+.lib-book-actions .lib-action-btn{
+  flex:none; border-right:none; width:34px; height:30px;
+  border-radius:8px; font-size:.86rem;
+}
+.lib-book-actions .lib-action-btn:hover{ background:var(--surface2); border-radius:8px; }

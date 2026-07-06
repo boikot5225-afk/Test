@@ -1498,10 +1498,34 @@ async function renderReaderScreen() {
 
   const langFlag = (lang) => ({ fr:'🇫🇷', zh:'🇨🇳', en:'🇬🇧', de:'🇩🇪', es:'🇪🇸' }[String(lang||'fr').slice(0,2)] || '🌐');
   const formatIcon = (book) => book.format === 'song' ? '🎵' : '📖';
+  const libCover = (book) => {
+    const lang = readerCanonicalLang(readerBookLang(book));
+    const letter = readerEscape((book.title || '?').trim().slice(0, 1).toUpperCase());
+    return `<div class="lib-cover lib-cover-${lang}">${letter}</div>`;
+  };
 
-  // Прячем старую "продолжить" карточку — теперь это в home
   const continueCard = document.getElementById('reader-continue-card');
-  if (continueCard) { continueCard.style.display = 'none'; continueCard.innerHTML = ''; }
+  const continueBook = readerContinueBook();
+  if (continueCard) {
+    if (!continueBook || continueBook.format === 'news') {
+      continueCard.style.display = 'none'; continueCard.innerHTML = '';
+    } else {
+      const pct = readerBookProgress(continueBook);
+      const ch = continueBook.chapters?.[continueBook.currentChapter || 0];
+      const chInfo = ch ? `${ch.title || `Гл. ${(continueBook.currentChapter||0)+1}`} · ${pct}%` : `${pct}%`;
+      continueCard.style.display = 'flex';
+      continueCard.innerHTML = `
+        <div class="lib-cont-card">
+          ${libCover(continueBook)}
+          <div class="lib-cont-body" onclick="readerOpenBook('${readerEscape(continueBook.id)}')">
+            <div class="lib-cont-title">${readerEscape(continueBook.title)}</div>
+            <div class="lib-cont-meta">${langFlag(readerBookLang(continueBook))} продолжить · ${readerEscape(chInfo)}</div>
+            <div class="lib-prog-bar"><div class="lib-prog-fill" style="width:${pct}%"></div></div>
+          </div>
+          <button class="lib-cont-go" onclick="readerOpenBook('${readerEscape(continueBook.id)}')">Читать</button>
+        </div>`;
+    }
+  }
 
   if (!readerBooks.length) {
     library.innerHTML = `
@@ -1578,22 +1602,17 @@ async function renderReaderScreen() {
     return `
       <div class="lib-book-card ${done ? 'done' : ''}">
         <div class="lib-book-main" onclick="readerOpenBook('${readerEscape(book.id)}')">
-          <div class="lib-book-icon">${formatIcon(book)} ${langFlag(lang)}</div>
+          ${libCover(book)}
           <div class="lib-book-body">
-            <div class="lib-book-title">${readerEscape(book.title)}</div>
-            <div class="lib-book-meta">${readerEscape(book.author || '')}${book.author ? ' · ' : ''}${readerEscape(book.level || '')}</div>
-            <div class="lib-book-tags">
-              ${book.format === 'song' ? '<span class="lib-tag">🎵 песня</span>' : ''}
-              ${done ? '<span class="lib-tag done">✓ прочитано</span>' : `<span class="lib-tag">${readerEscape(chInfo)}</span>`}
-            </div>
+            <div class="lib-book-title">${formatIcon(book) === '🎵' ? '🎵 ' : ''}${readerEscape(book.title)}</div>
+            <div class="lib-book-meta">${langFlag(lang)} ${readerEscape(book.author || '')}${book.author ? ' · ' : ''}${done ? 'прочитано' : readerEscape(chInfo)}</div>
             <div class="lib-prog-bar"><div class="lib-prog-fill" style="width:${pct}%"></div></div>
           </div>
           <div class="lib-book-pct">${pct}%</div>
         </div>
         <div class="lib-book-actions">
-          <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}')">📖 Читать</button>
-          <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}');setTimeout(()=>readerListenToggle(),400)">🔊</button>
-          <button class="lib-action-btn danger" onclick="readerDeleteBook('${readerEscape(book.id)}')">🗑</button>
+          <button class="lib-action-btn" onclick="readerOpenBook('${readerEscape(book.id)}');setTimeout(()=>readerListenToggle(),400)" title="Слушать" aria-label="Слушать">🔊</button>
+          <button class="lib-action-btn danger" onclick="readerDeleteBook('${readerEscape(book.id)}')" title="Удалить" aria-label="Удалить">🗑</button>
         </div>
       </div>`;
   }).join('') : `<div class="lib-empty-tab">${activeTab === 'news' ? '📰 Нет новостей на этом языке.<br>Добавь по URL или вставь текст.' : '📚 Нет книг.'}</div>`;
