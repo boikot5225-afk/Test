@@ -3341,3 +3341,40 @@ input:-webkit-autofill:focus {
   font-family:'Lora',serif; font-size:1.1rem; color:var(--text); line-height:1.2;
 }
 .home-stat-line .home-stat-lbl{ font-size:.72rem; color:var(--text-dim); }
+
+/* ── pages mode: book-like page-flip, alternative to the default scroll ──
+   Real chapter content (paragraphs, translations, word taps) stays exactly
+   as rendered for scroll mode — pages-mode.js only groups the SAME live
+   paragraph nodes into .rd-page wrappers and shows one at a time, so all
+   existing interactions keep working unchanged. */
+#reader-reading-view .rd-scroll.rd-pages-mode{
+  overflow:hidden !important; perspective:1800px; position:relative;
+}
+#reader-reading-view .rd-scroll.rd-pages-mode #reader-chapter-text{
+  position:relative; height:100%;
+}
+#reader-reading-view .rd-page{
+  position:absolute; inset:0; overflow-y:auto;
+  background:var(--bg);
+  backface-visibility:hidden; transform-origin:right center;
+  will-change:transform; display:none;
+}
+#reader-reading-view .rd-page.rd-page-show{ display:block; }
+#reader-reading-view .rd-page.rd-page-current{ z-index:3; }
+#reader-reading-view .rd-page.rd-page-flip{
+  transition:transform .42s cubic-bezier(.4,.05,.2,1);
+  transform:rotateY(-160deg);
+}
+#reader-reading-view .rd-page-fold{
+  position:absolute; inset:0; pointer-events:none; opacity:0;
+  background:linear-gradient(to left, rgba(0,0,0,.2), rgba(0,0,0,0) 35%);
+}
+#reader-reading-view .rd-page.rd-page-flip .rd-page-fold{ transition:opacity .42s; opacity:1; }
+#reader-reading-view .rd-pages-indicator{
+  display:none;
+  position:absolute; left:0; right:0; bottom:8px; z-index:2; text-align:center;
+  font-family:'IBM Plex Mono',monospace; font-size:.7rem; color:var(--text-dim);
+  pointer-events:none;
+}
+#reader-reading-view .rd-scroll.rd-pages-mode .rd-pages-indicator{ display:block; }
+#reader-reading-view #reader-view-mode-btn.on{ background:var(--accent); border-color:var(--accent); color:#f3e7cf; }

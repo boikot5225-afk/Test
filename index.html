@@ -224,7 +224,7 @@
           📡 Проверить связь с сервером
         </button>
         <div id="health-result" style="display:none;margin-top:10px;font-size:0.78rem;line-height:1.5;padding:8px 12px;border-radius:8px;"></div>
-        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v76.75-auto-backfill-ipa</span></div>
+        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v76.76-pages-mode</span></div>
       </div>
     </div>
 
@@ -459,6 +459,7 @@
         </div>
         <button id="reader-marks-btn" class="rd-icon" onclick="readerToggleWordMarks()" title="Подсветка слов" aria-label="Подсветка слов">🖍</button>
         <button id="reader-help-btn" class="rd-icon" onclick="toggleReaderTranslations()" title="Перевод и разбор" aria-label="Перевод и разбор">👁</button>
+        <button id="reader-view-mode-btn" class="rd-icon" onclick="readerTogglePagesMode()" title="Скролл / страницы" aria-label="Скролл / страницы">📖</button>
         <button class="rd-icon" onclick="readerToggleDisplayPanel()" title="Настройки текста" aria-label="Настройки текста" style="font-size:.82rem;font-family:'IBM Plex Sans',sans-serif;font-weight:600;letter-spacing:-.02em">Аа</button>
         <button id="reader-pinyin-btn" class="rd-icon rd-pinyin-btn" onclick="readerCycleZhPinyinMode()" title="Пиньинь" aria-label="Пиньинь" style="display:none">拼</button>
         <button id="reader-orig-audio-btn" class="rd-icon" onclick="readerToggleOriginalAudioPlayer()" title="Оригинальная запись" aria-label="Оригинальная запись" style="display:none">🎧</button>
@@ -511,6 +512,7 @@
       <div class="rd-scroll">
         <div id="reader-chapter-text"></div>
         <div class="rd-end"></div>
+        <div id="reader-pages-indicator" class="rd-pages-indicator"></div>
       </div>
 
       <!-- BOTTOM BAR -->
@@ -1937,6 +1939,6 @@
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=70.5"></script>
+<script type="module" src="js/app.js?v=70.6"></script>
 </body>
 </html>

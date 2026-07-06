@@ -26,7 +26,8 @@ import { createReaderLibraryStore } from './reader/library-store.js?v=5';
 import { createReaderDisplay } from './reader/display.js?v=4';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
-import { createReaderChapterRenderer } from './reader/chapter-render.js?v=3';
+import { createReaderChapterRenderer } from './reader/chapter-render.js?v=4';
+import { createReaderPagesMode } from './reader/pages-mode.js?v=1';
 import { splitTextToChapters as readerImportSplitTextToChapters,
          splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
 
@@ -2493,6 +2494,27 @@ function readerBackToLibrary() {
   renderReaderScreen();
 }
 
+const readerPagesMode = createReaderPagesMode({
+  getChapterText: () => document.getElementById('reader-chapter-text'),
+  getScroller: () => document.querySelector('#reader-reading-view .rd-scroll'),
+  getActiveParagraphIndex: () => readerCurrentBook()?.currentParagraph || 0,
+  setActiveParagraphIndex: (idx) => { readerSelectParagraph(idx); },
+  onPageChange: (index, total) => {
+    const el = document.getElementById('reader-pages-indicator');
+    if (el) el.textContent = total > 1 ? `стр. ${index + 1} / ${total}` : '';
+    document.getElementById('reader-view-mode-btn')?.classList.toggle('on', readerPagesMode.isEnabled());
+  },
+});
+
+function readerTogglePagesMode() {
+  const nowPages = readerPagesMode.toggleMode();
+  document.getElementById('reader-view-mode-btn')?.classList.toggle('on', nowPages);
+  const indicator = document.getElementById('reader-pages-indicator');
+  if (indicator && !nowPages) indicator.textContent = '';
+  showToast(nowPages ? '📖 Режим страниц' : '📜 Режим скролла');
+}
+window.readerTogglePagesMode = readerTogglePagesMode;
+
 const readerChapterRenderer = createReaderChapterRenderer({
   getCurrentBook: readerCurrentBook,
   getBookLang: readerBookLang,
@@ -2516,6 +2538,7 @@ const readerChapterRenderer = createReaderChapterRenderer({
   schedulePrefetch: readerSchedulePrefetch,
   openParagraphTimer: readerTimeParagraphOpen,
   loadEpubImages: readerLoadEpubImages,
+  syncPagesMode: (info) => readerPagesMode.syncAfterRender(info),
 });
 
 function renderReaderChapter() {
@@ -2678,6 +2701,7 @@ function readerSelectParagraph(index) {
 }
 
 function readerScrollActiveParagraph() {
+  if (readerPagesMode.isEnabled()) return;
   setTimeout(() => {
     const active = document.querySelector('#reader-chapter-text .reader-paragraph.active');
     active?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
@@ -2685,12 +2709,14 @@ function readerScrollActiveParagraph() {
 }
 
 function readerNextParagraph() {
+  if (readerPagesMode.isEnabled()) return readerPagesMode.next();
   const result = readerNavigation.nextParagraph();
   readerSyncOriginalAudioToCurrentParagraph();
   return result;
 }
 
 function readerPrevParagraph() {
+  if (readerPagesMode.isEnabled()) return readerPagesMode.prev();
   const result = readerNavigation.previousParagraph();
   readerSyncOriginalAudioToCurrentParagraph();
   return result;

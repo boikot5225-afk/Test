@@ -22,6 +22,7 @@ export function createReaderChapterRenderer({
   schedulePrefetch,
   openParagraphTimer,
   loadEpubImages,
+  syncPagesMode,
 }) {
   // ── Fast navigation helpers ──────────────────────────────────────
   // Returns true if we successfully updated only active-paragraph state
@@ -147,6 +148,7 @@ export function createReaderChapterRenderer({
           saveBooks();
           schedulePrefetch();
           openParagraphTimer();
+          syncPagesMode?.({ full: false });
           return;
         }
 
@@ -175,6 +177,7 @@ export function createReaderChapterRenderer({
     saveBooks();
     schedulePrefetch();
     openParagraphTimer();
+    syncPagesMode?.({ full: true });
   }
 
   return { render };
