@@ -17,13 +17,23 @@ export function createReaderWordPanel({
     panel.id = 'reader-word-panel';
     panel.className = 'reader-word-panel';
     panel.innerHTML = `
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px">
-        <div><div id="reader-word-title" style="font-family:'Playfair Display',serif;font-size:1.35rem;font-style:italic;color:var(--accent)">—</div><div id="reader-word-known" style="font-size:.76rem;color:var(--text-muted)"></div></div>
-        <button onclick="readerCloseWordPanel()" style="background:none;border:none;color:var(--text-muted);font-size:1.35rem;cursor:pointer">×</button>
+      <div class="rwp-grab" aria-hidden="true"></div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:8px">
+        <div style="min-width:0"><div id="reader-word-title" style="font-family:'Lora','Noto Serif SC',serif;font-size:1.9rem;font-weight:600;line-height:1.15;color:var(--text);overflow-wrap:anywhere">—</div><div id="reader-word-known" style="font-size:.74rem;color:var(--text-muted);margin-top:2px"></div></div>
+        <button onclick="readerCloseWordPanel()" style="background:none;border:none;color:var(--text-muted);font-size:1.35rem;cursor:pointer;flex:none">×</button>
       </div>
       <div id="reader-word-status" style="display:none;font-size:.78rem;margin-bottom:8px;padding:8px;border-radius:8px;background:var(--surface2)"></div>
       <div id="reader-word-analysis" class="reader-word-analysis"><div class="reader-word-loading">⏳ Разбираю слово...</div></div>
-      <details class="reader-word-edit" style="margin:10px 0">
+      <div class="reader-word-actions">
+        <button id="reader-word-save-btn" onclick="readerSaveWord()" class="btn btn-primary rwp-main">＋ Сохранить</button>
+        <button onclick="readerSpeakSelectedWord()" class="btn btn-secondary">🔊 слово</button>
+        <button onclick="readerSpeakSelectedContext()" class="btn btn-secondary">🔊 контекст</button>
+        <button onclick="readerMarkSelectedWordKnown()" class="btn btn-secondary">✓ знаю</button>
+        <button onclick="readerMarkSelectedWordProblem()" class="btn btn-secondary">⚠ проблема</button>
+        <button onclick="readerTranslateWordAI(true)" class="btn btn-secondary">↻ DeepSeek</button>
+        <button onclick="readerSendParagraphToPhrase(readerSelectedParagraphIndex)" class="btn btn-secondary">＋ фраза</button>
+      </div>
+      <details class="reader-word-edit" style="margin:12px 0 0">
         <summary style="cursor:pointer;font-size:.78rem;color:var(--text-muted);user-select:none">ручная правка</summary>
         <div style="display:grid;grid-template-columns:1fr 104px 88px;gap:8px;margin:8px 0">
           <input id="reader-word-lemma" placeholder="словарная форма">
@@ -35,16 +45,7 @@ export function createReaderWordPanel({
           <select id="reader-word-gender"><option value="m">m</option><option value="f">f</option><option value="">без рода</option></select>
         </div>
         <textarea id="reader-word-context" rows="2" placeholder="контекст-предложение" style="width:100%;box-sizing:border-box;padding:10px 11px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;resize:vertical;max-height:120px"></textarea>
-      </details>
-      <div class="reader-word-actions">
-        <button onclick="readerSpeakSelectedWord()" class="btn btn-secondary">🔊 слово</button>
-        <button onclick="readerSpeakSelectedContext()" class="btn btn-secondary">🔊 контекст</button>
-        <button onclick="readerTranslateWordAI(true)" class="btn btn-secondary">↻ DeepSeek</button>
-        <button id="reader-word-save-btn" onclick="readerSaveWord()" class="btn btn-primary">＋ Сохранить</button>
-        <button onclick="readerMarkSelectedWordProblem()" class="btn btn-secondary">⚠ проблема</button>
-        <button onclick="readerSendParagraphToPhrase(readerSelectedParagraphIndex)" class="btn btn-secondary">＋ фраза</button>
-        <button onclick="readerMarkSelectedWordKnown()" class="btn btn-secondary">✓ знаю</button>
-      </div>`;
+      </details>`;
 
     const root = document.getElementById('reader-reading-view') || document.body;
     root.appendChild(panel);

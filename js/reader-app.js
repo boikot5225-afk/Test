@@ -19,7 +19,7 @@ import { imgStorePut, imgStoreGet, imgStoreDeleteBook } from './reader/image-sto
 import { audioStorePut, audioStoreGet, audioStoreDelete } from './reader/audio-store.js?v=1';
 import { libraryIdbPut, libraryIdbGet } from './reader/library-idb-store.js?v=1';
 import { wordStateIdbPut, wordStateIdbGet } from './reader/word-state-idb-store.js?v=1';
-import { createReaderWordPanel } from './reader/word-panel.js?v=3';
+import { createReaderWordPanel } from './reader/word-panel.js?v=4';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=2';
 import { createReaderLibraryStore } from './reader/library-store.js?v=5';
