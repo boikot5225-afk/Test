@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.62-calm-reader-phase1';
+const CACHE_VERSION = 'v76.63-calm-reader-phase2';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

@@ -23,7 +23,7 @@ import { createReaderWordPanel } from './reader/word-panel.js?v=3';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=2';
 import { createReaderLibraryStore } from './reader/library-store.js?v=5';
-import { createReaderDisplay } from './reader/display.js?v=1';
+import { createReaderDisplay } from './reader/display.js?v=2';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
 import { createReaderChapterRenderer } from './reader/chapter-render.js?v=3';
@@ -2436,7 +2436,11 @@ async function readerToggleOriginalAudioPlayer() {
   if (!wrap || !audioEl) return;
 
   const showing = wrap.style.display !== 'none';
-  if (showing) { wrap.style.display = 'none'; audioEl.pause(); return; }
+  if (showing) {
+    wrap.style.display = 'none'; audioEl.pause();
+    try { window.__rdMeasureChrome?.(); } catch (_) {}
+    return;
+  }
 
   if (readerOriginalAudioBookId !== book.id) {
     let blob;
@@ -2449,6 +2453,7 @@ async function readerToggleOriginalAudioPlayer() {
     audioEl.src = readerOriginalAudioUrl;
   }
   wrap.style.display = 'flex';
+  try { window.__rdMeasureChrome?.(); } catch (_) {}
   readerSyncOriginalAudioToCurrentParagraph();
 }
 window.readerToggleOriginalAudioPlayer = readerToggleOriginalAudioPlayer;
@@ -2937,10 +2942,13 @@ function readerInitCalmChrome() {
   const measure = () => {
     const top = view.querySelector('.rd-top');
     const bot = view.querySelector('.rd-bot');
+    const audio = document.getElementById('reader-orig-audio-wrap');
     if (top) view.style.setProperty('--rd-top-h', top.offsetHeight + 'px');
     if (bot) view.style.setProperty('--rd-bot-h', bot.offsetHeight + 'px');
+    view.style.setProperty('--rd-audio-h', (audio && audio.style.display !== 'none' ? audio.offsetHeight : 0) + 'px');
   };
   measure();
+  window.__rdMeasureChrome = measure;
 
   if (readerChromeBound) return;
   readerChromeBound = true;

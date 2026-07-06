@@ -11,10 +11,14 @@ export function createReaderDisplay({
   panelId = 'rd-display-panel',
   backdropId = 'rd-display-back',
 }) {
+  // Calm-reader defaults: Lora reads better than Playfair at body sizes
+  // (Playfair is a display face), with slightly roomier leading. Users who
+  // already picked a font in the Аа panel keep their choice (saved settings
+  // override these).
   const defaults = {
-    font: 'Playfair Display',
+    font: 'Lora',
     size: 20,
-    lh: 182,
+    lh: 185,
     theme: '',
   };
 

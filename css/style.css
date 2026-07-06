@@ -2036,22 +2036,8 @@ input:-webkit-autofill:focus {
   border-left-color:var(--accent);
 }
 
-/* 2) Auto-hiding chrome: bars collapse via negative margins (measured by JS
-      into the --rd-top-h / --rd-bot-h vars) so the text area grows smoothly. */
-#reader-reading-view .rd-top{
-  transition:margin-top .28s ease, opacity .22s ease;
-}
-#reader-reading-view .rd-bot{
-  transition:margin-bottom .28s ease, opacity .22s ease;
-}
-#reader-reading-view.rd-chrome-hidden .rd-top{
-  margin-top:calc(-1 * var(--rd-top-h, 64px));
-  opacity:0; pointer-events:none;
-}
-#reader-reading-view.rd-chrome-hidden .rd-bot{
-  margin-bottom:calc(-1 * var(--rd-bot-h, 70px));
-  opacity:0; pointer-events:none;
-}
+/* 2) Auto-hiding chrome: mechanics live in the phase-2 block at the end of
+      this file (absolute bars + transform-only animation, no reflow). */
 /* keep the chapter progress line visible even with hidden chrome */
 #reader-reading-view .rd-free-prog{
   position:absolute; top:0; left:0; right:0; height:3px; z-index:30;
@@ -3209,4 +3195,63 @@ input:-webkit-autofill:focus {
   pointer-events: none;
   background: none !important;
   border: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   v76.63 calm reader phase 2 — appended last on purpose: these must win
+   the cascade over the earlier .rd-top/.rd-bot position:relative rules.
+
+   1) Bars overlay the text (position:absolute) and hide with pure
+      transform/opacity — compositor-only, no layout recalc, which is what
+      made the phase-1 margin animation janky on the phone.
+      z-index stays below the more-sheet (20/21) so sheets still cover bars. */
+#reader-reading-view .rd-top{
+  position:absolute !important; top:0; left:0; right:0; z-index:15;
+  margin:0 !important;
+  transition:transform .25s ease, opacity .2s ease;
+  will-change:transform;
+}
+#reader-reading-view .rd-bot{
+  position:absolute !important; left:0; right:0; bottom:0; z-index:15;
+  margin:0 !important;
+  transition:transform .25s ease, opacity .2s ease;
+  will-change:transform;
+}
+#reader-reading-view.rd-chrome-hidden .rd-top{ transform:translateY(-106%); opacity:0; pointer-events:none; }
+#reader-reading-view.rd-chrome-hidden .rd-bot{ transform:translateY(108%); opacity:0; pointer-events:none; }
+
+/* text flows under the bars; padding reserves space while they're shown */
+#reader-reading-view .rd-scroll{
+  padding-top:calc(var(--rd-top-h, 64px) + var(--rd-audio-h, 0px) + 10px) !important;
+  padding-bottom:calc(var(--rd-bot-h, 70px) + 18px) !important;
+}
+/* original-recording strip docks right under the absolute top bar */
+#reader-orig-audio-wrap{
+  position:absolute; top:var(--rd-top-h, 64px); left:0; right:0; z-index:14;
+}
+
+/* 2) Book column: comfortable measure, roomier side padding,
+      paragraphs read as text, not as cards */
+#reader-reading-view #reader-chapter-text{
+  max-width:660px; margin:0 auto; padding:0 8px;
+}
+#reader-reading-view .reader-paragraph{
+  padding:3px 2px 3px 14px;
+  margin:0 0 .9em;
+  border-radius:0;
+  border-left-width:2.5px;
+}
+
+/* 3) Bottom bar: quiet ghost controls + outline listen pill */
+#reader-reading-view .rd-nav,
+#reader-reading-view .rd-more{
+  border:none; background:transparent;
+  color:var(--text-muted); font-size:1.28rem;
+}
+#reader-reading-view .rd-listen{
+  background:transparent; color:var(--accent);
+  border:1.5px solid var(--accent); border-radius:99px; font-weight:600;
+}
+#reader-reading-view .rd-listen.playing{
+  background:var(--accent); color:#f3e7cf;
 }
