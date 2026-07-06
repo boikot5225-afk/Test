@@ -93,16 +93,9 @@ export async function renderHome() {
   const section = $('home-continue-section');
   if (section) {
     if (!recent.length) {
-      const langLabel = isZh ? 'китайский текст' : 'текст';
-      section.innerHTML = `
-        <div class="home-section-label">начать</div>
-        <button onclick="showScreen('reader');setTimeout(()=>showReaderImportModal(),120)" class="home-add-card">
-          <span style="font-size:1.6rem">${isZh ? '🀄' : '📖'}</span>
-          <div>
-            <b>Добавить ${langLabel}</b>
-            <small>вставка, TXT, EPUB или URL</small>
-          </div>
-        </button>`;
+      // Nothing to continue — the persistent "Добавить текст" button below
+      // already covers this case, no need for a second add prompt here.
+      section.innerHTML = '';
     } else {
       section.innerHTML = `
         <div class="home-section-label">продолжить</div>
@@ -169,10 +162,6 @@ export async function renderHome() {
   }).length;
 
   setText('home-stat-words', openedToday || langWords.filter(w => (w.clicked || 0) > 0).length);
-  setText('home-stat-chapters', (() => {
-    const total = langBooks.reduce((n, b) => n + (b.currentParagraph || 0), 0);
-    return total > 0 ? total : 0;
-  })());
   const readMinutes = (() => {
     try {
       const raw = JSON.parse(localStorage.getItem('an2_reader_time_v1') || '{}');
@@ -182,73 +171,18 @@ export async function renderHome() {
   })();
   setText('home-stat-minutes', readMinutes > 0 ? readMinutes : '—');
 
-  // Лейблы статов — разные для языков
-  const statChLabel = document.querySelector('#home-stats-row-new .home-stat-card:nth-child(2) .home-stat-lbl');
-  if (statChLabel) statChLabel.textContent = isZh ? 'абзацев' : 'глав';
-  const statWLabel = document.querySelector('#home-stats-row-new .home-stat-card:nth-child(3) .home-stat-lbl');
-  if (statWLabel) statWLabel.textContent = isZh ? 'иероглифов' : 'слов открыто';
-
   // Legacy
   setText('home-books-count', books.length);
-  setText('home-books-count-new', langBooks.length + ' ' + plural(langBooks.length, 'текст', 'текста', 'текстов'));
+  setText('home-books-count-new', langBooks.length);
   setText('home-saved-words-new', savedCount ? savedCount + ' сохранено' : 'сохранённые');
 
-  // ── Новости секция ──
+  // ── Новости: один компактный линк, без отдельных карточек ──
   const newsSection = document.getElementById('home-news-section');
   if (newsSection) {
-    const newsBooks = books
-      .filter(b => b.format === 'news' && String(b.lang || b.sourceLang || 'fr').slice(0,2) === lang)
-      .sort((a,b) => new Date(b.createdAt||0) - new Date(a.createdAt||0))
-      .slice(0, 3);
-
-    if (!newsBooks.length) {
-      newsSection.innerHTML = `
-        <div class="home-section-label">новости</div>
-        <button onclick="showScreen('reader');setTimeout(()=>{readerSetLibTab('news');},120)" class="home-add-card">
-          <span style="font-size:1.4rem">📰</span>
-          <div><b>Добавить новость</b><small>URL, Wikipedia или текст</small></div>
-        </button>`;
-    } else {
-      newsSection.innerHTML = `
-        <div class="home-section-label">новости</div>
-        ${newsBooks.map(b => {
-          const done = (b.chapters||[]).every((ch,ci) =>
-            (b.currentChapter||0) > ci ||
-            ((b.currentChapter||0) === ci && (b.currentParagraph||0) >= (ch.paragraphs?.length||1)-1));
-          const dateStr = b.newsDate || b.createdAt
-            ? new Date(b.newsDate || b.createdAt).toLocaleDateString('ru-RU',{day:'numeric',month:'long'})
-            : '';
-          const src = b.newsSource || b.author || 'вставка';
-          const isNew = !done;
-          return `
-            <div class="home-news-card${done?' read':''}" onclick="showScreen('reader');setTimeout(()=>readerOpenBook('${escape(b.id)}'),120)">
-              ${isNew ? '<div class="home-news-dot"></div>' : ''}
-              <div class="home-news-body">
-                <div class="home-news-source">📰 ${escape(src)}</div>
-                <div class="home-news-title">${escape(b.title)}</div>
-                <div class="home-news-meta">${escape(dateStr)}${done?' · прочитано':''}</div>
-              </div>
-              <button class="home-news-speak" onclick="event.stopPropagation();showScreen('reader');setTimeout(()=>{readerOpenBook('${escape(b.id)}');setTimeout(()=>readerListenToggle(),400)},120)">🔊</button>
-            </div>`;
-        }).join('')}
-        ${newsBooks.length >= 3 ? `<button class="home-lib-link" onclick="showScreen('reader');setTimeout(()=>readerSetLibTab('news'),120)">Все новости →</button>` : ''}`;
-    }
-  }
-
-  // ── Quick access ──
-  const quickGrid = document.querySelector('.home-quick-grid');
-  if (quickGrid) {
-    quickGrid.innerHTML = `
-      <button class="home-quick-card" onclick="showScreen('reader')">
-        <i class="hq-icon">📚</i>
-        <b>Библиотека</b>
-        <small id="home-books-count-new">${langBooks.length} ${plural(langBooks.length,'текст','текста','текстов')}</small>
-      </button>
-      <button class="home-quick-card" onclick="showScreen('dict')">
-        <i class="hq-icon">🔤</i>
-        <b>Словарь</b>
-        <small>мои слова</small>
-      </button>`;
+    const newsCount = books.filter(b => b.format === 'news' && String(b.lang || b.sourceLang || 'fr').slice(0,2) === lang).length;
+    newsSection.innerHTML = newsCount
+      ? `<button class="home-lib-link" onclick="showScreen('reader');setTimeout(()=>readerSetLibTab('news'),120)">📰 Новости (${newsCount}) →</button>`
+      : `<button class="home-lib-link" onclick="showScreen('reader');setTimeout(()=>readerSetLibTab('news'),120)">📰 Добавить новость</button>`;
   }
 
   // ── Последние слова / иероглифы ──
@@ -282,11 +216,4 @@ export async function renderHome() {
   // Секция лейбл
   const recentLabel = document.querySelector('.home-recent-section .home-section-label');
   if (recentLabel) recentLabel.textContent = isZh ? 'последние иероглифы' : 'последние слова';
-}
-
-function plural(n, one, few, many) {
-  const mod10 = n % 10, mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return one;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
-  return many;
 }

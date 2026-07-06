@@ -224,7 +224,7 @@
           📡 Проверить связь с сервером
         </button>
         <div id="health-result" style="display:none;margin-top:10px;font-size:0.78rem;line-height:1.5;padding:8px 12px;border-radius:8px;"></div>
-        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v76.67-library-continue-covers</span></div>
+        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v76.68-calm-home</span></div>
       </div>
     </div>
 
@@ -380,45 +380,30 @@
       </div>
     </div>
 
-    <!-- CONTINUE CARDS -->
+    <!-- CONTINUE CARD -->
     <div id="home-continue-section"></div>
-    <div id="home-news-section" style="margin-top:4px"></div>
 
-    <!-- STATS ROW -->
-    <div class="home-stats-row" id="home-stats-row-new">
-      <div class="home-stat-card">
-        <span class="home-stat-num" id="home-stat-minutes">0</span>
-        <span class="home-stat-lbl">мин сегодня</span>
-      </div>
-      <div class="home-stat-card">
-        <span class="home-stat-num" id="home-stat-chapters">0</span>
-        <span class="home-stat-lbl">глав</span>
-      </div>
-      <div class="home-stat-card">
-        <span class="home-stat-num" id="home-stat-words">0</span>
-        <span class="home-stat-lbl">слов открыто</span>
-      </div>
-    </div>
+    <!-- ADD TEXT — always available, one button -->
+    <button class="home-add" onclick="showScreen('reader');setTimeout(()=>showReaderImportModal(),120)">
+      <span class="home-add-icon">📖</span>
+      <div><b>Добавить текст</b><small>вставка, TXT, EPUB или аудио</small></div>
+    </button>
 
-    <!-- QUICK ACCESS -->
-    <div class="home-quick-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
-      <button class="home-quick-card" onclick="showScreen('reader')">
-        <i class="hq-icon">📚</i>
-        <b>Библиотека</b>
-        <small id="home-books-count-new">0 текстов</small>
-      </button>
-      <button class="home-quick-card" onclick="showScreen('dict')">
-        <i class="hq-icon">🔤</i>
-        <b>Словарь</b>
-        <small>мои слова</small>
-      </button>
-    </div>
-
-    <!-- RECENT WORDS (collapsed) -->
+    <!-- RECENT WORDS -->
     <div class="home-recent-section">
       <div class="home-section-label">последние слова</div>
       <div id="home-recent-reader-words" class="home-recent-words"></div>
     </div>
+
+    <!-- one compact stat line -->
+    <div class="home-stat-line" id="home-stats-row-new">
+      <div><b id="home-stat-minutes">0</b><span class="home-stat-lbl">мин сегодня</span></div>
+      <div><b id="home-stat-words">0</b><span class="home-stat-lbl">слов открыто</span></div>
+      <div><b id="home-books-count-new">0</b><span class="home-stat-lbl">текстов</span></div>
+    </div>
+
+    <!-- news: slim link only when there's something to show -->
+    <div id="home-news-section" style="margin-top:2px"></div>
 
     <!-- Hidden legacy ids for compatibility -->
     <div id="srs-widget" style="display:none"></div>

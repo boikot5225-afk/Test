@@ -3355,3 +3355,25 @@ input:-webkit-autofill:focus {
   border-radius:8px; font-size:.86rem;
 }
 .lib-book-actions .lib-action-btn:hover{ background:var(--surface2); border-radius:8px; }
+
+/* ── calm reader phase 5: simplified home screen ── */
+.home-add{
+  width:100%; display:flex; align-items:center; gap:14px;
+  text-align:left; padding:16px; margin-bottom:18px;
+  background:none; border:1.5px dashed var(--border);
+  border-radius:16px; cursor:pointer; color:var(--text);
+  font-family:inherit;
+}
+.home-add:hover{ border-color:var(--accent); }
+.home-add-icon{ font-size:1.6rem; flex:none; }
+.home-add b{ display:block; font-size:.92rem; }
+.home-add small{ color:var(--text-muted); font-size:.76rem; }
+
+.home-stat-line{
+  display:flex; gap:22px; margin:18px 0 6px;
+}
+.home-stat-line div{ display:flex; flex-direction:column; }
+.home-stat-line b{
+  font-family:'Lora',serif; font-size:1.1rem; color:var(--text); line-height:1.2;
+}
+.home-stat-line .home-stat-lbl{ font-size:.72rem; color:var(--text-dim); }
