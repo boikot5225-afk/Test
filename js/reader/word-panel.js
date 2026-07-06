@@ -117,6 +117,8 @@ export function createReaderWordPanel({
     const pinyin = isChinese ? (extractPinyin(data) || String(data.form_note || '').trim()) : '';
     const zhNote = isChinese ? String(data.note || data.form_note || '').trim() : '';
     const zhChars = isChinese ? String(data.chars || '').trim() : '';
+    const ipa = lang === 'en' ? String(data.ipa || '').trim() : '';
+    const ipaLine = ipa ? `<div class="reader-analysis-pinyin">${escape(ipa)}</div>` : '';
 
     if (known) {
       known.textContent = source === 'local'
@@ -152,6 +154,7 @@ export function createReaderWordPanel({
         <div class="reader-analysis-card verb">
           <div class="reader-analysis-kicker">глагольная форма</div>
           <div class="reader-analysis-main"><span>${escape(form)}</span> → <b>${escape(lemma)}</b></div>
+          ${ipaLine}
           <div class="reader-analysis-ru">${escape(ru)}</div>
           <div class="reader-analysis-meta">${escape(formInfo || 'форма глагола')}${escape(person)}${escape(number)} · ${escape(filled.level)}</div>
         </div>`;
@@ -163,6 +166,7 @@ export function createReaderWordPanel({
         <div class="reader-analysis-card noun">
           <div class="reader-analysis-kicker">существительное</div>
           <div class="reader-analysis-main"><b>${escape(lemma)}</b>${filled.gender ? ` <span class="reader-gender-chip">${escape(filled.gender)}</span>` : ''}</div>
+          ${ipaLine}
           <div class="reader-analysis-ru">${escape(ru)}</div>
           <div class="reader-analysis-meta">${filled.gender ? `род: ${escape(filled.gender)} · ` : ''}${escape(filled.level)}</div>
         </div>`;
@@ -173,6 +177,7 @@ export function createReaderWordPanel({
       <div class="reader-analysis-card other">
         <div class="reader-analysis-kicker">${escape(posRu(filled.pos))}</div>
         <div class="reader-analysis-main"><b>${escape(lemma)}</b></div>
+        ${ipaLine}
         <div class="reader-analysis-ru">${escape(ru)}</div>
         <div class="reader-analysis-meta">${escape(filled.level)}${formInfo ? ' · ' + escape(formInfo) : ''}</div>
       </div>`;

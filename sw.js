@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.73-fix-reading-time-undercount';
+const CACHE_VERSION = 'v76.74-english-ipa-transcription';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
