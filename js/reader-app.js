@@ -324,7 +324,11 @@ function toggleReaderTranslations() {
   readerTranslationsHidden = !readerTranslationsHidden;
   localStorage.setItem(READER_HIDE_TRANSLATIONS_KEY, readerTranslationsHidden ? '1' : '0');
   applyReaderTranslationVisibility();
-  renderReaderChapter();
+  // No renderReaderChapter() here: help blocks are always in the DOM and the
+  // body class alone shows/hides them. The full rebuild this used to do
+  // re-tokenized every word of the chapter and froze the UI for seconds.
+  const helpButton = document.getElementById('reader-help-btn');
+  if (helpButton) helpButton.classList.toggle('on', !readerTranslationsHidden);
 }
 
 const READER_WORD_STATE_KEY = 'an2_reader_word_state_v1';

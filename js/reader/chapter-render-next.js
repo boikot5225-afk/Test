@@ -29,18 +29,19 @@ export function createReaderChapterRenderer({
   function tryFastNav(chapterText, chapterIndex, paragraphs, paragraphIndex, chapter, translations, book) {
     const prevChIdx   = Number(chapterText.dataset.renderedChapter  ?? -1);
     const prevParCount = Number(chapterText.dataset.renderedParCount ?? 0);
-    const prevHidden  = chapterText.dataset.renderedHidden;
-    const curHidden   = String(getTranslationsHidden());
     // If zh-core JSON loaded after the initial render, tokenisation changes
     // (individual chars → multi-char words) — must do a full rebuild.
     const prevZhCore  = chapterText.dataset.renderedZhCore;
     const curZhCore   = String(!!(isZhCoreLoaded?.()));
 
-    // Fast path is only valid when DOM matches current chapter/state exactly
+    // Fast path is only valid when DOM matches current chapter/state exactly.
+    // Translation visibility deliberately does NOT invalidate it: help blocks
+    // are always rendered into the DOM and shown/hidden by the
+    // body.reader-hide-translation CSS class alone — that's what lets the 👁
+    // toggle be instant instead of freezing on a full chapter rebuild.
     if (
       prevChIdx !== chapterIndex ||
       prevParCount !== paragraphs.length ||
-      prevHidden !== curHidden ||
       prevZhCore !== curZhCore ||
       book.format === 'song'
     ) return false;
@@ -61,7 +62,7 @@ export function createReaderChapterRenderer({
     if (!newEl) return false; // DOM mismatch — fall back to full render
 
     newEl.classList.add('active');
-    if (!getTranslationsHidden()) {
+    {
       const translationKey = `${chapter?.id}:${paragraphIndex}`;
       const translation = translations[translationKey];
       const textDiv = newEl.querySelector('.reader-paragraph-text');
@@ -155,7 +156,7 @@ export function createReaderChapterRenderer({
         chapterText.innerHTML = paragraphs.map((paragraph, index) => {
           const translationKey = `${chapter?.id}:${index}`;
           const translation = translations[translationKey];
-          return `<div class="reader-paragraph ${index === paragraphIndex ? 'active' : ''}" data-p="${index}"><div class="reader-paragraph-text">${renderParagraphText(paragraph, index)}</div>${index === paragraphIndex && translation && !getTranslationsHidden() ? renderTranslationBlock(translation) : ''}${index === paragraphIndex && book.readerAnalyses?.[translationKey] && !getTranslationsHidden() ? renderAnalysisBlock(book.readerAnalyses[translationKey]) : ''}</div>`;
+          return `<div class="reader-paragraph ${index === paragraphIndex ? 'active' : ''}" data-p="${index}"><div class="reader-paragraph-text">${renderParagraphText(paragraph, index)}</div>${index === paragraphIndex && translation ? renderTranslationBlock(translation) : ''}${index === paragraphIndex && book.readerAnalyses?.[translationKey] ? renderAnalysisBlock(book.readerAnalyses[translationKey]) : ''}</div>`;
         }).join('');
 
         chapterText.dataset.renderedChapter = String(chapterIndex);
