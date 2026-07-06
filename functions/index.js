@@ -51,11 +51,12 @@ function sourceLang(body) {
   const raw = String(body?.sourceLang || body?.lang || 'fr').trim().toLowerCase();
   if (raw === 'zh' || raw.startsWith('zh-') || raw === 'cn' || raw === 'chinese') return 'zh';
   if (raw === 'en' || raw.startsWith('en-') || raw === 'english') return 'en';
+  if (raw === 'es' || raw.startsWith('es-') || raw === 'spanish') return 'es';
   return 'fr';
 }
 
 function sourceLangName(code) {
-  return code === 'zh' ? 'Chinese' : code === 'en' ? 'English' : 'French';
+  return code === 'zh' ? 'Chinese' : code === 'en' ? 'English' : code === 'es' ? 'Spanish' : 'French';
 }
 
 function buildPrompt(task, body) {
@@ -71,6 +72,12 @@ CONTEXT: ${body.context || ''}`;
     }
     if (lang === 'en') {
       return `You are an English-Russian lexical assistant for a language reader. Analyze the selected English token IN ITS CONTEXT. Return ONLY valid JSON with keys: pos (noun|verb|adjective|adverb|preposition|pronoun|other), lemma, ru, level (A1|A2|B1|B2), form_note, note, ipa. Rules: lemma is the base/infinitive form; ru must be the meaning of the token AS USED IN THIS SPECIFIC CONTEXT, not the most common dictionary sense — if the token is part of an idiom or phrasal verb (e.g. "road" in "get the show on the road", "up" in "give up"), ru gives the contextual meaning and note names the idiom/phrasal verb with its Russian meaning (e.g. "get the show on the road — начать, приступить к делу"); form_note briefly explains the form if it is inflected (e.g. "past tense", "plural", "3rd person singular"). "ipa" is the standard IPA phonetic transcription of the SURFACE token (the word as it actually appears, not the lemma) in General American pronunciation, wrapped in slashes, e.g. "/prəˈnaʊnst/" — always fill this in. No gender needed.
+
+TOKEN: ${body.word || body.surface || ''}
+CONTEXT: ${body.context || ''}`;
+    }
+    if (lang === 'es') {
+      return `You are a Spanish-Russian lexical assistant for a language reader. Analyze the selected Spanish token IN ITS CONTEXT. Return ONLY valid JSON with keys: pos (noun|verb|adjective|adverb|preposition|pronoun|other), lemma, infinitive, surface, ru, gender (m|f|), level (A1|A2|B1|B2), tense, person, number, form_note, note. Rules: if the token is a conjugated Spanish verb form, lemma and infinitive must be the infinitive; form_note must briefly explain what the surface form is (for example: "presente, ellos/ellas", "pretérito indefinido, yo", "subjuntivo presente, tú", "gerundio", "participio"). Reflexive verbs (e.g. "se levanta") must give the infinitive with "-se" (e.g. "levantarse"). If the token is a noun, give gender (el → m, la → f). ru must reflect the meaning AS USED IN THIS CONTEXT — if the token is part of an idiom or fixed expression, ru gives the contextual meaning and note names the expression with its Russian meaning. If it is not a noun or verb, still give a short Russian meaning and lemma.
 
 TOKEN: ${body.word || body.surface || ''}
 CONTEXT: ${body.context || ''}`;
@@ -158,6 +165,40 @@ Rules:
 SENTENCE:
 ${body.text || ''}`;
     }
+    if (lang === 'es') {
+      return `You are a Spanish grammar teacher for Russian-speaking learners (B1–C1 level).
+Analyze the sentence below. Split it into 2–5 meaningful structural parts (not every word).
+For each part explain WHAT it is and WHY it is here / why this grammar form is used.
+Then pick 2–3 most interesting grammar points and explain WHY (the rule behind it), with a short parallel example.
+Finally write one "суть" sentence: the key structural insight of the whole sentence.
+
+Return ONLY valid JSON, no markdown:
+{
+  "parts": [
+    {
+      "es": "meaningful chunk",
+      "what": "что это (на русском, 3–6 слов)",
+      "why": "краткий русский перевод этой части"
+    }
+  ],
+  "whys": [
+    {
+      "q": "Почему [конкретная форма]?",
+      "a": "Объяснение правила на русском (1–2 предложения). Краткий пример: ..."
+    }
+  ],
+  "summary": "Одно предложение о главной грамматической идее всего предложения."
+}
+
+Rules:
+- parts: 2–5 items, merge articles/prepositions with their noun/verb
+- whys: 2–3 items, only for genuinely non-obvious grammar (ser vs estar, subjuntivo triggers, clitic/pronoun placement, por vs para, etc.)
+- all text in "what", "a", "summary" must be in Russian
+- keep everything concise
+
+SENTENCE:
+${body.text || ''}`;
+    }
     return `You are a French grammar teacher for Russian-speaking learners (B1–C1 level).
 Analyze the sentence below. Split it into 2–5 meaningful structural parts (not every word).
 For each part explain WHAT it is and WHY it is here / why this grammar form is used.
@@ -193,7 +234,6 @@ ${body.text || ''}`;
   }
 
   if (task === 'song_strophe') {
-    const langName = lang === 'zh' ? 'Chinese' : 'French';
     return `You are a ${langName} language teacher helping a Russian-speaking learner understand song lyrics.
 The learner wants to understand the MEANING and FEEL of this strophe — not a word-for-word translation.
 

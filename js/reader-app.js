@@ -1126,12 +1126,14 @@ const READER_LANG_META = Object.freeze({
   fr: { code: 'fr', label: 'Français', short: 'FR', emoji: '🇫🇷', speech: 'fr-FR' },
   zh: { code: 'zh', label: '中文', short: 'ZH', emoji: '🇨🇳', speech: 'zh-CN' },
   en: { code: 'en', label: 'English', short: 'EN', emoji: '🇬🇧', speech: 'en-US' },
+  es: { code: 'es', label: 'Español', short: 'ES', emoji: '🇪🇸', speech: 'es-ES' },
 });
 
 function readerCanonicalLang(lang) {
   const raw = String(lang || '').trim().toLowerCase();
   if (raw === 'zh' || raw.startsWith('zh-') || raw === 'cn' || raw === 'chinese') return 'zh';
   if (raw === 'en' || raw.startsWith('en-') || raw === 'english') return 'en';
+  if (raw === 'es' || raw.startsWith('es-') || raw === 'spanish') return 'es';
   return 'fr';
 }
 
@@ -1160,10 +1162,13 @@ function readerNormalizeWord(word, lang = null) {
       .replace(/^[\s，。！？；：、,.!?;:"“”‘’'《》〈〉（）()【】\[\]{}…—\-]+|[\s，。！？；：、,.!?;:"“”‘’'《》〈〉（）()【】\[\]{}…—\-]+$/g, '')
       .trim();
   }
+  // Latin-1 accented range covers French, English and Spanish (á í ó ú ñ Ñ ¿ ¡
+  // are stripped as punctuation only when not letters — ñ/Ñ and á/í/ó/ú fall
+  // inside À-ÖØ-öø-ÿ, so trimming a Spanish word's edges no longer eats them.
   return String(word || '')
     .toLowerCase()
     .normalize('NFC')
-    .replace(/^[^a-zàâçéèêëîïôùûüÿœæ'-]+|[^a-zàâçéèêëîïôùûüÿœæ'-]+$/gi, '')
+    .replace(/^[^a-zà-öø-ÿœæ'-]+|[^a-zà-öø-ÿœæ'-]+$/gi, '')
     .replace(/[’`´]/g, "'")
     .trim();
 }
@@ -1348,7 +1353,7 @@ function readerSentenceContext(paragraphText, word, lang = null) {
   if (!sentences.length) return String(paragraphText || '').trim();
   const found = l === 'zh'
     ? sentences.find(sent => String(sent || '').includes(norm))
-    : sentences.find(sent => readerNormalizeWord(sent, l).split(/[^a-zàâçéèêëîïôùûüÿœæ'-]+/i).includes(norm)
+    : sentences.find(sent => readerNormalizeWord(sent, l).split(/[^a-zà-öø-ÿœæ'-]+/i).includes(norm)
       || readerNormalizeWord(sent, l).includes(norm));
   return (found || sentences[0] || paragraphText || '').trim();
 }
@@ -1364,7 +1369,7 @@ function readerRenderParagraphText(p, paragraphIndex) {
     const clean = readerNormalizeWord(tok, lang);
     const clickable = lang === 'zh'
       ? !!clean && /[\u3400-\u9FFF]/.test(clean)
-      : !!clean && /[a-zàâçéèêëîïôùûüÿœæ]/i.test(clean);
+      : !!clean && /[a-zà-öø-ÿœæ]/i.test(clean);
     if (!clickable) return readerEscape(tok);
     const visual = readerWordVisual(clean, lang);
     const pinyin = readerInlinePinyinForWord(clean, lang);
@@ -1656,7 +1661,7 @@ function showReaderImportModal(mode) {
           <div><label style="font-size:.74rem;color:var(--text-muted);display:block;margin-bottom:5px">Название</label><input id="reader-import-title" placeholder="Bel-Ami, chapitre 1" style="width:100%;box-sizing:border-box;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text)"></div>
           <div><label style="font-size:.74rem;color:var(--text-muted);display:block;margin-bottom:5px">Автор / пометка</label><input id="reader-import-author" placeholder="Maupassant · A2" style="width:100%;box-sizing:border-box;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text)"></div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px"><option value="" selected disabled>Язык — выбери</option><option value="fr">🇫🇷 Français</option><option value="en">🇬🇧 English</option><option value="zh">🇨🇳 中文</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option><option value="news">📰 Новость</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px"><option value="" selected disabled>Язык — выбери</option><option value="fr">🇫🇷 Français</option><option value="en">🇬🇧 English</option><option value="zh">🇨🇳 中文</option><option value="es">🇪🇸 Español</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option><option value="news">📰 Новость</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
         <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding:12px;background:var(--surface2);border:1px solid var(--accent);border-radius:10px">
           <span style="font-size:.82rem;font-weight:700;color:var(--text)">🎙 Аудио/видео → текст</span>
           <span style="font-size:.74rem;color:var(--text-muted)">Сначала выбери язык записи в списке выше — иначе распознавание может перепутать язык (например принять китайский за французский).</span>
@@ -2152,7 +2157,7 @@ async function readerImportEpubFromFile(file) {
   // guard) — but EPUBs usually declare their language themselves (dc:language),
   // so fill it in from the file when the user hasn't picked one yet.
   const langSel = document.getElementById('reader-import-lang');
-  if (langSel && !langSel.value && ['fr', 'en', 'zh'].includes(meta.lang)) langSel.value = meta.lang;
+  if (langSel && !langSel.value && ['fr', 'en', 'zh', 'es'].includes(meta.lang)) langSel.value = meta.lang;
 
   const { spine, allHtml } = readerExtractEpubManifestAndSpine(opf, base);
   const seenPaths = new Set();
@@ -3709,7 +3714,9 @@ async function readerTranslateWordAI(forceOrOptions = true) {
           ? 'Return JSON only: {pos, lemma, surface, pinyin, ru, level, form_note, note, chars}. For Chinese, give pinyin with tone marks and a short Russian meaning. "chars" is a compact per-character breakdown for 2+ character words (empty for single characters). No gender.'
           : sourceLang === 'en'
             ? 'Return JSON only: {pos:"noun|verb|adjective|adverb|preposition|pronoun|other", lemma, ru, level:"A1|A2|B1|B2", form_note, note}. Give a short Russian meaning in ru. For verbs, lemma is the base/infinitive form. No gender needed.'
-            : 'Return JSON only: {pos:"noun|verb|adjective|adverb|preposition|pronoun|other", lemma, infinitive, ru, gender:"m|f|", level:"A1|A2|B1|B2", tense, person, number, form_note, note}. For French conjugated verb forms, lemma and infinitive must be the infinitive; explain the selected surface form in form_note. For nouns, give gender.'
+            : sourceLang === 'es'
+              ? 'Return JSON only: {pos:"noun|verb|adjective|adverb|preposition|pronoun|other", lemma, infinitive, ru, gender:"m|f|", level:"A1|A2|B1|B2", tense, person, number, form_note, note}. For Spanish conjugated verb forms, lemma and infinitive must be the infinitive (reflexive verbs keep "-se"); explain the selected surface form in form_note. For nouns, give gender.'
+              : 'Return JSON only: {pos:"noun|verb|adjective|adverb|preposition|pronoun|other", lemma, infinitive, ru, gender:"m|f|", level:"A1|A2|B1|B2", tense, person, number, form_note, note}. For French conjugated verb forms, lemma and infinitive must be the infinitive; explain the selected surface form in form_note. For nouns, give gender.'
       });
       if (!force) readerLexicalInFlight.set(inFlightKey, p);
       try { data = await p; }
