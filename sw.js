@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.70-quiet-bottom-nav';
+const CACHE_VERSION = 'v76.71-app-wide-calm-palette';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
