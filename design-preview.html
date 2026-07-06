@@ -1,753 +1,483 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-theme="paper">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>Reader AI — Design Preview</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Noto+Serif+SC:wght@400;600&display=swap" rel="stylesheet">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reader AI — макет редизайна v2</title>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Serif+SC:wght@400;600&display=swap" rel="stylesheet">
 <style>
-:root {
-  --bg:        #F7F3EE;
-  --surface:   #FFFFFF;
-  --surface2:  #F0EBE3;
-  --border:    #E4DDD3;
-  --text:      #1A1510;
-  --text-mid:  #6B6055;
-  --text-dim:  #A09488;
-  --accent:    #C0392B;
-  --accent-bg: #FDF0EE;
-  --blue:      #2C6FAC;
-  --blue-bg:   #EAF2FB;
-  --green:     #27795C;
-  --green-bg:  #E8F5F0;
-  --gold:      #B8860B;
-  --nav-h:     60px;
-  --top-h:     56px;
-  --radius:    14px;
-  --radius-sm: 8px;
-
-  --rw-new:         #E8862A;
-  --rw-new-bg:      #FFF3E8;
-  --rw-looked:      #7C5CBF;
-  --rw-looked-bg:   #F2EEFF;
-  --rw-learning:    #2C6FAC;
-  --rw-learning-bg: #EAF2FB;
-  --rw-seen:        #B8860B;
-  --rw-seen-bg:     #FFF9E6;
+/* ─────────────────────────────────────────────
+   Темы: Бумага / Сепия / Чернила
+   Один акцент на всё. Никаких золотых заливок.
+────────────────────────────────────────────── */
+:root[data-theme="paper"] {
+  --bg:#FAF6F0; --surface:#FFFFFF; --surface2:#F1EBE2; --border:#E5DDD1;
+  --text:#241E17; --text-mid:#6E6356; --text-dim:#9C9184;
+  --accent:#8A4B2D; --accent-soft:#F3E4DA;
+  --mark-saved:#8A4B2D; --mark-problem:#C24141;
+  --hl-new:#FFF3D6; --hl-learn:#F8E3D8; --hl-problem:#F9DBDB; --hl-familiar:#E8EEDF;
+  --shadow:0 8px 32px rgba(60,40,20,.14);
+}
+:root[data-theme="sepia"] {
+  --bg:#EFE6D8; --surface:#F7F0E4; --surface2:#E6DBC8; --border:#D8CBB4;
+  --text:#332A1F; --text-mid:#71634F; --text-dim:#98896F;
+  --accent:#7A5232; --accent-soft:#E7D8C4;
+  --mark-saved:#7A5232; --mark-problem:#B04A3A;
+  --hl-new:#F4E5C2; --hl-learn:#EDD9C4; --hl-problem:#EFCEC4; --hl-familiar:#DDE2C6;
+  --shadow:0 8px 32px rgba(60,45,20,.18);
+}
+:root[data-theme="ink"] {
+  --bg:#14120F; --surface:#1D1A16; --surface2:#26221D; --border:#37322A;
+  --text:#E8E2D8; --text-mid:#A79D8F; --text-dim:#7A7164;
+  --accent:#D9A15F; --accent-soft:#332A1E;
+  --mark-saved:#D9A15F; --mark-problem:#E07B6A;
+  --hl-new:#3A331F; --hl-learn:#3C2E22; --hl-problem:#442824; --hl-familiar:#2C3322;
+  --shadow:0 8px 32px rgba(0,0,0,.5);
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-html, body { min-height: 100%; background: #2C2C2E; font-family: 'Inter', sans-serif; display: flex; flex-direction: column; align-items: center; padding: 32px 16px 48px; gap: 20px; }
-
-/* ── Tab switcher ── */
-.tab-row {
-  display: flex; gap: 4px;
-  background: rgba(255,255,255,0.08);
-  border-radius: 12px;
-  padding: 4px;
-}
-.tab-btn {
-  padding: 7px 18px; border-radius: 9px; border: none; cursor: pointer;
-  font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500;
-  color: rgba(255,255,255,0.5); background: transparent; transition: all 0.18s;
-}
-.tab-btn.active { background: #fff; color: #1A1510; }
-
-/* ── Phone shell ── */
-.phone {
-  width: 375px; height: 812px;
-  background: var(--bg);
-  border-radius: 40px;
-  box-shadow: 0 32px 100px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.08);
-  overflow: hidden;
-  position: relative;
-  display: flex; flex-direction: column;
-  flex-shrink: 0;
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body { height:100%; }
+body {
+  background:var(--bg); color:var(--text);
+  font-family:'IBM Plex Sans',system-ui,sans-serif;
+  overflow:hidden;
+  transition:background .35s,color .35s;
 }
 
-/* ── Screen ── */
-.screen { display: none; flex-direction: column; flex: 1; overflow: hidden; position: relative; }
-.screen.active { display: flex; }
+/* ── Панель управления макетом (не часть приложения) ── */
+#demo-bar {
+  position:fixed; left:0; right:0; bottom:0; z-index:99;
+  display:flex; gap:6px; align-items:center; justify-content:center;
+  padding:8px 10px calc(8px + env(safe-area-inset-bottom));
+  background:color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter:blur(12px); border-top:1px solid var(--border);
+  font-size:.72rem;
+}
+#demo-bar .grp { display:flex; gap:4px; background:var(--surface2); border-radius:99px; padding:3px; }
+#demo-bar button {
+  border:none; background:none; color:var(--text-mid); font:inherit;
+  padding:6px 10px; border-radius:99px; cursor:pointer; white-space:nowrap;
+}
+#demo-bar button.on { background:var(--accent); color:var(--bg); }
 
-/* ── Status bar ── */
-.status-bar {
-  height: 44px; padding: 14px 24px 0;
-  display: flex; justify-content: space-between; align-items: center;
-  font-size: 12px; font-weight: 600; color: var(--text);
-  flex-shrink: 0;
-}
-.status-icons { display: flex; gap: 6px; align-items: center; }
+/* ── Экраны ── */
+.screen { display:none; position:fixed; inset:0; bottom:52px; overflow:hidden; }
+.screen.on { display:block; }
 
-/* ── Top bar (shared) ── */
-.top-bar {
-  height: var(--top-h); padding: 0 16px;
-  display: flex; align-items: center; gap: 12px;
-  background: var(--bg); flex-shrink: 0;
-}
+/* ═════════ ЧИТАЛКА ═════════ */
+#rd-scroll { height:100%; overflow-y:auto; scroll-behavior:smooth; }
 
-/* ── Scroll area ── */
-.scroll-area { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-.scroll-area::-webkit-scrollbar { display: none; }
+#rd-progress {
+  position:absolute; top:0; left:0; height:3px; z-index:5;
+  background:var(--accent); width:22%; transition:width .3s;
+}
+#rd-top {
+  position:absolute; top:0; left:0; right:0; z-index:4;
+  display:flex; align-items:center; gap:10px;
+  padding:12px 14px 10px;
+  background:color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter:blur(14px);
+  border-bottom:1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  transition:transform .28s ease, opacity .28s ease;
+}
+#rd-top .back { font-size:1.05rem; color:var(--text-mid); background:none; border:none; padding:4px 6px; }
+#rd-top .ttl { flex:1; min-width:0; }
+#rd-top .ttl b { display:block; font-family:'Lora',serif; font-size:.95rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#rd-top .ttl span { font-size:.68rem; color:var(--text-dim); }
+#rd-top .ic { background:none; border:none; font-size:1.02rem; color:var(--text-mid); padding:6px 7px; border-radius:10px; }
+#rd-top .ic.on { color:var(--accent); background:var(--accent-soft); }
 
-/* ── Bottom nav ── */
-.bottom-nav {
-  height: var(--nav-h); background: var(--surface);
-  border-top: 1px solid var(--border);
-  display: flex; align-items: stretch; flex-shrink: 0;
+#rd-bottom {
+  position:absolute; left:0; right:0; bottom:0; z-index:4;
+  display:flex; gap:10px; align-items:center; justify-content:center;
+  padding:10px 16px 14px;
+  background:color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter:blur(14px);
+  border-top:1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  transition:transform .28s ease, opacity .28s ease;
 }
-.nav-item {
-  flex: 1; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 3px;
-  color: var(--text-dim); font-size: 10px; font-weight: 500;
-  letter-spacing: 0.3px; cursor: pointer;
+#rd-bottom .listen {
+  flex:0 1 240px; display:flex; align-items:center; justify-content:center; gap:8px;
+  border:1.5px solid var(--accent); color:var(--accent); background:none;
+  font:inherit; font-weight:600; font-size:.9rem;
+  padding:11px 22px; border-radius:99px;
 }
-.nav-item.active { color: var(--accent); }
-.nav-item svg { width: 22px; height: 22px; }
+#rd-bottom .more { background:none; border:none; color:var(--text-mid); font-size:1.2rem; padding:8px 10px; }
 
-/* ══ SCREEN 1 — HOME ══ */
-.lang-pills { display: flex; gap: 6px; margin-left: auto; }
-.lang-pill {
-  padding: 3px 9px; border-radius: 20px; font-size: 12px; font-weight: 500;
-  border: 1.5px solid var(--border); color: var(--text-mid); background: var(--surface);
-}
-.lang-pill.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.chrome-hidden #rd-top    { transform:translateY(-110%); opacity:0; pointer-events:none; }
+.chrome-hidden #rd-bottom { transform:translateY(120%);  opacity:0; pointer-events:none; }
 
-.section-label {
-  font-size: 11px; font-weight: 600; letter-spacing: 0.8px;
-  color: var(--text-dim); text-transform: uppercase;
-  padding: 0 16px; margin-bottom: 10px;
+/* ── Текст ── */
+#rd-body {
+  max-width:640px; margin:0 auto;
+  padding:86px 26px 140px;
+  font-family:'Lora','Noto Serif SC',Georgia,serif;
+  font-size:1.12rem; line-height:1.85;
 }
+#rd-body p { margin-bottom:1.35em; transition:opacity .2s; }
 
-.continue-scroll {
-  display: flex; gap: 12px; padding: 0 16px 4px;
-  overflow-x: auto; -webkit-overflow-scrolling: touch;
+/* активный абзац: тонкая линия слева, никакой карточки */
+#rd-body p.active {
+  border-left:2.5px solid var(--accent);
+  padding-left:14px; margin-left:-16.5px;
 }
-.continue-scroll::-webkit-scrollbar { display: none; }
+#rd-body p:not(.active) { opacity:.86; }
 
-.book-card-h {
-  width: 240px; flex-shrink: 0;
-  background: var(--surface); border-radius: var(--radius);
-  padding: 14px; border: 1px solid var(--border);
-}
-.book-card-h .flag-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-.book-card-h .flag-row span { font-size: 18px; }
-.badge {
-  font-size: 10px; font-weight: 600; background: var(--surface2);
-  color: var(--text-mid); padding: 2px 6px; border-radius: 4px;
-}
-.book-card-h .title {
-  font-size: 14px; font-weight: 600; color: var(--text);
-  line-height: 1.35; margin-bottom: 4px;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
-.book-card-h .meta { font-size: 11px; color: var(--text-dim); margin-bottom: 10px; }
-.progress-bar-wrap { height: 3px; background: var(--border); border-radius: 2px; margin-bottom: 10px; }
-.progress-bar-fill { height: 100%; border-radius: 2px; background: var(--accent); }
-.book-card-h .actions { display: flex; gap: 8px; }
-.btn-sm {
-  flex: 1; padding: 7px 0; border-radius: var(--radius-sm);
-  font-size: 12px; font-weight: 500; border: none; cursor: pointer;
-  display: flex; align-items: center; justify-content: center; gap: 5px;
-}
-.btn-primary-sm { background: var(--accent); color: #fff; }
-.btn-ghost-sm { background: var(--surface2); color: var(--text-mid); }
+/* слова: в спокойном режиме чистый текст, метки — только у своих слов */
+.w { border-radius:4px; }
+.w-saved   { border-bottom:1.5px dotted var(--mark-saved); }
+.w-problem { border-bottom:2px solid var(--mark-problem); }
+/* режим разбора (👁): мягкие плашки по статусам */
+.marks-on .w-new      { background:var(--hl-new); }
+.marks-on .w-learn    { background:var(--hl-learn); box-shadow:0 0 0 2px var(--hl-learn); }
+.marks-on .w-problem  { background:var(--hl-problem); box-shadow:0 0 0 2px var(--hl-problem); border-bottom:none; }
+.marks-on .w-familiar { background:var(--hl-familiar); }
+.marks-on .w-saved    { border-bottom:none; background:var(--hl-learn); }
 
-.news-card {
-  margin: 0 16px 10px;
-  background: var(--surface); border-radius: var(--radius);
-  padding: 12px 14px; border: 1px solid var(--border);
-  display: flex; align-items: center; gap: 12px;
+/* перевод под активным абзацем */
+.tr-link {
+  display:inline-block; margin:-.6em 0 1.4em;
+  font-family:'IBM Plex Sans',sans-serif; font-size:.78rem; font-style:normal;
+  color:var(--text-dim); border:none; background:none; padding:2px 0;
+  border-bottom:1px dashed var(--text-dim); cursor:pointer;
 }
-.news-card .news-icon { font-size: 22px; flex-shrink: 0; }
-.news-card .news-title { font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.4; }
-.news-card .news-meta { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
-.news-card .news-chevron { margin-left: auto; color: var(--text-dim); font-size: 16px; }
+.tr-text {
+  display:none; margin:-.6em 0 1.5em; padding:10px 14px;
+  font-family:'IBM Plex Sans',sans-serif; font-size:.88rem; line-height:1.6;
+  color:var(--text-mid); background:var(--surface2); border-radius:10px;
+}
+.tr-open .tr-text { display:block; }
+.tr-open .tr-link { display:none; }
 
-/* ══ SCREEN 2 — LIBRARY ══ */
-.add-btn {
-  padding: 0 14px; height: 36px; border-radius: 10px;
-  background: var(--accent); color: #fff;
-  border: none; font-size: 13px; font-weight: 600;
-  display: flex; align-items: center; gap: 6px;
-}
-.icon-btn {
-  width: 36px; height: 36px; border-radius: 10px;
-  background: var(--surface); border: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: center;
-  color: var(--text-mid); font-size: 16px;
-}
-.lib-tabs { display: flex; padding: 0 16px; margin-bottom: 12px; gap: 4px; }
-.lib-tab {
-  padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 500;
-  cursor: pointer; color: var(--text-mid); background: transparent; border: none;
-}
-.lib-tab.active { background: var(--accent-bg); color: var(--accent); }
+/* китайский */
+#rd-body.zh { font-size:1.28rem; line-height:2.5; }
+#rd-body.zh rt { font-size:.58rem; color:var(--text-dim); font-family:'IBM Plex Sans',sans-serif; }
+.pinyin-off rt { display:none; }
+.pinyin-off #rd-body.zh { line-height:2.0; }
 
-.book-list-item {
-  margin: 0 16px 8px;
-  background: var(--surface); border-radius: var(--radius);
-  padding: 12px 14px; border: 1px solid var(--border);
-}
-.book-list-item .row1 { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 6px; }
-.book-cover-placeholder {
-  width: 38px; height: 52px; border-radius: 6px;
-  background: linear-gradient(135deg, var(--surface2), var(--border));
-  display: flex; align-items: center; justify-content: center;
-  font-size: 20px; flex-shrink: 0;
-}
-.book-info { flex: 1; min-width: 0; }
-.book-list-title { font-size: 14px; font-weight: 600; color: var(--text); line-height: 1.3; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.book-list-author { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
-.book-list-chapter { display: inline-block; font-size: 11px; background: var(--surface2); color: var(--text-mid); padding: 2px 8px; border-radius: 4px; }
-.book-pct { font-size: 13px; font-weight: 600; color: var(--accent); flex-shrink: 0; }
-.book-list-actions { display: flex; gap: 8px; margin-top: 8px; }
-.book-act-btn {
-  flex: 1; padding: 7px 0; background: var(--surface2);
-  border: none; border-radius: var(--radius-sm); font-size: 12px;
-  font-weight: 500; color: var(--text-mid);
-  display: flex; align-items: center; justify-content: center; gap: 5px;
-}
-.book-act-btn.primary { background: var(--accent); color: #fff; }
-.book-act-icon { width: 32px; height: 32px; border-radius: 8px; background: var(--surface2); border: none; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+/* зоны перелистывания */
+.edge { position:absolute; top:80px; bottom:90px; width:14%; z-index:3; }
+.edge.l { left:0; } .edge.r { right:0; }
 
-/* ══ SCREEN 3 — READER ══ */
-.reader-screen { background: var(--bg); }
+/* ── Шторка слова ── */
+#sheet-veil {
+  position:fixed; inset:0; z-index:60; background:rgba(0,0,0,.35);
+  opacity:0; pointer-events:none; transition:opacity .25s;
+}
+#sheet {
+  position:fixed; left:0; right:0; bottom:0; z-index:61;
+  background:var(--surface); border-radius:22px 22px 0 0;
+  box-shadow:var(--shadow); padding:10px 20px calc(20px + env(safe-area-inset-bottom));
+  transform:translateY(105%); transition:transform .3s cubic-bezier(.3,.9,.3,1);
+  max-height:78vh; overflow-y:auto;
+}
+body.sheet-open #sheet { transform:none; }
+body.sheet-open #sheet-veil { opacity:1; pointer-events:auto; }
+#sheet .grab { width:38px; height:4px; border-radius:2px; background:var(--border); margin:4px auto 14px; }
+#sheet .word { font-family:'Lora','Noto Serif SC',serif; font-size:2.1rem; font-weight:600; line-height:1.15; }
+#sheet .pinyin { color:var(--accent); font-size:1.02rem; margin-top:2px; letter-spacing:.04em; }
+#sheet .ru { font-size:1.05rem; margin:10px 0 2px; }
+#sheet .meta { font-size:.75rem; color:var(--text-dim); margin-bottom:4px; }
+#sheet .chars { font-size:.78rem; color:var(--text-mid); background:var(--surface2); border-radius:8px; padding:8px 10px; margin-top:10px; }
+#sheet .row { display:flex; gap:8px; margin-top:16px; flex-wrap:wrap; }
+#sheet .chip {
+  border:1px solid var(--border); background:none; color:var(--text-mid);
+  font:inherit; font-size:.82rem; padding:9px 14px; border-radius:99px;
+}
+#sheet .chip.main { background:var(--accent); border-color:var(--accent); color:var(--bg); font-weight:600; flex:1; text-align:center; }
+#sheet details { margin-top:14px; }
+#sheet summary { font-size:.78rem; color:var(--text-dim); cursor:pointer; }
+#sheet details div { padding:10px 0 0; font-size:.8rem; color:var(--text-mid); }
 
-.reader-topbar {
-  height: var(--top-h); padding: 0 12px;
-  display: flex; align-items: center; gap: 10px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.reader-back {
-  width: 36px; height: 36px; border-radius: 10px;
-  background: var(--surface2); border: none;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 20px; color: var(--text-mid); line-height: 1;
-}
-.reader-title-wrap { flex: 1; min-width: 0; }
-.reader-title { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.reader-subtitle { font-size: 11px; color: var(--text-dim); }
-.reader-ctrl-btn {
-  width: 34px; height: 34px; border-radius: 9px;
-  background: var(--surface2); border: none;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 15px; color: var(--text-mid); font-weight: 600;
-}
-.reader-ctrl-btn.active { background: var(--accent); color: #fff; }
+/* ═════════ БИБЛИОТЕКА ═════════ */
+#lib-scroll { height:100%; overflow-y:auto; padding:22px 18px 40px; }
+.lib-h { font-family:'Lora',serif; font-size:1.5rem; font-weight:600; margin-bottom:16px; display:flex; align-items:center; justify-content:space-between; }
+.lib-h button { border:1.5px solid var(--accent); color:var(--accent); background:none; font:inherit; font-weight:600; font-size:.82rem; padding:8px 16px; border-radius:99px; }
 
-.reader-progress-bar { height: 2px; background: var(--border); flex-shrink: 0; }
-.reader-progress-fill { height: 100%; background: var(--accent); }
+.cont-card {
+  display:flex; gap:14px; align-items:center;
+  background:var(--surface); border:1px solid var(--border); border-radius:18px;
+  padding:14px; margin-bottom:22px; box-shadow:var(--shadow);
+}
+.cover {
+  width:56px; height:78px; border-radius:8px; flex:none;
+  display:flex; align-items:center; justify-content:center;
+  font-family:'Lora',serif; font-size:1.5rem; font-weight:600; color:#fff;
+}
+.cover.fr { background:linear-gradient(160deg,#4C6285,#2E3F58); }
+.cover.en { background:linear-gradient(160deg,#7A4C85,#4A2E58); }
+.cover.zh { background:linear-gradient(160deg,#A84C3F,#6E2A22); }
+.cont-card .m { flex:1; min-width:0; }
+.cont-card .m b { display:block; font-family:'Lora',serif; font-size:.98rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cont-card .m span { font-size:.74rem; color:var(--text-dim); }
+.cont-card .bar { height:3px; background:var(--surface2); border-radius:2px; margin-top:8px; }
+.cont-card .bar i { display:block; height:100%; border-radius:2px; background:var(--accent); }
+.cont-card .go { border:none; background:var(--accent); color:var(--bg); font:inherit; font-weight:600; font-size:.82rem; padding:10px 16px; border-radius:99px; }
 
-.reader-text-area {
-  flex: 1; overflow-y: auto; padding: 16px 20px 12px;
-  -webkit-overflow-scrolling: touch;
+.lib-sec { font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; color:var(--text-dim); margin:0 0 10px 2px; }
+.book-row {
+  display:flex; gap:12px; align-items:center;
+  padding:10px 4px; border-bottom:1px solid color-mix(in srgb, var(--border) 55%, transparent);
 }
-.reader-text-area::-webkit-scrollbar { display: none; }
+.book-row .cover { width:40px; height:56px; font-size:1.05rem; border-radius:6px; }
+.book-row .m { flex:1; min-width:0; }
+.book-row .m b { display:block; font-family:'Lora',serif; font-size:.92rem; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.book-row .m span { font-size:.72rem; color:var(--text-dim); }
+.book-row .pct { font-size:.78rem; color:var(--text-mid); }
 
-.reader-chapter-title {
-  font-family: 'Noto Serif SC', serif;
-  font-size: 16px; font-weight: 600; color: var(--text-mid);
-  text-align: center; margin-bottom: 20px;
-  padding-bottom: 16px; border-bottom: 1px solid var(--border);
-  letter-spacing: 0.05em;
+/* ═════════ ГЛАВНАЯ ═════════ */
+#home-scroll { height:100%; overflow-y:auto; padding:26px 20px 40px; }
+.home-hi { font-family:'Lora',serif; font-size:1.65rem; font-weight:600; }
+.home-date { font-size:.78rem; color:var(--text-dim); margin:2px 0 20px; }
+.lang-row { display:flex; gap:6px; margin-bottom:22px; }
+.lang-row button {
+  border:1px solid var(--border); background:var(--surface); font:inherit; font-size:.85rem;
+  padding:8px 14px; border-radius:99px; color:var(--text-mid);
 }
-
-.reader-para {
-  font-family: 'Noto Serif SC', 'Inter', serif;
-  font-size: 22px; line-height: 1.9;
-  color: var(--text); margin-bottom: 18px;
-  letter-spacing: 0.05em;
+.lang-row button.on { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); font-weight:600; }
+.home-words { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 26px; }
+.home-words .wchip {
+  background:var(--surface); border:1px solid var(--border); border-radius:12px;
+  padding:10px 14px; font-family:'Lora',serif; font-size:.95rem;
 }
-.reader-para.active {
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 12px 14px;
-  margin: 0 -14px 18px;
-  border: 1px solid var(--border);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+.home-words .wchip small { display:block; font-family:'IBM Plex Sans',sans-serif; font-size:.66rem; color:var(--text-dim); margin-top:2px; }
+.home-add {
+  display:flex; align-items:center; gap:12px; width:100%;
+  background:none; border:1.5px dashed var(--border); color:var(--text-mid);
+  font:inherit; font-size:.9rem; padding:16px; border-radius:16px; margin-top:6px;
 }
-
-ruby { display: inline; }
-rt { display: none; } /* pinyin hidden by default (拼 off) */
-
-.rw {
-  display: inline;
-  border-radius: 3px;
-  padding: 0 2px;
-  cursor: pointer;
-}
-.rw-new      { color: var(--rw-new);      background: var(--rw-new-bg);      }
-.rw-looked   { color: var(--rw-looked);   background: var(--rw-looked-bg);   }
-.rw-learning { color: var(--rw-learning); background: var(--rw-learning-bg); }
-.rw-seen     { color: var(--rw-seen);     background: var(--rw-seen-bg);     }
-.rw-known    { color: inherit; background: transparent; }
-
-.para-translation {
-  font-size: 13px; color: var(--text-mid); font-family: 'Inter', sans-serif;
-  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
-  line-height: 1.6;
-}
-
-.reader-bottom {
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  padding: 10px 16px 14px;
-  flex-shrink: 0;
-}
-.reader-nav-row { display: flex; align-items: center; gap: 8px; }
-.nav-arrow {
-  width: 48px; height: 48px; border-radius: 12px;
-  background: var(--surface2); border: none;
-  font-size: 22px; color: var(--text-mid); flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-}
-.reader-progress-text { flex: 1; text-align: center; font-size: 12px; color: var(--text-dim); }
-.listen-btn {
-  flex: 2; height: 48px; border-radius: 12px;
-  background: var(--accent); color: #fff;
-  border: none; font-size: 14px; font-weight: 600;
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-}
-
-/* Word panel — bottom sheet */
-.word-panel {
-  position: absolute; bottom: 0; left: 0; right: 0;
-  background: var(--surface);
-  border-top-left-radius: 20px; border-top-right-radius: 20px;
-  border-top: 1px solid var(--border);
-  box-shadow: 0 -8px 32px rgba(0,0,0,0.12);
-}
-.word-panel-handle {
-  width: 36px; height: 4px; background: var(--border); border-radius: 2px;
-  margin: 10px auto 14px;
-}
-.word-panel-content { padding: 0 16px 20px; }
-.word-panel-word {
-  font-family: 'Noto Serif SC', serif;
-  font-size: 28px; font-weight: 600; color: var(--text); margin-bottom: 2px;
-}
-.word-pinyin { font-size: 14px; color: var(--text-dim); margin-bottom: 10px; }
-.word-meaning { font-size: 15px; color: var(--text); line-height: 1.5; margin-bottom: 14px; }
-.word-actions { display: flex; gap: 8px; }
-.word-act {
-  flex: 1; padding: 11px 0; border-radius: 10px;
-  font-size: 13px; font-weight: 600; border: none;
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-}
-.word-act-save { background: var(--blue); color: #fff; }
-.word-act-know { background: var(--green-bg); color: var(--green); }
-.word-act-context { background: var(--surface2); color: var(--text-mid); }
-
-/* Legend */
-.legend {
-  display: flex; gap: 14px; flex-wrap: wrap; justify-content: center;
-  font-size: 12px; color: rgba(255,255,255,0.45);
-}
-.legend span { display: flex; align-items: center; gap: 5px; }
-.legend-dot { width: 10px; height: 10px; border-radius: 3px; }
+.stat-line { display:flex; gap:18px; margin:22px 0 6px; font-size:.78rem; color:var(--text-dim); }
+.stat-line b { color:var(--text); font-size:1.05rem; display:block; font-family:'Lora',serif; }
 </style>
 </head>
 <body>
 
-<div class="tab-row">
-  <button class="tab-btn active" onclick="showScreen('home',this)">Главная</button>
-  <button class="tab-btn" onclick="showScreen('library',this)">Библиотека</button>
-  <button class="tab-btn" onclick="showScreen('reader',this)">Ридер</button>
-  <button class="tab-btn" onclick="showScreen('word-panel',this)">Слово</button>
+<!-- ═════════ ЧИТАЛКА (EN) ═════════ -->
+<section class="screen on" id="scr-reader">
+  <div id="rd-progress"></div>
+  <div id="rd-top">
+    <button class="back">←</button>
+    <div class="ttl"><b id="rd-title">The Guns of August</b><span id="rd-sub">🇬🇧 глава 1 · 22%</span></div>
+    <button class="ic" id="btn-marks" title="раскраска слов">👁</button>
+    <button class="ic" id="btn-pinyin" style="display:none" title="пиньинь">拼</button>
+    <button class="ic">Aa</button>
+    <button class="ic">🎧</button>
+  </div>
+
+  <div class="edge l"></div><div class="edge r"></div>
+
+  <div id="rd-scroll">
+    <div id="rd-body">
+      <p>He <span class="w w-familiar">didn't</span> even have the <span class="w w-saved w-learn" data-word="decency" data-ru="порядочность" data-note="B2 · существительное">decency</span> to mention that I was that friend. I get no <span class="w w-new">credit</span> from him. I get no thanks.</p>
+
+      <p class="active tr-open0">Well, you should thank me. Alright, alright, I'll think about it. A <span class="w w-new">chance</span> to talk with you. Walsh's real history of <span class="w w-saved w-learn" data-word="slavery" data-ru="рабство" data-note="B1 · существительное">slavery</span>. That could work. All right. Get this show on the <span class="w w-problem" data-word="road" data-ru="начать, приступить к делу" data-note="идиома: get the show on the road — «давай уже начинать»" >road</span>.<br>
+      <button class="tr-link">показать перевод</button>
+      <span class="tr-text">Ну, ты должен меня поблагодарить. Ладно, ладно, я подумаю. Возможность поговорить с тобой. Настоящая история рабства Уолша. Это может сработать. Хорошо. Давай уже начинать это чёртово шоу.</span></p>
+
+      <p>I guess Milo had a game. A drinking game. I never asked what the <span class="w w-new">rules</span> were, because the rules never <span class="w w-familiar">mattered</span> — only the drinking did.</p>
+
+      <p>Thereafter England was <span class="w w-saved w-learn" data-word="determined" data-ru="полна решимости" data-note="B1 · past participle → determine">determined</span> to make that patch of open, easily <span class="w w-new">traversible</span> territory a neutral zone and, under the post-Napoleon <span class="w w-new">settlement</span> of the Congress of Vienna, agreed with the other powers to attach it to the Kingdom of the Netherlands.</p>
+
+      <p>Resenting union with a Protestant power, burning with the fever of the nineteenth-century nationalism, the Belgians <span class="w w-familiar">revolted</span> in 1830, setting off an international <span class="w w-new">scramble</span>.</p>
+
+      <p>Belgium's coast was England's <span class="w w-saved w-learn" data-word="frontier" data-ru="граница, рубеж" data-note="B2 · существительное">frontier</span>; on the plains of Belgium, Wellington had defeated the greatest <span class="w w-new">threat</span> to England since the Armada.</p>
+
+      <p>He didn't even have the decency to mention that I was that friend. I get no credit from him. I get no thanks. Well, you should thank me.</p>
+    </div>
+  </div>
+
+  <div id="rd-bottom">
+    <button class="listen">🔊 Слушать</button>
+    <button class="more">⋯</button>
+  </div>
+</section>
+
+<!-- ═════════ БИБЛИОТЕКА ═════════ -->
+<section class="screen" id="scr-lib">
+  <div id="lib-scroll">
+    <div class="lib-h">Библиотека <button>＋ Добавить</button></div>
+
+    <div class="cont-card">
+      <div class="cover en">G</div>
+      <div class="m">
+        <b>The Guns of August</b>
+        <span>🇬🇧 глава 1 · продолжить с 22%</span>
+        <div class="bar"><i style="width:22%"></i></div>
+      </div>
+      <button class="go">Читать</button>
+    </div>
+
+    <div class="lib-sec">Все тексты</div>
+    <div class="book-row"><div class="cover zh">中</div><div class="m"><b>China Radio International 90.5</b><span>🇨🇳 23/26 абз. · есть аудио 🎧</span></div><div class="pct">85%</div></div>
+    <div class="book-row"><div class="cover en">M</div><div class="m"><b>Matt Walsh's Fascist History…</b><span>🇬🇧 4/136 абз. · есть аудио 🎧</span></div><div class="pct">2%</div></div>
+    <div class="book-row"><div class="cover fr">B</div><div class="m"><b>Bel-Ami</b><span>🇫🇷 Maupassant · глава 3</span></div><div class="pct">41%</div></div>
+    <div class="book-row"><div class="cover fr">P</div><div class="m"><b>Le Petit Prince</b><span>🇫🇷 Saint-Exupéry · глава 7</span></div><div class="pct">64%</div></div>
+  </div>
+</section>
+
+<!-- ═════════ ГЛАВНАЯ ═════════ -->
+<section class="screen" id="scr-home">
+  <div id="home-scroll">
+    <div class="home-hi">Reader AI</div>
+    <div class="home-date">пт, 3 июля · boikot5225</div>
+
+    <div class="lang-row">
+      <button>🇫🇷 Français</button>
+      <button class="on">🇬🇧 English</button>
+      <button>🇨🇳 中文</button>
+    </div>
+
+    <div class="cont-card">
+      <div class="cover en">G</div>
+      <div class="m">
+        <b>The Guns of August</b>
+        <span>продолжить · глава 1, 22%</span>
+        <div class="bar"><i style="width:22%"></i></div>
+      </div>
+      <button class="go">Читать</button>
+    </div>
+
+    <div class="lib-sec">Недавние слова</div>
+    <div class="home-words">
+      <div class="wchip">decency<small>порядочность</small></div>
+      <div class="wchip">road<small>идиома · get the show on the road</small></div>
+      <div class="wchip">frontier<small>граница</small></div>
+    </div>
+
+    <button class="home-add">📖 Добавить текст, EPUB или аудио</button>
+
+    <div class="stat-line">
+      <div><b>26</b>мин сегодня</div>
+      <div><b>14</b>слов открыто</div>
+      <div><b>4</b>текста</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════ ШТОРКА СЛОВА ═════════ -->
+<div id="sheet-veil"></div>
+<div id="sheet">
+  <div class="grab"></div>
+  <div class="word" id="sh-word">road</div>
+  <div class="pinyin" id="sh-pinyin" style="display:none"></div>
+  <div class="ru" id="sh-ru">начать, приступить к делу</div>
+  <div class="meta" id="sh-meta">идиома: get the show on the road</div>
+  <div class="chars" id="sh-chars" style="display:none"></div>
+  <div class="row">
+    <button class="chip main">＋ В словарь</button>
+    <button class="chip">🔊</button>
+    <button class="chip">✓ знаю</button>
+    <button class="chip">⚠</button>
+  </div>
+  <div class="row">
+    <button class="chip">↻ DeepSeek</button>
+    <button class="chip">＋ фраза</button>
+  </div>
+  <details><summary>ручная правка</summary><div>словарная форма · перевод · уровень · контекст — как сейчас, но спрятано, пока не нужно.</div></details>
 </div>
 
-<div class="phone">
-
-  <!-- ══ SCREEN: HOME ══ -->
-  <div class="screen active" id="screen-home">
-    <div class="status-bar">
-      <span>10:27</span>
-      <div class="status-icons"><span>📶</span><span style="font-weight:700">19%</span></div>
-    </div>
-    <div class="top-bar">
-      <div style="font-size:20px;font-weight:700;color:var(--text);flex:1">Главная</div>
-      <div class="lang-pills">
-        <div class="lang-pill">FR</div>
-        <div class="lang-pill">EN</div>
-        <div class="lang-pill active">ZH</div>
-      </div>
-    </div>
-
-    <div class="scroll-area">
-      <div style="height:20px"></div>
-      <div class="section-label">Продолжить чтение</div>
-      <div class="continue-scroll">
-        <div class="book-card-h">
-          <div class="flag-row">
-            <span>🇨🇳</span>
-            <div class="badge">ОРИГИНАЛ</div>
-            <div style="margin-left:auto;font-size:12px;font-weight:700;color:var(--accent)">2%</div>
-          </div>
-          <div class="title">死亡通知单：暗黑者</div>
-          <div class="meta">Гл. 1 · абзац 44/299</div>
-          <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:2%"></div></div>
-          <div class="actions">
-            <button class="btn-sm btn-primary-sm">📖 Читать</button>
-            <button class="btn-sm btn-ghost-sm">🎧 Слушать</button>
-          </div>
-        </div>
-        <div class="book-card-h">
-          <div class="flag-row">
-            <span>🇨🇳</span>
-            <div class="badge">B2</div>
-            <div style="margin-left:auto;font-size:12px;font-weight:700;color:var(--accent)">58%</div>
-          </div>
-          <div class="title">坏小孩 — B2辅助阅读版</div>
-          <div class="meta">Гл. 12 · абзац 1/26</div>
-          <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:58%"></div></div>
-          <div class="actions">
-            <button class="btn-sm btn-primary-sm">📖 Читать</button>
-            <button class="btn-sm btn-ghost-sm">🎧 Слушать</button>
-          </div>
-        </div>
-        <div class="book-card-h">
-          <div class="flag-row">
-            <span>🇫🇷</span>
-            <div class="badge">A2</div>
-            <div style="margin-left:auto;font-size:12px;font-weight:700;color:var(--accent)">35%</div>
-          </div>
-          <div class="title">Les Fantômes du chapelier</div>
-          <div class="meta">Chapitre 4 · 19/47</div>
-          <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:35%"></div></div>
-          <div class="actions">
-            <button class="btn-sm btn-primary-sm">📖 Читать</button>
-            <button class="btn-sm btn-ghost-sm">🎧 Слушать</button>
-          </div>
-        </div>
-      </div>
-
-      <div style="text-align:center;padding:14px 0 4px;font-size:13px;color:var(--text-dim)">Все тексты (14) →</div>
-
-      <div style="height:20px"></div>
-      <div class="section-label">Новости</div>
-      <div class="news-card">
-        <div class="news-icon">🇨🇳</div>
-        <div>
-          <div class="news-title">百家号 — 最新科技动态</div>
-          <div class="news-meta">baijiahao.baidu.com · сегодня</div>
-        </div>
-        <div class="news-chevron">›</div>
-      </div>
-      <div class="news-card">
-        <div class="news-icon">🇨🇳</div>
-        <div>
-          <div class="news-title">新华社 — 国际新闻</div>
-          <div class="news-meta">xinhuanet.com · вчера</div>
-        </div>
-        <div class="news-chevron">›</div>
-      </div>
-      <div style="height:16px"></div>
-    </div>
-
-    <div class="bottom-nav">
-      <div class="nav-item active">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
-        Главная
-      </div>
-      <div class="nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
-        Читать
-      </div>
-      <div class="nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-        Слова
-      </div>
-      <div class="nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        Профиль
-      </div>
-    </div>
+<!-- ═════════ ПАНЕЛЬ МАКЕТА ═════════ -->
+<div id="demo-bar">
+  <div class="grp" id="g-screen">
+    <button data-s="scr-reader" class="on">Читалка</button>
+    <button data-s="zh">中文</button>
+    <button data-s="scr-lib">Книги</button>
+    <button data-s="scr-home">Домой</button>
   </div>
-
-
-  <!-- ══ SCREEN: LIBRARY ══ -->
-  <div class="screen" id="screen-library">
-    <div class="status-bar">
-      <span>10:27</span>
-      <div class="status-icons"><span>📶</span><span style="font-weight:700">20%</span></div>
-    </div>
-    <div class="top-bar">
-      <div style="font-size:20px;font-weight:700;color:var(--text);flex:1">Библиотека</div>
-      <button class="add-btn">＋ Добавить</button>
-      <div class="icon-btn" style="margin-left:6px">☁</div>
-    </div>
-
-    <div class="lib-tabs">
-      <button class="lib-tab active">📚 Книги (14)</button>
-      <button class="lib-tab">📰 Новости (1)</button>
-    </div>
-
-    <div class="scroll-area">
-      <div class="book-list-item">
-        <div class="row1">
-          <div class="book-cover-placeholder">📖</div>
-          <div class="book-info">
-            <div class="book-list-title">死亡通知单：暗黑者</div>
-            <div class="book-list-author">周浩晖 · original</div>
-            <div class="book-list-chapter">第一章 · абзац 44/299</div>
-          </div>
-          <div class="book-pct">2%</div>
-        </div>
-        <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:2%"></div></div>
-        <div class="book-list-actions">
-          <button class="book-act-btn primary">📖 Читать</button>
-          <button class="book-act-btn">🎧</button>
-          <button class="book-act-icon">🗑</button>
-        </div>
-      </div>
-
-      <div class="book-list-item">
-        <div class="row1">
-          <div class="book-cover-placeholder">📗</div>
-          <div class="book-info">
-            <div class="book-list-title">坏小孩 — B2辅助阅读版</div>
-            <div class="book-list-author">紫金陈 · B2 адаптация</div>
-            <div class="book-list-chapter">第十二章 · абзац 1/26</div>
-          </div>
-          <div class="book-pct">58%</div>
-        </div>
-        <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:58%"></div></div>
-        <div class="book-list-actions">
-          <button class="book-act-btn primary">📖 Читать</button>
-          <button class="book-act-btn">🎧</button>
-          <button class="book-act-icon">🗑</button>
-        </div>
-      </div>
-
-      <div class="book-list-item">
-        <div class="row1">
-          <div class="book-cover-placeholder">📘</div>
-          <div class="book-info">
-            <div class="book-list-title">Les Fantômes du chapelier</div>
-            <div class="book-list-author">Georges Simenon · A2</div>
-            <div class="book-list-chapter">Chapitre 4 · 19/47</div>
-          </div>
-          <div class="book-pct">35%</div>
-        </div>
-        <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:35%"></div></div>
-        <div class="book-list-actions">
-          <button class="book-act-btn primary">📖 Читать</button>
-          <button class="book-act-btn">🎧</button>
-          <button class="book-act-icon">🗑</button>
-        </div>
-      </div>
-
-      <div class="book-list-item">
-        <div class="row1">
-          <div class="book-cover-placeholder">📕</div>
-          <div class="book-info">
-            <div class="book-list-title">L'Affaire Saint-Fiacre</div>
-            <div class="book-list-author">Georges Simenon · A2</div>
-            <div class="book-list-chapter" style="color:var(--green)">✓ Прочитано</div>
-          </div>
-          <div class="book-pct" style="color:var(--green)">100%</div>
-        </div>
-        <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:100%;background:var(--green)"></div></div>
-        <div class="book-list-actions">
-          <button class="book-act-btn">📖 Снова</button>
-          <button class="book-act-btn">🎧</button>
-          <button class="book-act-icon">🗑</button>
-        </div>
-      </div>
-
-      <div style="height:16px"></div>
-    </div>
-
-    <div class="bottom-nav">
-      <div class="nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
-        Главная
-      </div>
-      <div class="nav-item active">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
-        Читать
-      </div>
-      <div class="nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-        Слова
-      </div>
-      <div class="nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        Профиль
-      </div>
-    </div>
+  <div class="grp" id="g-theme">
+    <button data-t="paper" class="on">Бумага</button>
+    <button data-t="sepia">Сепия</button>
+    <button data-t="ink">Чернила</button>
   </div>
-
-
-  <!-- ══ SCREEN: READER (текст без панели) ══ -->
-  <div class="screen reader-screen" id="screen-reader">
-    <div class="status-bar">
-      <span>10:27</span>
-      <div class="status-icons"><span>📶</span><span style="font-weight:700">19%</span></div>
-    </div>
-    <div class="reader-topbar">
-      <button class="reader-back">‹</button>
-      <div class="reader-title-wrap">
-        <div class="reader-title">死亡通知单：暗黑者</div>
-        <div class="reader-subtitle">🇨🇳 ZH · Гл.1 · абзац 44/299</div>
-      </div>
-      <button class="reader-ctrl-btn active">👁</button>
-      <button class="reader-ctrl-btn">Aa</button>
-      <button class="reader-ctrl-btn" style="font-size:13px">拼</button>
-    </div>
-    <div class="reader-progress-bar"><div class="reader-progress-fill" style="width:15%"></div></div>
-
-    <div class="reader-text-area">
-      <div class="reader-chapter-title">第一章 · 死亡通知单</div>
-
-      <div class="reader-para">
-        <ruby class="rw rw-new"><span>深夜</span><rt>shēn yè</rt></ruby>，
-        <ruby class="rw rw-known"><span>雨</span><rt></rt></ruby>
-        <ruby class="rw rw-new"><span>打在</span><rt>dǎ zài</rt></ruby>
-        <ruby class="rw rw-learning"><span>窗户</span><rt>chuāng hu</rt></ruby>
-        <ruby class="rw rw-known"><span>上</span><rt></rt></ruby>，
-        <ruby class="rw rw-new"><span>发出</span><rt>fā chū</rt></ruby>
-        <ruby class="rw rw-seen"><span>嗒嗒</span><rt>dā dā</rt></ruby>
-        <ruby class="rw rw-known"><span>的</span><rt></rt></ruby>
-        <ruby class="rw rw-new"><span>声音</span><rt>shēng yīn</rt></ruby>。
-      </div>
-
-      <div class="reader-para">
-        <ruby class="rw rw-learning"><span>两个</span><rt>liǎng gè</rt></ruby>
-        <ruby class="rw rw-known"><span>人</span><rt></rt></ruby>，
-        <ruby class="rw rw-known"><span>一个</span><rt></rt></ruby>
-        <ruby class="rw rw-learning"><span>警察</span><rt>jǐng chá</rt></ruby>，
-        <ruby class="rw rw-known"><span>一个</span><rt></rt></ruby>
-        <ruby class="rw rw-new"><span>怪物</span><rt>guài wù</rt></ruby>。
-      </div>
-
-      <div class="reader-para active">
-        <ruby class="rw rw-known"><span>他们</span><rt>tā men</rt></ruby>
-        <ruby class="rw rw-known"><span>在</span><rt></rt></ruby>
-        <ruby class="rw rw-seen"><span>潇潇</span><rt>xiāo xiāo</rt></ruby>
-        <ruby class="rw rw-known"><span>的</span><rt></rt></ruby>
-        <ruby class="rw rw-new"><span>雨夜</span><rt>yǔ yè</rt></ruby>
-        <ruby class="rw rw-known"><span>中</span><rt></rt></ruby>
-        <ruby class="rw rw-looked"><span>对视</span><rt>duì shì</rt></ruby>
-        <ruby class="rw rw-known"><span>着</span><rt></rt></ruby>。
-        <div class="para-translation">Они смотрели друг на друга в шумную дождливую ночь.</div>
-      </div>
-
-      <div class="reader-para">
-        <ruby class="rw rw-known"><span>两个</span><rt></rt></ruby>
-        <ruby class="rw rw-known"><span>人</span><rt></rt></ruby>
-        <ruby class="rw rw-known"><span>的</span><rt></rt></ruby>
-        <ruby class="rw rw-new"><span>目光</span><rt>mù guāng</rt></ruby>
-        <ruby class="rw rw-new"><span>似乎</span><rt>sì hū</rt></ruby>
-        <ruby class="rw rw-known"><span>比</span><rt></rt></ruby>
-        <ruby class="rw rw-learning"><span>风雨</span><rt>fēng yǔ</rt></ruby>
-        <ruby class="rw rw-known"><span>更加</span><rt></rt></ruby>
-        <ruby class="rw rw-new"><span>寒冷</span><rt>hán lěng</rt></ruby>。
-      </div>
-
-      <div class="reader-para">
-        <ruby class="rw rw-new"><span>黑暗</span><rt>hēi àn</rt></ruby>
-        <ruby class="rw rw-known"><span>中</span><rt></rt></ruby>，
-        <ruby class="rw rw-learning"><span>警察</span><rt>jǐng chá</rt></ruby>
-        <ruby class="rw rw-known"><span>缓缓</span><rt></rt></ruby>
-        <ruby class="rw rw-known"><span>地</span><rt></rt></ruby>
-        <ruby class="rw rw-new"><span>举起</span><rt>jǔ qǐ</rt></ruby>
-        <ruby class="rw rw-known"><span>了</span><rt></rt></ruby>
-        <ruby class="rw rw-new"><span>手枪</span><rt>shǒu qiāng</rt></ruby>。
-      </div>
-    </div>
-
-    <div class="reader-bottom">
-      <div class="reader-nav-row">
-        <button class="nav-arrow">‹</button>
-        <div class="reader-progress-text">44 / 299</div>
-        <button class="listen-btn">🎧 Слушать</button>
-        <div class="reader-progress-text">15%</div>
-        <button class="nav-arrow">›</button>
-      </div>
-    </div>
-  </div>
-
-
-  <!-- ══ SCREEN: READER + WORD PANEL ══ -->
-  <div class="screen reader-screen" id="screen-word-panel">
-    <div class="status-bar">
-      <span>10:27</span>
-      <div class="status-icons"><span>📶</span><span style="font-weight:700">19%</span></div>
-    </div>
-    <div class="reader-topbar">
-      <button class="reader-back">‹</button>
-      <div class="reader-title-wrap">
-        <div class="reader-title">死亡通知单：暗黑者</div>
-        <div class="reader-subtitle">🇨🇳 ZH · Гл.1 · абзац 44/299</div>
-      </div>
-      <button class="reader-ctrl-btn active">👁</button>
-      <button class="reader-ctrl-btn">Aa</button>
-      <button class="reader-ctrl-btn" style="font-size:13px">拼</button>
-    </div>
-    <div class="reader-progress-bar"><div class="reader-progress-fill" style="width:15%"></div></div>
-
-    <div class="reader-text-area" style="padding-bottom:8px">
-      <div class="reader-chapter-title">第一章 · 死亡通知单</div>
-
-      <div class="reader-para">
-        <ruby class="rw rw-learning"><span>两个</span><rt>liǎng gè</rt></ruby>
-        <ruby class="rw rw-known"><span>人</span><rt></rt></ruby>，
-        <ruby class="rw rw-known"><span>一个</span><rt></rt></ruby>
-        <ruby class="rw rw-learning"><span>警察</span><rt>jǐng chá</rt></ruby>，
-        <ruby class="rw rw-known"><span>一个</span><rt></rt></ruby>
-        <ruby class="rw rw-new"><span>怪物</span><rt>guài wù</rt></ruby>。
-      </div>
-
-      <div class="reader-para active">
-        <ruby class="rw rw-known"><span>他们</span><rt>tā men</rt></ruby>
-        <ruby class="rw rw-known"><span>在</span><rt></rt></ruby>
-        <ruby class="rw rw-seen"><span>潇潇</span><rt>xiāo xiāo</rt></ruby>
-        <ruby class="rw rw-known"><span>的</span><rt></rt></ruby>
-        <ruby class="rw rw-new"><span>雨夜</span><rt>yǔ yè</rt></ruby>
-        <ruby class="rw rw-known"><span>中</span><rt></rt></ruby>
-        <ruby class="rw rw-looked" style="outline:2px solid var(--rw-looked);outline-offset:1px;border-radius:4px"><span>对视</span><rt>duì shì</rt></ruby>
-        <ruby class="rw rw-known"><span>着</span><rt></rt></ruby>。
-        <div class="para-translation">Они смотрели друг на друга в шумную дождливую ночь.</div>
-      </div>
-    </div>
-
-    <!-- Word panel overlaid -->
-    <div class="word-panel">
-      <div class="word-panel-handle"></div>
-      <div class="word-panel-content">
-        <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:2px">
-          <div class="word-panel-word">对视</div>
-          <div class="word-pinyin" style="margin:0">duì shì</div>
-        </div>
-        <div class="word-meaning">смотреть друг на друга; глядеть в глаза</div>
-        <div class="word-actions">
-          <button class="word-act word-act-save">+ Изучить</button>
-          <button class="word-act word-act-know">✓ Знаю</button>
-          <button class="word-act word-act-context">⋯</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-</div><!-- phone -->
-
-<div class="legend">
-  <span><span class="legend-dot" style="background:var(--rw-new-bg);border:1.5px solid var(--rw-new)"></span><span style="color:var(--rw-new)">Новое</span></span>
-  <span><span class="legend-dot" style="background:var(--rw-seen-bg);border:1.5px solid var(--rw-seen)"></span><span style="color:var(--rw-seen)">Замечено</span></span>
-  <span><span class="legend-dot" style="background:var(--rw-looked-bg);border:1.5px solid var(--rw-looked)"></span><span style="color:var(--rw-looked)">Нажато</span></span>
-  <span><span class="legend-dot" style="background:var(--rw-learning-bg);border:1.5px solid var(--rw-learning)"></span><span style="color:var(--rw-learning)">Изучается</span></span>
 </div>
 
 <script>
-function showScreen(id, btn) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('screen-' + id).classList.add('active');
-  btn.classList.add('active');
+/* ── переключение тем ── */
+document.querySelectorAll('#g-theme button').forEach(b => b.onclick = () => {
+  document.documentElement.dataset.theme = b.dataset.t;
+  document.querySelectorAll('#g-theme button').forEach(x => x.classList.toggle('on', x === b));
+});
+
+/* ── переключение экранов (+ спец-режим 中文) ── */
+const EN_HTML = document.getElementById('rd-body').innerHTML;
+const ZH_HTML = `
+  <p><ruby>第一<rt>dì yī</rt></ruby><ruby>作者<rt>zuòzhě</rt></ruby>和<ruby>通讯<rt>tōngxùn</rt></ruby><ruby>作者<rt>zuòzhě</rt></ruby><span class="w w-saved w-learn" data-word="身份" data-ru="статус, личность" data-note="HSK4 · 身(shēn) тело + 份(fèn) доля" data-pinyin="shēnfèn" data-chars="身(shēn) тело, сам + 份(fèn) доля, часть"><ruby>身份<rt>shēnfèn</rt></ruby></span>，<ruby>联合<rt>liánhé</rt></ruby><ruby>全球<rt>quánqiú</rt></ruby>43个<ruby>单位<rt>dānwèi</rt></ruby>的85位<ruby>共同<rt>gòngtóng</rt></ruby><ruby>作者<rt>zuòzhě</rt></ruby>。</p>
+  <p class="active">通过<ruby>古代<rt>gǔdài</rt></ruby>和<ruby>现代<rt>xiàndài</rt></ruby><ruby>人群<rt>rénqún</rt></ruby>的DNA<ruby>比对<rt>bǐduì</rt></ruby><ruby>分析<rt>fēnxī</rt></ruby>，<span class="w w-problem" data-word="实证" data-ru="эмпирически подтвердить" data-note="HSK6 · глагол" data-pinyin="shízhèng" data-chars="实(shí) реальный, факт + 证(zhèng) доказывать">​<ruby>实证<rt>shízhèng</rt></ruby></span>了<ruby>黄河<rt>Huáng Hé</rt></ruby><ruby>流域<rt>liúyù</rt></ruby><ruby>中原<rt>Zhōngyuán</rt></ruby><ruby>地区<rt>dìqū</rt></ruby>。<br>
+  <button class="tr-link">показать перевод</button>
+  <span class="tr-text">Сравнительный анализ ДНК древних и современных популяций эмпирически подтвердил роль региона Чжунъюань в бассейне Хуанхэ.</span></p>
+  <p><ruby>东亚<rt>Dōngyà</rt></ruby><ruby>人群<rt>rénqún</rt></ruby>8000<ruby>年来<rt>nián lái</rt></ruby>的<span class="w w-saved w-learn" data-word="迁徙" data-ru="миграция" data-note="HSK6" data-pinyin="qiānxǐ" data-chars="迁(qiān) переезжать + 徙(xǐ) перемещаться"><ruby>迁徙<rt>qiānxǐ</rt></ruby></span>和<ruby>混合<rt>hùnhé</rt></ruby><ruby>历史<rt>lìshǐ</rt></ruby>，这是<ruby>当时<rt>dāngshí</rt></ruby><ruby>国内<rt>guónèi</rt></ruby><ruby>开展<rt>kāizhǎn</rt></ruby>的<ruby>最大<rt>zuìdà</rt></ruby><ruby>规模<rt>guīmó</rt></ruby>的<ruby>考古<rt>kǎogǔ</rt></ruby><ruby>基因组<rt>jīyīnzǔ</rt></ruby><ruby>学<rt>xué</rt></ruby><ruby>研究<rt>yánjiū</rt></ruby>。</p>
+  <p>跟<ruby>卢宁<rt>Lú Níng</rt></ruby>这次一样，<ruby>整个<rt>zhěnggè</rt></ruby><span class="w w-new" data-word="审判" data-ru="суд, судебный процесс" data-note="HSK5" data-pinyin="shěnpàn" data-chars="审(shěn) рассматривать + 判(pàn) судить"><ruby>审判<rt>shěnpàn</rt></ruby></span><ruby>过程<rt>guòchéng</rt></ruby>也是<ruby>高度<rt>gāodù</rt></ruby><ruby>保密<rt>bǎomì</rt></ruby>。</p>`;
+
+const rdBody = document.getElementById('rd-body');
+function setScreen(id) {
+  const zh = id === 'zh';
+  const target = zh ? 'scr-reader' : id;
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('on', s.id === target));
+  if (target === 'scr-reader') {
+    rdBody.classList.toggle('zh', zh);
+    rdBody.innerHTML = zh ? ZH_HTML : EN_HTML;
+    document.getElementById('rd-title').textContent = zh ? 'China Radio International' : 'The Guns of August';
+    document.getElementById('rd-sub').textContent = zh ? '🇨🇳 23/26 · 85%' : '🇬🇧 глава 1 · 22%';
+    document.getElementById('rd-progress').style.width = zh ? '85%' : '22%';
+    document.getElementById('btn-pinyin').style.display = zh ? '' : 'none';
+    bindReader();
+  }
+  document.querySelectorAll('#g-screen button').forEach(x => x.classList.toggle('on', x.dataset.s === id));
 }
+document.querySelectorAll('#g-screen button').forEach(b => b.onclick = () => setScreen(b.dataset.s));
+
+/* ── 👁 раскраска ── */
+const scrReader = document.getElementById('scr-reader');
+document.getElementById('btn-marks').onclick = (e) => {
+  scrReader.classList.toggle('marks-on');
+  e.currentTarget.classList.toggle('on');
+};
+document.getElementById('btn-pinyin').onclick = (e) => {
+  scrReader.classList.toggle('pinyin-off');
+  e.currentTarget.classList.toggle('on');
+};
+
+/* ── автоскрытие панелей + тап по центру ── */
+const rdScroll = document.getElementById('rd-scroll');
+let lastY = 0;
+rdScroll.addEventListener('scroll', () => {
+  const y = rdScroll.scrollTop;
+  if (y - lastY > 6 && y > 60) scrReader.classList.add('chrome-hidden');
+  else if (lastY - y > 6) scrReader.classList.remove('chrome-hidden');
+  lastY = y;
+});
+rdScroll.addEventListener('click', (e) => {
+  if (e.target.closest('.w, .tr-link, button, ruby')) return;
+  scrReader.classList.toggle('chrome-hidden');
+});
+
+/* ── перелистывание тапом по краям ── */
+document.querySelector('.edge.l').onclick = () => rdScroll.scrollBy({ top: -rdScroll.clientHeight * .75 });
+document.querySelector('.edge.r').onclick = () => rdScroll.scrollBy({ top:  rdScroll.clientHeight * .75 });
+
+/* ── перевод + шторка слова ── */
+function bindReader() {
+  rdBody.querySelectorAll('.tr-link').forEach(l => l.onclick = (e) => {
+    e.stopPropagation();
+    l.closest('p').classList.add('tr-open');
+  });
+  rdBody.querySelectorAll('.w[data-word]').forEach(w => w.onclick = (e) => {
+    e.stopPropagation();
+    openSheet(w.dataset);
+  });
+}
+function openSheet(d) {
+  document.getElementById('sh-word').textContent = d.word;
+  document.getElementById('sh-ru').textContent = d.ru || '—';
+  document.getElementById('sh-meta').textContent = d.note || '';
+  const py = document.getElementById('sh-pinyin');
+  py.style.display = d.pinyin ? '' : 'none'; py.textContent = d.pinyin || '';
+  const ch = document.getElementById('sh-chars');
+  ch.style.display = d.chars ? '' : 'none'; ch.textContent = d.chars || '';
+  document.body.classList.add('sheet-open');
+}
+document.getElementById('sheet-veil').onclick = () => document.body.classList.remove('sheet-open');
+bindReader();
 </script>
 </body>
 </html>
