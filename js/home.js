@@ -21,10 +21,11 @@ export async function renderHome() {
   // ── Обновить UI переключателя языка ──
   if (typeof globalThis.updateLangUI === 'function') globalThis.updateLangUI();
   else {
-    const btnFr = $('hlb-fr'); const btnEn = $('hlb-en'); const btnZh = $('hlb-zh');
+    const btnFr = $('hlb-fr'); const btnEn = $('hlb-en'); const btnZh = $('hlb-zh'); const btnEs = $('hlb-es');
     if (btnFr) btnFr.classList.toggle('active', lang === 'fr');
     if (btnEn) btnEn.classList.toggle('active', lang === 'en');
     if (btnZh) btnZh.classList.toggle('active', isZh);
+    if (btnEs) btnEs.classList.toggle('active', lang === 'es');
     const icon = $('bn-practice-icon'); const label = $('bn-practice-label');
     if (icon) icon.textContent = isZh ? '🀄' : '⚡';
     if (label) label.textContent = isZh ? 'Символы' : 'Глаголы';

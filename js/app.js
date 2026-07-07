@@ -844,7 +844,7 @@ export function showScreen(id) {
     const curDictLang = globalThis.AN2_LANG || 'fr';
     if (typeof window.setDictType === 'function') {
       if (curDictLang === 'zh') window.setDictType('zh');
-      else if (curDictLang === 'en') window.setDictType('reader');
+      else if (curDictLang === 'en' || curDictLang === 'es') window.setDictType('reader');
       else { closeDictDetail(); window.renderDict(); }
     } else {
       closeDictDetail();
@@ -1909,7 +1909,7 @@ export function startSRSReview() {
 
 // ── Переключение языка ──
 function setAppLang(lang) {
-  const allowed = ['fr', 'zh', 'en'];
+  const allowed = ['fr', 'zh', 'en', 'es'];
   if (!allowed.includes(lang)) return;
   globalThis.AN2_LANG = lang;
   try { localStorage.setItem('an2_lang', lang); } catch {}
@@ -1917,14 +1917,14 @@ function setAppLang(lang) {
   // Reset dict to correct type for new language
   if (typeof window.setDictType === 'function') {
     const dictScreenActive = document.getElementById('screen-dict')?.classList.contains('active');
-    const targetDictType = lang === 'zh' ? 'zh' : lang === 'en' ? 'reader' : 'verbs';
+    const targetDictType = lang === 'zh' ? 'zh' : (lang === 'en' || lang === 'es') ? 'reader' : 'verbs';
     if (dictScreenActive) {
       window.setDictType(targetDictType);
     } else {
       // Reset tab visibility quietly so next open starts correctly
       const tabsFr = document.getElementById('dict-tabs-fr');
       const tabsZh = document.getElementById('dict-tabs-zh');
-      if (tabsFr) tabsFr.style.display = (lang === 'zh' || lang === 'en') ? 'none' : 'flex';
+      if (tabsFr) tabsFr.style.display = (lang === 'zh' || lang === 'en' || lang === 'es') ? 'none' : 'flex';
       if (tabsZh) tabsZh.style.display = lang === 'zh' ? 'block' : 'none';
     }
   }
@@ -1938,14 +1938,17 @@ function updateLangUI() {
   const lang = globalThis.AN2_LANG || 'fr';
   const isZh = lang === 'zh';
   const isEn = lang === 'en';
+  const isEs = lang === 'es';
 
   // Topbar buttons
   const btnFr = document.getElementById('hlb-fr');
   const btnEn = document.getElementById('hlb-en');
   const btnZh = document.getElementById('hlb-zh');
+  const btnEs = document.getElementById('hlb-es');
   if (btnFr) btnFr.classList.toggle('active', lang === 'fr');
   if (btnEn) btnEn.classList.toggle('active', isEn);
   if (btnZh) btnZh.classList.toggle('active', isZh);
+  if (btnEs) btnEs.classList.toggle('active', isEs);
 
   // 4th nav button
   const icon = document.getElementById('bn-practice-icon');
@@ -1956,7 +1959,7 @@ function updateLangUI() {
   // Sync dict tabs visibility without triggering a render
   const tabsFr = document.getElementById('dict-tabs-fr');
   const tabsZh = document.getElementById('dict-tabs-zh');
-  if (tabsFr) tabsFr.style.display = (isZh || isEn) ? 'none' : 'flex';
+  if (tabsFr) tabsFr.style.display = (isZh || isEn || isEs) ? 'none' : 'flex';
   if (tabsZh) tabsZh.style.display = isZh ? 'block' : 'none';
 
   // Also sync import modal lang selector if open
