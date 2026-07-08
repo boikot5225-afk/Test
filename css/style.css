@@ -3394,3 +3394,19 @@ input:-webkit-autofill:focus {
 }
 #reader-reading-view .rd-scroll.rd-pages-mode .rd-pages-indicator{ display:block; }
 #reader-reading-view #reader-view-mode-btn.on{ background:var(--accent); border-color:var(--accent); color:#f3e7cf; }
+/* A long-press-to-select on a word is exactly what a slow page-turn swipe
+   looks like at first — text selection is deliberately allowed elsewhere in
+   the reader (v66.9 above), but here it hijacks every touch that follows
+   (the OS owns the gesture for extending the selection, not the page), which
+   read as "перелистывание виснет" until the selection was cleared some other
+   way. Only page-turn swipes/taps are meaningful in this mode, so turn
+   selection off — more specific than the #reader-chapter-text rule above, so
+   it wins despite both using !important. */
+#reader-reading-view .rd-scroll.rd-pages-mode .rd-page,
+#reader-reading-view .rd-scroll.rd-pages-mode .reader-paragraph-text,
+#reader-reading-view .rd-scroll.rd-pages-mode .reader-word{
+  -webkit-user-select:none !important;
+  -moz-user-select:none !important;
+  user-select:none !important;
+  -webkit-touch-callout:none !important;
+}
