@@ -5,7 +5,7 @@
 import { sb, sbUser, sbGetCurrentUserId, isSupabaseReady, fbSaveWordState, fbLoadWordState,
          LONG_REQUEST_TIMEOUT_MS, initSupabase } from './supabase.js';
 import { isGuest, VERBS, NOUNS, setCurrentProfile } from './state.js';
-import { speak, stopSpeak, getTtsRate, setTtsRate, getTtsVoiceEngine, setTtsVoiceEngine } from './tts.js?v=68.39-disable-broken-gpt4o';
+import { speak, stopSpeak, getTtsRate, setTtsRate, getTtsVoiceEngine, setTtsVoiceEngine, getTtsVoice, setTtsVoice, KOKORO_VOICES } from './tts.js?v=68.40-voice-picker';
 import { showToast, showLoading, hideLoading, normalizeImportKey } from './utils.js';
 import { createReaderAudio } from './reader/audio.js?v=3';
 import { createReaderNavigation } from './reader/navigation.js?v=1';
@@ -160,6 +160,21 @@ function readerSyncVoiceEnginePanel() {
   if (!panel) return;
   const engine = getTtsVoiceEngine();
   panel.querySelectorAll('.rd-dp-voice').forEach(btn => btn.classList.toggle('rd-dp-active', btn.dataset.voice === engine));
+  readerSyncVoicePicker();
+}
+// The available Kokoro voices differ per language, so this row is only
+// shown (and only ever rendered) for the language actually being read —
+// French has just one Kokoro voice, so there's nothing worth picking there.
+function readerSyncVoicePicker() {
+  const row = document.getElementById('rd-dp-voice-picker-row');
+  const wrap = document.getElementById('rd-dp-voice-picker');
+  if (!row || !wrap) return;
+  const lang = readerCurrentLang();
+  const options = KOKORO_VOICES[lang] || [];
+  if (options.length < 2) { row.style.display = 'none'; return; }
+  row.style.display = 'flex';
+  const current = getTtsVoice(lang) || options[0].id;
+  wrap.innerHTML = options.map(o => `<button class="rd-dp-pill${current === o.id ? ' rd-dp-active' : ''}" onclick="rdSetVoice('${lang}','${o.id}',this)">${o.label}</button>`).join('');
 }
 function readerToggleDisplayPanel() {
   const open = readerDisplay.togglePanel();
@@ -176,6 +191,11 @@ function rdSetVoiceEngine(engine, element) {
   element?.closest('.rd-dp-row')?.querySelectorAll('.rd-dp-voice').forEach(btn => btn.classList.remove('rd-dp-active'));
   element?.classList.add('rd-dp-active');
   showToast(engine === 'gpt4o' ? '🎙 Голос: GPT-4o (лучше, ~4x дороже)' : '🎙 Голос: Kokoro (по умолчанию)');
+}
+function rdSetVoice(lang, voiceId, element) {
+  setTtsVoice(lang, voiceId);
+  element?.closest('.rd-dp-pills')?.querySelectorAll('.rd-dp-pill').forEach(btn => btn.classList.remove('rd-dp-active'));
+  element?.classList.add('rd-dp-active');
 }
 
 const readerPinyinControls = createReaderPinyinControls({
@@ -3890,6 +3910,7 @@ window.rdSetSize  = rdSetSize;
 window.rdSetLH    = rdSetLH;
 window.rdSetTheme = rdSetTheme;
 window.rdSetVoiceEngine = rdSetVoiceEngine;
+window.rdSetVoice = rdSetVoice;
 window.readerNextChapter = readerNextChapter;
 window.readerPrevChapter = readerPrevChapter;
 window.readerOpenToc     = readerOpenToc;

@@ -10,9 +10,14 @@ if (!admin.apps.length) {
   admin.initializeApp({ databaseURL: DATABASE_URL });
 }
 
-// Live probe against OpenRouter's audio/speech endpoint (2026-07-08, see
-// git history for the temp diagnostic code) established what's actually
-// callable with this project's key, despite what OpenRouter's own docs say:
+// Live-probed (2026-07-08) against OpenRouter's audio/speech endpoint — every
+// candidate Kokoro voice id below (fr/en-US/en-UK/zh/es) came back 200 OK, so
+// the full Kokoro voicepack is genuinely available through this project's
+// key. That's what backs js/tts.js's KOKORO_VOICES picker.
+//
+// Separately, a TTS *model* (not voice) probe against the same endpoint
+// (2026-07-08, see git history for the temp diagnostic code) established
+// what's actually callable with this key, despite what OpenRouter's docs say:
 //   openai/gpt-4o-mini-tts (+ dated variant, + bare, + tts-1) → 400 "does not exist"
 //   mistralai/voxtral-mini-tts-2603 → provider 404
 //   google/gemini-3.1-flash-tts-preview → EXISTS (but requires response_format:"pcm")

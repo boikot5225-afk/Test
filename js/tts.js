@@ -147,7 +147,7 @@ async function firebaseIdToken() {
   return user.getIdToken(false);
 }
 
-async function requestFirebaseAudio(text, { lang = 'fr', engine = 'kokoro' } = {}) {
+async function requestFirebaseAudio(text, { lang = 'fr', engine = 'kokoro', voice = '' } = {}) {
   const token = await firebaseIdToken();
   const normalizedLang = normalizeLang(lang);
   // Own AbortController (not fetchWithTimeout's internal one) so stopSpeak()
@@ -174,6 +174,7 @@ async function requestFirebaseAudio(text, { lang = 'fr', engine = 'kokoro' } = {
         text,
         lang: normalizedLang,
         engine,
+        voice: voice || undefined,
         speed: 1,
       }),
       signal: controller.signal,
@@ -333,6 +334,42 @@ export function setTtsVoiceEngine(voiceEngine) {
   return v;
 }
 
+// Specific Kokoro voice per language, selectable instead of the one fixed
+// default per language — live-probed against OpenRouter on 2026-07-08 (every
+// id below returned 200 OK), not guessed. French only ever had one Kokoro
+// voice, so there's nothing to pick there.
+export const KOKORO_VOICES = Object.freeze({
+  en: [
+    { id: 'af_heart', label: 'Heart (US, ж)' },
+    { id: 'af_bella', label: 'Bella (US, ж)' },
+    { id: 'af_nicole', label: 'Nicole (US, ж)' },
+    { id: 'am_adam', label: 'Adam (US, м)' },
+    { id: 'am_onyx', label: 'Onyx (US, м)' },
+    { id: 'bf_emma', label: 'Emma (UK, ж)' },
+    { id: 'bm_george', label: 'George (UK, м)' },
+  ],
+  zh: [
+    { id: 'zf_xiaobei', label: '晓贝 (ж)' },
+    { id: 'zf_xiaoxiao', label: '晓晓 (ж)' },
+    { id: 'zm_yunjian', label: '云健 (м)' },
+    { id: 'zm_yunxi', label: '云希 (м)' },
+    { id: 'zm_yunyang', label: '云扬 (м)' },
+  ],
+  es: [
+    { id: 'ef_dora', label: 'Dora (ж)' },
+    { id: 'em_alex', label: 'Alex (м)' },
+    { id: 'em_santa', label: 'Santa (м)' },
+  ],
+});
+
+function ttsVoiceKey(lang) { return `an2_tts_voice_${normalizeLang(lang)}`; }
+export function getTtsVoice(lang) {
+  try { return localStorage.getItem(ttsVoiceKey(lang)) || ''; } catch (_) { return ''; }
+}
+export function setTtsVoice(lang, voiceId) {
+  try { localStorage.setItem(ttsVoiceKey(lang), String(voiceId || '')); } catch (_) {}
+}
+
 export async function speak(text, opts = {}) {
   primeMobileAudio();
   const lang = normalizeLang(opts.lang || 'fr');
@@ -344,14 +381,15 @@ export async function speak(text, opts = {}) {
   if (engine === 'webspeech') return speakViaWebSpeech(prepared, { lang, rate });
 
   const voiceEngine = getTtsVoiceEngine();
-  const key = cacheHash(`${lang}|${voiceEngine}|${prepared}`);
+  const voice = getTtsVoice(lang);
+  const key = cacheHash(`${lang}|${voiceEngine}|${voice}|${prepared}`);
   stopSpeak();
   const token = ++ttsToken;
   try {
     let cached = TTS_MEM_CACHE.get(key) || null;
     if (!cached) cached = await readPersistentAudio(key);
     if (!cached) {
-      cached = await requestFirebaseAudio(prepared, { lang, engine: voiceEngine });
+      cached = await requestFirebaseAudio(prepared, { lang, engine: voiceEngine, voice });
       TTS_MEM_CACHE.set(key, cached);
       writePersistentAudio(key, cached.buffer, cached.mimeType);
     } else {

@@ -224,7 +224,7 @@
           📡 Проверить связь с сервером
         </button>
         <div id="health-result" style="display:none;margin-top:10px;font-size:0.78rem;line-height:1.5;padding:8px 12px;border-radius:8px;"></div>
-        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v76.92-disable-broken-gpt4o-voice</span></div>
+        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v76.93-kokoro-voice-picker</span></div>
       </div>
     </div>
 
@@ -516,6 +516,10 @@
                  slug) — re-enable once a verified working id is confirmed. -->
             <button class="rd-dp-voice rd-dp-pill" data-voice="gpt4o" disabled title="Временно недоступно — уточняется правильный id модели" style="opacity:.45;cursor:not-allowed">GPT-4o (скоро)</button>
           </div>
+        </div>
+        <div class="rd-dp-row" id="rd-dp-voice-picker-row" style="display:none">
+          <span class="rd-dp-label">Тембр</span>
+          <div class="rd-dp-pills" id="rd-dp-voice-picker"></div>
         </div>
       </div>
 
@@ -1958,6 +1962,6 @@
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=70.21"></script>
+<script type="module" src="js/app.js?v=70.22"></script>
 </body>
 </html>
