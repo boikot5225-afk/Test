@@ -6,7 +6,7 @@
 import { fetchWithTimeout } from './supabase.js';
 
 const TTS_MEM_CACHE = new Map();
-const TTS_CACHE_NAME = 'an2-tts-audio-v4';
+const TTS_CACHE_NAME = 'an2-tts-audio-v5';
 const TTS_CACHE_LIMIT = 60;
 
 let ttsAudio = null;
@@ -143,7 +143,7 @@ async function firebaseIdToken() {
   return user.getIdToken(false);
 }
 
-async function requestFirebaseAudio(text, { lang = 'fr' } = {}) {
+async function requestFirebaseAudio(text, { lang = 'fr', engine = 'kokoro' } = {}) {
   const token = await firebaseIdToken();
   const normalizedLang = normalizeLang(lang);
   // Speed is now always requested neutral and applied client-side via
@@ -161,6 +161,7 @@ async function requestFirebaseAudio(text, { lang = 'fr' } = {}) {
     body: JSON.stringify({
       text,
       lang: normalizedLang,
+      engine,
       speed: 1,
     }),
   }, 60000);
@@ -282,6 +283,20 @@ export function setTtsRate(rate) {
   return r;
 }
 
+// Which cloud voice to generate with — separate from the ttsEngine setting
+// above (that one picks firebase-vs-webspeech delivery). 'kokoro' is the
+// free-ish default already in use; 'gpt4o' is a noticeably more natural
+// voice for about 4x the per-character cost.
+const TTS_VOICE_ENGINE_KEY = 'an2_tts_voice_engine';
+export function getTtsVoiceEngine() {
+  return String(localStorage.getItem(TTS_VOICE_ENGINE_KEY) || 'kokoro').toLowerCase() === 'gpt4o' ? 'gpt4o' : 'kokoro';
+}
+export function setTtsVoiceEngine(voiceEngine) {
+  const v = String(voiceEngine || 'kokoro').toLowerCase() === 'gpt4o' ? 'gpt4o' : 'kokoro';
+  try { localStorage.setItem(TTS_VOICE_ENGINE_KEY, v); } catch (_) {}
+  return v;
+}
+
 export async function speak(text, opts = {}) {
   primeMobileAudio();
   const lang = normalizeLang(opts.lang || 'fr');
@@ -292,14 +307,15 @@ export async function speak(text, opts = {}) {
   const rate = opts.rate != null ? Math.max(0.6, Math.min(2, Number(opts.rate))) : getTtsRate();
   if (engine === 'webspeech') return speakViaWebSpeech(prepared, { lang, rate });
 
-  const key = cacheHash(`${lang}|${prepared}`);
+  const voiceEngine = getTtsVoiceEngine();
+  const key = cacheHash(`${lang}|${voiceEngine}|${prepared}`);
   stopSpeak();
   const token = ++ttsToken;
   try {
     let cached = TTS_MEM_CACHE.get(key) || null;
     if (!cached) cached = await readPersistentAudio(key);
     if (!cached) {
-      cached = await requestFirebaseAudio(prepared, { lang });
+      cached = await requestFirebaseAudio(prepared, { lang, engine: voiceEngine });
       TTS_MEM_CACHE.set(key, cached);
       writePersistentAudio(key, cached.buffer, cached.mimeType);
     } else {

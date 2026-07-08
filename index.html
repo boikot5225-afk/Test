@@ -224,7 +224,7 @@
           📡 Проверить связь с сервером
         </button>
         <div id="health-result" style="display:none;margin-top:10px;font-size:0.78rem;line-height:1.5;padding:8px 12px;border-radius:8px;"></div>
-        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v76.88-fix-background-audio-and-duplicate-stop</span></div>
+        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v76.89-gpt4o-mini-tts-option</span></div>
       </div>
     </div>
 
@@ -505,6 +505,13 @@
             <button class="rd-dp-theme rd-dp-pill" data-theme="paper" onclick="rdSetTheme('paper',this)">Бумага</button>
             <button class="rd-dp-theme rd-dp-pill" data-theme="sepia" onclick="rdSetTheme('sepia',this)">Сепия</button>
             <button class="rd-dp-theme rd-dp-pill" data-theme="ink"   onclick="rdSetTheme('ink',this)">Чернила</button>
+          </div>
+        </div>
+        <div class="rd-dp-row">
+          <span class="rd-dp-label">Голос</span>
+          <div class="rd-dp-pills">
+            <button class="rd-dp-voice rd-dp-pill" data-voice="kokoro" onclick="rdSetVoiceEngine('kokoro',this)">Kokoro</button>
+            <button class="rd-dp-voice rd-dp-pill" data-voice="gpt4o"  onclick="rdSetVoiceEngine('gpt4o',this)">GPT-4o (лучше)</button>
           </div>
         </div>
       </div>
@@ -1948,6 +1955,6 @@
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=70.17"></script>
+<script type="module" src="js/app.js?v=70.18"></script>
 </body>
 </html>

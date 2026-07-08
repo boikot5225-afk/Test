@@ -5,7 +5,7 @@
 import { sb, sbUser, sbGetCurrentUserId, isSupabaseReady, fbSaveWordState, fbLoadWordState,
          LONG_REQUEST_TIMEOUT_MS, initSupabase } from './supabase.js';
 import { isGuest, VERBS, NOUNS, setCurrentProfile } from './state.js';
-import { speak, stopSpeak, getTtsRate, setTtsRate } from './tts.js?v=68.35-audio-element-primary';
+import { speak, stopSpeak, getTtsRate, setTtsRate, getTtsVoiceEngine, setTtsVoiceEngine } from './tts.js?v=68.36-gpt4o-voice';
 import { showToast, showLoading, hideLoading, normalizeImportKey } from './utils.js';
 import { createReaderAudio } from './reader/audio.js?v=3';
 import { createReaderNavigation } from './reader/navigation.js?v=1';
@@ -155,12 +155,28 @@ function readerLoadDisplay() { return readerDisplay.load(); }
 function readerSaveDisplay(settings) { return readerDisplay.save(settings); }
 function readerApplyDisplay(settings) { return readerDisplay.apply(settings); }
 function readerInitDisplay() { return readerDisplay.init(); }
-function readerToggleDisplayPanel() { return readerDisplay.togglePanel(); }
+function readerSyncVoiceEnginePanel() {
+  const panel = document.getElementById('rd-display-panel');
+  if (!panel) return;
+  const engine = getTtsVoiceEngine();
+  panel.querySelectorAll('.rd-dp-voice').forEach(btn => btn.classList.toggle('rd-dp-active', btn.dataset.voice === engine));
+}
+function readerToggleDisplayPanel() {
+  const open = readerDisplay.togglePanel();
+  if (open) readerSyncVoiceEnginePanel();
+  return open;
+}
 function readerCloseDisplayPanel() { return readerDisplay.closePanel(); }
 function rdSetFont(name, element) { return readerDisplay.setFont(name, element); }
 function rdSetSize(input) { return readerDisplay.setSize(input); }
 function rdSetLH(input) { return readerDisplay.setLineHeight(input); }
 function rdSetTheme(theme, element) { return readerDisplay.setTheme(theme, element); }
+function rdSetVoiceEngine(engine, element) {
+  setTtsVoiceEngine(engine);
+  element?.closest('.rd-dp-row')?.querySelectorAll('.rd-dp-voice').forEach(btn => btn.classList.remove('rd-dp-active'));
+  element?.classList.add('rd-dp-active');
+  showToast(engine === 'gpt4o' ? '🎙 Голос: GPT-4o (лучше, ~4x дороже)' : '🎙 Голос: Kokoro (по умолчанию)');
+}
 
 const readerPinyinControls = createReaderPinyinControls({
   storageKey: READER_ZH_PINYIN_MODE_KEY,
@@ -3873,6 +3889,7 @@ window.rdSetFont  = rdSetFont;
 window.rdSetSize  = rdSetSize;
 window.rdSetLH    = rdSetLH;
 window.rdSetTheme = rdSetTheme;
+window.rdSetVoiceEngine = rdSetVoiceEngine;
 window.readerNextChapter = readerNextChapter;
 window.readerPrevChapter = readerPrevChapter;
 window.readerOpenToc     = readerOpenToc;

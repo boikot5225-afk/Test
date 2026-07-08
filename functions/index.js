@@ -443,13 +443,27 @@ exports.readerAI = onCall(
 // No artificial daily limit is used here.
 // ────────────────────────────────────────────────────────────────
 const TTS_MAX_CHARS = 1800;
-const TTS_MODEL = 'hexgrad/kokoro-82m';
-const TTS_VOICES = Object.freeze({
-  fr: 'ff_siwis',
-  zh: 'zf_xiaobei',
-  en: 'af_heart',
-  es: 'ef_dora',
+// Two selectable voice engines (client picks via body.engine, defaults to
+// 'kokoro'): Kokoro is free-ish and already in use; GPT-4o Mini TTS is a
+// noticeably more natural voice for roughly 4x the per-character cost —
+// still a fraction of a cent per paragraph, cheap enough to offer as an
+// upgrade rather than a wholesale replacement. GPT-4o's TTS is multilingual
+// per-voice (it infers pronunciation from the input text), so one voice
+// covers all reader languages instead of Kokoro's per-language voice IDs.
+const TTS_ENGINES = Object.freeze({
+  kokoro: {
+    model: 'hexgrad/kokoro-82m',
+    voices: { fr: 'ff_siwis', zh: 'zf_xiaobei', en: 'af_heart', es: 'ef_dora' },
+  },
+  gpt4o: {
+    model: 'openai/gpt-4o-mini-tts',
+    voices: { fr: 'alloy', zh: 'alloy', en: 'alloy', es: 'alloy' },
+  },
 });
+
+function ttsEngineName(raw) {
+  return String(raw || 'kokoro').trim().toLowerCase() === 'gpt4o' ? 'gpt4o' : 'kokoro';
+}
 
 function ttsLang(raw) {
   const v = String(raw || 'fr').trim().toLowerCase();
@@ -469,7 +483,7 @@ function setTtsHeaders(res, extras = {}) {
   res.set({
     'Content-Type': 'audio/mpeg',
     'Cache-Control': 'no-store',
-    'Access-Control-Expose-Headers': 'Content-Type, X-TTS-Voice, X-TTS-Lang, X-Generation-Id',
+    'Access-Control-Expose-Headers': 'Content-Type, X-TTS-Voice, X-TTS-Lang, X-TTS-Engine, X-Generation-Id',
     ...extras,
   });
 }
@@ -508,10 +522,12 @@ exports.ttsAudio = onRequest(
     }
 
     const lang = ttsLang(req.body?.lang);
+    const engine = ttsEngineName(req.body?.engine);
+    const engineConf = TTS_ENGINES[engine];
     const requestedVoice = typeof req.body?.voice === 'string' ? req.body.voice.trim() : '';
     // Voices are server-controlled by language. This prevents a French voice
     // accidentally receiving Chinese text and keeps the UI deterministic.
-    const voice = requestedVoice || TTS_VOICES[lang];
+    const voice = requestedVoice || engineConf.voices[lang] || engineConf.voices.en;
     const speed = safeTtsSpeed(req.body?.speed ?? req.body?.rate);
     const key = OPENROUTER_API_KEY.value();
     if (!key) {
@@ -527,7 +543,7 @@ exports.ttsAudio = onRequest(
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: TTS_MODEL,
+          model: engineConf.model,
           input: text,
           voice,
           response_format: 'mp3',
@@ -552,14 +568,16 @@ exports.ttsAudio = onRequest(
       return res.status(502).json({ error: 'empty_audio', message: 'OpenRouter вернул слишком короткое аудио.' });
     }
 
-    // A lightweight usage counter, never a blocking quota.
+    // A lightweight usage counter, never a blocking quota — split by engine
+    // since gpt4o costs ~4x more per character than kokoro.
     try {
-      await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/tts_audio_chars`).transaction((current) => Number(current || 0) + text.length);
+      await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/tts_audio_chars_${engine}`).transaction((current) => Number(current || 0) + text.length);
     } catch (_) {}
 
     setTtsHeaders(res, {
       'X-TTS-Voice': voice,
       'X-TTS-Lang': lang,
+      'X-TTS-Engine': engine,
       'X-Generation-Id': upstream.headers.get('x-generation-id') || '',
     });
     return res.status(200).send(audio);
