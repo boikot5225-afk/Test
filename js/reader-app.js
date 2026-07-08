@@ -882,10 +882,28 @@ function saveReaderWordState() {
 }
 
 // ── Облачная синхронизация статусов слов ──
+// This used to be a plain debounce (reset on every call) — during continuous
+// reading, word-state saves fire constantly (every paragraph view, every
+// click), so the timer kept getting pushed back and could go a whole session
+// without ever actually firing. A "clear all site data" while that tab stays
+// open never gives the app a chance to flush (no JS hook exists for it), so
+// the only real defenses are: sync soon after the FIRST pending change no
+// matter how much activity follows, and the visibilitychange/pagehide flush
+// below for when the tab is backgrounded or closed normally.
 let _wordStateSyncTimer = null;
+let _wordStateSyncPendingSince = 0;
+const WORD_STATE_SYNC_IDLE_MS = 15000;
+const WORD_STATE_SYNC_MAX_WAIT_MS = 20000;
 function scheduleWordStateCloudSync() {
+  const now = Date.now();
+  if (!_wordStateSyncPendingSince) _wordStateSyncPendingSince = now;
   clearTimeout(_wordStateSyncTimer);
-  _wordStateSyncTimer = setTimeout(() => syncWordStateToCloud().catch(() => {}), 60000);
+  const elapsed = now - _wordStateSyncPendingSince;
+  const delay = Math.min(WORD_STATE_SYNC_IDLE_MS, Math.max(0, WORD_STATE_SYNC_MAX_WAIT_MS - elapsed));
+  _wordStateSyncTimer = setTimeout(() => {
+    _wordStateSyncPendingSince = 0;
+    syncWordStateToCloud().catch(() => {});
+  }, delay);
 }
 
 async function syncWordStateToCloud() {
@@ -4754,6 +4772,12 @@ document.addEventListener('visibilitychange', () => {
       readerTimeParagraphOpen();
     }
   }
+});
+// Extra flush alongside visibilitychange: some browsers fire pagehide on
+// real navigation/tab-close without a preceding 'hidden' visibility change.
+window.addEventListener('pagehide', () => {
+  clearTimeout(_wordStateSyncTimer);
+  syncWordStateToCloud().catch(() => {});
 });
 
 

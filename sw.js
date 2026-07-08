@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.80-lexical-cache-idb-cap';
+const CACHE_VERSION = 'v76.81-fix-word-sync-debounce';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
