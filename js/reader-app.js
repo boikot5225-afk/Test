@@ -27,7 +27,7 @@ import { createReaderLibraryStore } from './reader/library-store.js?v=5';
 import { createReaderDisplay } from './reader/display.js?v=4';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
-import { createReaderChapterRenderer } from './reader/chapter-render.js?v=5';
+import { createReaderChapterRenderer } from './reader/chapter-render.js?v=6';
 import { createReaderPagesMode } from './reader/pages-mode.js?v=2';
 import { splitTextToChapters as readerImportSplitTextToChapters,
          splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
@@ -2607,6 +2607,7 @@ const readerChapterRenderer = createReaderChapterRenderer({
   openParagraphTimer: readerTimeParagraphOpen,
   loadEpubImages: readerLoadEpubImages,
   syncPagesMode: (info) => readerPagesMode.syncAfterRender(info),
+  autoTranslateActive: (index) => readerAutoTranslateActiveParagraph(index),
 });
 
 function renderReaderChapter() {
@@ -3696,13 +3697,14 @@ async function readerAnalyzeParagraphAI(i = null) {
 }
 
 
-async function readerTranslateParagraphAI(i = null) {
+async function readerTranslateParagraphAI(i = null, opts = {}) {
+  const silent = !!opts.silent;
   const index = i == null ? (readerCurrentBook()?.currentParagraph || 0) : i;
   const text = readerCurrentParagraphText(index);
   const book = readerCurrentBook();
   const ch = book?.chapters?.[book.currentChapter || 0];
   if (!text || !book || !ch) return;
-  showToast('⏳ DeepSeek переводит абзац...');
+  if (!silent) showToast('⏳ DeepSeek переводит абзац...');
   try {
     const d = await readerAI({ task: 'translate_paragraph', text, sourceLang: readerBookLang(book), targetLang: 'ru' });
     const ru = d.ru || d.translation || d.text || '';
@@ -3716,12 +3718,37 @@ async function readerTranslateParagraphAI(i = null) {
     book.updatedAt = new Date().toISOString();
     saveReaderBooks();
     renderReaderChapter();
-    showToast('✅ Перевод добавлен под абзацем');
+    if (!silent) showToast('✅ Перевод добавлен под абзацем');
   } catch(e) {
+    // A background auto-translate failing quietly is fine — the 🌐 button
+    // still works manually, and a popup mid-read would be far more disruptive
+    // than just not having this one paragraph's translation yet.
+    if (silent) return;
     const msg = e?.message || String(e);
     showToast('⚠️ DeepSeek не сработал');
     alert('DeepSeek не сработал для перевода абзаца.\n\nСкорее всего, не развернута Supabase Edge Function reader-ai или нет DEEPSEEK_API_KEY.\n\nОшибка: ' + msg);
   }
+}
+
+// Auto-translate whichever paragraph is actually ACTIVE (selected), not just
+// "the next one" — readerSchedulePrefetch()/readerPrefetchNext() only ever
+// warmed the translation for currentParagraph+1, so reading fast, skipping a
+// paragraph, or going backward all landed on an untranslated paragraph with
+// no fetch in flight for it at all. This runs on every render (paragraph
+// selection, next/prev, chapter change) and silently fills in the gap.
+const readerAutoTranslateInFlight = new Set();
+function readerAutoTranslateActiveParagraph(index) {
+  if (readerTranslationsHidden) return;
+  if (typeof isGuest !== 'undefined' && isGuest) return;
+  const book = readerCurrentBook();
+  if (!book) return;
+  const ch = book.chapters?.[book.currentChapter || 0];
+  if (!ch) return;
+  const key = `${ch.id}:${index}`;
+  if (book.readerTranslations?.[key]) return;
+  if (readerAutoTranslateInFlight.has(key)) return;
+  readerAutoTranslateInFlight.add(key);
+  readerTranslateParagraphAI(index, { silent: true }).finally(() => readerAutoTranslateInFlight.delete(key));
 }
 
 async function readerTranslateWordAI(forceOrOptions = true) {

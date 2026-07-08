@@ -1,1 +1,1 @@
-export { createReaderChapterRenderer } from './chapter-render-next.js?v=11';
+export { createReaderChapterRenderer } from './chapter-render-next.js?v=12';

@@ -23,6 +23,7 @@ export function createReaderChapterRenderer({
   openParagraphTimer,
   loadEpubImages,
   syncPagesMode,
+  autoTranslateActive,
 }) {
   // ── Fast navigation helpers ──────────────────────────────────────
   // Returns true if we successfully updated only active-paragraph state
@@ -149,6 +150,7 @@ export function createReaderChapterRenderer({
           schedulePrefetch();
           openParagraphTimer();
           syncPagesMode?.({ full: false });
+          autoTranslateActive?.(paragraphIndex);
           return;
         }
 
@@ -182,6 +184,7 @@ export function createReaderChapterRenderer({
     schedulePrefetch();
     openParagraphTimer();
     syncPagesMode?.({ full: true });
+    autoTranslateActive?.(paragraphIndex);
   }
 
   return { render };

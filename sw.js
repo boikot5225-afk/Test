@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.82-translation-all-paragraphs-pages-jank';
+const CACHE_VERSION = 'v76.83-auto-translate-active-paragraph';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
