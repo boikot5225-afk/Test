@@ -10,6 +10,16 @@ if (!admin.apps.length) {
   admin.initializeApp({ databaseURL: DATABASE_URL });
 }
 
+// Live probe against OpenRouter's audio/speech endpoint (2026-07-08, see
+// git history for the temp diagnostic code) established what's actually
+// callable with this project's key, despite what OpenRouter's own docs say:
+//   openai/gpt-4o-mini-tts (+ dated variant, + bare, + tts-1) → 400 "does not exist"
+//   mistralai/voxtral-mini-tts-2603 → provider 404
+//   google/gemini-3.1-flash-tts-preview → EXISTS (but requires response_format:"pcm")
+//   hexgrad/kokoro-82m → works (in production use)
+// So the only real better-quality upgrade path via OpenRouter is Gemini
+// Flash TTS with PCM output — GPT-4o Mini TTS is simply not available here.
+
 // v68.20: no hard daily AI limits.
 // We only record usage counters in Realtime Database for visibility/debugging.
 const DAILY_LIMITS = Object.freeze({});
