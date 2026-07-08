@@ -19,9 +19,10 @@ import { imgStorePut, imgStoreGet, imgStoreDeleteBook } from './reader/image-sto
 import { audioStorePut, audioStoreGet, audioStoreDelete } from './reader/audio-store.js?v=1';
 import { libraryIdbPut, libraryIdbGet } from './reader/library-idb-store.js?v=1';
 import { wordStateIdbPut, wordStateIdbGet } from './reader/word-state-idb-store.js?v=1';
+import { lexicalCacheIdbPut, lexicalCacheIdbGet } from './reader/lexical-cache-idb-store.js?v=1';
 import { createReaderWordPanel } from './reader/word-panel.js?v=5';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
-import { createReaderWordState } from './reader/word-state.js?v=2';
+import { createReaderWordState } from './reader/word-state.js?v=3';
 import { createReaderLibraryStore } from './reader/library-store.js?v=5';
 import { createReaderDisplay } from './reader/display.js?v=4';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
@@ -262,11 +263,25 @@ window.an2ReaderCleanupDuplicates = async function an2ReaderCleanupDuplicates() 
 
 
 const READER_LEXICAL_CACHE_KEY = 'an2_reader_lexical_cache_v1';
+// This cache had no size cap at all and no durable backup — it grew forever
+// (1MB+ observed in the wild) purely in localStorage, unlike the book library
+// and word-state which already got an IndexedDB durable copy + a bound. Same
+// fix here: cap the count and evict the oldest entries by cachedAt, and keep
+// a durable IndexedDB copy so a localStorage quota failure can't lose it.
+const READER_LEXICAL_CACHE_MAX = 4000;
 let readerLexicalCache = null;
 let readerLexicalCacheOwnerId = null;
 const readerLexicalInFlight = new Map();
 
 function readerLexicalCacheStorageKey() { return readerScopedKey(READER_LEXICAL_CACHE_KEY); }
+
+function pruneReaderLexicalCache(cache) {
+  const keys = Object.keys(cache);
+  if (keys.length <= READER_LEXICAL_CACHE_MAX) return false;
+  keys.sort((a, b) => new Date(cache[a]?.cachedAt || 0) - new Date(cache[b]?.cachedAt || 0));
+  for (const k of keys.slice(0, keys.length - READER_LEXICAL_CACHE_MAX)) delete cache[k];
+  return true;
+}
 
 function loadReaderLexicalCache() {
   const owner = readerCurrentOwnerId();
@@ -278,7 +293,31 @@ function loadReaderLexicalCache() {
 }
 
 function saveReaderLexicalCache() {
-  try { localStorage.setItem(readerLexicalCacheStorageKey(), JSON.stringify(loadReaderLexicalCache())); } catch {}
+  const cache = loadReaderLexicalCache();
+  pruneReaderLexicalCache(cache);
+  let localOk = true;
+  try { localStorage.setItem(readerLexicalCacheStorageKey(), JSON.stringify(cache)); }
+  catch (e) { localOk = false; console.warn('[reader] lexical cache localStorage write failed (IndexedDB still holds it)', e); }
+  lexicalCacheIdbPut(readerLexicalCacheStorageKey(), cache).catch(e => {
+    if (!localOk) console.warn('[reader] lexical cache IndexedDB save also failed — this lookup is not durably saved', e);
+  });
+}
+
+async function hydrateReaderLexicalCacheFromIndexedDB() {
+  let fromIdb;
+  try { fromIdb = await lexicalCacheIdbGet(readerLexicalCacheStorageKey()); }
+  catch { return false; }
+  if (!fromIdb || typeof fromIdb !== 'object') return false;
+  const current = loadReaderLexicalCache();
+  let changed = false;
+  for (const [k, v] of Object.entries(fromIdb)) {
+    const existing = current[k];
+    if (!existing || new Date(v?.cachedAt || 0) > new Date(existing?.cachedAt || 0)) { current[k] = v; changed = true; }
+  }
+  if (!changed) return false;
+  pruneReaderLexicalCache(current);
+  try { localStorage.setItem(readerLexicalCacheStorageKey(), JSON.stringify(current)); } catch (_) {}
+  return true;
 }
 
 window.an2ImportLegacyReaderLexicalCache = function an2ImportLegacyReaderLexicalCache() {
@@ -1474,6 +1513,8 @@ async function renderReaderScreen() {
   // Same recovery for word colors/status — a quota failure there silently drops
   // marks the same way it used to drop whole books.
   try { await readerWordState.hydrateFromIndexedDB(); } catch {}
+  // Same recovery for the DeepSeek word-lookup cache.
+  try { await hydrateReaderLexicalCacheFromIndexedDB(); } catch {}
   // Cloud merge runs in the BACKGROUND: local stores (localStorage + IndexedDB)
   // already have the books, and awaiting the cloud here left the library blank
   // for as long as the network took. When the merge actually changes something,

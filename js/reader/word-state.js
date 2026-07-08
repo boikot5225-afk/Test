@@ -18,6 +18,16 @@ export function createReaderWordState(opts) {
   // places is only needed to count distinct paragraphs up to the fade threshold;
   // without a cap it grows unbounded and eventually blows the localStorage quota.
   const PLACES_CAP = 12;
+  // A large multi-language vocabulary can still blow the ~5MB localStorage quota
+  // even with places capped per word, once the total WORD COUNT itself grows
+  // large — every "looked at" or "seen" word is tracked forever with no cap.
+  // Evict oldest low-value entries (never saved/known/problem/familiar — pure
+  // seen/looked churn) once the total is past this, so real learning progress
+  // (saved words, known words, problem words) is never at risk.
+  const TOTAL_CAP = 6000;
+
+  const isPrunable = (state) => !state?.saved && !state?.known
+    && !['problem', 'hard', 'familiar'].includes(state?.status);
 
   const prunePlaces = (state) => {
     const places = state?.places;
@@ -30,9 +40,20 @@ export function createReaderWordState(opts) {
     return true;
   };
 
+  const pruneOverflow = (data) => {
+    const keys = Object.keys(data);
+    if (keys.length <= TOTAL_CAP) return false;
+    const candidates = keys.filter(k => isPrunable(data[k]))
+      .sort((a, b) => new Date(data[a]?.updatedAt || 0) - new Date(data[b]?.updatedAt || 0));
+    const over = keys.length - TOTAL_CAP;
+    for (const k of candidates.slice(0, over)) delete data[k];
+    return over > 0 && candidates.length > 0;
+  };
+
   const pruneAll = (data) => {
     let pruned = false;
     for (const k of Object.keys(data)) pruned = prunePlaces(data[k]) || pruned;
+    pruned = pruneOverflow(data) || pruned;
     return pruned;
   };
 
@@ -63,6 +84,10 @@ export function createReaderWordState(opts) {
   };
   const save = () => {
     const data = load();
+    // The in-memory cache only runs pruneAll() once (at first load), so a long
+    // session that keeps adding new words needs the overflow check re-run on
+    // every save — otherwise the total count only gets capped again on reload.
+    pruneOverflow(data);
     // localStorage is only the fast in-session cache now — IndexedDB below is
     // the durable store (no ~5MB ceiling) and cloud sync mirrors it. A quota
     // failure here alone doesn't endanger the data, so it's logged, not surfaced.
