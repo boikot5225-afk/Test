@@ -317,8 +317,15 @@ export function setTtsRate(rate) {
 // free-ish default already in use; 'gpt4o' is a noticeably more natural
 // voice for about 4x the per-character cost.
 const TTS_VOICE_ENGINE_KEY = 'an2_tts_voice_engine';
+// 'gpt4o' is temporarily force-disabled here (not just in the UI) — every
+// OpenRouter model id tried for it so far has failed, and anyone who tapped
+// the button before it was disabled already has 'gpt4o' persisted, which
+// would otherwise keep hitting the broken engine silently. Flip this back
+// once a verified working model id is confirmed.
+const TTS_VOICE_ENGINE_GPT4O_ENABLED = false;
 export function getTtsVoiceEngine() {
-  return String(localStorage.getItem(TTS_VOICE_ENGINE_KEY) || 'kokoro').toLowerCase() === 'gpt4o' ? 'gpt4o' : 'kokoro';
+  const stored = String(localStorage.getItem(TTS_VOICE_ENGINE_KEY) || 'kokoro').toLowerCase();
+  return stored === 'gpt4o' && TTS_VOICE_ENGINE_GPT4O_ENABLED ? 'gpt4o' : 'kokoro';
 }
 export function setTtsVoiceEngine(voiceEngine) {
   const v = String(voiceEngine || 'kokoro').toLowerCase() === 'gpt4o' ? 'gpt4o' : 'kokoro';

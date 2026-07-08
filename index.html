@@ -224,7 +224,7 @@
           📡 Проверить связь с сервером
         </button>
         <div id="health-result" style="display:none;margin-top:10px;font-size:0.78rem;line-height:1.5;padding:8px 12px;border-radius:8px;"></div>
-        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v76.91-fix-stop-delay-and-gpt4o-model-id</span></div>
+        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v76.92-disable-broken-gpt4o-voice</span></div>
       </div>
     </div>
 
@@ -511,7 +511,10 @@
           <span class="rd-dp-label">Голос</span>
           <div class="rd-dp-pills">
             <button class="rd-dp-voice rd-dp-pill" data-voice="kokoro" onclick="rdSetVoiceEngine('kokoro',this)">Kokoro</button>
-            <button class="rd-dp-voice rd-dp-pill" data-voice="gpt4o"  onclick="rdSetVoiceEngine('gpt4o',this)">GPT-4o (лучше)</button>
+            <!-- Disabled: OpenRouter rejects every model id tried so far for
+                 GPT-4o Mini TTS (404, then "does not exist" on the dated
+                 slug) — re-enable once a verified working id is confirmed. -->
+            <button class="rd-dp-voice rd-dp-pill" data-voice="gpt4o" disabled title="Временно недоступно — уточняется правильный id модели" style="opacity:.45;cursor:not-allowed">GPT-4o (скоро)</button>
           </div>
         </div>
       </div>
@@ -1955,6 +1958,6 @@
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=70.20"></script>
+<script type="module" src="js/app.js?v=70.21"></script>
 </body>
 </html>
