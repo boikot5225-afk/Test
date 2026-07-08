@@ -3349,9 +3349,25 @@ input:-webkit-autofill:focus {
    existing interactions keep working unchanged. */
 #reader-reading-view .rd-scroll.rd-pages-mode{
   overflow:hidden !important; perspective:1800px; position:relative;
+  /* Tells the browser upfront that horizontal gestures here are ours — without
+     it, the browser's own gesture recognizer spends the first several pixels
+     of a touch deciding whether it's a scroll/zoom, which can delay or drop
+     the swipe handler and reads as "sometimes doesn't turn the page". */
+  touch-action:pan-y;
 }
 #reader-reading-view .rd-scroll.rd-pages-mode #reader-chapter-text{
   position:relative; height:100%;
+}
+/* Blurring the fixed top/bottom bars every frame while a 3D transform
+   animates underneath is expensive enough on mid-range phones to drop
+   frames (and even whole transitionend events) mid-flip — same finding as
+   the pagination-preview.html prototype. Only turn it off while pages mode
+   is actually active; scroll mode has no concurrent transform animation, so
+   the blur there is cheap and stays. */
+#reader-reading-view.rd-pages-active .rd-top,
+#reader-reading-view.rd-pages-active .rd-bot{
+  backdrop-filter:none;
+  background:color-mix(in srgb, var(--bg) 97%, transparent);
 }
 #reader-reading-view .rd-page{
   position:absolute; inset:0; overflow-y:auto;

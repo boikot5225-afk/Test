@@ -115,18 +115,21 @@ export function createReaderPagesMode({
     const chapterText = getChapterText();
     const scroller = getScroller();
     if (!chapterText || !scroller) return;
+    const readingView = scroller.closest('#reader-reading-view');
 
     unwrap(chapterText);
     if (!enabled) {
       scroller.classList.remove('rd-pages-mode');
+      readingView?.classList.remove('rd-pages-active');
       return;
     }
 
     const { ranges, paragraphs } = measurePageRanges(chapterText, scroller) || {};
-    if (!ranges || !ranges.length) { scroller.classList.remove('rd-pages-mode'); return; }
+    if (!ranges || !ranges.length) { scroller.classList.remove('rd-pages-mode'); readingView?.classList.remove('rd-pages-active'); return; }
 
     pages = buildPageElements(chapterText, ranges, paragraphs);
     scroller.classList.add('rd-pages-mode');
+    readingView?.classList.add('rd-pages-active');
     animating = false;
     showPageInstant(pageIndexForParagraph(getActiveParagraphIndex()));
   }
@@ -149,19 +152,29 @@ export function createReaderPagesMode({
     if (!enabled || animating) return false;
     const target = currentPageIndex + delta;
     if (target < 0 || target >= pages.length) return false;
-    animating = true;
     const curPage = pages[currentPageIndex];
     const nextPage = pages[target];
-    nextPage.el.classList.add('rd-page-show');
-    requestAnimationFrame(() => curPage.el.classList.add('rd-page-flip'));
-    onceTransitionOrTimeout(curPage.el, () => {
-      curPage.el.classList.remove('rd-page-show', 'rd-page-current', 'rd-page-flip');
-      nextPage.el.classList.add('rd-page-current');
-      currentPageIndex = target;
+    // Guard against a stale `pages` array (e.g. a rebuild landed between this
+    // call being scheduled and running) — without this, a missing .el would
+    // throw after `animating` is already true, leaving it stuck forever and
+    // every future tap/swipe silently doing nothing ("иногда не листается").
+    if (!curPage?.el || !nextPage?.el) return false;
+    animating = true;
+    try {
+      nextPage.el.classList.add('rd-page-show');
+      requestAnimationFrame(() => curPage.el.classList.add('rd-page-flip'));
+      onceTransitionOrTimeout(curPage.el, () => {
+        curPage.el.classList.remove('rd-page-show', 'rd-page-current', 'rd-page-flip');
+        nextPage.el.classList.add('rd-page-current');
+        currentPageIndex = target;
+        animating = false;
+        onPageChange?.(currentPageIndex, pages.length);
+        setActiveParagraphIndex(pages[target].start);
+      });
+    } catch (_) {
       animating = false;
-      onPageChange?.(currentPageIndex, pages.length);
-      setActiveParagraphIndex(pages[target].start);
-    });
+      return false;
+    }
     return true;
   }
 

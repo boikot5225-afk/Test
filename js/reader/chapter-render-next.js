@@ -50,15 +50,15 @@ export function createReaderChapterRenderer({
     const prevActive = Number(chapterText.dataset.activeParagraph ?? -1);
     if (prevActive === paragraphIndex) return true; // nothing to do
 
-    // Deactivate old paragraph
+    // Translation/analysis blocks are rendered for every paragraph that HAS
+    // one (not just the active paragraph — see the full-render path below),
+    // so switching the active paragraph only ever needs to move the
+    // highlight, never add/remove help blocks that belong to other
+    // paragraphs. The active paragraph's own block is only inserted here if
+    // it's missing (e.g. translated after the initial render).
     const oldEl = chapterText.querySelector(`.reader-paragraph[data-p="${prevActive}"]`);
-    if (oldEl) {
-      oldEl.classList.remove('active');
-      oldEl.querySelector('.reader-translation-block')?.remove();
-      oldEl.querySelector('.reader-sentence-analysis')?.remove(); // ra2/grammar-mini analysis top-level class
-    }
+    if (oldEl) oldEl.classList.remove('active');
 
-    // Activate new paragraph
     const newEl = chapterText.querySelector(`.reader-paragraph[data-p="${paragraphIndex}"]`);
     if (!newEl) return false; // DOM mismatch — fall back to full render
 
@@ -68,8 +68,8 @@ export function createReaderChapterRenderer({
       const translation = translations[translationKey];
       const textDiv = newEl.querySelector('.reader-paragraph-text');
       if (textDiv) {
-        if (translation) textDiv.insertAdjacentHTML('afterend', renderTranslationBlock(translation));
-        if (book.readerAnalyses?.[translationKey]) textDiv.insertAdjacentHTML('afterend', renderAnalysisBlock(book.readerAnalyses[translationKey]));
+        if (translation && !newEl.querySelector('.reader-translation-block')) textDiv.insertAdjacentHTML('afterend', renderTranslationBlock(translation));
+        if (book.readerAnalyses?.[translationKey] && !newEl.querySelector('.reader-sentence-analysis')) textDiv.insertAdjacentHTML('afterend', renderAnalysisBlock(book.readerAnalyses[translationKey]));
       }
     }
 
@@ -158,7 +158,11 @@ export function createReaderChapterRenderer({
         chapterText.innerHTML = paragraphs.map((paragraph, index) => {
           const translationKey = `${chapter?.id}:${index}`;
           const translation = translations[translationKey];
-          return `<div class="reader-paragraph ${index === paragraphIndex ? 'active' : ''}" data-p="${index}"><div class="reader-paragraph-text">${renderParagraphText(paragraph, index)}</div>${index === paragraphIndex && translation ? renderTranslationBlock(translation) : ''}${index === paragraphIndex && book.readerAnalyses?.[translationKey] ? renderAnalysisBlock(book.readerAnalyses[translationKey]) : ''}</div>`;
+          // Every paragraph that HAS a translation/analysis shows it, not just
+          // the active one — otherwise switching the active paragraph away and
+          // back was the only way to "regain" a help block that was already
+          // there, since it got attached/detached purely based on activeness.
+          return `<div class="reader-paragraph ${index === paragraphIndex ? 'active' : ''}" data-p="${index}"><div class="reader-paragraph-text">${renderParagraphText(paragraph, index)}</div>${translation ? renderTranslationBlock(translation) : ''}${book.readerAnalyses?.[translationKey] ? renderAnalysisBlock(book.readerAnalyses[translationKey]) : ''}</div>`;
         }).join('');
 
         chapterText.dataset.renderedChapter = String(chapterIndex);
