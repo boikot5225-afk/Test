@@ -13,7 +13,7 @@ import { loadStats, saveStats, loadMeta, saveMeta, syncStatsFromCloud,
          loadLearnLater, addLearnLater, removeLearnLater, isInLearnLater } from './storage.js';
 import { speak, stopSpeak, initSpeech, applyKbMode, initTTSEngineUI, showFrKb, hideFrKb, isFrKbEnabled, setTTSEngine,
          frKbEnabled, autoSpeak, toggleAutoSpeak, toggleKbMode, insertFrChar,
-         frBackspace, frEnter, frToggleShift } from './tts.js?v=68.33-spanish-voice';
+         frBackspace, frEnter, frToggleShift } from './tts.js?v=68.34-player-rate';
 import { renderHome } from './home.js';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';

@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.86-disable-native-select-in-pages-mode';
+const CACHE_VERSION = 'v76.87-tts-mini-player';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

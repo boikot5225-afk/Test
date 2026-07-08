@@ -224,7 +224,7 @@
           📡 Проверить связь с сервером
         </button>
         <div id="health-result" style="display:none;margin-top:10px;font-size:0.78rem;line-height:1.5;padding:8px 12px;border-radius:8px;"></div>
-        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v76.86-disable-native-select-in-pages-mode</span></div>
+        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v76.87-tts-mini-player</span></div>
       </div>
     </div>
 
@@ -514,6 +514,14 @@
         <div id="reader-chapter-text"></div>
         <div class="rd-end"></div>
         <div id="reader-pages-indicator" class="rd-pages-indicator"></div>
+      </div>
+
+      <!-- TTS MINI-PLAYER: appears only while listening; docks above the bottom bar -->
+      <div id="reader-tts-player" style="display:none">
+        <button id="reader-tts-prev" onclick="readerTtsSkip(-1)" title="Предыдущий абзац" aria-label="Предыдущий абзац">⏮</button>
+        <button id="reader-tts-playpause" onclick="readerListenToggle()" title="Пауза / продолжить" aria-label="Пауза / продолжить">⏸</button>
+        <button id="reader-tts-next" onclick="readerTtsSkip(1)" title="Следующий абзац" aria-label="Следующий абзац">⏭</button>
+        <button id="reader-tts-rate" onclick="readerTtsCycleRate()" title="Скорость озвучки" aria-label="Скорость озвучки">1×</button>
       </div>
 
       <!-- BOTTOM BAR -->
@@ -1940,6 +1948,6 @@
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=70.15"></script>
+<script type="module" src="js/app.js?v=70.16"></script>
 </body>
 </html>

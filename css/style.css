@@ -3190,7 +3190,24 @@ input:-webkit-autofill:focus {
 /* text flows under the bars; padding reserves space while they're shown */
 #reader-reading-view .rd-scroll{
   padding-top:calc(var(--rd-top-h, 64px) + var(--rd-audio-h, 0px) + 10px) !important;
-  padding-bottom:calc(var(--rd-bot-h, 70px) + 18px) !important;
+  padding-bottom:calc(var(--rd-bot-h, 70px) + var(--rd-tts-h, 0px) + 18px) !important;
+}
+/* TTS mini-player: docks right above the bottom bar, only while listening */
+#reader-tts-player{
+  position:absolute; left:0; right:0; bottom:var(--rd-bot-h, 70px); z-index:14;
+  display:none; align-items:center; justify-content:center; gap:22px;
+  padding:8px 16px calc(8px + env(safe-area-inset-bottom, 0px));
+  background:color-mix(in srgb, var(--bg) 94%, transparent);
+  border-top:1px solid color-mix(in srgb, var(--border) 75%, transparent);
+}
+#reader-tts-player button{
+  background:none; border:none; color:var(--text); font-size:1.15rem; line-height:1;
+  cursor:pointer; padding:6px;
+}
+#reader-tts-player #reader-tts-playpause{ font-size:1.5rem; color:var(--accent); }
+#reader-tts-player #reader-tts-rate{
+  font-size:.78rem; font-weight:600; color:var(--accent);
+  border:1px solid var(--border); border-radius:8px; padding:4px 10px;
 }
 /* original-recording strip docks right under the absolute top bar */
 #reader-orig-audio-wrap{

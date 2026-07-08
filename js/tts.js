@@ -6,7 +6,7 @@
 import { fetchWithTimeout } from './supabase.js';
 
 const TTS_MEM_CACHE = new Map();
-const TTS_CACHE_NAME = 'an2-tts-audio-v3';
+const TTS_CACHE_NAME = 'an2-tts-audio-v4';
 const TTS_CACHE_LIMIT = 60;
 
 let ttsAudio = null;
@@ -143,9 +143,15 @@ async function firebaseIdToken() {
   return user.getIdToken(false);
 }
 
-async function requestFirebaseAudio(text, { lang = 'fr', rate = 1 } = {}) {
+async function requestFirebaseAudio(text, { lang = 'fr' } = {}) {
   const token = await firebaseIdToken();
   const normalizedLang = normalizeLang(lang);
+  // Speed is now always requested neutral and applied client-side via
+  // AudioBufferSourceNode.playbackRate (see playAudioBuffer) instead of being
+  // baked into the generated audio — one cached generation then serves any
+  // playback speed instantly, and a mid-paragraph speed change (the player's
+  // speed button) can take effect immediately instead of waiting for a fresh
+  // TTS request at the new speed.
   const response = await fetchWithTimeout(cloudTtsUrl(), {
     method: 'POST',
     headers: {
@@ -155,7 +161,7 @@ async function requestFirebaseAudio(text, { lang = 'fr', rate = 1 } = {}) {
     body: JSON.stringify({
       text,
       lang: normalizedLang,
-      speed: Number(rate) || 1,
+      speed: 1,
     }),
   }, 60000);
 
@@ -173,7 +179,7 @@ async function requestFirebaseAudio(text, { lang = 'fr', rate = 1 } = {}) {
   };
 }
 
-async function playAudioBuffer(buffer, mimeType = 'audio/mpeg', token = ++ttsToken) {
+async function playAudioBuffer(buffer, mimeType = 'audio/mpeg', token = ++ttsToken, rate = 1) {
   if (ttsCurrentSource) { try { ttsCurrentSource.stop(); } catch (_) {} ttsCurrentSource = null; }
   if (ttsAudio) { try { ttsAudio.pause(); } catch (_) {} ttsAudio = null; }
   const ctx = getAudioContext();
@@ -183,6 +189,7 @@ async function playAudioBuffer(buffer, mimeType = 'audio/mpeg', token = ++ttsTok
     if (token !== ttsToken) return false;
     const source = ctx.createBufferSource();
     source.buffer = decoded;
+    source.playbackRate.value = rate;
     source.connect(ctx.destination);
     ttsCurrentSource = source;
     // Resolve when audio ends; false means stopped early (ttsToken changed by stopSpeak)
@@ -197,6 +204,7 @@ async function playAudioBuffer(buffer, mimeType = 'audio/mpeg', token = ++ttsTok
     const blob = new Blob([buffer], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
+    audio.playbackRate = rate;
     ttsAudio = audio;
     return new Promise((resolve) => {
       audio.onended = () => { URL.revokeObjectURL(url); if (ttsAudio === audio) ttsAudio = null; resolve(true); };
@@ -240,6 +248,23 @@ export function stopSpeak() {
   try { window.speechSynthesis?.cancel?.(); } catch (_) {}
 }
 
+// User-adjustable playback speed for the reader's listen/player controls,
+// decoupled from TTS generation (see requestFirebaseAudio) — persisted so it
+// carries over between paragraphs/books, and live-applied to whatever is
+// currently playing so a mid-paragraph speed change is instant.
+const TTS_RATE_KEY = 'an2_tts_rate';
+export function getTtsRate() {
+  const v = Number(localStorage.getItem(TTS_RATE_KEY));
+  return Number.isFinite(v) && v > 0 ? v : 1;
+}
+export function setTtsRate(rate) {
+  const r = Math.max(0.6, Math.min(2, Number(rate) || 1));
+  try { localStorage.setItem(TTS_RATE_KEY, String(r)); } catch (_) {}
+  try { if (ttsCurrentSource) ttsCurrentSource.playbackRate.value = r; } catch (_) {}
+  try { if (ttsAudio) ttsAudio.playbackRate = r; } catch (_) {}
+  return r;
+}
+
 export async function speak(text, opts = {}) {
   primeMobileAudio();
   const lang = normalizeLang(opts.lang || 'fr');
@@ -247,24 +272,24 @@ export async function speak(text, opts = {}) {
   if (!prepared) return false;
 
   const engine = String(localStorage.getItem('ttsEngine') || 'firebase').toLowerCase() === 'webspeech' ? 'webspeech' : 'firebase';
-  if (engine === 'webspeech') return speakViaWebSpeech(prepared, { lang, rate: opts.rate });
+  const rate = opts.rate != null ? Math.max(0.6, Math.min(2, Number(opts.rate))) : getTtsRate();
+  if (engine === 'webspeech') return speakViaWebSpeech(prepared, { lang, rate });
 
-  const rate = Math.max(0.7, Math.min(1.2, Number(opts.rate) || (lang === 'zh' ? 0.92 : 0.9)));
-  const key = cacheHash(`${lang}|${rate}|${prepared}`);
+  const key = cacheHash(`${lang}|${prepared}`);
   stopSpeak();
   const token = ++ttsToken;
   try {
     let cached = TTS_MEM_CACHE.get(key) || null;
     if (!cached) cached = await readPersistentAudio(key);
     if (!cached) {
-      cached = await requestFirebaseAudio(prepared, { lang, rate });
+      cached = await requestFirebaseAudio(prepared, { lang });
       TTS_MEM_CACHE.set(key, cached);
       writePersistentAudio(key, cached.buffer, cached.mimeType);
     } else {
       TTS_MEM_CACHE.set(key, cached);
     }
     if (token !== ttsToken) return false;
-    return await playAudioBuffer(cached.buffer, cached.mimeType, token);
+    return await playAudioBuffer(cached.buffer, cached.mimeType, token, rate);
   } catch (error) {
     console.warn('[tts] Firebase/OpenRouter TTS failed:', error);
     const msg = String(error?.message || error || 'неизвестная ошибка');

@@ -20,13 +20,15 @@ export function createReaderAudio({
     const chunk = clean.length > 900 ? clean.slice(0, 900) : clean;
     const rawLang = String(opts.lang || getLang?.() || 'fr').toLowerCase();
     const lang = rawLang.startsWith('zh') ? 'zh' : rawLang.startsWith('en') ? 'en' : rawLang.startsWith('es') ? 'es' : 'fr';
-    const rate = opts.rate || (lang === 'zh' ? 0.92 : 0.9);
 
     stop(false);
     setActive(true);
     try {
-      // speak() now resolves when audio actually finishes (or returns false if stopped early)
-      const ok = await speak(chunk, { lang, rate });
+      // No rate passed through unless the caller gave one explicitly — speak()
+      // falls back to the user's persisted player speed (getTtsRate()) so the
+      // reader's speed control actually affects playback instead of always
+      // being overridden by a fixed per-language default.
+      const ok = await speak(chunk, { lang, rate: opts.rate });
       setActive(false);
       return !!ok;
     } catch (error) {

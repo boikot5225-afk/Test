@@ -5,9 +5,9 @@
 import { sb, sbUser, sbGetCurrentUserId, isSupabaseReady, fbSaveWordState, fbLoadWordState,
          LONG_REQUEST_TIMEOUT_MS, initSupabase } from './supabase.js';
 import { isGuest, VERBS, NOUNS, setCurrentProfile } from './state.js';
-import { speak, stopSpeak } from './tts.js?v=68.33-spanish-voice';
+import { speak, stopSpeak, getTtsRate, setTtsRate } from './tts.js?v=68.34-player-rate';
 import { showToast, showLoading, hideLoading, normalizeImportKey } from './utils.js';
-import { createReaderAudio } from './reader/audio.js?v=2';
+import { createReaderAudio } from './reader/audio.js?v=3';
 import { createReaderNavigation } from './reader/navigation.js?v=1';
 import { readFileAsArrayBuffer as epubReadFileAsArrayBuffer, zipU16 as epubZipU16,
          zipU32 as epubZipU32, inflateZipData as epubInflateZipData,
@@ -3065,9 +3065,11 @@ function readerInitCalmChrome() {
     const top = view.querySelector('.rd-top');
     const bot = view.querySelector('.rd-bot');
     const audio = document.getElementById('reader-orig-audio-wrap');
+    const ttsPlayer = document.getElementById('reader-tts-player');
     if (top) view.style.setProperty('--rd-top-h', top.offsetHeight + 'px');
     if (bot) view.style.setProperty('--rd-bot-h', bot.offsetHeight + 'px');
     view.style.setProperty('--rd-audio-h', (audio && audio.style.display !== 'none' ? audio.offsetHeight : 0) + 'px');
+    view.style.setProperty('--rd-tts-h', (ttsPlayer && ttsPlayer.style.display !== 'none' ? ttsPlayer.offsetHeight : 0) + 'px');
   };
   measure();
   window.__rdMeasureChrome = measure;
@@ -3902,17 +3904,53 @@ window.readerAnalyzeParagraphAI = readerAnalyzeParagraphAI;
 window.readerAction = readerAction;
 
 // ── v66 reader: compact controls glue (presentation only) ──
+const READER_TTS_RATES = [0.8, 1, 1.25, 1.5, 1.75];
+function readerTtsRateLabel(r) {
+  return (Math.round(r * 100) / 100).toString().replace(/(\.\d)0$/, '$1') + '×';
+}
+
 function readerListenSetBtn(playing) {
   const b = document.getElementById('reader-listen-btn');
-  if (!b) return;
-  if (playing) { b.classList.add('playing'); b.innerHTML = '⏹ Стоп'; }
-  else { b.classList.remove('playing'); b.innerHTML = '🔊 Слушать'; }
+  if (b) {
+    if (playing) { b.classList.add('playing'); b.innerHTML = '⏹ Стоп'; }
+    else { b.classList.remove('playing'); b.innerHTML = '🔊 Слушать'; }
+  }
+  // Persistent mini-player: docked above the bottom bar, only while
+  // actually playing/paused-mid-listen — reading without TTS stays exactly
+  // as quiet as before.
+  const bar = document.getElementById('reader-tts-player');
+  if (bar) bar.style.display = playing ? 'flex' : 'none';
+  const playBtn = document.getElementById('reader-tts-playpause');
+  if (playBtn) playBtn.textContent = playing ? '⏸' : '▶';
+  const rateBtn = document.getElementById('reader-tts-rate');
+  if (rateBtn) rateBtn.textContent = readerTtsRateLabel(getTtsRate());
+  try { window.__rdMeasureChrome?.(); } catch (_) {}
+  if ('mediaSession' in navigator) {
+    try { navigator.mediaSession.playbackState = playing ? 'playing' : 'paused'; } catch (_) {}
+  }
+}
+
+function readerSetupMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  try {
+    const book = readerCurrentBook();
+    const chapter = book?.chapters?.[book.currentChapter || 0];
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: book?.title || 'Reader AI',
+      artist: chapter?.title || '',
+    });
+    navigator.mediaSession.setActionHandler('play', () => readerListenToggle());
+    navigator.mediaSession.setActionHandler('pause', () => readerListenToggle());
+    navigator.mediaSession.setActionHandler('previoustrack', () => readerTtsSkip(-1));
+    navigator.mediaSession.setActionHandler('nexttrack', () => readerTtsSkip(1));
+  } catch (_) {}
 }
 
 async function readerAutoPlay() {
   if (readerAutoPlayActive) return;
   readerAutoPlayActive = true;
   readerAutoPlayAbort = false;
+  readerSetupMediaSession();
   readerListenSetBtn(true);
   try {
     while (!readerAutoPlayAbort) {
@@ -3937,6 +3975,7 @@ async function readerAutoPlay() {
 
       // Advance — handles chapter transitions + scroll automatically
       readerNavigation.nextParagraph();
+      readerSetupMediaSession();
       await new Promise(r => setTimeout(r, 150));
     }
   } finally {
@@ -3954,6 +3993,26 @@ function readerListenToggle() {
   }
   readerAutoPlay().catch(e => console.error('[autoplay]', e));
 }
+
+// ── Player controls: skip by paragraph, cycle playback speed ──
+function readerTtsSkip(delta) {
+  const wasPlaying = readerAutoPlayActive;
+  if (wasPlaying) { readerAutoPlayAbort = true; readerStopSpeech(false); }
+  if (delta > 0) readerNavigation.nextParagraph();
+  else readerNavigation.previousParagraph();
+  if (wasPlaying) setTimeout(() => readerAutoPlay().catch(e => console.error('[autoplay]', e)), 60);
+}
+window.readerTtsSkip = readerTtsSkip;
+
+function readerTtsCycleRate() {
+  const cur = getTtsRate();
+  const idx = READER_TTS_RATES.findIndex(r => Math.abs(r - cur) < 0.001);
+  const next = READER_TTS_RATES[(idx + 1 + READER_TTS_RATES.length) % READER_TTS_RATES.length] ?? 1;
+  setTtsRate(next);
+  const btn = document.getElementById('reader-tts-rate');
+  if (btn) btn.textContent = readerTtsRateLabel(next);
+}
+window.readerTtsCycleRate = readerTtsCycleRate;
 function readerOpenMoreSheet() {
   document.getElementById('reader-sheet-back')?.classList.add('show');
   document.getElementById('reader-more-sheet')?.classList.add('show');
