@@ -200,6 +200,14 @@ async function playAudioBuffer(buffer, mimeType = 'audio/mpeg', token = ++ttsTok
     const ok = await new Promise((resolve, reject) => {
       audio.onended = () => resolve(token === ttsToken);
       audio.onerror = () => reject(new Error('audio element playback error'));
+      // stopSpeak() calls .pause() to stop playback early, but pausing fires
+      // neither 'ended' nor 'error' — without this, the promise never
+      // settled, so the autoplay loop hung forever awaiting a paragraph that
+      // had already been stopped (readerAutoPlayAbort was set, but the code
+      // never got back around to checking it). ttsToken is already bumped by
+      // the time stopSpeak's pause() reaches here, so this always resolves
+      // false (stopped early) and never fires on a real natural finish.
+      audio.onpause = () => resolve(token === ttsToken);
       audio.play().catch(reject);
     });
     URL.revokeObjectURL(url);
