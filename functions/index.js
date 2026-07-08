@@ -308,6 +308,26 @@ TOKEN: ${body.word || body.infinitive || body.surface || ''}
 CONTEXT: ${body.context || ''}`;
   }
 
+  if (task === 'reverse_lookup') {
+    return `The learner is trying to think in ${langName} but can't recall or doesn't know the exact word for a concept they can only describe in Russian. Given their Russian description below, suggest the ${langName} word(s) or short phrase(s) that best express it.
+
+Return ONLY valid JSON, no markdown:
+{
+  "suggestions": [
+    {"word": "...", "note": "1 short sentence in Russian: when/why to use this one, or how it differs from the other options"}
+  ]
+}
+
+Rules:
+- suggestions: 2-4 items, ordered by how well they fit
+- if there's a clearly single correct word, still give 1-2 close alternatives/synonyms and explain the nuance
+- "word" is just the ${langName} word or short phrase itself — no translation, no article unless essential to the meaning
+- note must be in Russian, concise and practical, not a dictionary definition
+
+RUSSIAN DESCRIPTION:
+${body.query || body.text || ''}`;
+  }
+
   throw new HttpsError('invalid-argument', 'Unknown task');
 }
 

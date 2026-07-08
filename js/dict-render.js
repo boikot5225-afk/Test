@@ -123,11 +123,17 @@ window.onDictSearch = function() {
     if (dictType === 'nouns') inp.placeholder = 'Поиск: chien, beau, rapidement...';
     else if (dictType === 'preps') inp.placeholder = 'Поиск глагола: penser, parler, aller...';
     else if (dictType === 'zh') inp.placeholder = 'Поиск: 塑料布, pinyin, перевод...';
+    else if (dictType === 'reader') inp.placeholder = 'Поиск слова или опиши мысль по-русски...';
     else inp.placeholder = 'Поиск глагола...';
   }
 
   if (dictType === 'verbs') {
     window.renderDict();
+    return;
+  }
+
+  if (dictType === 'reader') {
+    renderReaderWords(undefined, val);
     return;
   }
 
@@ -145,9 +151,10 @@ window.onDictSearch = function() {
   renderDictWords(dictType, val);
 };
 
-function renderReaderWords(activeBookFilter) {
+function renderReaderWords(activeBookFilter, search = '') {
   const card = document.getElementById('dict-reader-card');
   if (!card) return;
+  const q = String(search || '').trim().toLowerCase();
 
   const escape = readerEscape;
   const wordState = loadReaderWordState();
@@ -196,6 +203,13 @@ function renderReaderWords(activeBookFilter) {
     shown = (byBook[currentFilter] || []).sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
   }
 
+  if (q) {
+    shown = shown.filter(w => {
+      const ruFromCache = (() => { try { return readerGetCachedLexical(w.word, w.lang || 'en')?.ru || ''; } catch { return ''; } })();
+      return String(w.word || '').toLowerCase().includes(q) || String(w.ru || ruFromCache || '').toLowerCase().includes(q);
+    });
+  }
+
   const savedWords   = shown.filter(w => w.saved);
   const openedWords  = shown.filter(w => !w.saved && (w.clicked || 0) > 0);
 
@@ -224,11 +238,62 @@ function renderReaderWords(activeBookFilter) {
     <div class="rw-list">${openedWords.map(wordRowHTML).join('')}</div>` : '';
 
   const emptyHTML = !shown.length
-    ? `<div style="font-size:.82rem;color:var(--text-muted);padding:8px 0">Нет слов из этого текста.</div>` : '';
+    ? `<div style="font-size:.82rem;color:var(--text-muted);padding:8px 0">${q ? 'Ничего не найдено среди твоих слов.' : 'Нет слов из этого текста.'}</div>` : '';
 
-  card.innerHTML = filterHTML + savedHTML + openedHTML + emptyHTML;
+  // "Как сказать" — reverse lookup: describe the idea in Russian, get word
+  // suggestions from DeepSeek, instead of only searching words already saved.
+  const reverseLookupHTML = q ? `
+    <div id="dict-reverse-lookup" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+      <button class="btn btn-secondary" style="width:100%" onclick="onReaderReverseLookup()">🔍 Как сказать «${escape(q)}»?</button>
+      <div id="dict-reverse-results" style="margin-top:10px"></div>
+    </div>` : '';
+
+  card.innerHTML = filterHTML + savedHTML + openedHTML + emptyHTML + reverseLookupHTML;
 }
 window.renderReaderWords = renderReaderWords;
+
+// "Как сказать X по-английски/испански" — the reverse of the usual dict
+// search (word → meaning): describe the idea in Russian, DeepSeek suggests
+// the target-language word(s) with a short note on nuance/when to use each,
+// and any suggestion can be saved straight into the reader dictionary.
+window.onReaderReverseLookup = async function onReaderReverseLookup() {
+  const inp = document.getElementById('dict-search');
+  const query = String(inp?.value || '').trim();
+  if (!query) return;
+  const results = document.getElementById('dict-reverse-results');
+  if (!results) return;
+  const lang = readerCanonicalLang(globalThis.AN2_LANG || 'en');
+  results.innerHTML = `<div style="font-size:.82rem;color:var(--text-muted)">⏳ DeepSeek подбирает слово...</div>`;
+  try {
+    const d = await readerAI({ task: 'reverse_lookup', query, sourceLang: lang });
+    const suggestions = Array.isArray(d?.suggestions) ? d.suggestions.filter(s => s && s.word) : [];
+    if (!suggestions.length) {
+      results.innerHTML = `<div style="font-size:.82rem;color:var(--text-muted)">Не получилось подобрать вариант.</div>`;
+      return;
+    }
+    results.innerHTML = suggestions.map(s => `
+      <div class="rw-row" style="align-items:center">
+        <span class="rw-word">${readerEscape(s.word)}</span>
+        <span class="rw-ru" style="flex:1">${readerEscape(s.note || '')}</span>
+        <button class="btn btn-secondary" style="padding:6px 10px;font-size:.76rem;white-space:nowrap"
+          data-word="${escapeAttr(s.word)}" data-ru="${escapeAttr(query)}"
+          onclick="onReaderSaveReverseSuggestion(this)">＋ Сохранить</button>
+      </div>`).join('');
+  } catch (e) {
+    results.innerHTML = `<div style="font-size:.82rem;color:var(--bad)">⚠️ DeepSeek не сработал: ${readerEscape(e?.message || String(e))}</div>`;
+  }
+};
+
+window.onReaderSaveReverseSuggestion = function onReaderSaveReverseSuggestion(btn) {
+  const word = btn?.dataset?.word || '';
+  const ru = btn?.dataset?.ru || '';
+  if (!word) return;
+  const lang = readerCanonicalLang(globalThis.AN2_LANG || 'en');
+  readerMarkWordSaved(word, word, lang, ru);
+  showToast(`＋ «${word}» добавлено в словарь`);
+  btn.disabled = true;
+  btn.textContent = '✓ Сохранено';
+};
 
 window.renderDictWords = renderDictWords;
 async function renderDictWords(type, search = '') {
