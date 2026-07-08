@@ -3,8 +3,6 @@
 // Browser TTS exists only as an explicit emergency switch.
 // ════════════════════════════════════════════════
 
-import { fetchWithTimeout } from './supabase.js';
-
 const TTS_MEM_CACHE = new Map();
 const TTS_CACHE_NAME = 'an2-tts-audio-v5';
 const TTS_CACHE_LIMIT = 60;
@@ -15,6 +13,12 @@ let ttsCtx = null;
 let ttsCurrentSource = null;
 let ttsAudioPrimed = false;
 let ttsUnlockInstalled = false;
+// The Firebase/OpenRouter TTS request can take 20+ seconds under load
+// (observed in Cloud Function logs) — without this, pressing "stop" while a
+// fetch was still in flight didn't actually cancel the network request, it
+// just discarded whatever came back once it eventually finished. That read
+// as "кнопка стоп не работает": stop DID work, just up to ~27s late.
+let ttsFetchController = null;
 
 function normalizeLang(lang = 'fr') {
   const raw = String(lang || 'fr').trim().toLowerCase();
@@ -146,25 +150,41 @@ async function firebaseIdToken() {
 async function requestFirebaseAudio(text, { lang = 'fr', engine = 'kokoro' } = {}) {
   const token = await firebaseIdToken();
   const normalizedLang = normalizeLang(lang);
+  // Own AbortController (not fetchWithTimeout's internal one) so stopSpeak()
+  // can actually cancel this specific in-flight request instead of only being
+  // able to discard its result once it eventually arrives.
+  const controller = new AbortController();
+  ttsFetchController = controller;
+  const timer = setTimeout(() => controller.abort(), 60000);
+  let response;
   // Speed is now always requested neutral and applied client-side via
   // AudioBufferSourceNode.playbackRate (see playAudioBuffer) instead of being
   // baked into the generated audio — one cached generation then serves any
   // playback speed instantly, and a mid-paragraph speed change (the player's
   // speed button) can take effect immediately instead of waiting for a fresh
   // TTS request at the new speed.
-  const response = await fetchWithTimeout(cloudTtsUrl(), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      text,
-      lang: normalizedLang,
-      engine,
-      speed: 1,
-    }),
-  }, 60000);
+  try {
+    response = await fetch(cloudTtsUrl(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        text,
+        lang: normalizedLang,
+        engine,
+        speed: 1,
+      }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error('Озвучка остановлена или сервер не ответил вовремя.');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    if (ttsFetchController === controller) ttsFetchController = null;
+  }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
@@ -269,6 +289,7 @@ function speakViaWebSpeech(text, { lang = 'fr', rate = 1 } = {}) {
 
 export function stopSpeak() {
   ttsToken += 1;
+  if (ttsFetchController) { try { ttsFetchController.abort(); } catch (_) {} ttsFetchController = null; }
   if (ttsCurrentSource) { try { ttsCurrentSource.stop(); } catch (_) {} ttsCurrentSource = null; }
   if (ttsAudio) { try { ttsAudio.pause(); } catch (_) {} ttsAudio = null; }
   try { window.speechSynthesis?.cancel?.(); } catch (_) {}

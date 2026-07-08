@@ -456,7 +456,9 @@ const TTS_ENGINES = Object.freeze({
     voices: { fr: 'ff_siwis', zh: 'zf_xiaobei', en: 'af_heart', es: 'ef_dora' },
   },
   gpt4o: {
-    model: 'openai/gpt-4o-mini-tts',
+    // Dated/versioned slug — OpenRouter's audio/speech endpoint 502s on the
+    // unversioned "openai/gpt-4o-mini-tts" (confirmed in Cloud Function logs).
+    model: 'openai/gpt-4o-mini-tts-2025-12-15',
     voices: { fr: 'alloy', zh: 'alloy', en: 'alloy', es: 'alloy' },
   },
 });
@@ -556,6 +558,7 @@ exports.ttsAudio = onRequest(
 
     if (!upstream.ok) {
       const detail = await upstream.text().catch(() => '');
+      console.error(`[ttsAudio] OpenRouter ${upstream.status} for engine=${engine} model=${engineConf.model} voice=${voice}: ${detail.slice(0, 500)}`);
       return res.status(502).json({
         error: 'openrouter_tts_failed',
         message: `OpenRouter TTS HTTP ${upstream.status}`,

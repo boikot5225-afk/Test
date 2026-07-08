@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.90-fix-player-freeze-on-stop';
+const CACHE_VERSION = 'v76.91-fix-stop-delay-and-gpt4o-model-id';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

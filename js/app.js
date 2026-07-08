@@ -13,7 +13,7 @@ import { loadStats, saveStats, loadMeta, saveMeta, syncStatsFromCloud,
          loadLearnLater, addLearnLater, removeLearnLater, isInLearnLater } from './storage.js';
 import { speak, stopSpeak, initSpeech, applyKbMode, initTTSEngineUI, showFrKb, hideFrKb, isFrKbEnabled, setTTSEngine,
          frKbEnabled, autoSpeak, toggleAutoSpeak, toggleKbMode, insertFrChar,
-         frBackspace, frEnter, frToggleShift } from './tts.js?v=68.37-fix-pause-hang';
+         frBackspace, frEnter, frToggleShift } from './tts.js?v=68.38-abort-inflight-fetch';
 import { renderHome } from './home.js';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
