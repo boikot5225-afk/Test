@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.84-reverse-word-lookup';
+const CACHE_VERSION = 'v76.85-fix-page-swipe-vs-word-selection';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

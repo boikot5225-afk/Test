@@ -2631,7 +2631,11 @@ function bindReaderSwipe() {
     if (!t) return;
     const dx = t.clientX - sx;
     const dy = t.clientY - sy;
-    if (Date.now() - st > 600) return;
+    // A deliberate page-turn drag (mimicking a physical book) is often
+    // slower than a quick paragraph-scroll flick — don't cut it off at 600ms
+    // in pages mode, where this swipe is the only touch gesture available.
+    const maxDurationMs = readerPagesMode.isEnabled() ? 1500 : 600;
+    if (Date.now() - st > maxDurationMs) return;
     if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.7) {
       if (dx < 0) readerNextParagraph();
       else readerPrevParagraph();
@@ -4690,7 +4694,13 @@ function installReaderSelectionTranslate() {
       const w = root && e.target.closest?.('.reader-word');
       if (!onUI) readerHideSelectionButton();
       if (!onUI && !w) clearWordSel();
-      if (!root || !w || !root.contains(w)) { active = false; return; }
+      // In pages mode, a page-turn swipe almost always starts on top of a
+      // word (most of the page is text) — letting word-range selection
+      // engage there swallowed the gesture before bindReaderSwipe's
+      // touchend ever saw it (it explicitly skips while __readerRanging is
+      // set), which is exactly "страницы не всегда листаются". Selecting a
+      // phrase to translate still works fine via native text selection.
+      if (!root || !w || !root.contains(w) || readerPagesMode.isEnabled()) { active = false; return; }
       clearWordSel();
       active = true; decided = false; ranging = false; startWord = w;
       paraEl = w.closest('.reader-paragraph'); sx = e.clientX; sy = e.clientY;
