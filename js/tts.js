@@ -182,35 +182,52 @@ async function requestFirebaseAudio(text, { lang = 'fr' } = {}) {
 async function playAudioBuffer(buffer, mimeType = 'audio/mpeg', token = ++ttsToken, rate = 1) {
   if (ttsCurrentSource) { try { ttsCurrentSource.stop(); } catch (_) {} ttsCurrentSource = null; }
   if (ttsAudio) { try { ttsAudio.pause(); } catch (_) {} ttsAudio = null; }
-  const ctx = getAudioContext();
-  if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+
+  // <audio> is the primary path now, not Web Audio API. AudioContext gets
+  // suspended by Android when the screen locks/the tab backgrounds, and
+  // nothing here was resuming it mid-playback — the current paragraph's
+  // audio just died with no `onended` ever firing, which is exactly
+  // "прерывается когда включаю экран". A plain <audio> element is what
+  // Android (and Media Session) actually expect for background/lock-screen
+  // audio and reliably keeps playing through both.
+  const blob = new Blob([buffer], { type: mimeType });
+  const url = URL.createObjectURL(blob);
   try {
-    const decoded = await ctx.decodeAudioData(buffer.slice(0));
-    if (token !== ttsToken) return false;
-    const source = ctx.createBufferSource();
-    source.buffer = decoded;
-    source.playbackRate.value = rate;
-    source.connect(ctx.destination);
-    ttsCurrentSource = source;
-    // Resolve when audio ends; false means stopped early (ttsToken changed by stopSpeak)
-    return new Promise((resolve) => {
-      source.onended = () => {
-        if (ttsCurrentSource === source) ttsCurrentSource = null;
-        resolve(token === ttsToken);
-      };
-      source.start(0);
-    });
-  } catch (_) {
-    const blob = new Blob([buffer], { type: mimeType });
-    const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audio.playbackRate = rate;
     ttsAudio = audio;
-    return new Promise((resolve) => {
-      audio.onended = () => { URL.revokeObjectURL(url); if (ttsAudio === audio) ttsAudio = null; resolve(true); };
-      audio.onerror = () => { URL.revokeObjectURL(url); resolve(false); };
-      audio.play().catch(() => resolve(false));
+    const ok = await new Promise((resolve, reject) => {
+      audio.onended = () => resolve(token === ttsToken);
+      audio.onerror = () => reject(new Error('audio element playback error'));
+      audio.play().catch(reject);
     });
+    URL.revokeObjectURL(url);
+    if (ttsAudio === audio) ttsAudio = null;
+    return ok;
+  } catch (_) {
+    URL.revokeObjectURL(url);
+    ttsAudio = null;
+    // Fallback only: some format edge case <audio> couldn't play directly.
+    const ctx = getAudioContext();
+    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+    try {
+      const decoded = await ctx.decodeAudioData(buffer.slice(0));
+      if (token !== ttsToken) return false;
+      const source = ctx.createBufferSource();
+      source.buffer = decoded;
+      source.playbackRate.value = rate;
+      source.connect(ctx.destination);
+      ttsCurrentSource = source;
+      return new Promise((resolve) => {
+        source.onended = () => {
+          if (ttsCurrentSource === source) ttsCurrentSource = null;
+          resolve(token === ttsToken);
+        };
+        source.start(0);
+      });
+    } catch (_) {
+      return false;
+    }
   }
 }
 

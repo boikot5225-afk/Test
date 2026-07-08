@@ -5,7 +5,7 @@
 import { sb, sbUser, sbGetCurrentUserId, isSupabaseReady, fbSaveWordState, fbLoadWordState,
          LONG_REQUEST_TIMEOUT_MS, initSupabase } from './supabase.js';
 import { isGuest, VERBS, NOUNS, setCurrentProfile } from './state.js';
-import { speak, stopSpeak, getTtsRate, setTtsRate } from './tts.js?v=68.34-player-rate';
+import { speak, stopSpeak, getTtsRate, setTtsRate } from './tts.js?v=68.35-audio-element-primary';
 import { showToast, showLoading, hideLoading, normalizeImportKey } from './utils.js';
 import { createReaderAudio } from './reader/audio.js?v=3';
 import { createReaderNavigation } from './reader/navigation.js?v=1';
@@ -3912,8 +3912,13 @@ function readerTtsRateLabel(r) {
 function readerListenSetBtn(playing) {
   const b = document.getElementById('reader-listen-btn');
   if (b) {
-    if (playing) { b.classList.add('playing'); b.innerHTML = '⏹ Стоп'; }
-    else { b.classList.remove('playing'); b.innerHTML = '🔊 Слушать'; }
+    // The mini-player's own ⏸ already covers stop/pause once playback starts
+    // — showing a second "Стоп" button here at the same time was a duplicate
+    // control. visibility:hidden (not display:none) keeps its grid column
+    // reserved so the bottom bar's other buttons don't reflow into its slot.
+    b.style.visibility = playing ? 'hidden' : '';
+    b.classList.toggle('playing', playing);
+    b.innerHTML = '🔊 Слушать';
   }
   // Persistent mini-player: docked above the bottom bar, only while
   // actually playing/paused-mid-listen — reading without TTS stays exactly
