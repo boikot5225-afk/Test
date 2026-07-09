@@ -5,7 +5,7 @@
 import { sb, sbUser, sbGetCurrentUserId, isSupabaseReady, fbSaveWordState, fbLoadWordState,
          LONG_REQUEST_TIMEOUT_MS, initSupabase } from './supabase.js';
 import { isGuest, VERBS, NOUNS, setCurrentProfile } from './state.js';
-import { speak, stopSpeak, getTtsRate, setTtsRate, getTtsVoiceEngine, setTtsVoiceEngine, getTtsVoice, setTtsVoice, KOKORO_VOICES } from './tts.js?v=68.40-voice-picker';
+import { speak, stopSpeak, getTtsRate, setTtsRate, getTtsVoiceEngine, setTtsVoiceEngine, getTtsVoice, setTtsVoice, KOKORO_VOICES, prefetchSpeech } from './tts.js?v=68.41-tts-prefetch';
 import { showToast, showLoading, hideLoading, normalizeImportKey } from './utils.js';
 import { createReaderAudio } from './reader/audio.js?v=3';
 import { createReaderNavigation } from './reader/navigation.js?v=1';
@@ -3989,6 +3989,26 @@ function readerSetupMediaSession() {
   } catch (_) {}
 }
 
+// Warm the NEXT paragraph's audio while the current one is being fetched/
+// played — Kokoro generation can take up to a minute under provider load,
+// and without this that whole wait re-occurred between every two paragraphs.
+// Mirrors readerAudio.speakText's exact text preparation (whitespace collapse
+// + 900-char cut) so the prefetch fills the exact cache key playback reads.
+function readerPrefetchNextParagraphSpeech() {
+  try {
+    const book = readerCurrentBook();
+    if (!book) return;
+    const chapter = book.chapters?.[book.currentChapter || 0];
+    const paragraphs = chapter?.paragraphs || [];
+    let next = (book.currentParagraph || 0) + 1;
+    while (next < paragraphs.length && paragraphs[next] && typeof paragraphs[next] === 'object') next++;
+    const raw = next < paragraphs.length ? paragraphs[next] : null;
+    if (!raw || typeof raw !== 'string') return;
+    const clean = raw.replace(/\s+/g, ' ').trim().slice(0, 900);
+    if (clean) prefetchSpeech(clean, { lang: readerBookLang(book) });
+  } catch (_) {}
+}
+
 async function readerAutoPlay() {
   if (readerAutoPlayActive) return;
   readerAutoPlayActive = true;
@@ -3997,6 +4017,7 @@ async function readerAutoPlay() {
   readerListenSetBtn(true);
   try {
     while (!readerAutoPlayAbort) {
+      readerPrefetchNextParagraphSpeech();
       const ok = await readerSpeakCurrentParagraph();
       if (!ok || readerAutoPlayAbort) break;
 
@@ -4056,6 +4077,20 @@ function readerTtsCycleRate() {
   if (btn) btn.textContent = readerTtsRateLabel(next);
 }
 window.readerTtsCycleRate = readerTtsCycleRate;
+
+// Generation can take up to a minute under provider load — show ⏳ on the
+// mini-player's play/pause slot while audio is being generated, so the
+// silence reads as "working on it", not "player froze". 'idle' is ignored
+// on purpose: it fires between every pair of paragraphs in the autoplay
+// loop, and the player's overall visibility is readerListenSetBtn's job.
+window.addEventListener('an2-tts-state', (e) => {
+  if (!readerAutoPlayActive) return;
+  const btn = document.getElementById('reader-tts-playpause');
+  if (!btn) return;
+  if (e.detail === 'loading') btn.textContent = '⏳';
+  else if (e.detail === 'playing') btn.textContent = '⏸';
+});
+
 function readerOpenMoreSheet() {
   document.getElementById('reader-sheet-back')?.classList.add('show');
   document.getElementById('reader-more-sheet')?.classList.add('show');

@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.93-kokoro-voice-picker';
+const CACHE_VERSION = 'v76.94-tts-prefetch-and-instant-open';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

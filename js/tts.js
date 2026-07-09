@@ -147,15 +147,20 @@ async function firebaseIdToken() {
   return user.getIdToken(false);
 }
 
-async function requestFirebaseAudio(text, { lang = 'fr', engine = 'kokoro', voice = '' } = {}) {
+async function requestFirebaseAudio(text, { lang = 'fr', engine = 'kokoro', voice = '', track = true } = {}) {
   const token = await firebaseIdToken();
   const normalizedLang = normalizeLang(lang);
   // Own AbortController (not fetchWithTimeout's internal one) so stopSpeak()
   // can actually cancel this specific in-flight request instead of only being
-  // able to discard its result once it eventually arrives.
+  // able to discard its result once it eventually arrives. Background
+  // prefetches pass track:false so they never claim this slot — otherwise a
+  // prefetch would be aborted by (or worse, survive) the user's stop.
+  // 85s, just under the Cloud Function's own 90s cap: observed real Kokoro
+  // latencies reach 52-65s under provider load, and the old 60s timeout was
+  // killing requests that were about to succeed.
   const controller = new AbortController();
-  ttsFetchController = controller;
-  const timer = setTimeout(() => controller.abort(), 60000);
+  if (track) ttsFetchController = controller;
+  const timer = setTimeout(() => controller.abort(), 85000);
   let response;
   // Speed is now always requested neutral and applied client-side via
   // AudioBufferSourceNode.playbackRate (see playAudioBuffer) instead of being
@@ -184,7 +189,7 @@ async function requestFirebaseAudio(text, { lang = 'fr', engine = 'kokoro', voic
     throw e;
   } finally {
     clearTimeout(timer);
-    if (ttsFetchController === controller) ttsFetchController = null;
+    if (track && ttsFetchController === controller) ttsFetchController = null;
   }
 
   if (!response.ok) {
@@ -389,6 +394,9 @@ export async function speak(text, opts = {}) {
     let cached = TTS_MEM_CACHE.get(key) || null;
     if (!cached) cached = await readPersistentAudio(key);
     if (!cached) {
+      // Kokoro on OpenRouter can take a minute under load — tell the UI the
+      // silence is generation, not a freeze (mini-player shows ⏳).
+      emitTtsState('loading');
       cached = await requestFirebaseAudio(prepared, { lang, engine: voiceEngine, voice });
       TTS_MEM_CACHE.set(key, cached);
       writePersistentAudio(key, cached.buffer, cached.mimeType);
@@ -396,12 +404,49 @@ export async function speak(text, opts = {}) {
       TTS_MEM_CACHE.set(key, cached);
     }
     if (token !== ttsToken) return false;
+    emitTtsState('playing');
     return await playAudioBuffer(cached.buffer, cached.mimeType, token, rate);
   } catch (error) {
     console.warn('[tts] Firebase/OpenRouter TTS failed:', error);
     const msg = String(error?.message || error || 'неизвестная ошибка');
     if (window.showToast) window.showToast(`⚠️ Firebase-озвучка: ${msg.slice(0, 220)}`, 6500);
     return false;
+  } finally {
+    emitTtsState('idle');
+  }
+}
+
+function emitTtsState(state) {
+  try { window.dispatchEvent(new CustomEvent('an2-tts-state', { detail: state })); } catch (_) {}
+}
+
+// Warm the audio cache for a paragraph WITHOUT playing it — fired for the
+// next paragraph while the current one plays, so the huge (up to ~1 min
+// under provider load) generation latency is only ever felt on the very
+// first paragraph of a listening session, not between every pair.
+const ttsPrefetchInFlight = new Set();
+export async function prefetchSpeech(text, opts = {}) {
+  try {
+    const lang = normalizeLang(opts.lang || 'fr');
+    const prepared = normalizeSpeechText(text, lang);
+    if (!prepared) return;
+    const engine = String(localStorage.getItem('ttsEngine') || 'firebase').toLowerCase();
+    if (engine === 'webspeech') return; // nothing to prefetch, synthesis is local
+    const voiceEngine = getTtsVoiceEngine();
+    const voice = getTtsVoice(lang);
+    const key = cacheHash(`${lang}|${voiceEngine}|${voice}|${prepared}`);
+    if (TTS_MEM_CACHE.has(key) || ttsPrefetchInFlight.has(key)) return;
+    if (await readPersistentAudio(key)) return;
+    ttsPrefetchInFlight.add(key);
+    try {
+      const audio = await requestFirebaseAudio(prepared, { lang, engine: voiceEngine, voice, track: false });
+      TTS_MEM_CACHE.set(key, audio);
+      writePersistentAudio(key, audio.buffer, audio.mimeType);
+    } finally {
+      ttsPrefetchInFlight.delete(key);
+    }
+  } catch (_) {
+    // Prefetch is best-effort; the real playback request will retry anyway.
   }
 }
 

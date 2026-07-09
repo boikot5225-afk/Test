@@ -113,12 +113,12 @@ export async function renderHome() {
         <div class="home-section-label">продолжить</div>
         <div class="lib-cont-card">
           <div class="lib-cover lib-cover-${coverClass(primary)}">${letter}</div>
-          <div class="lib-cont-body" onclick="showScreen('reader');setTimeout(()=>readerOpenBook('${escape(primary.id)}'),120)">
+          <div class="lib-cont-body" onclick="showScreen('reader');readerOpenBook('${escape(primary.id)}')">
             <div class="lib-cont-title">${escape(primary.title || 'Текст')}</div>
             <div class="lib-cont-meta">${langFlag(primary.lang || primary.sourceLang)} ${escape(chInfo)}</div>
             <div class="lib-prog-bar"><div class="lib-prog-fill" style="width:${pct}%"></div></div>
           </div>
-          <button class="lib-cont-go" onclick="showScreen('reader');setTimeout(()=>readerOpenBook('${escape(primary.id)}'),120)">Читать</button>
+          <button class="lib-cont-go" onclick="showScreen('reader');readerOpenBook('${escape(primary.id)}')">Читать</button>
         </div>
         ${langBooks.length > 1 ? `
           <button class="home-lib-link" onclick="showScreen('reader')">
