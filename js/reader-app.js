@@ -2587,7 +2587,12 @@ async function readerToggleOriginalAudioPlayer() {
 window.readerToggleOriginalAudioPlayer = readerToggleOriginalAudioPlayer;
 
 function readerBackToLibrary() {
-  readerStopSpeech();
+  // Safety cleanup on every exit — but only announce it when a listening
+  // session was actually running; the unconditional default toast made
+  // every book exit claim "озвучка остановлена" out of nowhere.
+  const wasListening = readerAutoPlayActive;
+  if (wasListening) readerAutoPlayAbort = true;
+  readerStopSpeech(wasListening);
   readerStopWarm();
   readerTimeParagraphClose();
   readerHideSelectionUI();
