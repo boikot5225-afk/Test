@@ -4,6 +4,12 @@ const admin = require('firebase-admin');
 
 const DEEPSEEK_API_KEY = defineSecret('DEEPSEEK_API_KEY');
 const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');
+// Optional self-hosted Kokoro TTS + faster-whisper STT (see selfhost/ in the
+// repo). When both are set, ttsAudio/transcribeAudio try this first and only
+// fall back to OpenRouter if it's unreachable — free per-request once the
+// VPS is already paid for something else, OpenRouter stays as a safety net.
+const SELFHOST_TTS_STT_URL = defineSecret('SELFHOST_TTS_STT_URL');
+const SELFHOST_TOKEN = defineSecret('SELFHOST_TOKEN');
 
 const DATABASE_URL = process.env.FIREBASE_DATABASE_URL || 'https://french-da79a-default-rtdb.asia-southeast1.firebasedatabase.app';
 if (!admin.apps.length) {
@@ -517,7 +523,7 @@ exports.ttsAudio = onRequest(
     region: 'asia-southeast1',
     timeoutSeconds: 90,
     memory: '512MiB',
-    secrets: [OPENROUTER_API_KEY],
+    secrets: [OPENROUTER_API_KEY, SELFHOST_TTS_STT_URL, SELFHOST_TOKEN],
     cors: true,
   },
   async (req, res) => {
@@ -546,57 +552,96 @@ exports.ttsAudio = onRequest(
     // accidentally receiving Chinese text and keeps the UI deterministic.
     const voice = requestedVoice || engineConf.voices[lang] || engineConf.voices.en;
     const speed = safeTtsSpeed(req.body?.speed ?? req.body?.rate);
-    const key = OPENROUTER_API_KEY.value();
-    if (!key) {
-      return res.status(500).json({ error: 'missing_openrouter_key', message: 'В Firebase Secret Manager не задан OPENROUTER_API_KEY.' });
+
+    let audio = null;
+    let mimeType = 'audio/mpeg';
+    let usedSelfhost = false;
+    let generationId = '';
+
+    // Try the self-hosted VPS first (Kokoro only — that's what runs there),
+    // only when both secrets are actually configured. Falls through to
+    // OpenRouter below on any failure, so a self-host outage never breaks
+    // listening entirely.
+    const selfhostUrl = SELFHOST_TTS_STT_URL.value();
+    const selfhostToken = SELFHOST_TOKEN.value();
+    if (engine === 'kokoro' && selfhostUrl && selfhostToken) {
+      try {
+        const r = await fetch(`${selfhostUrl.replace(/\/$/, '')}/v1/audio/speech`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${selfhostToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: engineConf.model, input: text, voice, response_format: 'wav', speed }),
+          signal: AbortSignal.timeout(45000),
+        });
+        if (r.ok) {
+          audio = Buffer.from(await r.arrayBuffer());
+          mimeType = r.headers.get('content-type') || 'audio/wav';
+          usedSelfhost = true;
+        } else {
+          console.warn(`[ttsAudio] self-host ${r.status}, falling back to OpenRouter`);
+        }
+      } catch (error) {
+        console.warn('[ttsAudio] self-host unreachable, falling back to OpenRouter:', error?.message || error);
+      }
     }
 
-    let upstream;
-    try {
-      upstream = await fetch('https://openrouter.ai/api/v1/audio/speech', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${key}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: engineConf.model,
-          input: text,
-          voice,
-          response_format: 'mp3',
-          speed,
-        }),
-      });
-    } catch (error) {
-      return res.status(503).json({ error: 'openrouter_unavailable', message: `OpenRouter network error: ${error?.message || String(error)}` });
+    if (!audio) {
+      const key = OPENROUTER_API_KEY.value();
+      if (!key) {
+        return res.status(500).json({ error: 'missing_openrouter_key', message: 'В Firebase Secret Manager не задан OPENROUTER_API_KEY.' });
+      }
+
+      let upstream;
+      try {
+        upstream = await fetch('https://openrouter.ai/api/v1/audio/speech', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${key}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: engineConf.model,
+            input: text,
+            voice,
+            response_format: 'mp3',
+            speed,
+          }),
+        });
+      } catch (error) {
+        return res.status(503).json({ error: 'openrouter_unavailable', message: `OpenRouter network error: ${error?.message || String(error)}` });
+      }
+
+      if (!upstream.ok) {
+        const detail = await upstream.text().catch(() => '');
+        console.error(`[ttsAudio] OpenRouter ${upstream.status} for engine=${engine} model=${engineConf.model} voice=${voice}: ${detail.slice(0, 500)}`);
+        return res.status(502).json({
+          error: 'openrouter_tts_failed',
+          message: `OpenRouter TTS HTTP ${upstream.status}`,
+          detail: detail.slice(0, 1000),
+        });
+      }
+
+      audio = Buffer.from(await upstream.arrayBuffer());
+      mimeType = upstream.headers.get('content-type') || 'audio/mpeg';
+      generationId = upstream.headers.get('x-generation-id') || '';
     }
 
-    if (!upstream.ok) {
-      const detail = await upstream.text().catch(() => '');
-      console.error(`[ttsAudio] OpenRouter ${upstream.status} for engine=${engine} model=${engineConf.model} voice=${voice}: ${detail.slice(0, 500)}`);
-      return res.status(502).json({
-        error: 'openrouter_tts_failed',
-        message: `OpenRouter TTS HTTP ${upstream.status}`,
-        detail: detail.slice(0, 1000),
-      });
-    }
-
-    const audio = Buffer.from(await upstream.arrayBuffer());
     if (audio.length < 200) {
-      return res.status(502).json({ error: 'empty_audio', message: 'OpenRouter вернул слишком короткое аудио.' });
+      return res.status(502).json({ error: 'empty_audio', message: 'Пустое аудио от бэкенда озвучки.' });
     }
 
-    // A lightweight usage counter, never a blocking quota — split by engine
-    // since gpt4o costs ~4x more per character than kokoro.
+    // A lightweight usage counter, never a blocking quota — split by engine,
+    // and self-host calls are tracked separately since they cost nothing.
     try {
-      await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/tts_audio_chars_${engine}`).transaction((current) => Number(current || 0) + text.length);
+      const counterEngine = usedSelfhost ? `${engine}_selfhost` : engine;
+      await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/tts_audio_chars_${counterEngine}`).transaction((current) => Number(current || 0) + text.length);
     } catch (_) {}
 
     setTtsHeaders(res, {
+      'Content-Type': mimeType,
       'X-TTS-Voice': voice,
       'X-TTS-Lang': lang,
-      'X-TTS-Engine': engine,
-      'X-Generation-Id': upstream.headers.get('x-generation-id') || '',
+      'X-TTS-Engine': usedSelfhost ? `${engine}-selfhost` : engine,
+      'X-Generation-Id': generationId,
     });
     return res.status(200).send(audio);
   }
@@ -619,7 +664,7 @@ exports.transcribeAudio = onRequest(
     region: 'asia-southeast1',
     timeoutSeconds: 180,
     memory: '512MiB',
-    secrets: [OPENROUTER_API_KEY],
+    secrets: [OPENROUTER_API_KEY, SELFHOST_TTS_STT_URL, SELFHOST_TOKEN],
     cors: true,
   },
   async (req, res) => {
@@ -642,43 +687,75 @@ exports.transcribeAudio = onRequest(
       return res.status(400).json({ error: 'audio_too_large', message: 'Файл слишком большой (лимит ~20 МБ). Сожми битрейт или обрежь файл.' });
     }
 
-    const key = OPENROUTER_API_KEY.value();
-    if (!key) {
-      return res.status(500).json({ error: 'missing_openrouter_key', message: 'В Firebase Secret Manager не задан OPENROUTER_API_KEY.' });
+    let data = null;
+    let usedSelfhost = false;
+
+    const selfhostUrl = SELFHOST_TTS_STT_URL.value();
+    const selfhostToken = SELFHOST_TOKEN.value();
+    if (selfhostUrl && selfhostToken) {
+      try {
+        const r = await fetch(`${selfhostUrl.replace(/\/$/, '')}/v1/audio/transcriptions`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${selfhostToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            input_audio: { data: audioBase64, format },
+            ...(lang ? { language: lang } : {}),
+            response_format: 'verbose_json',
+            timestamp_granularities: ['segment'],
+          }),
+          signal: AbortSignal.timeout(150000),
+        });
+        if (r.ok) {
+          data = await r.json().catch(() => ({}));
+          usedSelfhost = true;
+        } else {
+          console.warn(`[transcribeAudio] self-host ${r.status}, falling back to OpenRouter`);
+        }
+      } catch (error) {
+        console.warn('[transcribeAudio] self-host unreachable, falling back to OpenRouter:', error?.message || error);
+      }
     }
 
-    let upstream;
-    try {
-      upstream = await fetch('https://openrouter.ai/api/v1/audio/transcriptions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${key}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: STT_MODEL,
-          input_audio: { data: audioBase64, format },
-          ...(lang ? { language: lang } : {}),
-          response_format: 'verbose_json',
-          timestamp_granularities: ['segment'],
-        }),
-      });
-    } catch (error) {
-      return res.status(503).json({ error: 'openrouter_unavailable', message: `OpenRouter network error: ${error?.message || String(error)}` });
+    if (!data) {
+      const key = OPENROUTER_API_KEY.value();
+      if (!key) {
+        return res.status(500).json({ error: 'missing_openrouter_key', message: 'В Firebase Secret Manager не задан OPENROUTER_API_KEY.' });
+      }
+
+      let upstream;
+      try {
+        upstream = await fetch('https://openrouter.ai/api/v1/audio/transcriptions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${key}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: STT_MODEL,
+            input_audio: { data: audioBase64, format },
+            ...(lang ? { language: lang } : {}),
+            response_format: 'verbose_json',
+            timestamp_granularities: ['segment'],
+          }),
+        });
+      } catch (error) {
+        return res.status(503).json({ error: 'openrouter_unavailable', message: `OpenRouter network error: ${error?.message || String(error)}` });
+      }
+
+      if (!upstream.ok) {
+        const detail = await upstream.text().catch(() => '');
+        return res.status(502).json({
+          error: 'openrouter_stt_failed',
+          message: `OpenRouter STT HTTP ${upstream.status}`,
+          detail: detail.slice(0, 1000),
+        });
+      }
+
+      data = await upstream.json().catch(() => ({}));
     }
 
-    if (!upstream.ok) {
-      const detail = await upstream.text().catch(() => '');
-      return res.status(502).json({
-        error: 'openrouter_stt_failed',
-        message: `OpenRouter STT HTTP ${upstream.status}`,
-        detail: detail.slice(0, 1000),
-      });
-    }
-
-    const data = await upstream.json().catch(() => ({}));
     const text = data?.text || data?.transcript || data?.transcription || '';
-    if (!text) return res.status(502).json({ error: 'empty_transcript', message: 'OpenRouter вернул пустой транскрипт.' });
+    if (!text) return res.status(502).json({ error: 'empty_transcript', message: 'Пустой транскрипт от бэкенда распознавания.' });
 
     // Not every provider/model actually honors timestamp_granularities — degrade
     // gracefully to plain text (no sync) rather than fail the whole request.
@@ -689,10 +766,11 @@ exports.transcribeAudio = onRequest(
       : [];
 
     try {
-      await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/transcribe_audio_chars`).transaction((current) => Number(current || 0) + text.length);
+      const counterEngine = usedSelfhost ? 'transcribe_audio_chars_selfhost' : 'transcribe_audio_chars';
+      await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/${counterEngine}`).transaction((current) => Number(current || 0) + text.length);
     } catch (_) {}
 
-    return res.status(200).json({ text, segments });
+    return res.status(200).json({ text, segments, engine: usedSelfhost ? 'selfhost' : 'openrouter' });
   }
 );
 

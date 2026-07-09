@@ -1,0 +1,12 @@
+services:
+  tts-stt:
+    build: ./server
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"  # bound to localhost only — nginx (or ufw) fronts it, see README
+    environment:
+      - SELFHOST_TOKEN=${SELFHOST_TOKEN}
+      - WHISPER_MODEL_SIZE=${WHISPER_MODEL_SIZE:-base}
+    # 2GB RAM total on the box — leave headroom for the VPN process and the
+    # OS itself instead of letting one bad request balloon and OOM the host.
+    mem_limit: 1400m
