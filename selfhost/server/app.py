@@ -46,6 +46,40 @@ def get_kokoro():
     return _kokoro
 
 
+def _split_in_half(text):
+    mid = len(text) // 2
+    left = text.rfind(" ", 0, mid)
+    right = text.find(" ", mid)
+    if left == -1 and right == -1:
+        split_at = mid
+    elif left == -1:
+        split_at = right
+    elif right == -1:
+        split_at = left
+    else:
+        split_at = left if (mid - left) <= (right - mid) else right
+    return text[:split_at].strip(), text[split_at:].strip()
+
+
+def synthesize(kokoro, text, voice, speed, depth=0):
+    # kokoro_onnx auto-splits long input into <=510-token phoneme batches, but
+    # has an off-by-one bug that throws IndexError when a batch lands at
+    # exactly the 510-token boundary. Rather than patch the vendored library,
+    # fall back to splitting the input ourselves and recombining the audio.
+    import numpy as np
+    try:
+        return kokoro.create(text, voice=voice, speed=speed)
+    except IndexError:
+        if depth >= 6 or len(text) < 30:
+            raise
+        left, right = _split_in_half(text)
+        if not left or not right:
+            raise
+        samples_l, sample_rate = synthesize(kokoro, left, voice, speed, depth + 1)
+        samples_r, _ = synthesize(kokoro, right, voice, speed, depth + 1)
+        return np.concatenate([samples_l, samples_r]), sample_rate
+
+
 class SpeechRequest(BaseModel):
     model: str = "hexgrad/kokoro-82m"
     input: str
@@ -60,7 +94,7 @@ def speech(req: SpeechRequest, authorization: str | None = Header(default=None))
     if not req.input.strip():
         raise HTTPException(400, "Empty input text")
     kokoro = get_kokoro()
-    samples, sample_rate = kokoro.create(req.input, voice=req.voice, speed=max(0.5, min(2.0, req.speed)))
+    samples, sample_rate = synthesize(kokoro, req.input, req.voice, max(0.5, min(2.0, req.speed)))
 
     import io
     import soundfile as sf
