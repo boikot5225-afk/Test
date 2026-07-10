@@ -5,7 +5,7 @@
 import { sb, sbUser, sbGetCurrentUserId, isSupabaseReady, fbSaveWordState, fbLoadWordState,
          LONG_REQUEST_TIMEOUT_MS, initSupabase } from './supabase.js';
 import { isGuest, VERBS, NOUNS, setCurrentProfile } from './state.js';
-import { speak, stopSpeak, getTtsRate, setTtsRate, getTtsVoiceEngine, setTtsVoiceEngine, getTtsVoice, setTtsVoice, KOKORO_VOICES, prefetchSpeech } from './tts.js?v=68.41-tts-prefetch';
+import { speak, stopSpeak, getTtsRate, setTtsRate, getTtsVoiceEngine, setTtsVoiceEngine, getTtsVoice, setTtsVoice, KOKORO_VOICES, prefetchSpeech } from './tts.js?v=68.42-tts-cache-bust-lang-fix';
 import { showToast, showLoading, hideLoading, normalizeImportKey } from './utils.js';
 import { createReaderAudio } from './reader/audio.js?v=3';
 import { createReaderNavigation } from './reader/navigation.js?v=1';
