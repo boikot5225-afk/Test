@@ -110,7 +110,11 @@ CONTEXT: ${body.context || ''}`;
   }
 
   if (task === 'translate_paragraph') {
-    return `Translate this ${langName} paragraph into natural Russian for comprehension. Do not explain grammar unless needed. Return ONLY valid JSON: {"ru":"..."}.
+    return `Translate this ${langName} paragraph into natural Russian for comprehension. Do not explain grammar unless needed.
+
+Slang, insults, ethnic nicknames, and idioms must be translated by their ACTUAL MEANING as used in context, never word-for-word by root/etymology. For example "frijolero" is a slang/derogatory nickname for Mexicans, not a word about beans — translate it as the real-world equivalent (e.g. "мексиканец" or a fitting Russian slang/derogatory equivalent), not literally. If unsure of the real meaning of a slang term, prefer a natural contextual guess over a literal mistranslation.
+
+Return ONLY valid JSON: {"ru":"..."}.
 
 TEXT:
 ${body.text || ''}`;
