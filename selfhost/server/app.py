@@ -61,14 +61,37 @@ def _split_in_half(text):
     return text[:split_at].strip(), text[split_at:].strip()
 
 
+# Kokoro voice ids are "<lang><gender>_<name>" (e.g. "ef_dora" = Spanish
+# female Dora, "ff_siwis" = French female Siwis). The first letter picks the
+# espeak-ng phonemizer language — without this, kokoro.create() defaults to
+# en-us and reads every language with English pronunciation.
+VOICE_PREFIX_TO_LANG = {
+    "a": "en-us",
+    "b": "en-gb",
+    "e": "es",
+    "f": "fr-fr",
+    "h": "hi",
+    "i": "it",
+    "j": "ja",
+    "p": "pt-br",
+    "z": "cmn",
+}
+
+
+def lang_for_voice(voice):
+    prefix = voice[:1].lower()
+    return VOICE_PREFIX_TO_LANG.get(prefix, "en-us")
+
+
 def synthesize(kokoro, text, voice, speed, depth=0):
     # kokoro_onnx auto-splits long input into <=510-token phoneme batches, but
     # has an off-by-one bug that throws IndexError when a batch lands at
     # exactly the 510-token boundary. Rather than patch the vendored library,
     # fall back to splitting the input ourselves and recombining the audio.
     import numpy as np
+    lang = lang_for_voice(voice)
     try:
-        return kokoro.create(text, voice=voice, speed=speed)
+        return kokoro.create(text, voice=voice, speed=speed, lang=lang)
     except IndexError:
         if depth >= 6 or len(text) < 30:
             raise
