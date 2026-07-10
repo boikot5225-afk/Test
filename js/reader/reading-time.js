@@ -1,5 +1,6 @@
 export function createReaderTimeTracker({ key = 'an2_reader_time_v1' } = {}) {
   let paragraphStartedAt = null;
+  let openId = null;
 
   function today() {
     try {
@@ -21,7 +22,17 @@ export function createReaderTimeTracker({ key = 'an2_reader_time_v1' } = {}) {
     } catch {}
   }
 
-  function openParagraph() {
+  // id identifies "which paragraph" (e.g. `${bookId}:${chapterIndex}:${paragraphIndex}`).
+  // render() fires on all sorts of incidental re-renders (a translation
+  // arriving, pinyin toggling, etc.), not just on actually moving to a new
+  // paragraph — calling openParagraph() unconditionally on every one of those
+  // used to reset the clock each time, silently discarding whatever reading
+  // time had already accumulated on the still-current paragraph. Only reset
+  // when id actually changes; otherwise leave the running timer alone.
+  function openParagraph(id = null) {
+    if (paragraphStartedAt && id != null && id === openId) return;
+    if (paragraphStartedAt) closeParagraph();
+    openId = id;
     paragraphStartedAt = Date.now();
   }
 
@@ -29,6 +40,7 @@ export function createReaderTimeTracker({ key = 'an2_reader_time_v1' } = {}) {
     if (!paragraphStartedAt) return;
     const seconds = (Date.now() - paragraphStartedAt) / 1000;
     paragraphStartedAt = null;
+    openId = null;
     if (seconds >= 3 && seconds <= 300) addSeconds(seconds);
   }
 

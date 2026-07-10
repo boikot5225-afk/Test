@@ -25,7 +25,7 @@ import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=3';
 import { createReaderLibraryStore } from './reader/library-store.js?v=5';
 import { createReaderDisplay } from './reader/display.js?v=4';
-import { createReaderTimeTracker } from './reader/reading-time.js?v=1';
+import { createReaderTimeTracker } from './reader/reading-time.js?v=2-per-paragraph-timer-guard';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
 import { createReaderChapterRenderer } from './reader/chapter-render.js?v=6';
 import { createReaderPagesMode } from './reader/pages-mode.js?v=2';
@@ -45,7 +45,12 @@ const readerTimeTracker = createReaderTimeTracker({ key: READER_TIME_KEY });
 
 function readerTimeToday() { return readerTimeTracker.today(); }
 function readerTimeAddSeconds(seconds) { return readerTimeTracker.addSeconds(seconds); }
-function readerTimeParagraphOpen() { return readerTimeTracker.openParagraph(); }
+function readerTimeParagraphId() {
+  const book = readerCurrentBook?.();
+  if (!book) return null;
+  return `${book.id || ''}:${book.currentChapter || 0}:${book.currentParagraph || 0}`;
+}
+function readerTimeParagraphOpen() { return readerTimeTracker.openParagraph(readerTimeParagraphId()); }
 function readerTimeParagraphClose() { return readerTimeTracker.closeParagraph(); }
 
 const READER_OWNER_KEY = 'an2_reader_active_owner_v1';
