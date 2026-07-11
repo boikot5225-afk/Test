@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v77.01-word-frequency-tracker';
+const CACHE_VERSION = 'v77.02-home-top-clicked-words';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

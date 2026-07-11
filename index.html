@@ -224,7 +224,7 @@
           📡 Проверить связь с сервером
         </button>
         <div id="health-result" style="display:none;margin-top:10px;font-size:0.78rem;line-height:1.5;padding:8px 12px;border-radius:8px;"></div>
-        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v77.01-word-frequency-tracker</span></div>
+        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v77.02-home-top-clicked-words</span></div>
       </div>
     </div>
 
@@ -394,6 +394,12 @@
     <div class="home-recent-section">
       <div class="home-section-label">последние слова</div>
       <div id="home-recent-reader-words" class="home-recent-words"></div>
+    </div>
+
+    <!-- TOP CLICKED WORDS (frequency tracker) -->
+    <div class="home-recent-section" id="home-top-clicked-section" style="display:none">
+      <div class="home-section-label">🔥 часто открываемые</div>
+      <div id="home-top-clicked-words" class="home-recent-words"></div>
     </div>
 
     <!-- one compact stat line -->
@@ -1962,6 +1968,6 @@
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=70.30"></script>
+<script type="module" src="js/app.js?v=70.31"></script>
 </body>
 </html>

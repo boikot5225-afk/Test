@@ -205,4 +205,34 @@ export async function renderHome() {
   // Секция лейбл
   const recentLabel = document.querySelector('.home-recent-section .home-section-label');
   if (recentLabel) recentLabel.textContent = isZh ? 'последние иероглифы' : 'последние слова';
+
+  // ── Часто открываемые (по кликам, для текущего языка) ──
+  const topSection = $('home-top-clicked-section');
+  const topWords = $('home-top-clicked-words');
+  if (topSection && topWords) {
+    const topClicked = [...langWords]
+      .filter(w => (w.clicked || 0) > 0)
+      .sort((a, b) => (b.clicked || 0) - (a.clicked || 0))
+      .slice(0, 10);
+    if (!topClicked.length) {
+      topSection.style.display = 'none';
+    } else {
+      topSection.style.display = '';
+      if (isZh) {
+        topWords.innerHTML = topClicked.map(w => {
+          const pinyin = w.pinyin || w.reading || '';
+          return `<span class="home-word-chip zh-chip" onclick="showScreen('dict');setTimeout(()=>window.renderDictWords&&renderDictWords('zh','${escape(w.word)}'),80)">
+            <b style="font-size:1.1rem;line-height:1">${escape(w.word)}</b>
+            ${pinyin ? `<small style="font-size:.65rem;opacity:.7">${escape(pinyin)}</small>` : ''}
+          </span>`;
+        }).join('');
+      } else {
+        topWords.innerHTML = topClicked.map(w =>
+          `<span class="home-word-chip ${w.saved ? 'saved' : ''}">
+            <b>${escape(w.word)}</b><small>${w.clicked}×</small>
+          </span>`
+        ).join('');
+      }
+    }
+  }
 }
