@@ -2545,6 +2545,14 @@ function readerOpenBook(id) {
   readerScrollActiveParagraph();
   installReaderSelectionTranslate();
   readerStartWarm();
+  // showScreen('reader') kicks off renderReaderScreen()'s IndexedDB word-state
+  // hydration but doesn't await it before returning, and readerOpenBook() runs
+  // its own renderReaderChapter() right away — so the first paint of this book
+  // can beat that hydration, rendering saved words without their highlight.
+  // Repaint once hydration actually settles, in case it changed anything.
+  readerWordState.hydrateFromIndexedDB()
+    .then((changed) => { if (changed) readerRefreshParagraphWordClasses(); })
+    .catch(() => {});
   // pull word marks made on other devices; repaints colors when merge changes something
   syncWordStateFromCloud().catch(() => {});
 

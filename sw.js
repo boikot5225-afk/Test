@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v76.97-fix-reading-time-reset-bug';
+const CACHE_VERSION = 'v76.98-fix-word-highlight-hydration-race';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
