@@ -64,7 +64,11 @@ def _split_in_half(text):
 # Kokoro voice ids are "<lang><gender>_<name>" (e.g. "ef_dora" = Spanish
 # female Dora, "ff_siwis" = French female Siwis). The first letter picks the
 # espeak-ng phonemizer language — without this, kokoro.create() defaults to
-# en-us and reads every language with English pronunciation.
+# en-us and reads every language with English pronunciation. Chinese ("z...")
+# is the odd one out: kokoro_onnx's built-in tokenizer only wraps espeak-ng
+# (its own docstring says so — "lang can be en-us or en-gb"), and Kokoro's zh
+# voices were trained on misaki's dedicated Mandarin g2p output, not espeak
+# IPA, so Chinese needs its own code path below instead of a lang= string.
 VOICE_PREFIX_TO_LANG = {
     "a": "en-us",
     "b": "en-gb",
@@ -74,8 +78,17 @@ VOICE_PREFIX_TO_LANG = {
     "i": "it",
     "j": "ja",
     "p": "pt-br",
-    "z": "cmn",
 }
+
+_zh_g2p = None
+
+
+def get_zh_g2p():
+    global _zh_g2p
+    if _zh_g2p is None:
+        from misaki import zh
+        _zh_g2p = zh.ZHG2P()
+    return _zh_g2p
 
 
 def lang_for_voice(voice):
@@ -89,8 +102,11 @@ def synthesize(kokoro, text, voice, speed, depth=0):
     # exactly the 510-token boundary. Rather than patch the vendored library,
     # fall back to splitting the input ourselves and recombining the audio.
     import numpy as np
-    lang = lang_for_voice(voice)
     try:
+        if voice[:1].lower() == "z":
+            phonemes, _ = get_zh_g2p()(text)
+            return kokoro.create(phonemes, voice=voice, speed=speed, is_phonemes=True)
+        lang = lang_for_voice(voice)
         return kokoro.create(text, voice=voice, speed=speed, lang=lang)
     except IndexError:
         if depth >= 6 or len(text) < 30:
