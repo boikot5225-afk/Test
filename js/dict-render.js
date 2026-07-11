@@ -253,17 +253,51 @@ function renderReaderWords(activeBookFilter, search = '') {
 }
 window.renderReaderWords = renderReaderWords;
 
-// "Как сказать" — reverse lookup: describe the idea in Russian, get word
-// suggestions from DeepSeek, instead of only searching words already saved.
-// Shared between the reader dictionary (en/es/fr) and the Chinese dictionary.
+// "Как сказать" (RU → target word) and "Перевести" (target word → RU) —
+// two directions of the same idea: search only finds words already in your
+// saved vocabulary, so anything typed that isn't there yet gets a DeepSeek
+// fallback either way. Shared between the reader dictionary (en/es/fr) and
+// the Chinese dictionary.
 function renderReverseLookupBlock(q) {
   if (!q) return '';
   return `
-    <div id="dict-reverse-lookup" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
-      <button class="btn btn-secondary" style="width:100%" onclick="onReaderReverseLookup()">🔍 Как сказать «${readerEscape(q)}»?</button>
-      <div id="dict-reverse-results" style="margin-top:10px"></div>
-    </div>`;
+    <div id="dict-reverse-lookup" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-secondary" style="flex:1;min-width:140px" onclick="onReaderForwardTranslate()">🔤 Перевести «${readerEscape(q)}»?</button>
+      <button class="btn btn-secondary" style="flex:1;min-width:140px" onclick="onReaderReverseLookup()">🔍 Как сказать «${readerEscape(q)}»?</button>
+    </div>
+    <div id="dict-reverse-results" style="margin-top:10px"></div>`;
 }
+
+// "Перевести" — the word/phrase typed is already IN the target language;
+// just translate it to Russian (as opposed to onReaderReverseLookup, which
+// goes the other way: a Russian description → target-language word).
+window.onReaderForwardTranslate = async function onReaderForwardTranslate() {
+  const inp = document.getElementById('dict-search');
+  const query = String(inp?.value || '').trim();
+  if (!query) return;
+  const results = document.getElementById('dict-reverse-results');
+  if (!results) return;
+  const lang = readerCanonicalLang(globalThis.AN2_LANG || 'en');
+  results.innerHTML = `<div style="font-size:.82rem;color:var(--text-muted)">⏳ DeepSeek переводит...</div>`;
+  try {
+    const d = await readerAI({ task: 'translate_paragraph', text: query, sourceLang: lang });
+    const ru = String(d?.ru || '').trim();
+    if (!ru) {
+      results.innerHTML = `<div style="font-size:.82rem;color:var(--text-muted)">Не получилось перевести.</div>`;
+      return;
+    }
+    results.innerHTML = `
+      <div class="rw-row" style="align-items:center">
+        <span class="rw-word">${readerEscape(query)}</span>
+        <span class="rw-ru" style="flex:1">${readerEscape(ru)}</span>
+        <button class="btn btn-secondary" style="padding:6px 10px;font-size:.76rem;white-space:nowrap"
+          data-word="${escapeAttr(query)}" data-ru="${escapeAttr(ru)}"
+          onclick="onReaderSaveReverseSuggestion(this)">＋ Сохранить</button>
+      </div>`;
+  } catch (e) {
+    results.innerHTML = `<div style="font-size:.82rem;color:var(--bad)">⚠️ DeepSeek не сработал: ${readerEscape(e?.message || String(e))}</div>`;
+  }
+};
 
 // "Как сказать X по-английски/испански" — the reverse of the usual dict
 // search (word → meaning): describe the idea in Russian, DeepSeek suggests
