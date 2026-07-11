@@ -215,7 +215,10 @@ function renderReaderWords(activeBookFilter, search = '') {
   // Frequency tracker: words actually clicked/looked up, ranked by how often —
   // a direct signal of what genuinely trips you up, as opposed to just words
   // that happen to appear a lot in the text (which you may already know).
-  const topClicked = q ? [] : [...shown].filter(w => (w.clicked || 0) > 0)
+  // Already-saved/known words are excluded — clicked is a lifetime counter
+  // with no decay, so a word you clicked a lot before learning it would
+  // otherwise sit at the top forever even after it stopped being a problem.
+  const topClicked = q ? [] : [...shown].filter(w => !w.saved && !w.known && (w.clicked || 0) > 0)
     .sort((a, b) => (b.clicked || 0) - (a.clicked || 0)).slice(0, 15);
 
   const wordRowHTML = (w) => {
@@ -475,8 +478,13 @@ function renderChineseDictWords(search = '') {
   if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: false }).then(() => { try { if (dictType === 'zh') renderChineseDictWords(search); } catch {} });
 
   // Frequency tracker: words actually clicked/looked up, ranked by how often.
-  const topClicked = q ? [] : [...entries].filter(e => (e.state?.clicked || 0) > 0)
-    .sort((a, b) => (b.state?.clicked || 0) - (a.state?.clicked || 0)).slice(0, 15);
+  // Already-saved/known words excluded — clicked never decays, so an
+  // already-learned word clicked a lot in the past would otherwise stick at
+  // the top forever.
+  const topClicked = q ? [] : [...entries].filter(e => {
+    const st = e.state || {};
+    return !st.saved && !st.known && (st.clicked || 0) > 0;
+  }).sort((a, b) => (b.state?.clicked || 0) - (a.state?.clicked || 0)).slice(0, 15);
   const topClickedHTML = topClicked.length ? `
     <div style="font-size:0.78rem;font-weight:600;color:var(--text-muted);margin-bottom:8px">🔥 Часто открываемые</div>
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px">

@@ -211,7 +211,7 @@ export async function renderHome() {
   const topWords = $('home-top-clicked-words');
   if (topSection && topWords) {
     const topClicked = [...langWords]
-      .filter(w => (w.clicked || 0) > 0)
+      .filter(w => !w.saved && !w.known && (w.clicked || 0) > 0)
       .sort((a, b) => (b.clicked || 0) - (a.clicked || 0))
       .slice(0, 10);
     if (!topClicked.length) {

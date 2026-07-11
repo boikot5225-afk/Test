@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v77.03-forward-translate-lookup';
+const CACHE_VERSION = 'v77.04-exclude-known-from-top-clicked';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
