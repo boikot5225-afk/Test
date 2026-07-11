@@ -212,6 +212,11 @@ function renderReaderWords(activeBookFilter, search = '') {
 
   const savedWords   = shown.filter(w => w.saved);
   const openedWords  = shown.filter(w => !w.saved && (w.clicked || 0) > 0);
+  // Frequency tracker: words actually clicked/looked up, ranked by how often —
+  // a direct signal of what genuinely trips you up, as opposed to just words
+  // that happen to appear a lot in the text (which you may already know).
+  const topClicked = q ? [] : [...shown].filter(w => (w.clicked || 0) > 0)
+    .sort((a, b) => (b.clicked || 0) - (a.clicked || 0)).slice(0, 15);
 
   const wordRowHTML = (w) => {
     const statusLabel = w.saved ? 'сохранено' : w.known ? 'знаю' : `открыто ${w.clicked || 1}×`;
@@ -229,8 +234,12 @@ function renderReaderWords(activeBookFilter, search = '') {
     </div>`;
   };
 
+  const topClickedHTML = topClicked.length ? `
+    <div class="rw-section-label">🔥 Часто открываемые</div>
+    <div class="rw-list">${topClicked.map(wordRowHTML).join('')}</div>` : '';
+
   const savedHTML = savedWords.length ? `
-    <div class="rw-section-label">Сохранённые (${savedWords.length})</div>
+    <div class="rw-section-label" style="margin-top:14px">Сохранённые (${savedWords.length})</div>
     <div class="rw-list">${savedWords.map(wordRowHTML).join('')}</div>` : '';
 
   const openedHTML = openedWords.length ? `
@@ -240,7 +249,7 @@ function renderReaderWords(activeBookFilter, search = '') {
   const emptyHTML = !shown.length
     ? `<div style="font-size:.82rem;color:var(--text-muted);padding:8px 0">${q ? 'Ничего не найдено среди твоих слов.' : 'Нет слов из этого текста.'}</div>` : '';
 
-  card.innerHTML = filterHTML + savedHTML + openedHTML + emptyHTML + renderReverseLookupBlock(q);
+  card.innerHTML = filterHTML + topClickedHTML + savedHTML + openedHTML + emptyHTML + renderReverseLookupBlock(q);
 }
 window.renderReaderWords = renderReaderWords;
 
@@ -431,6 +440,15 @@ function renderChineseDictWords(search = '') {
 
   if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: false }).then(() => { try { if (dictType === 'zh') renderChineseDictWords(search); } catch {} });
 
+  // Frequency tracker: words actually clicked/looked up, ranked by how often.
+  const topClicked = q ? [] : [...entries].filter(e => (e.state?.clicked || 0) > 0)
+    .sort((a, b) => (b.state?.clicked || 0) - (a.state?.clicked || 0)).slice(0, 15);
+  const topClickedHTML = topClicked.length ? `
+    <div style="font-size:0.78rem;font-weight:600;color:var(--text-muted);margin-bottom:8px">🔥 Часто открываемые</div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px">
+      ${topClicked.map(renderChineseDictListItem).join('')}
+    </div>` : '';
+
   if (!filtered.length && !q) {
     card.innerHTML = `
       <div style="text-align:center;padding:40px 20px;color:var(--text-muted)">
@@ -450,7 +468,7 @@ function renderChineseDictWords(search = '') {
     return;
   }
 
-  card.innerHTML = `
+  card.innerHTML = topClickedHTML + `
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
       ${filtered.map(renderChineseDictListItem).join('')}
     </div>` + renderReverseLookupBlock(q);
