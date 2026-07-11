@@ -4,7 +4,7 @@
 // ════════════════════════════════════════════════
 
 const TTS_MEM_CACHE = new Map();
-const TTS_CACHE_NAME = 'an2-tts-audio-v6';
+const TTS_CACHE_NAME = 'an2-tts-audio-v7';
 const TTS_CACHE_LIMIT = 60;
 
 let ttsAudio = null;
