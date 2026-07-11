@@ -240,17 +240,21 @@ function renderReaderWords(activeBookFilter, search = '') {
   const emptyHTML = !shown.length
     ? `<div style="font-size:.82rem;color:var(--text-muted);padding:8px 0">${q ? 'Ничего не найдено среди твоих слов.' : 'Нет слов из этого текста.'}</div>` : '';
 
-  // "Как сказать" — reverse lookup: describe the idea in Russian, get word
-  // suggestions from DeepSeek, instead of only searching words already saved.
-  const reverseLookupHTML = q ? `
-    <div id="dict-reverse-lookup" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
-      <button class="btn btn-secondary" style="width:100%" onclick="onReaderReverseLookup()">🔍 Как сказать «${escape(q)}»?</button>
-      <div id="dict-reverse-results" style="margin-top:10px"></div>
-    </div>` : '';
-
-  card.innerHTML = filterHTML + savedHTML + openedHTML + emptyHTML + reverseLookupHTML;
+  card.innerHTML = filterHTML + savedHTML + openedHTML + emptyHTML + renderReverseLookupBlock(q);
 }
 window.renderReaderWords = renderReaderWords;
+
+// "Как сказать" — reverse lookup: describe the idea in Russian, get word
+// suggestions from DeepSeek, instead of only searching words already saved.
+// Shared between the reader dictionary (en/es/fr) and the Chinese dictionary.
+function renderReverseLookupBlock(q) {
+  if (!q) return '';
+  return `
+    <div id="dict-reverse-lookup" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+      <button class="btn btn-secondary" style="width:100%" onclick="onReaderReverseLookup()">🔍 Как сказать «${readerEscape(q)}»?</button>
+      <div id="dict-reverse-results" style="margin-top:10px"></div>
+    </div>`;
+}
 
 // "Как сказать X по-английски/испански" — the reverse of the usual dict
 // search (word → meaning): describe the idea in Russian, DeepSeek suggests
@@ -442,14 +446,14 @@ function renderChineseDictWords(search = '') {
       <div style="text-align:center;padding:30px 20px;color:var(--text-muted)">
         <div style="font-size:0.9rem;margin-bottom:8px">«${readerEscape(search)}» не найдено в китайском словаре</div>
         <div style="font-size:0.8rem;color:var(--text-dim)">Нажми «+ Китайское» и добавь вручную.</div>
-      </div>`;
+      </div>` + renderReverseLookupBlock(q);
     return;
   }
 
   card.innerHTML = `
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
       ${filtered.map(renderChineseDictListItem).join('')}
-    </div>`;
+    </div>` + renderReverseLookupBlock(q);
 }
 
 function renderChineseDictListItem(e) {
