@@ -944,6 +944,31 @@ function an2SyncBottomNav() {
 }
 window.an2SyncBottomNav = an2SyncBottomNav;
 
+// The bar appearing/disappearing in lockstep with scroll direction (confirmed
+// by a real device: scroll down -> appears, scroll up -> disappears) is the
+// classic mobile-Chrome symptom of the on-screen address bar collapsing and
+// expanding as you scroll — the layout viewport height changes, but a plain
+// `position:fixed; bottom:0` element doesn't always get repositioned against
+// the new visual viewport correctly on every Android WebView/Chrome build.
+// The VisualViewport API reports the actual visible area directly, so pin
+// the bar's position from that instead of trusting bottom:0 alone.
+function an2PinBottomNavToVisualViewport() {
+  try {
+    const vv = window.visualViewport;
+    const bar = document.getElementById('bottom-nav');
+    if (!vv || !bar) return;
+    const gap = window.innerHeight - (vv.height + vv.offsetTop);
+    bar.style.setProperty('bottom', Math.max(0, Math.round(gap)) + 'px', 'important');
+  } catch (_) {}
+}
+try {
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', an2PinBottomNavToVisualViewport);
+    window.visualViewport.addEventListener('scroll', an2PinBottomNavToVisualViewport);
+  }
+  window.addEventListener('scroll', an2PinBottomNavToVisualViewport, { passive: true });
+} catch (_) {}
+
 function updateBottomNav(id) {
   an2SyncBottomNav();
   // Map screen ids to nav item ids
