@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v77.07-fix-stale-reading-view-on-tab-leave';
+const CACHE_VERSION = 'v77.08-remove-fr-verb-dict-display';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
