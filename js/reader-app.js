@@ -1575,6 +1575,13 @@ function readerQuickOpen() {
 window.readerQuickOpen = readerQuickOpen;
 
 async function renderReaderScreen() {
+  // A book may already be open by the time a delayed/background trigger
+  // (e.g. the cloud-merge callback further down this function, which can
+  // resolve long after the initial call on a slow connection) fires a second
+  // call here. Rebuilding the (hidden) library markup underneath an actively
+  // open book is at best wasted work — bail out instead of risking it ever
+  // fighting with whatever readerOpenBook() already put on screen.
+  if (document.getElementById('reader-reading-view')?.style.display === 'flex') return;
   loadReaderBooks();
   applyReaderTranslationVisibility();
   // Recovers any book a past localStorage quota failure silently dropped —
