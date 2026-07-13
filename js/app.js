@@ -885,6 +885,11 @@ export function showScreen(id) {
 }
 
 function updateBottomNav(id) {
+  // Defensive reset: something occasionally leaves an inline display:none on
+  // the bar itself (root cause not pinned down yet), which no visible screen
+  // should ever be able to do — force it back to whatever the stylesheet
+  // says on every navigation instead of trusting whatever state it was left in.
+  try { document.getElementById('bottom-nav')?.style.removeProperty('display'); } catch (_) {}
   // Map screen ids to nav item ids
   const lang = globalThis.AN2_LANG || 'fr';
   const navMap = {
