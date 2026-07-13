@@ -224,7 +224,7 @@
           📡 Проверить связь с сервером
         </button>
         <div id="health-result" style="display:none;margin-top:10px;font-size:0.78rem;line-height:1.5;padding:8px 12px;border-radius:8px;"></div>
-        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v77.04-exclude-known-from-top-clicked</span></div>
+        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v77.05-quick-open-last-book</span></div>
       </div>
     </div>
 
@@ -240,7 +240,7 @@
   </div>
   <div class="nav-tabs" style="overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;flex-shrink:1;min-width:0">
     <div class="nav-tab active" onclick="showScreen('home')">🏠 Главная</div>
-    <div class="nav-tab" onclick="showScreen('reader')">📖 Читать</div>
+    <div class="nav-tab" onclick="readerQuickOpen()">📖 Читать</div>
     <div class="nav-tab" onclick="showScreen('dict')">📚 Слова</div>
     <div class="nav-tab" onclick="showScreen('profile')">👤 Профиль</div>
   </div>
@@ -251,7 +251,7 @@
   <div class="bottom-nav-item active" id="bn-home" onclick="showScreen('home')">
     <span class="bn-icon">🏠</span><span>Главная</span>
   </div>
-  <div class="bottom-nav-item" id="bn-reader" onclick="showScreen('reader')">
+  <div class="bottom-nav-item" id="bn-reader" onclick="readerQuickOpen()">
     <span class="bn-icon">📖</span><span>Читать</span>
   </div>
   <div class="bottom-nav-item" id="bn-dict" onclick="showScreen('dict')">
@@ -1968,6 +1968,6 @@
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=70.33"></script>
+<script type="module" src="js/app.js?v=70.34"></script>
 </body>
 </html>

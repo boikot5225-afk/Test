@@ -1561,6 +1561,19 @@ function readerBookProgress(book) { return readerLibrary.progress(book); }
 
 function readerContinueBook() { return readerLibrary.continueBook(); }
 
+// Bottom-nav "Читать" tab: jump straight into whatever book was last read
+// instead of always landing on the library list — the library is still one
+// tap away ("Все тексты"/library button) for actually picking a different
+// book. Falls back to the plain library view when there's nothing to
+// continue (e.g. a brand new profile with no books yet).
+function readerQuickOpen() {
+  window.showScreen('reader');
+  loadReaderBooks();
+  const book = readerContinueBook();
+  if (book) readerOpenBook(book.id);
+}
+window.readerQuickOpen = readerQuickOpen;
+
 async function renderReaderScreen() {
   loadReaderBooks();
   applyReaderTranslationVisibility();
