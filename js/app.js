@@ -944,33 +944,44 @@ function an2SyncBottomNav() {
 }
 window.an2SyncBottomNav = an2SyncBottomNav;
 
-// The bar appearing/disappearing in lockstep with scroll direction (confirmed
-// by a real device: scroll down -> appears, scroll up -> disappears) is the
-// classic mobile-Chrome symptom of the on-screen address bar collapsing and
-// expanding as you scroll — the layout viewport height changes, but a plain
-// `position:fixed; bottom:0` element doesn't always get repositioned against
-// the new visual viewport correctly on every Android WebView/Chrome build.
-// The VisualViewport API reports the actual visible area directly, so pin
-// the bar's position from that instead of trusting bottom:0 alone.
-function an2PinBottomNavToVisualViewport() {
+// A real device screenshot settled this: the bar was sitting in the middle
+// of the page's own scrolling content (between two sections of the home
+// screen), not pinned to the screen edge at all — meaning `position:fixed`
+// itself isn't taking effect there, not a viewport-height/address-bar
+// miscalculation as previously assumed. Something (likely a `transform`,
+// `filter`, `perspective`, `contain`, or `will-change` property on an
+// ancestor — any of these makes that ancestor the containing block for
+// fixed descendants instead of the viewport) is defeating position:fixed
+// for this element on that device. Rather than hunt for which property on
+// which ancestor, stop depending on position:fixed working at all: pin the
+// bar with JS on every scroll/resize by computing its absolute position
+// directly from window.scrollY, which produces the same visual result
+// regardless of what's breaking the native fixed positioning.
+function an2PinBottomNavManually() {
   try {
-    const vv = window.visualViewport;
     const bar = document.getElementById('bottom-nav');
-    if (!vv || !bar) return;
-    const gap = window.innerHeight - (vv.height + vv.offsetTop);
-    bar.style.setProperty('bottom', Math.max(0, Math.round(gap)) + 'px', 'important');
+    if (!bar || getComputedStyle(bar).display === 'none') return;
+    const vv = window.visualViewport;
+    const visibleBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+    const top = window.scrollY + visibleBottom - bar.offsetHeight;
+    bar.style.setProperty('position', 'absolute', 'important');
+    bar.style.setProperty('top', Math.round(top) + 'px', 'important');
+    bar.style.setProperty('bottom', 'auto', 'important');
   } catch (_) {}
 }
 try {
+  window.addEventListener('scroll', an2PinBottomNavManually, { passive: true });
+  window.addEventListener('resize', an2PinBottomNavManually);
   if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', an2PinBottomNavToVisualViewport);
-    window.visualViewport.addEventListener('scroll', an2PinBottomNavToVisualViewport);
+    window.visualViewport.addEventListener('resize', an2PinBottomNavManually);
+    window.visualViewport.addEventListener('scroll', an2PinBottomNavManually);
   }
-  window.addEventListener('scroll', an2PinBottomNavToVisualViewport, { passive: true });
+  setInterval(an2PinBottomNavManually, 400);
 } catch (_) {}
 
 function updateBottomNav(id) {
   an2SyncBottomNav();
+  try { an2PinBottomNavManually(); } catch (_) {}
   // Map screen ids to nav item ids
   const lang = globalThis.AN2_LANG || 'fr';
   const navMap = {
