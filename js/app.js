@@ -816,6 +816,16 @@ export function showScreen(id) {
     // entirely, silently discarding that whole reading interval. Safe to call
     // unconditionally: it's a no-op when no paragraph timer is running.
     try { readerTimeParagraphClose(); } catch (_) {}
+    // Same story for the reading/library sub-view split: readerOpenBook()
+    // flips #reader-reading-view to visible and #reader-library-view to
+    // hidden, but only readerBackToLibrary() ever flipped them back. Leaving
+    // the reader tab through the bottom nav skipped that too, so the reading
+    // view (with its own scroll-hides-chrome behavior and toolbar) silently
+    // stayed "on" underneath — the next time the reader tab was reopened via
+    // "Читать", the stale reading view was still what was showing instead of
+    // the library, or the library rendered on top of leftover reading-view
+    // chrome. Reset both explicitly here so every exit leaves a clean slate.
+    try { window.readerSyncViewOnTabLeave?.(); } catch (_) {}
   }
   const target = document.getElementById('screen-' + id);
   if (target) { target.classList.add('active'); target.style.display = ''; }

@@ -1561,19 +1561,6 @@ function readerBookProgress(book) { return readerLibrary.progress(book); }
 
 function readerContinueBook() { return readerLibrary.continueBook(); }
 
-// Bottom-nav "Читать" tab: jump straight into whatever book was last read
-// instead of always landing on the library list — the library is still one
-// tap away ("Все тексты"/library button) for actually picking a different
-// book. Falls back to the plain library view when there's nothing to
-// continue (e.g. a brand new profile with no books yet).
-function readerQuickOpen() {
-  window.showScreen('reader');
-  loadReaderBooks();
-  const book = readerContinueBook();
-  if (book) readerOpenBook(book.id);
-}
-window.readerQuickOpen = readerQuickOpen;
-
 async function renderReaderScreen() {
   // A book may already be open by the time a delayed/background trigger
   // (e.g. the cloud-merge callback further down this function, which can
@@ -2618,6 +2605,23 @@ async function readerToggleOriginalAudioPlayer() {
   readerSyncOriginalAudioToCurrentParagraph();
 }
 window.readerToggleOriginalAudioPlayer = readerToggleOriginalAudioPlayer;
+
+// Leaving the reader tab via the bottom/top nav (Главная/Слова/Профиль)
+// instead of the reader's own back button used to skip resetting the
+// reading/library sub-view split entirely — #reader-reading-view stayed
+// "on" underneath, so reopening the reader tab later showed stale reading
+// chrome instead of (or on top of) the library. Unlike readerBackToLibrary(),
+// this only fixes the view split — it deliberately leaves TTS playback and
+// everything else alone, since background listening while browsing other
+// tabs is not something leaving the reader tab should interrupt.
+function readerSyncViewOnTabLeave() {
+  const readingView = document.getElementById('reader-reading-view');
+  const libraryView = document.getElementById('reader-library-view');
+  if (readingView) readingView.style.display = 'none';
+  if (libraryView) libraryView.style.display = 'block';
+  readerCurrentBookId = null;
+}
+window.readerSyncViewOnTabLeave = readerSyncViewOnTabLeave;
 
 function readerBackToLibrary() {
   // Safety cleanup on every exit — but only announce it when a listening
