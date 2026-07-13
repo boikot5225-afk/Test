@@ -2546,6 +2546,9 @@ function readerOpenBook(id) {
   // v66: immersive reading handled by fixed #reader-reading-view layout (no old reader-mode chrome hacks)
   document.getElementById('reader-library-view').style.display = 'none';
   document.getElementById('reader-reading-view').style.display = 'flex';
+  // A healed (re-parented, max-z) bottom nav would float above the reading
+  // view's own bottom controls — an2SyncBottomNav hides it while a book is open.
+  try { window.an2SyncBottomNav?.(); } catch (_) {}
   readerInitCalmChrome();
   readerInitDisplay();
   renderReaderChapter();
@@ -2620,6 +2623,7 @@ function readerSyncViewOnTabLeave() {
   if (readingView) readingView.style.display = 'none';
   if (libraryView) libraryView.style.display = 'block';
   readerCurrentBookId = null;
+  try { window.an2SyncBottomNav?.(); } catch (_) {}
 }
 window.readerSyncViewOnTabLeave = readerSyncViewOnTabLeave;
 
@@ -2637,6 +2641,7 @@ function readerBackToLibrary() {
   document.getElementById('reader-reading-view').style.display = 'none';
   document.getElementById('reader-library-view').style.display = 'block';
   readerCurrentBookId = null;
+  try { window.an2SyncBottomNav?.(); } catch (_) {}
   renderReaderScreen();
 }
 

@@ -780,6 +780,9 @@ export function showScreen(id) {
       setTimeout(() => renderUserProfile(), 0);
     } else {
       document.getElementById('main-app').style.display = 'none';
+      // A healed bottom nav lives directly under <body>, so hiding main-app
+      // no longer hides it implicitly — do it explicitly on the auth screen.
+      try { const b = document.getElementById('bottom-nav'); if (b?.dataset.an2Healed === '1') b.style.setProperty('display', 'none', 'important'); } catch (_) {}
       const el = document.getElementById('screen-profile');
       if (el) el.style.display = 'flex';
       switchAuthTab('login');
@@ -884,19 +887,65 @@ export function showScreen(id) {
   }
 }
 
-function updateBottomNav(id) {
-  // The CSS-only fix (body:has(#screen-reader.active) .bottom-nav {display:
-  // flex!important}) didn't help on at least one real device even on the
-  // latest deployed build, which points at :has() not being supported there
-  // rather than a caching issue — so force it here in JS instead, which
-  // works everywhere regardless of :has() support.
+// Self-healing for the bottom nav. On at least one real device the bar
+// vanishes on the reader screen even with display:flex!important set inline
+// on the bar itself — which can only mean an ANCESTOR is effectively hiding
+// it (inline styles on the bar can't win against a hidden container), since
+// the same build renders it fine in a clean environment. Instead of guessing
+// which ancestor and why, measure the real outcome: if the bar has no
+// on-screen box (or inherits visibility:hidden), pull it out of whatever
+// container is eating it, re-parent it directly under <body>, and pin its
+// styling inline. Deliberately based on geometry only (no elementFromPoint):
+// a legitimately open modal covering the bar must NOT trigger this.
+function an2SyncBottomNav() {
   try {
     const bar = document.getElementById('bottom-nav');
-    if (bar) {
-      if (id === 'reader') bar.style.setProperty('display', 'flex', 'important');
-      else bar.style.removeProperty('display');
+    if (!bar) return;
+    // Desktop layouts keep the top nav, the bottom bar is display:none by
+    // design there — nothing to heal.
+    if (window.innerWidth > 700) return;
+    const healed = bar.dataset.an2Healed === '1';
+    // While a book is actually open, the reading view brings its own bottom
+    // chrome. The stock bar normally just sits underneath it; but once
+    // healed (max z-index), it would float above the reader controls, so it
+    // has to be explicitly hidden for the reading session instead.
+    const readingOpen = document.getElementById('reader-reading-view')?.style.display === 'flex';
+    if (readingOpen) {
+      if (healed) bar.style.setProperty('display', 'none', 'important');
+      return;
     }
+    if (healed) bar.style.setProperty('display', 'flex', 'important');
+    const rect = bar.getBoundingClientRect();
+    const cs = getComputedStyle(bar);
+    const effectivelyVisible = rect.height > 0 && rect.width > 0
+      && rect.top < window.innerHeight && cs.display !== 'none' && cs.visibility === 'visible';
+    if (effectivelyVisible) return;
+    // Log which ancestor was responsible before detaching, for future debugging.
+    try {
+      let el = bar.parentElement;
+      while (el && el !== document.documentElement) {
+        const c = getComputedStyle(el);
+        if (c.display === 'none' || c.visibility === 'hidden') {
+          console.warn('[bottom-nav heal] hidden ancestor:', el.tagName, el.id || el.className);
+          break;
+        }
+        el = el.parentElement;
+      }
+    } catch (_) {}
+    document.body.appendChild(bar);
+    bar.dataset.an2Healed = '1';
+    bar.style.setProperty('display', 'flex', 'important');
+    bar.style.setProperty('position', 'fixed', 'important');
+    bar.style.setProperty('bottom', '0', 'important');
+    bar.style.setProperty('left', '0', 'important');
+    bar.style.setProperty('right', '0', 'important');
+    bar.style.setProperty('z-index', '2147483000', 'important');
   } catch (_) {}
+}
+window.an2SyncBottomNav = an2SyncBottomNav;
+
+function updateBottomNav(id) {
+  an2SyncBottomNav();
   // Map screen ids to nav item ids
   const lang = globalThis.AN2_LANG || 'fr';
   const navMap = {
@@ -1025,6 +1074,7 @@ export function logoutProfile() {
   const brand = document.querySelector('.nav-brand');
   if (brand) brand.innerHTML = 'Reader AI';
   document.getElementById('main-app').style.display = 'none';
+  try { const b = document.getElementById('bottom-nav'); if (b?.dataset.an2Healed === '1') b.style.setProperty('display', 'none', 'important'); } catch (_) {}
   document.getElementById('screen-profile').style.display = 'flex';
   const puEl = document.getElementById('screen-profile-user');
   if (puEl) puEl.style.display = 'none';
