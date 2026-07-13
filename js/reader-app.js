@@ -3456,21 +3456,6 @@ async function readerSaveWord() {
       return;
     }
 
-    // The verb-conjugation database (groups/aux/tense tables, generate_verb AI
-    // task) is French-specific — English verbs just save as a regular
-    // vocabulary word below, same as nouns/adjectives.
-    if (pos === 'verb' && activeLang === 'fr') {
-      const known = VERBS.find(v => readerNormalizeWord(v.inf) === readerNormalizeWord(lemma));
-      if (known) {
-        if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = `✅ Это форма глагола ${known.inf}. В словарь слов не сохраняю.`; }
-        showToast(`Глагол: ${known.inf}`);
-        return;
-      }
-      if (st) { st.style.display = 'block'; st.style.color = 'var(--warn)'; st.textContent = 'Это глагол. Открою форму добавления глагола, чтобы не засорять слова.'; }
-      readerPrefillAddVerbFromPanel();
-      return;
-    }
-
     if (st) { st.style.display = 'block'; st.style.color = 'var(--accent)'; st.textContent = '⏳ Сохраняю в словарь...'; }
     const id = normalizeImportKey(lemma);
     const examples = context ? [{ fr: context, ru: '' }] : [];

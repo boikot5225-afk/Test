@@ -854,8 +854,7 @@ export function showScreen(id) {
     const curDictLang = globalThis.AN2_LANG || 'fr';
     if (typeof window.setDictType === 'function') {
       if (curDictLang === 'zh') window.setDictType('zh');
-      else if (curDictLang === 'en' || curDictLang === 'es') window.setDictType('reader');
-      else { closeDictDetail(); window.renderDict(); }
+      else window.setDictType('reader');
     } else {
       closeDictDetail();
       window.renderDict();

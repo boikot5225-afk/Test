@@ -33,7 +33,7 @@ window.setDictType = function(type) {
   const tabsFr = document.getElementById('dict-tabs-fr');
   const tabsZh = document.getElementById('dict-tabs-zh');
   const curLangForDict = globalThis.AN2_LANG || 'fr';
-  if (tabsFr) tabsFr.style.display = (type === 'zh' || curLangForDict === 'en' || curLangForDict === 'es') ? 'none' : 'flex';
+  if (tabsFr) tabsFr.style.display = 'none';
   if (tabsZh) tabsZh.style.display = type === 'zh' ? 'block' : 'none';
 
   // Update tabs — только видимые кнопки
