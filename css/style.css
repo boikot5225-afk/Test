@@ -1664,6 +1664,14 @@ input:-webkit-autofill:focus {
 .home-word-chip small { color:var(--text-muted); font-size:.65rem; }
 .home-empty-note { color:var(--text-muted); background:var(--surface); border:1px dashed var(--border); border-radius:13px; padding:13px; font-size:.82rem; line-height:1.45; }
 
+/* The reader screen hides the top nav below (mobile only) and relies on
+   the bottom nav instead — but that bottom nav only shows itself under its
+   own separate (max-width:700px) media query. If that query ever fails to
+   match for any reason while this one does, the reader screen would be
+   left with no navigation at all. Force the bottom bar on for this screen,
+   unconditionally, so the two can never both be hidden together. */
+body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
+
 /* hide old top nav in active reading view on phones */
 @media (max-width: 700px) {
   body:has(#screen-reader.active) nav { display:none !important; }
