@@ -885,11 +885,18 @@ export function showScreen(id) {
 }
 
 function updateBottomNav(id) {
-  // Defensive reset: something occasionally leaves an inline display:none on
-  // the bar itself (root cause not pinned down yet), which no visible screen
-  // should ever be able to do — force it back to whatever the stylesheet
-  // says on every navigation instead of trusting whatever state it was left in.
-  try { document.getElementById('bottom-nav')?.style.removeProperty('display'); } catch (_) {}
+  // The CSS-only fix (body:has(#screen-reader.active) .bottom-nav {display:
+  // flex!important}) didn't help on at least one real device even on the
+  // latest deployed build, which points at :has() not being supported there
+  // rather than a caching issue — so force it here in JS instead, which
+  // works everywhere regardless of :has() support.
+  try {
+    const bar = document.getElementById('bottom-nav');
+    if (bar) {
+      if (id === 'reader') bar.style.setProperty('display', 'flex', 'important');
+      else bar.style.removeProperty('display');
+    }
+  } catch (_) {}
   // Map screen ids to nav item ids
   const lang = globalThis.AN2_LANG || 'fr';
   const navMap = {
