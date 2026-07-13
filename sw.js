@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v77.09-defensive-bottom-nav-reset';
+const CACHE_VERSION = 'v77.10-force-bottom-nav-on-reader-screen';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
