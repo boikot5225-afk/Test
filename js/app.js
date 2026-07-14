@@ -862,6 +862,17 @@ export function showScreen(id) {
       closeDictDetail();
       window.renderDict();
     }
+    // Word marks (saved/highlighted) only ever pulled from the cloud on login
+    // or when opening a specific book — a device that's just resuming an
+    // already-open session and goes straight to Слова never saw marks made
+    // on another device. Pull and re-render here too so cross-device
+    // highlights actually show up without needing to open a book first.
+    syncWordStateFromCloud().then(() => {
+      if (document.getElementById('screen-dict')?.classList.contains('active')) {
+        if (curDictLang === 'zh' && typeof window.renderDictWords === 'function') window.renderDictWords('zh', document.getElementById('dict-search')?.value || '');
+        else if (typeof window.renderReaderWords === 'function') window.renderReaderWords(undefined, document.getElementById('dict-search')?.value || '');
+      }
+    }).catch(() => {});
   }
   if (id === 'study')   {
     window.renderStudyScreen().catch(e => console.error(e));
