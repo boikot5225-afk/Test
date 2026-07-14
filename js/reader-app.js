@@ -2563,8 +2563,12 @@ function readerOpenBook(id) {
   readerWordState.hydrateFromIndexedDB()
     .then((changed) => { if (changed) readerRefreshParagraphWordClasses(); })
     .catch(() => {});
-  // pull word marks made on other devices; repaints colors when merge changes something
-  syncWordStateFromCloud().catch(() => {});
+  // Pull word marks made on other devices. syncWordStateFromCloud() only
+  // repaints itself when its own "changed" check trips — force an extra
+  // repaint here regardless, so a subtle bug in that check (or a merge that
+  // technically changed nothing visible but should still resync colors)
+  // can never leave a book's word highlights silently stale after this.
+  syncWordStateFromCloud().then(() => { try { readerRefreshParagraphWordClasses(); } catch (_) {} }).catch(() => {});
 
   const audioBtn = document.getElementById('reader-orig-audio-btn');
   if (audioBtn) audioBtn.style.display = book.hasOriginalAudio ? 'flex' : 'none';
