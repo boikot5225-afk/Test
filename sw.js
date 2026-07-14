@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v77.14-js-manual-bottom-nav-pin';
+const CACHE_VERSION = 'v77.15-dict-screen-cloud-sync';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [
