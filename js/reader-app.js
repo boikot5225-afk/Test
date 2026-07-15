@@ -2542,7 +2542,7 @@ function saveReaderImport() {
   closeReaderImportModal(); showToast('📖 Текст добавлен'); renderReaderScreen(); readerOpenBook(finalBook.id);
 }
 
-function readerOpenBook(id) {
+async function readerOpenBook(id) {
   // Keep the pre-reload reference: if a localStorage quota failure silently
   // dropped the write moments ago (e.g. right after saveReaderImport), the
   // reload below would overwrite the in-memory array with the stale disk
@@ -2555,6 +2555,18 @@ function readerOpenBook(id) {
     readerBooks.unshift(preLoadBook);
     book = preLoadBook;
     saveReaderBooks(); // retry persisting now that IndexedDB backup is also in play
+  }
+  if (!book) {
+    // The home screen's "Продолжить" card reads/merges IndexedDB on its own,
+    // separately from this module's readerBooks — a book recovered there
+    // (e.g. dropped from localStorage earlier by a quota failure) can be
+    // visible on the home card before this module's own IndexedDB hydration
+    // has caught up, so the very first tap on "Читать" landed here and found
+    // nothing. Try the same recovery this screen normally does on its own
+    // before giving up, instead of flashing "not found" for a book that
+    // opens fine a second later once that hydration finishes on its own.
+    try { await hydrateReaderBooksFromIndexedDB(); } catch {}
+    book = readerBooks.find(b => b.id === id);
   }
   if (!book) { showToast('⚠️ Текст не найден'); return; }
   readerCurrentBookId = id;
