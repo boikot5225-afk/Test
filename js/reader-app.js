@@ -3487,7 +3487,6 @@ async function readerSaveWord() {
       return;
     }
 
-    if (st) { st.style.display = 'block'; st.style.color = 'var(--accent)'; st.textContent = '⏳ Сохраняю в словарь...'; }
     const id = normalizeImportKey(lemma);
     const examples = context ? [{ fr: context, ru: '' }] : [];
     const normalizedPos = readerSimplifyPos(pos);
@@ -3502,20 +3501,34 @@ async function readerSaveWord() {
       created_at: new Date().toISOString(),
       custom: true
     };
-    // 20s outer guard: the write itself now falls back to REST after a 6s
-    // websocket stall (see resilientRootUpdate), so give that path room to run.
-    const { error } = await readerWithDeadline(() => sb.from('nouns').upsert(record), 20000, 'Сохранение слова');
-    if (error) throw error;
 
-    const oldIdx = NOUNS.findIndex(n => String(n.id) === id);
-    const slim = { id, fr: lemma, ru, gender: record.gender, pos: record.pos, no_article: record.no_article, theme: 'reader' };
-    if (oldIdx >= 0) NOUNS[oldIdx] = slim; else NOUNS.push(slim);
+    // Mark the word learned locally first, same as the Chinese path above —
+    // this is the part the user actually cares about ("Сохранить" worked)
+    // and it doesn't need the network at all. The shared reference-dictionary
+    // upsert below is just enrichment (translation/gender lookup for other
+    // readers of this word) — it used to run BEFORE this and block it, so a
+    // slow/dropped connection meant the word wasn't saved anywhere at all,
+    // even locally, and 20s later you'd get a timeout with nothing to show
+    // for it.
     readerMarkWordSaved(rawWord, lemma, null, ru);
     readerRefreshParagraphWordClasses(readerSelectedParagraphIndex);
-    try { Object.keys(localStorage).forEach(k => { if (k.startsWith('an2_cache_nouns')) localStorage.removeItem(k); }); } catch {}
     renderReaderChapter();
     if (st) { st.style.color = 'var(--good)'; st.textContent = '✅ Сохранено и выделено в тексте'; }
     showToast('✅ Слово добавлено и выделено');
+
+    // 20s outer guard: the write itself now falls back to REST after a 6s
+    // websocket stall (see resilientRootUpdate), so give that path room to run.
+    readerWithDeadline(() => sb.from('nouns').upsert(record), 20000, 'Сохранение слова')
+      .then(({ error }) => {
+        if (error) throw error;
+        const oldIdx = NOUNS.findIndex(n => String(n.id) === id);
+        const slim = { id, fr: lemma, ru, gender: record.gender, pos: record.pos, no_article: record.no_article, theme: 'reader' };
+        if (oldIdx >= 0) NOUNS[oldIdx] = slim; else NOUNS.push(slim);
+        try { Object.keys(localStorage).forEach(k => { if (k.startsWith('an2_cache_nouns')) localStorage.removeItem(k); }); } catch {}
+      })
+      .catch((e) => {
+        console.warn('[reader] shared dictionary upsert failed (word is still saved locally):', e?.message || e);
+      });
   } catch(e) {
     if (st) { st.style.display = 'block'; st.style.color = 'var(--bad)'; st.textContent = '❌ ' + (e?.message || e); }
     else showToast('⚠️ ' + (e?.message || e));
