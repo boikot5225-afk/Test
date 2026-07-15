@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v77.18-pull-word-state-on-foreground';
+const CACHE_VERSION = 'v77.19-poll-word-state-while-visible';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

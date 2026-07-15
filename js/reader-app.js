@@ -5007,23 +5007,35 @@ document.addEventListener('visibilitychange', () => {
     // the foreground (unlock, tab switch back), not just when navigating to
     // a specific screen — otherwise a device left open on e.g. the home
     // screen never sees words saved elsewhere until the user happens to
-    // open a book or the dict screen. Throttled to avoid hammering the
-    // network on rapid visibility flicker.
-    const now = Date.now();
-    if (!readerLastVisibleSyncAt || now - readerLastVisibleSyncAt > 5000) {
-      readerLastVisibleSyncAt = now;
-      syncWordStateFromCloud().then(() => {
-        try { readerRefreshParagraphWordClasses(); } catch (_) {}
-        try {
-          if (document.getElementById('screen-dict')?.classList.contains('active') && typeof window.renderReaderWords === 'function') {
-            window.renderReaderWords(undefined, document.getElementById('dict-search')?.value || '');
-          }
-        } catch (_) {}
-      }).catch(() => {});
-    }
+    // open a book or the dict screen.
+    readerPullWordStateAndRepaint();
   }
 });
 let readerLastVisibleSyncAt = 0;
+function readerPullWordStateAndRepaint() {
+  // Throttled to avoid hammering the network on rapid visibility flicker /
+  // frequent poll ticks.
+  const now = Date.now();
+  if (readerLastVisibleSyncAt && now - readerLastVisibleSyncAt < 5000) return;
+  readerLastVisibleSyncAt = now;
+  syncWordStateFromCloud().then(() => {
+    try { readerRefreshParagraphWordClasses(); } catch (_) {}
+    try {
+      if (document.getElementById('screen-dict')?.classList.contains('active') && typeof window.renderReaderWords === 'function') {
+        window.renderReaderWords(undefined, document.getElementById('dict-search')?.value || '');
+      }
+    } catch (_) {}
+  }).catch(() => {});
+}
+// Two devices can both sit open and visible at once (e.g. phone and tablet
+// side by side) — neither ever fires visibilitychange in that case, so a
+// pull triggered only by foregrounding can miss marks saved on the other
+// device indefinitely. Poll on a plain interval as a fallback whenever this
+// tab is actually visible, so cross-device sync doesn't depend on the user
+// switching tabs/apps at all.
+setInterval(() => {
+  if (document.visibilityState === 'visible') readerPullWordStateAndRepaint();
+}, 20000);
 // Extra flush alongside visibilitychange: some browsers fire pagehide on
 // real navigation/tab-close without a preceding 'hidden' visibility change.
 window.addEventListener('pagehide', () => {
