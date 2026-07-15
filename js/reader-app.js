@@ -947,9 +947,23 @@ function scheduleWordStateCloudSync() {
   }, delay);
 }
 
+function readerWaitForCloudReady(timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    (function check() {
+      if (isSupabaseReady?.()) return resolve(true);
+      if (Date.now() - start >= timeoutMs) return resolve(false);
+      setTimeout(check, 200);
+    })();
+  });
+}
+
 async function syncWordStateToCloud() {
   const uid = typeof sbGetCurrentUserId === 'function' ? sbGetCurrentUserId() : null;
-  if (!uid || !isSupabaseReady?.()) return;
+  if (!uid) return;
+  // See syncWordStateFromCloud below: same init-timing race applies to uploads.
+  const ready = isSupabaseReady?.() || await readerWaitForCloudReady();
+  if (!ready) return;
   const state = loadReaderWordState();
   if (!state || !Object.keys(state).length) return;
   // fbSaveWordState replaces the whole cloud node (set), so a device with stale
@@ -981,7 +995,15 @@ async function syncWordStateToCloud() {
 
 async function syncWordStateFromCloud() {
   const uid = typeof sbGetCurrentUserId === 'function' ? sbGetCurrentUserId() : null;
-  if (!uid || !isSupabaseReady?.()) return;
+  if (!uid) return;
+  // isSupabaseReady() (misnamed — it also gates on Firebase's own init flag)
+  // can still be false for a moment right after navigating to the reader/
+  // dict screen if that happens early in the session, before init settles.
+  // A silent no-op here means "opened a book/screen too soon" would
+  // permanently skip pulling cloud word marks for that visit — wait briefly
+  // for init instead of giving up immediately.
+  const ready = isSupabaseReady?.() || await readerWaitForCloudReady();
+  if (!ready) return;
   const cloud = await fbLoadWordState(uid);
   if (!cloud || typeof cloud !== 'object') return;
   const local = loadReaderWordState();
