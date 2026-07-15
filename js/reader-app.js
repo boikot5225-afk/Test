@@ -5003,8 +5003,27 @@ document.addEventListener('visibilitychange', () => {
     if (document.getElementById('reader-reading-view')?.style.display !== 'none') {
       readerTimeParagraphOpen();
     }
+    // Pull word marks saved on other devices whenever the app comes back to
+    // the foreground (unlock, tab switch back), not just when navigating to
+    // a specific screen — otherwise a device left open on e.g. the home
+    // screen never sees words saved elsewhere until the user happens to
+    // open a book or the dict screen. Throttled to avoid hammering the
+    // network on rapid visibility flicker.
+    const now = Date.now();
+    if (!readerLastVisibleSyncAt || now - readerLastVisibleSyncAt > 5000) {
+      readerLastVisibleSyncAt = now;
+      syncWordStateFromCloud().then(() => {
+        try { readerRefreshParagraphWordClasses(); } catch (_) {}
+        try {
+          if (document.getElementById('screen-dict')?.classList.contains('active') && typeof window.renderReaderWords === 'function') {
+            window.renderReaderWords(undefined, document.getElementById('dict-search')?.value || '');
+          }
+        } catch (_) {}
+      }).catch(() => {});
+    }
   }
 });
+let readerLastVisibleSyncAt = 0;
 // Extra flush alongside visibilitychange: some browsers fire pagehide on
 // real navigation/tab-close without a preceding 'hidden' visibility change.
 window.addEventListener('pagehide', () => {
