@@ -158,7 +158,12 @@ export function createReaderWordState(opts) {
       const seen = Math.max(state.seen || 0, Object.keys(state.places).length);
       if (state.seen !== seen) { state.seen = seen; changed = true; }
       if (isCommonWord(word, language)) { state.known = true; state.status = 'known'; }
-      state.updatedAt = new Date().toISOString();
+      // Do NOT bump updatedAt here: this fires on every rendered paragraph for
+      // every word in view, purely from passive "seen" tracking, not a real
+      // interaction. The cloud merge picks whichever side has the newer
+      // updatedAt — if merely opening a book on one device re-stamped every
+      // visible word as "just changed now", it would always beat a genuine
+      // save/click made on another device, silently discarding it on sync.
     });
     if (changed) save();
     return changed;
