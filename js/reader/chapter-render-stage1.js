@@ -6,8 +6,10 @@ import {
   renderContentItem,
 } from './semantic-content.js?v=1';
 import { installSemanticImportBridge } from './semantic-import-bridge.js?v=1';
+import { installSemanticLibraryCovers } from './library-cover-stage1.js?v=1';
 
 installSemanticImportBridge();
+installSemanticLibraryCovers();
 
 const STYLE_ID = 'reader-stage1-format-style';
 
