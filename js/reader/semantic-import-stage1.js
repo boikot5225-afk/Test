@@ -8,6 +8,7 @@ import {
   semanticItemText,
   semanticItemsDiagnostics,
 } from './epub-stage1-real.js?v=2';
+import { splitSemanticItemLines } from './semantic-content.js?v=2';
 import { imgStorePut } from './image-store.js?v=1';
 
 function cleanPath(value) {
@@ -115,7 +116,8 @@ export async function parseSemanticEpubFile(file, {
     try {
       const html = await entries.get(path).text();
       const basePath = path.split('/').slice(0, -1).join('/');
-      const parsed = htmlToSemanticItems(html, { basePath });
+      const parsed = htmlToSemanticItems(html, { basePath })
+        .flatMap(item => splitSemanticItemLines(item));
       const items = await resolveImageItems(parsed, entries, bookId, imageBlobs, missingImages);
       const diag = semanticItemsDiagnostics(items);
       diagnostics.push({ path, ...diag });
