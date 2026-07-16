@@ -1,4 +1,4 @@
-name: Reader stage 1 Android APK S2 proof
+name: Reader semantic EPUB Android APK
 
 on:
   push:
@@ -39,7 +39,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Generate clean S2 proof wrapper
+      - name: Generate clean semantic EPUB wrapper
         shell: bash
         run: |
           set -euo pipefail
@@ -62,31 +62,34 @@ jobs:
           MANIFEST_FILE='.stage1-android/app/src/main/AndroidManifest.xml'
 
           sed -i 's#https://appassets.androidplatform.net/assets/index.html#https://appassets.androidplatform.net/assets/www/index.html#' "$JAVA_FILE"
-          sed -i "s/applicationId 'space.saintjust.reader.stage1'/applicationId 'space.saintjust.reader.s2proof2'/" "$BUILD_FILE"
-          sed -i "s/versionName 'stage1-test'/versionName 's2-proof-2'/" "$BUILD_FILE"
-          sed -i 's/Reader AI Stage 1/Reader AI S2 Proof 2/' "$MANIFEST_FILE"
+          sed -i "s/applicationId 'space.saintjust.reader.stage1'/applicationId 'space.saintjust.reader.semanticstage1clean'/" "$BUILD_FILE"
+          sed -i "s/versionName 'stage1-test'/versionName 'semantic-stage1-clean'/" "$BUILD_FILE"
+          sed -i 's/Reader AI Stage 1/Reader AI EPUB Clean/' "$MANIFEST_FILE"
 
           grep -F 'assets/www/index.html' "$JAVA_FILE"
-          grep -F "applicationId 'space.saintjust.reader.s2proof2'" "$BUILD_FILE"
+          grep -F "applicationId 'space.saintjust.reader.semanticstage1clean'" "$BUILD_FILE"
           test -f '.stage1-android/app/src/main/assets/www/index.html'
-          test -f '.stage1-android/app/src/main/assets/www/js/reader/semantic-stage1-proof-v2.js'
+          test -f '.stage1-android/app/src/main/assets/www/js/reader/semantic-import-bridge.js'
+          test -f '.stage1-android/app/src/main/assets/www/js/reader/semantic-import-stage1.js'
+          test -f '.stage1-android/app/src/main/assets/www/js/reader/chapter-render-stage1.js'
+          ! grep -q 'semantic-stage1-proof' '.stage1-android/app/src/main/assets/www/js/reader/chapter-render.js'
 
-      - name: Build S2 proof APK
+      - name: Build clean semantic EPUB APK
         working-directory: .stage1-android
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare artifact
         run: |
           mkdir -p dist
-          cp .stage1-android/app/build/outputs/apk/debug/app-debug.apk dist/Reader-AI-S2-Proof-2.apk
-          sha256sum dist/Reader-AI-S2-Proof-2.apk | tee dist/Reader-AI-S2-Proof-2.apk.sha256
+          cp .stage1-android/app/build/outputs/apk/debug/app-debug.apk dist/Reader-AI-EPUB-Stage1-Clean.apk
+          sha256sum dist/Reader-AI-EPUB-Stage1-Clean.apk | tee dist/Reader-AI-EPUB-Stage1-Clean.apk.sha256
 
-      - name: Upload S2 proof APK
+      - name: Upload clean semantic EPUB APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-S2-Proof-2-APK
+          name: Reader-AI-EPUB-Stage1-Clean-APK
           path: |
-            dist/Reader-AI-S2-Proof-2.apk
-            dist/Reader-AI-S2-Proof-2.apk.sha256
+            dist/Reader-AI-EPUB-Stage1-Clean.apk
+            dist/Reader-AI-EPUB-Stage1-Clean.apk.sha256
           if-no-files-found: error
           retention-days: 14
