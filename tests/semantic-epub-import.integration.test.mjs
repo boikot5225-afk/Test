@@ -57,6 +57,7 @@ const chapter = `<!doctype html>
 <html><body>
   <h1>Capítulo de prueba</h1>
   <p>Texto <strong>negrita</strong> y <em>cursiva</em>.</p>
+  <p>— Primera réplica<br>— Segunda <em>réplica</em><br>— Tercera réplica</p>
   <figure><img src="images/pic.png" alt="Mapa"><figcaption>Mapa de prueba</figcaption></figure>
 </body></html>`;
 
@@ -137,6 +138,16 @@ assert.equal(image.caption, 'Mapa de prueba');
 const runs = items.flatMap(item => item?.runs || []);
 assert.ok(runs.some(run => run.marks?.includes('bold')), 'bold formatting must survive import');
 assert.ok(runs.some(run => run.marks?.includes('italic')), 'italic formatting must survive import');
+
+const textOf = item => (item?.runs || []).map(run => String(run?.text || '')).join('');
+const dialogueItems = items.filter(item => /^— /.test(textOf(item)));
+assert.deepEqual(
+  dialogueItems.map(textOf),
+  ['— Primera réplica', '— Segunda réplica', '— Tercera réplica'],
+  'EPUB <br> dialogue lines must become independent reader paragraphs',
+);
+assert.ok(dialogueItems[1].runs.some(run => run.marks?.includes('italic')), 'inline formatting must survive dialogue split');
+assert.ok(dialogueItems.every(item => !/[\r\n]/.test(textOf(item))), 'split dialogue paragraphs must not retain line breaks');
 
 const { imgStoreGet } = await import('../js/reader/image-store.js');
 const storedImage = await imgStoreGet(image.key);
