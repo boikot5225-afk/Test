@@ -14,7 +14,6 @@ globalThis.Element = browser.Element;
 globalThis.HTMLElement = browser.HTMLElement;
 globalThis.FileReader = browser.FileReader;
 globalThis.File = browser.File;
-globalThis.Blob = browser.Blob;
 globalThis.indexedDB = indexedDB;
 globalThis.IDBKeyRange = IDBKeyRange;
 
@@ -142,8 +141,8 @@ assert.ok(runs.some(run => run.marks?.includes('italic')), 'italic formatting mu
 const { imgStoreGet } = await import('../js/reader/image-store.js');
 const storedImage = await imgStoreGet(image.key);
 const storedCover = await imgStoreGet(book.coverKey);
-assert.ok(storedImage instanceof browser.Blob, 'chapter image Blob must exist in IndexedDB');
-assert.ok(storedCover instanceof browser.Blob, 'cover Blob must exist in IndexedDB');
+assert.ok(storedImage instanceof Blob, 'chapter image Blob must exist in IndexedDB');
+assert.ok(storedCover instanceof Blob, 'cover Blob must exist in IndexedDB');
 assert.ok(toasts.some(text => text.includes('семантическом формате')));
 
 console.log('semantic EPUB full integration: OK');
