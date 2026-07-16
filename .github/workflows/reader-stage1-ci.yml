@@ -31,6 +31,8 @@ jobs:
           node --check js/reader/semantic-import-stage1.js
           node --check js/reader/semantic-import-bridge.js
           node --check js/reader/library-cover-stage1.js
+          node --check js/reader/semantic-tts-target.js
+          node --check js/reader/semantic-tts-prefetch-stage1.js
           node --check js/reader/navigation.js
           node --check js/reader/audio.js
           node --check js/reader/chapter-render-stage1.js
@@ -41,3 +43,4 @@ jobs:
         run: |
           node --experimental-default-type=module tests/semantic-reader-compat.test.mjs
           node --experimental-default-type=module tests/library-cover-stage1.test.mjs
+          node --experimental-default-type=module tests/semantic-tts-target.test.mjs
