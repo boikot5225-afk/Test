@@ -6,6 +6,9 @@ on:
       - test/reader-epub-format-stage1
     paths:
       - '.github/workflows/reader-stage1-android-apk-fixed.yml'
+  pull_request:
+    branches:
+      - claude/epic-hawking-540kte
   workflow_dispatch:
 
 permissions:
