@@ -73,10 +73,9 @@ function setStatus(text, kind = 'progress') {
   element.textContent = text;
 }
 
-function setInputValue(id, value, onlyWhenEmpty = false) {
+function setInputValue(id, value) {
   const element = document.getElementById(id);
   if (!element) return;
-  if (onlyWhenEmpty && String(element.value || '').trim()) return;
   element.value = value || '';
 }
 
@@ -104,12 +103,12 @@ async function handleSemanticEpub(event, originalImport) {
     });
     pendingImport = result;
 
-    setInputValue('reader-import-title', result.title, true);
-    setInputValue('reader-import-author', result.author, true);
+    // EPUB metadata must replace stale values left in the reusable modal.
+    // Keeping the previous title here saved El Narco under the prior Nada card.
+    setInputValue('reader-import-title', result.title);
+    setInputValue('reader-import-author', result.author);
     const languageSelect = document.getElementById('reader-import-lang');
     const validMetadataLang = ['fr', 'en', 'zh', 'es'].includes(result.lang);
-    // The modal may prefill the current app language automatically. EPUB metadata
-    // should beat that automatic default, but never overwrite a manual user pick.
     if (languageSelect && validMetadataLang && languageSelect.dataset.userChanged !== '1') {
       languageSelect.value = result.lang;
     }
@@ -212,8 +211,6 @@ async function savePendingSemanticBook(originalSave) {
   const target = existing || book;
   pendingImport = null;
 
-  // A duplicate was parsed under a temporary id, so remove its just-created
-  // local image blobs instead of leaving unreachable data in IndexedDB.
   if (existing && importedBookId !== existing.id) {
     await imgStoreDeleteBook(importedBookId).catch(() => {});
   }
@@ -225,7 +222,7 @@ async function savePendingSemanticBook(originalSave) {
   if (existing) {
     window.showToast?.('📚 Такая книга уже есть — открыта существующая');
   } else if (localSaved && durableSaved) {
-    window.showToast?.('📖 EPUB добавлен в тестовом семантическом формате');
+    window.showToast?.('📖 EPUB добавлен в семантическом формате');
   } else if (durableSaved) {
     window.showToast?.('📖 EPUB сохранён в IndexedDB; localStorage переполнен');
   } else {
@@ -233,20 +230,47 @@ async function savePendingSemanticBook(originalSave) {
   }
 }
 
+function realHandler(name) {
+  const saved = window[`__real_${name}`];
+  if (typeof saved === 'function' && !saved.__isStub) return saved;
+  const direct = window[name];
+  if (typeof direct === 'function' && !direct.__isStub) return direct;
+  return null;
+}
+
+function publishHandler(name, handler) {
+  // Inline handlers installed in index.html call __real_NAME through a stub.
+  // Updating only window[name] leaves the old implementation active forever.
+  window[name] = handler;
+  window[`__real_${name}`] = handler;
+}
+
 function installWhenReady() {
-  const originalImport = window.readerImportFromFile;
-  const originalSave = window.saveReaderImport;
+  const originalImport = realHandler('readerImportFromFile');
+  const originalSave = realHandler('saveReaderImport');
   if (typeof originalImport !== 'function' || typeof originalSave !== 'function') return false;
-  if (originalImport.__semanticStage1) return true;
+
+  if (originalImport.__semanticStage1 && originalSave.__semanticStage1) {
+    publishHandler('readerImportFromFile', originalImport);
+    publishHandler('saveReaderImport', originalSave);
+    return true;
+  }
 
   const wrappedImport = event => handleSemanticEpub(event, originalImport);
   wrappedImport.__semanticStage1 = true;
-  window.readerImportFromFile = wrappedImport;
+  wrappedImport.__semanticOriginal = originalImport;
+  publishHandler('readerImportFromFile', wrappedImport);
 
   const wrappedSave = () => savePendingSemanticBook(originalSave);
   wrappedSave.__semanticStage1 = true;
-  window.saveReaderImport = wrappedSave;
+  wrappedSave.__semanticOriginal = originalSave;
+  publishHandler('saveReaderImport', wrappedSave);
   return true;
+}
+
+// Exported only so CI can verify the exact handler-bridge scenario used by index.html.
+export function installSemanticRouteNow() {
+  return installWhenReady();
 }
 
 export function installSemanticImportBridge() {
