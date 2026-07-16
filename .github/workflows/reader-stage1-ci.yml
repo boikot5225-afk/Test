@@ -25,6 +25,9 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Install browser integration test dependencies
+        run: npm install --no-save --no-package-lock --ignore-scripts happy-dom fake-indexeddb fflate
+
       - name: Check JavaScript syntax
         run: |
           node --check js/reader/semantic-content.js
@@ -38,6 +41,7 @@ jobs:
           node --check js/reader/chapter-render-stage1.js
           node --check js/reader/epub-stage1.js
           node --check js/reader/epub-stage1-real.js
+          node --check tests/semantic-epub-import.integration.test.mjs
 
       - name: Run compatibility checks
         run: |
@@ -45,3 +49,6 @@ jobs:
           node --experimental-default-type=module tests/semantic-reader-compat.test.mjs
           node --experimental-default-type=module tests/library-cover-stage1.test.mjs
           node --experimental-default-type=module tests/semantic-tts-target.test.mjs
+
+      - name: Run full EPUB import integration
+        run: node --experimental-default-type=module tests/semantic-epub-import.integration.test.mjs
