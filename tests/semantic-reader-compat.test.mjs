@@ -3,6 +3,7 @@ globalThis.window = { speechSynthesis: { cancel() {} } };
 const {
   contentItemText,
   chapterContentText,
+  normalizeSemanticBookLineItems,
   renderContentItem,
 } = await import('../js/reader/semantic-content.js');
 const { createReaderNavigation } = await import('../js/reader/navigation.js');
@@ -59,7 +60,7 @@ const dialogue = {
 };
 const dialogueHtml = renderContentItem(dialogue, 5, { renderLegacy: text => text });
 assert(
-  'EPUB dialogue line breaks render as br',
+  'old EPUB dialogue line breaks still render as br',
   dialogueHtml.includes('— Salut.<br>— Salut.<br>— J’ai un rendez-vous…'),
   dialogueHtml,
 );
@@ -70,10 +71,41 @@ const markedDialogue = {
 };
 const markedDialogueHtml = renderContentItem(markedDialogue, 6, { renderLegacy: text => text });
 assert(
-  'formatting survives across dialogue lines',
+  'formatting survives across old dialogue lines',
   markedDialogueHtml.includes('<em>— Première ligne</em><br><em>— Deuxième ligne</em>'),
   markedDialogueHtml,
 );
+
+const existingBook = {
+  schemaVersion: 2,
+  currentChapter: 0,
+  currentParagraph: 2,
+  chapters: [{
+    id: 'ch_0',
+    paragraphs: [
+      { type: 'heading', level: 1, runs: [{ text: 'Chapitre 1', marks: [] }] },
+      {
+        type: 'paragraph',
+        runs: [
+          { text: '— Première réplique\n— Deuxième ', marks: [] },
+          { text: 'réplique', marks: ['italic'] },
+          { text: '\n— Troisième réplique', marks: [] },
+        ],
+      },
+      { type: 'paragraph', runs: [{ text: 'Narration après le dialogue.', marks: [] }] },
+    ],
+  }],
+};
+assert('existing semantic book dialogue migrates', normalizeSemanticBookLineItems(existingBook) === true);
+assert(
+  'dialogue becomes three independent paragraphs',
+  existingBook.chapters[0].paragraphs.map(contentItemText).join('|') ===
+    'Chapitre 1|— Première réplique|— Deuxième réplique|— Troisième réplique|Narration après le dialogue.',
+  existingBook.chapters[0].paragraphs.map(contentItemText).join('|'),
+);
+assert('italic formatting survives paragraph split', existingBook.chapters[0].paragraphs[2].runs.some(run => run.marks?.includes('italic')));
+assert('reading position follows content after split', existingBook.currentParagraph === 4, String(existingBook.currentParagraph));
+assert('dialogue migration is one-shot', normalizeSemanticBookLineItems(existingBook) === false);
 
 const spoken = [];
 const audio = createReaderAudio({
