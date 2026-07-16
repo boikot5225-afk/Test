@@ -36,6 +36,75 @@ export function lastReadableContentIndex(items = [], from = null) {
   return items.length ? 0 : 0;
 }
 
+function trimLineRuns(runs = []) {
+  const out = runs
+    .map(run => ({ ...run, text: String(run?.text || '') }))
+    .filter(run => run.text.length > 0);
+  if (!out.length) return [];
+  out[0].text = out[0].text.replace(/^\s+/, '');
+  out[out.length - 1].text = out[out.length - 1].text.replace(/\s+$/, '');
+  return out.filter(run => run.text.length > 0);
+}
+
+export function splitSemanticItemLines(item) {
+  if (!isSemanticTextItem(item)) return [item];
+  const type = String(item.type || 'paragraph');
+  if (type !== 'paragraph' && type !== 'quote') return [item];
+  if (!/[\r\n]/.test(contentItemText(item))) return [item];
+
+  const parts = [];
+  let currentRuns = [];
+  const flush = () => {
+    const runs = trimLineRuns(currentRuns);
+    currentRuns = [];
+    if (!runs.length) return;
+    parts.push({ ...item, runs });
+  };
+
+  for (const run of item.runs || []) {
+    const pieces = String(run?.text || '').replace(/\r\n?/g, '\n').split('\n');
+    pieces.forEach((piece, index) => {
+      if (piece) currentRuns.push({ ...run, text: piece });
+      if (index < pieces.length - 1) flush();
+    });
+  }
+  flush();
+  return parts.length ? parts : [item];
+}
+
+export function normalizeSemanticBookLineItems(book) {
+  if (!book || book._semanticLineItemsV1) return false;
+  const currentChapter = Math.max(0, Number(book.currentChapter) || 0);
+  const oldCurrentParagraph = Math.max(0, Number(book.currentParagraph) || 0);
+  let mappedCurrentParagraph = oldCurrentParagraph;
+  let changed = false;
+
+  for (let chapterIndex = 0; chapterIndex < (book.chapters || []).length; chapterIndex += 1) {
+    const chapter = book.chapters[chapterIndex];
+    const items = Array.isArray(chapter?.paragraphs) ? chapter.paragraphs : [];
+    const next = [];
+
+    for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+      const parts = splitSemanticItemLines(items[itemIndex]);
+      if (parts.length !== 1 || parts[0] !== items[itemIndex]) changed = true;
+      if (chapterIndex === currentChapter && itemIndex === oldCurrentParagraph) {
+        mappedCurrentParagraph = next.length;
+      }
+      next.push(...parts);
+    }
+
+    if (next.length !== items.length || next.some((item, index) => item !== items[index])) {
+      chapter.paragraphs = next;
+    }
+  }
+
+  if (changed && book.chapters?.[currentChapter]?.paragraphs?.length) {
+    book.currentParagraph = Math.min(mappedCurrentParagraph, book.chapters[currentChapter].paragraphs.length - 1);
+  }
+  book._semanticLineItemsV1 = true;
+  return changed;
+}
+
 function escapeHtml(value) {
   return String(value || '')
     .replace(/&/g, '&amp;')
@@ -57,9 +126,7 @@ function wrapMarks(html, marks = []) {
 }
 
 function renderRunWithLineBreaks(run, paragraphIndex, renderLegacy) {
-  // EPUB adaptations often keep a whole dialogue in one <p> and separate
-  // speakers with <br>. The parser stores those as \n; render real <br>
-  // elements so WebView does not collapse all replies into one visual line.
+  // Safety net for books imported before line-based semantic normalization.
   const lines = String(run?.text || '').replace(/\r\n?/g, '\n').split('\n');
   return lines
     .map(line => wrapMarks(renderLegacy(line, paragraphIndex), run?.marks || []))
