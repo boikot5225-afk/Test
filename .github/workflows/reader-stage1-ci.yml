@@ -39,6 +39,7 @@ jobs:
           node --check js/reader/navigation.js
           node --check js/reader/audio.js
           node --check js/reader/chapter-render-stage1.js
+          node --check js/reader/chapter-render-dialogue.js
           node --check js/reader/epub-stage1.js
           node --check js/reader/epub-stage1-real.js
           node --check tests/semantic-epub-import.integration.test.mjs
