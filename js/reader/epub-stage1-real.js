@@ -5,13 +5,24 @@
 import {
   htmlToSemanticItems as parseSemanticBase,
   semanticItemText,
-  semanticItemsDiagnostics,
+  semanticItemsDiagnostics as baseSemanticItemsDiagnostics,
 } from './epub-stage1.js?v=1';
 
-export { semanticItemText, semanticItemsDiagnostics };
+export { semanticItemText };
 
 const FIGURE_RE = /(?:^|[-_\s])(figure|figura|illustration|image|photo|plate)(?:[-_\s]|$)/i;
 const CAPTION_RE = /caption|figcaption|legend|legende|pie.*figur|figur.*pie|image.*caption|photo.*caption/i;
+
+export function semanticItemsDiagnostics(items = []) {
+  const base = baseSemanticItemsDiagnostics(items);
+  const marks = {};
+  for (const item of items || []) {
+    for (const run of item?.runs || []) {
+      for (const mark of run?.marks || []) marks[mark] = (marks[mark] || 0) + 1;
+    }
+  }
+  return { ...base, marks };
+}
 
 export function resolveEpubPath(base, href) {
   if (!href) return '';
