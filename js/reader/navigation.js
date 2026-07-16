@@ -25,7 +25,9 @@ export function createReaderNavigation(deps) {
     if (!book) return '';
     const chapter = book.chapters?.[book.currentChapter || 0];
     const items = chapter?.paragraphs || [];
-    if (index === '__chapter__') return items.map(contentItemText).filter(Boolean).join(' ');
+    if (typeof index === 'string' && index.startsWith('__chapter')) {
+      return items.map(contentItemText).filter(Boolean).join(' ');
+    }
     const idx = index == null ? (book.currentParagraph || 0) : Number(index);
     return contentItemText(items[idx]);
   }
