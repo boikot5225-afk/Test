@@ -5,6 +5,9 @@ import {
   isImageContentItem,
   renderContentItem,
 } from './semantic-content.js?v=1';
+import { installSemanticImportBridge } from './semantic-import-bridge.js?v=1';
+
+installSemanticImportBridge();
 
 const STYLE_ID = 'reader-stage1-format-style';
 
