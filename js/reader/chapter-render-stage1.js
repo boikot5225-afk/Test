@@ -15,6 +15,15 @@ installSemanticTtsPrefetch();
 
 const STYLE_ID = 'reader-stage1-format-style';
 
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function ensureReaderStage1Styles() {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement('style');
@@ -109,6 +118,17 @@ export function ensureReaderStage1Styles() {
       line-height: 1.45;
       text-align: center;
     }
+    #reader-reading-view #reader-chapter-text .reader-stage1-fallback-note {
+      margin: 0 0 1em;
+      padding: 9px 11px;
+      border: 1px dashed var(--warn, #b57924);
+      border-radius: 9px;
+      color: var(--text-muted);
+      background: var(--surface2);
+      font-family: 'IBM Plex Sans', sans-serif;
+      font-size: .72rem;
+      line-height: 1.4;
+    }
     @media (max-width: 700px) {
       #reader-reading-view #reader-chapter-text .reader-figure {
         margin: .95em auto;
@@ -138,6 +158,43 @@ function ensureReadablePosition(book) {
   book.currentParagraph = firstReadableContentIndex(items);
 }
 
+function chapterHasContent(items = []) {
+  return items.some(item => isImageContentItem(item) || contentItemText(item).trim());
+}
+
+function rootHasVisibleContent(root) {
+  if (!root) return false;
+  if (root.querySelector('img[data-img-key], .reader-figure')) return true;
+  return String(root.textContent || '').replace(/\s+/g, '').length > 0;
+}
+
+function renderEmergencyFallback(deps, reason = '') {
+  const root = document.getElementById('reader-chapter-text');
+  const book = deps.getCurrentBook?.();
+  const chapter = book?.chapters?.[book.currentChapter || 0];
+  const items = chapter?.paragraphs || [];
+  if (!root || !chapterHasContent(items)) return false;
+
+  const active = Number(book?.currentParagraph || 0);
+  const rows = items.map((item, index) => {
+    if (isImageContentItem(item)) {
+      const caption = String(item.caption || '').trim();
+      return `<figure class="reader-figure reader-stage1-fallback-item" data-p="${index}"><img data-img-key="${escapeHtml(item.key || '')}" alt="${escapeHtml(item.alt || caption || '')}" class="epub-img">${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ''}</figure>`;
+    }
+    const text = contentItemText(item).trim();
+    if (!text) return '';
+    return `<div class="reader-paragraph${index === active ? ' active' : ''} reader-stage1-fallback-item" data-p="${index}"><div class="reader-paragraph-text">${escapeHtml(text)}</div></div>`;
+  }).join('');
+
+  const detail = String(reason || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+  root.innerHTML = `<div class="reader-stage1-fallback-note">⚠ Включён упрощённый режим отображения: основной рендер вернул пустую страницу${detail ? ` · ${escapeHtml(detail)}` : ''}</div>${rows}`;
+  try { globalThis.__readerStage1FallbackReason = detail || 'empty semantic render'; } catch {}
+  try { deps.loadEpubImages?.(); } catch (error) { console.warn('[reader stage1 fallback] image load failed', error); }
+  try { deps.bindParagraphEvents?.(); } catch {}
+  try { deps.bindVisibleParagraphTracking?.(); } catch {}
+  return true;
+}
+
 export function createReaderChapterRenderer(deps) {
   ensureReaderStage1Styles();
 
@@ -147,12 +204,7 @@ export function createReaderChapterRenderer(deps) {
     ...deps,
     renderParagraphText: (item, index) => renderContentItem(item, index, {
       renderLegacy,
-      escape: value => String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;'),
+      escape: escapeHtml,
     }),
     trackParagraphSeen: (index, options) => {
       const book = deps.getCurrentBook?.();
@@ -176,7 +228,29 @@ export function createReaderChapterRenderer(deps) {
     ...base,
     render() {
       ensureReadablePosition(deps.getCurrentBook?.());
-      return base.render();
+      let result;
+      try {
+        result = base.render();
+      } catch (error) {
+        console.error('[reader stage1] semantic render failed', error);
+        renderEmergencyFallback(deps, error?.message || String(error));
+        return false;
+      }
+
+      // A few Android WebView failures do not throw: the renderer finishes but
+      // leaves an empty chapter root. Verify the visible result on the next task
+      // and replace it with a plain, lossless fallback instead of showing blank.
+      setTimeout(() => {
+        const root = document.getElementById('reader-chapter-text');
+        const book = deps.getCurrentBook?.();
+        const chapter = book?.chapters?.[book.currentChapter || 0];
+        const items = chapter?.paragraphs || [];
+        if (chapterHasContent(items) && !rootHasVisibleContent(root)) {
+          console.error('[reader stage1] renderer returned an empty chapter');
+          renderEmergencyFallback(deps, 'empty chapter root');
+        }
+      }, 0);
+      return result;
     },
   };
 }
