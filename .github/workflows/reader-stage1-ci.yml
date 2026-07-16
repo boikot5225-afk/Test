@@ -51,4 +51,19 @@ jobs:
           node --experimental-default-type=module tests/semantic-tts-target.test.mjs
 
       - name: Run full EPUB import integration
-        run: node --experimental-default-type=module tests/semantic-epub-import.integration.test.mjs
+        shell: bash
+        run: |
+          set +e
+          node --experimental-default-type=module tests/semantic-epub-import.integration.test.mjs > semantic-epub-integration.log 2>&1
+          code=$?
+          cat semantic-epub-integration.log
+          exit $code
+
+      - name: Upload EPUB integration output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semantic-epub-integration-output
+          path: semantic-epub-integration.log
+          if-no-files-found: warn
+          retention-days: 3
