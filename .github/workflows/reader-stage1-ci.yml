@@ -1,0 +1,40 @@
+name: Reader stage 1 checks
+
+on:
+  push:
+    branches:
+      - test/reader-epub-format-stage1
+  pull_request:
+    branches:
+      - claude/epic-hawking-540kte
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-reader:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check js/reader/semantic-content.js
+          node --check js/reader/semantic-import-stage1.js
+          node --check js/reader/semantic-import-bridge.js
+          node --check js/reader/navigation.js
+          node --check js/reader/audio.js
+          node --check js/reader/chapter-render-stage1.js
+          node --check js/reader/epub-stage1.js
+          node --check js/reader/epub-stage1-real.js
+
+      - name: Run compatibility checks
+        run: node --experimental-default-type=module tests/semantic-reader-compat.test.mjs
