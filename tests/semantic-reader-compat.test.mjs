@@ -53,6 +53,28 @@ const imageHtml = renderContentItem(items[3], 3, { renderLegacy: text => text })
 assert('bold mark renders', paragraphHtml.includes('<strong>fuerte</strong>'));
 assert('image caption renders', imageHtml.includes('<figcaption>Foto</figcaption>'));
 
+const dialogue = {
+  type: 'paragraph',
+  runs: [{ text: '— Salut.\n— Salut.\n— J’ai un rendez-vous…', marks: [] }],
+};
+const dialogueHtml = renderContentItem(dialogue, 5, { renderLegacy: text => text });
+assert(
+  'EPUB dialogue line breaks render as br',
+  dialogueHtml.includes('— Salut.<br>— Salut.<br>— J’ai un rendez-vous…'),
+  dialogueHtml,
+);
+
+const markedDialogue = {
+  type: 'paragraph',
+  runs: [{ text: '— Première ligne\n— Deuxième ligne', marks: ['italic'] }],
+};
+const markedDialogueHtml = renderContentItem(markedDialogue, 6, { renderLegacy: text => text });
+assert(
+  'formatting survives across dialogue lines',
+  markedDialogueHtml.includes('<em>— Première ligne</em><br><em>— Deuxième ligne</em>'),
+  markedDialogueHtml,
+);
+
 const spoken = [];
 const audio = createReaderAudio({
   speak: async text => { spoken.push(text); return true; },
