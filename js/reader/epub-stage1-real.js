@@ -11,7 +11,7 @@ import {
 export { semanticItemText, semanticItemsDiagnostics };
 
 const FIGURE_RE = /(?:^|[-_\s])(figure|figura|illustration|image|photo|plate)(?:[-_\s]|$)/i;
-const CAPTION_RE = /caption|figcaption|legend|legende|pie[-_\s]*(?:de[-_\s]*)?figur|figur.*pie|image.*caption|photo.*caption/i;
+const CAPTION_RE = /caption|figcaption|legend|legende|pie.*figur|figur.*pie|image.*caption|photo.*caption/i;
 
 export function resolveEpubPath(base, href) {
   if (!href) return '';
