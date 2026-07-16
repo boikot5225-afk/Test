@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EPUB Stage 1 test</title>
+<style>
+  body{font-family:system-ui;margin:20px;background:#faf6f0;color:#241e17}
+  #fixture{max-width:420px;border:1px solid #ddd;padding:12px}
+  .epub-img{display:block;width:auto;max-width:100%;height:auto;max-height:min(78dvh,900px);object-fit:contain;margin:1em auto}
+  .ok{color:#176b3a}.bad{color:#a62a21}
+  blockquote{border-left:3px solid #999;padding-left:10px}
+</style>
+</head>
+<body>
+<h1>EPUB semantic parser — stage 1</h1>
+<div id="results"></div>
+<div id="fixture"></div>
+<script type="module">
+import { htmlToSemanticItems, semanticItemsDiagnostics, semanticItemText } from '../js/reader/epub-stage1.js';
+
+const sample = `
+<html><body>
+  <h1>Глава <em>первая</em></h1>
+  <p>До картинки <em>курсив</em><img src="../Images/map.png" alt="Карта"> после <strong>жирный</strong>.</p>
+  <blockquote>Ночная цитата.</blockquote>
+  <ol><li>Первый пункт</li><li>Второй пункт</li></ol>
+  <figure><img src="../Images/city.jpg" alt="Город"><figcaption>Город ночью</figcaption></figure>
+  <script>window.evil=true<\/script>
+</body></html>`;
+
+const items = htmlToSemanticItems(sample, { basePath: 'OEBPS/Text' });
+const diagnostics = semanticItemsDiagnostics(items);
+const results = [];
+const assert = (name, condition, detail='') => results.push({name, ok:!!condition, detail});
+
+assert('Порядок элементов сохранён',
+  JSON.stringify(items.map(x=>x.type)) === JSON.stringify(['heading','paragraph','image','paragraph','quote','list-item','list-item','image']),
+  items.map(x=>x.type).join(' → '));
+assert('Картинка осталась между частями абзаца', items[2]?.type === 'image' && semanticItemText(items[1]).startsWith('До картинки') && semanticItemText(items[3]).startsWith('после'));
+assert('Путь картинки разрешён относительно главы', items[2]?.path === 'OEBPS/Images/map.png', items[2]?.path || '');
+assert('Курсив сохранён', items[1]?.runs?.some(r=>r.marks.includes('italic') && r.text.includes('курсив')));
+assert('Жирный текст сохранён', items[3]?.runs?.some(r=>r.marks.includes('bold') && r.text.includes('жирный')));
+assert('Подпись figure привязана к изображению', items.at(-1)?.caption === 'Город ночью', items.at(-1)?.caption || '');
+assert('Скрипты не попали в текст', !items.some(x=>semanticItemText(x).includes('window.evil')));
+assert('Диагностика считает изображения', diagnostics.images === 2, JSON.stringify(diagnostics));
+
+const imageOnly = htmlToSemanticItems('<html><body><figure><img src="plate.png" alt="plate"></figure></body></html>', {basePath:'OPS'});
+const imageOnlyDiag = semanticItemsDiagnostics(imageOnly);
+assert('Глава только с изображением считается содержательной', imageOnlyDiag.hasRenderableContent && imageOnlyDiag.images === 1, JSON.stringify(imageOnlyDiag));
+
+const fixture = document.getElementById('fixture');
+const px = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500"><rect width="1200" height="500" fill="#8a4b2d"/><text x="40" y="270" font-size="80" fill="white">EPUB image</text></svg>');
+function runsHtml(runs=[]){return runs.map(r=>{let t=r.text.replaceAll('&','&amp;').replaceAll('<','&lt;');if(r.marks.includes('italic'))t='<em>'+t+'</em>';if(r.marks.includes('bold'))t='<strong>'+t+'</strong>';return t}).join('')}
+fixture.innerHTML = items.map(item=>{
+  if(item.type==='image') return `<figure><img class="epub-img" src="${px}" alt=""><figcaption>${item.caption||item.alt||''}</figcaption></figure>`;
+  if(item.type==='heading') return `<h${item.level}>${runsHtml(item.runs)}</h${item.level}>`;
+  if(item.type==='quote') return `<blockquote>${runsHtml(item.runs)}</blockquote>`;
+  if(item.type==='list-item') return `<div>• ${runsHtml(item.runs)}</div>`;
+  return `<p>${runsHtml(item.runs)}</p>`;
+}).join('');
+await Promise.all([...fixture.querySelectorAll('img')].map(img=>img.decode().catch(()=>{})));
+const overflow = [...fixture.querySelectorAll('img')].some(img=>img.getBoundingClientRect().width > fixture.getBoundingClientRect().width + .5);
+assert('Большие изображения не выходят за колонку', !overflow);
+
+const out = document.getElementById('results');
+out.innerHTML = results.map(r=>`<div class="${r.ok?'ok':'bad'}">${r.ok?'✓':'✗'} ${r.name}${r.detail?' — '+r.detail:''}</div>`).join('');
+window.testResults = results;
+window.testDone = true;
+</script>
+</body>
+</html>
