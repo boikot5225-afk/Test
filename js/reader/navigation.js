@@ -1,20 +1,20 @@
-function isImageItem(p) {
-  return p != null && typeof p === 'object' && p.type === 'image';
+import {
+  contentItemText,
+  firstReadableContentIndex,
+  lastReadableContentIndex,
+} from './semantic-content.js?v=1';
+
+function hasReadableText(item) {
+  return contentItemText(item).trim().length > 0;
 }
 
-function firstTextIndex(paragraphs, from = 0) {
-  for (let i = from; i < paragraphs.length; i++) {
-    if (!isImageItem(paragraphs[i])) return i;
-  }
-  return from;
-}
-
-function lastTextIndex(paragraphs, from) {
-  const start = from ?? paragraphs.length - 1;
-  for (let i = start; i >= 0; i--) {
-    if (!isImageItem(paragraphs[i])) return i;
-  }
-  return 0;
+function nearestReadableIndex(items = [], requested = 0) {
+  if (!items.length) return 0;
+  const start = Math.max(0, Math.min(Number(requested) || 0, items.length - 1));
+  if (hasReadableText(items[start])) return start;
+  const after = firstReadableContentIndex(items, start + 1);
+  if (after > start && after < items.length && hasReadableText(items[after])) return after;
+  return lastReadableContentIndex(items, start - 1);
 }
 
 export function createReaderNavigation(deps) {
@@ -24,20 +24,18 @@ export function createReaderNavigation(deps) {
     const book = getBook();
     if (!book) return '';
     const chapter = book.chapters?.[book.currentChapter || 0];
-    const idx = index == null ? (book.currentParagraph || 0) : index;
-    const p = chapter?.paragraphs?.[idx];
-    return isImageItem(p) ? '' : (p || '');
+    const items = chapter?.paragraphs || [];
+    if (index === '__chapter__') return items.map(contentItemText).filter(Boolean).join(' ');
+    const idx = index == null ? (book.currentParagraph || 0) : Number(index);
+    return contentItemText(items[idx]);
   }
 
   function selectParagraph(index) {
     const book = getBook();
     if (!book) return;
     const chapter = book.chapters?.[book.currentChapter || 0];
-    const paragraphs = chapter?.paragraphs || [];
-    const target = isImageItem(paragraphs[index])
-      ? firstTextIndex(paragraphs, index + 1)
-      : index;
-    book.currentParagraph = target;
+    const items = chapter?.paragraphs || [];
+    book.currentParagraph = nearestReadableIndex(items, index);
     book.updatedAt = new Date().toISOString();
     render();
   }
@@ -47,8 +45,8 @@ export function createReaderNavigation(deps) {
     if (!book) return;
     if ((book.currentChapter || 0) >= (book.chapters?.length || 1) - 1) return showToast('Это последняя глава');
     book.currentChapter = (book.currentChapter || 0) + 1;
-    const ch = book.chapters[book.currentChapter];
-    book.currentParagraph = firstTextIndex(ch?.paragraphs || []);
+    const chapter = book.chapters[book.currentChapter];
+    book.currentParagraph = firstReadableContentIndex(chapter?.paragraphs || []);
     book.updatedAt = new Date().toISOString();
     render();
   }
@@ -58,8 +56,8 @@ export function createReaderNavigation(deps) {
     if (!book) return;
     if ((book.currentChapter || 0) <= 0) return showToast('Это первая глава');
     book.currentChapter = (book.currentChapter || 0) - 1;
-    const ch = book.chapters[book.currentChapter];
-    book.currentParagraph = firstTextIndex(ch?.paragraphs || []);
+    const chapter = book.chapters[book.currentChapter];
+    book.currentParagraph = firstReadableContentIndex(chapter?.paragraphs || []);
     book.updatedAt = new Date().toISOString();
     render();
   }
@@ -68,21 +66,21 @@ export function createReaderNavigation(deps) {
     const book = getBook();
     if (!book) return;
     closeParagraphTime();
-    const chapter = book.chapters?.[book.currentChapter || 0];
-    const paragraphs = chapter?.paragraphs || [];
-    const max = (paragraphs.length || 1) - 1;
-    let next = (book.currentParagraph || 0) + 1;
-    while (next <= max && isImageItem(paragraphs[next])) next++;
 
-    if (next <= max) {
+    const chapter = book.chapters?.[book.currentChapter || 0];
+    const items = chapter?.paragraphs || [];
+    const next = firstReadableContentIndex(items, (book.currentParagraph || 0) + 1);
+
+    if (next < items.length && hasReadableText(items[next])) {
       book.currentParagraph = next;
     } else if ((book.currentChapter || 0) < (book.chapters?.length || 1) - 1) {
       book.currentChapter = (book.currentChapter || 0) + 1;
-      const newCh = book.chapters[book.currentChapter];
-      book.currentParagraph = firstTextIndex(newCh?.paragraphs || []);
+      const newChapter = book.chapters[book.currentChapter];
+      book.currentParagraph = firstReadableContentIndex(newChapter?.paragraphs || []);
     } else {
       return showToast('Это конец текста');
     }
+
     book.updatedAt = new Date().toISOString();
     render();
     scrollActiveParagraph();
@@ -92,24 +90,32 @@ export function createReaderNavigation(deps) {
     const book = getBook();
     if (!book) return;
     closeParagraphTime();
-    const chapter = book.chapters?.[book.currentChapter || 0];
-    const paragraphs = chapter?.paragraphs || [];
-    let prev = (book.currentParagraph || 0) - 1;
-    while (prev >= 0 && isImageItem(paragraphs[prev])) prev--;
 
-    if (prev >= 0) {
-      book.currentParagraph = prev;
+    const chapter = book.chapters?.[book.currentChapter || 0];
+    const items = chapter?.paragraphs || [];
+    const previous = lastReadableContentIndex(items, (book.currentParagraph || 0) - 1);
+
+    if (previous >= 0 && previous < (book.currentParagraph || 0) && hasReadableText(items[previous])) {
+      book.currentParagraph = previous;
     } else if ((book.currentChapter || 0) > 0) {
       book.currentChapter = (book.currentChapter || 0) - 1;
-      const prevCh = book.chapters[book.currentChapter];
-      book.currentParagraph = lastTextIndex(prevCh?.paragraphs || []);
+      const previousChapter = book.chapters[book.currentChapter];
+      book.currentParagraph = lastReadableContentIndex(previousChapter?.paragraphs || []);
     } else {
       return showToast('Это начало текста');
     }
+
     book.updatedAt = new Date().toISOString();
     render();
     scrollActiveParagraph();
   }
 
-  return { currentParagraphText, selectParagraph, nextChapter, previousChapter, nextParagraph, previousParagraph };
+  return {
+    currentParagraphText,
+    selectParagraph,
+    nextChapter,
+    previousChapter,
+    nextParagraph,
+    previousParagraph,
+  };
 }
