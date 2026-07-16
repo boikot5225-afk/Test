@@ -41,6 +41,7 @@ jobs:
 
       - name: Run compatibility checks
         run: |
+          node --experimental-default-type=module tests/semantic-handler-route.test.mjs
           node --experimental-default-type=module tests/semantic-reader-compat.test.mjs
           node --experimental-default-type=module tests/library-cover-stage1.test.mjs
           node --experimental-default-type=module tests/semantic-tts-target.test.mjs
