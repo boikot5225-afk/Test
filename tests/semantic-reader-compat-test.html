@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Semantic reader compatibility test</title>
+<style>
+body{font-family:system-ui;margin:20px}.ok{color:#176b3a}.bad{color:#a62a21}
+#column{width:320px;max-width:calc(100vw - 64px);border:1px solid #bbb;padding:10px}
+.epub-img{display:block;max-width:100%;height:auto}
+</style>
+</head>
+<body>
+<h1>Semantic reader compatibility</h1>
+<div id="results"></div>
+<div id="column"></div>
+<script type="module">
+import { contentItemText, chapterContentText, renderContentItem } from '../js/reader/semantic-content.js';
+import { createReaderNavigation } from '../js/reader/navigation.js';
+import { createReaderAudio } from '../js/reader/audio.js';
+
+const items=[
+ {type:'image',key:'book::cover.jpg',alt:'Обложка'},
+ {type:'heading',level:1,runs:[{text:'Capítulo ',marks:[]},{text:'uno',marks:['italic']}]},
+ {type:'paragraph',runs:[{text:'Texto ',marks:[]},{text:'fuerte',marks:['bold']}]},
+ {type:'image',key:'book::photo.jpg',caption:'Foto'},
+ {type:'quote',runs:[{text:'Cita',marks:['italic']}]},
+];
+const results=[];
+const assert=(name,ok,detail='')=>results.push({name,ok:!!ok,detail});
+const book={currentChapter:0,currentParagraph:0,chapters:[{id:'c1',paragraphs:items}]};
+let renders=0;
+const nav=createReaderNavigation({getBook:()=>book,render:()=>renders++,closeParagraphTime(){},scrollActiveParagraph(){},showToast(){}});
+
+assert('Текст semantic item извлекается',contentItemText(items[2])==='Texto fuerte');
+assert('Текст главы не содержит изображения',chapterContentText(items)==='Capítulo uno Texto fuerte Cita');
+assert('Навигация отдаёт текст главы',nav.currentParagraphText('__chapter_semantic__')==='Capítulo uno Texto fuerte Cita');
+nav.selectParagraph(0); assert('Выбор изображения переходит к тексту',book.currentParagraph===1,String(book.currentParagraph));
+nav.nextParagraph(); assert('Следующий semantic-абзац',book.currentParagraph===2,String(book.currentParagraph));
+nav.nextParagraph(); assert('Навигация пропускает изображение',book.currentParagraph===4,String(book.currentParagraph));
+nav.previousParagraph(); assert('Обратная навигация пропускает изображение',book.currentParagraph===2,String(book.currentParagraph));
+
+const legacy=text=>text.replaceAll('&','&amp;').replaceAll('<','&lt;');
+const paragraphHtml=renderContentItem(items[2],2,{renderLegacy:legacy});
+const imageHtml=renderContentItem(items[3],3,{renderLegacy:legacy});
+assert('Жирное начертание рендерится',paragraphHtml.includes('<strong>fuerte</strong>'));
+assert('Подпись картинки рендерится',imageHtml.includes('<figcaption>Foto</figcaption>'));
+
+const spoken=[];
+const audio=createReaderAudio({
+ speak:async text=>{spoken.push(text);return true},stopSpeak(){},showToast(){},
+ getParagraphText:index=>nav.currentParagraphText(index),getLang:()=> 'es',onActiveChange(){}
+});
+book.currentParagraph=2;
+await audio.speakParagraph(null);
+assert('TTS абзаца получает строку',spoken.at(-1)==='Texto fuerte',spoken.at(-1));
+await audio.speakChapter();
+assert('TTS главы получает строку',spoken.at(-1)==='Capítulo uno Texto fuerte Cita',spoken.at(-1));
+
+const column=document.getElementById('column');
+const svg='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500"><rect width="1200" height="500"/></svg>');
+column.innerHTML=imageHtml.replace('data-img-key="book::photo.jpg"','src="'+svg+'"');
+const img=column.querySelector('img');
+await img.decode().catch(()=>{});
+assert('Картинка не выходит за колонку',img.getBoundingClientRect().width<=column.getBoundingClientRect().width+.5,`${img.getBoundingClientRect().width}/${column.getBoundingClientRect().width}`);
+assert('Навигация действительно перерисовывалась',renders>=4,String(renders));
+
+const out=document.getElementById('results');
+out.innerHTML=results.map(x=>`<div class="${x.ok?'ok':'bad'}">${x.ok?'✓':'✗'} ${x.name}${x.detail?' — '+x.detail:''}</div>`).join('');
+window.testResults=results;
+window.testDone=true;
+document.body.dataset.ok=String(results.every(x=>x.ok));
+</script>
+</body>
+</html>
