@@ -1,4 +1,8 @@
-import { libraryIdbPut } from './library-idb-store.js?v=1';
+import {
+  libraryIdbGet,
+  libraryIdbPut,
+} from './library-idb-store.js?v=1';
+import { imgStoreDeleteBook } from './image-store.js?v=1';
 import {
   chapterContentText,
   firstReadableContentIndex,
@@ -27,6 +31,20 @@ function readStoredBooks(key) {
   } catch {
     return [];
   }
+}
+
+function mergeBookLists(...lists) {
+  const byId = new Map();
+  for (const list of lists) {
+    for (const book of Array.isArray(list) ? list : []) {
+      if (!book?.id) continue;
+      const previous = byId.get(book.id);
+      if (!previous || new Date(book.updatedAt || 0) >= new Date(previous.updatedAt || 0)) {
+        byId.set(book.id, book);
+      }
+    }
+  }
+  return [...byId.values()].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
 }
 
 function hashText(value) {
@@ -89,7 +107,10 @@ async function handleSemanticEpub(event, originalImport) {
     setInputValue('reader-import-title', result.title, true);
     setInputValue('reader-import-author', result.author, true);
     const languageSelect = document.getElementById('reader-import-lang');
-    if (languageSelect && !languageSelect.value && ['fr', 'en', 'zh', 'es'].includes(result.lang)) {
+    const validMetadataLang = ['fr', 'en', 'zh', 'es'].includes(result.lang);
+    // The modal may prefill the current app language automatically. EPUB metadata
+    // should beat that automatic default, but never overwrite a manual user pick.
+    if (languageSelect && validMetadataLang && languageSelect.dataset.userChanged !== '1') {
       languageSelect.value = result.lang;
     }
     if (preview) {
@@ -106,6 +127,16 @@ async function handleSemanticEpub(event, originalImport) {
   } catch (error) {
     pendingImport = null;
     setStatus(`❌ EPUB не импортировался: ${String(error?.message || error)}`, 'error');
+  }
+}
+
+async function readDurableBooks(key) {
+  try {
+    const value = await libraryIdbGet(key);
+    return Array.isArray(value) ? value : [];
+  } catch (error) {
+    console.warn('[semantic epub] IndexedDB read failed; preserving local snapshot', error);
+    return [];
   }
 }
 
@@ -149,29 +180,56 @@ async function savePendingSemanticBook(originalSave) {
   };
 
   const key = storageKey();
-  const books = readStoredBooks(key);
+  const localBooks = readStoredBooks(key);
+  const durableBooks = await readDurableBooks(key);
+  const books = mergeBookLists(durableBooks, localBooks);
   const existing = books.find(item => item?.importKey === importKey);
   const next = existing
     ? books
-    : [book, ...books.filter(item => item?.id !== book.id)];
+    : mergeBookLists([book], books.filter(item => item?.id !== book.id));
 
-  let localSaved = true;
-  try { localStorage.setItem(key, JSON.stringify(next)); }
-  catch { localSaved = false; }
-  await libraryIdbPut(key, next);
+  let localSaved = false;
+  let durableSaved = false;
+  try {
+    localStorage.setItem(key, JSON.stringify(next));
+    localSaved = true;
+  } catch (error) {
+    console.warn('[semantic epub] localStorage write failed', error);
+  }
+  try {
+    await libraryIdbPut(key, next);
+    durableSaved = true;
+  } catch (error) {
+    console.warn('[semantic epub] IndexedDB write failed', error);
+  }
 
+  if (!localSaved && !durableSaved) {
+    setStatus('Не удалось сохранить книгу ни в localStorage, ни в IndexedDB. Импорт не закрыт — можно повторить.', 'error');
+    return;
+  }
+
+  const importedBookId = pendingImport.bookId;
   const target = existing || book;
   pendingImport = null;
+
+  // A duplicate was parsed under a temporary id, so remove its just-created
+  // local image blobs instead of leaving unreachable data in IndexedDB.
+  if (existing && importedBookId !== existing.id) {
+    await imgStoreDeleteBook(importedBookId).catch(() => {});
+  }
+
   window.closeReaderImportModal?.();
   await window.renderReaderScreen?.();
   await window.readerOpenBook?.(target.id);
 
   if (existing) {
     window.showToast?.('📚 Такая книга уже есть — открыта существующая');
-  } else if (localSaved) {
+  } else if (localSaved && durableSaved) {
     window.showToast?.('📖 EPUB добавлен в тестовом семантическом формате');
-  } else {
+  } else if (durableSaved) {
     window.showToast?.('📖 EPUB сохранён в IndexedDB; localStorage переполнен');
+  } else {
+    window.showToast?.('📖 EPUB сохранён локально; резервная запись IndexedDB не сработала');
   }
 }
 
