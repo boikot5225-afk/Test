@@ -99,10 +99,12 @@ const file = new browser.File([epubBytes], 'integration.epub', { type: 'applicat
 await browser.__real_readerImportFromFile({ target: { files: [file] } });
 
 assert.equal(legacyImportCalls, 0, 'EPUB must not go through the legacy importer');
+const importStatus = browser.document.getElementById('reader-import-status').textContent;
+assert.doesNotMatch(importStatus, /^❌/, `semantic parser failed: ${importStatus}`);
 assert.equal(browser.document.getElementById('reader-import-title').value, 'Integration Book', 'EPUB title must replace stale modal title');
 assert.equal(browser.document.getElementById('reader-import-author').value, 'Integration Author', 'EPUB author must replace stale modal author');
 assert.equal(browser.document.getElementById('reader-import-lang').value, 'es');
-assert.match(browser.document.getElementById('reader-import-status').textContent, /EPUB проверен: 1 глав · 1 изображений/);
+assert.match(importStatus, /EPUB проверен: 1 глав · 1 изображений/);
 assert.match(browser.document.getElementById('reader-import-text').placeholder, /семантическим импортёром/);
 
 await browser.__real_saveReaderImport();
