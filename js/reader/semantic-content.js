@@ -56,6 +56,16 @@ function wrapMarks(html, marks = []) {
   return out;
 }
 
+function renderRunWithLineBreaks(run, paragraphIndex, renderLegacy) {
+  // EPUB adaptations often keep a whole dialogue in one <p> and separate
+  // speakers with <br>. The parser stores those as \n; render real <br>
+  // elements so WebView does not collapse all replies into one visual line.
+  const lines = String(run?.text || '').replace(/\r\n?/g, '\n').split('\n');
+  return lines
+    .map(line => wrapMarks(renderLegacy(line, paragraphIndex), run?.marks || []))
+    .join('<br>');
+}
+
 export function renderContentItem(item, paragraphIndex, {
   renderLegacy,
   escape = escapeHtml,
@@ -70,7 +80,7 @@ export function renderContentItem(item, paragraphIndex, {
   }
 
   const runs = Array.isArray(item.runs) ? item.runs : [{ text: contentItemText(item), marks: [] }];
-  const body = runs.map(run => wrapMarks(renderLegacy(String(run?.text || ''), paragraphIndex), run?.marks || [])).join('');
+  const body = runs.map(run => renderRunWithLineBreaks(run, paragraphIndex, renderLegacy)).join('');
   const type = String(item.type || 'paragraph');
 
   if (type === 'heading') {
