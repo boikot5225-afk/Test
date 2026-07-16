@@ -1,0 +1,87 @@
+name: Reader stage 1 Android APK fixed
+
+on:
+  push:
+    branches:
+      - test/reader-epub-format-stage1
+    paths:
+      - '.github/workflows/reader-stage1-android-apk-fixed.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk-fixed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout test branch
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform 35
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Generate wrapper from tested workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('.github/workflows/reader-stage1-android-apk.yml').read_text()
+          marker = '      - name: Generate isolated WebView wrapper\n'
+          start = source.index(marker) + len(marker)
+          run_marker = '        run: |\n'
+          start = source.index(run_marker, start) + len(run_marker)
+          end = source.index('\n      - name: Build debug APK', start)
+          lines = source[start:end].splitlines()
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines) + '\n'
+          Path('/tmp/generate-stage1-wrapper.sh').write_text(script)
+          PY
+          bash /tmp/generate-stage1-wrapper.sh
+
+          JAVA_FILE='.stage1-android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java'
+          BUILD_FILE='.stage1-android/app/build.gradle'
+          MANIFEST_FILE='.stage1-android/app/src/main/AndroidManifest.xml'
+
+          sed -i 's#https://appassets.androidplatform.net/assets/index.html#https://appassets.androidplatform.net/assets/www/index.html#' "$JAVA_FILE"
+          sed -i "s/applicationId 'space.saintjust.reader.stage1'/applicationId 'space.saintjust.reader.stage1fix'/" "$BUILD_FILE"
+          sed -i "s/versionName 'stage1-test'/versionName 'stage1-test-fixed'/" "$BUILD_FILE"
+          sed -i 's/Reader AI Stage 1/Reader AI Stage 1 Fix/' "$MANIFEST_FILE"
+
+          grep -F 'assets/www/index.html' "$JAVA_FILE"
+          test -f '.stage1-android/app/src/main/assets/www/index.html'
+
+      - name: Build fixed debug APK
+        working-directory: .stage1-android
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p dist
+          cp .stage1-android/app/build/outputs/apk/debug/app-debug.apk dist/Reader-AI-Stage1-Fixed.apk
+          sha256sum dist/Reader-AI-Stage1-Fixed.apk | tee dist/Reader-AI-Stage1-Fixed.apk.sha256
+
+      - name: Upload fixed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-Stage1-Fixed-APK
+          path: |
+            dist/Reader-AI-Stage1-Fixed.apk
+            dist/Reader-AI-Stage1-Fixed.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
