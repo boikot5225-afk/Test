@@ -4,7 +4,9 @@ const {
   contentItemText,
   chapterContentText,
   normalizeSemanticBookLineItems,
+  normalizeSemanticBookTranslations,
   renderContentItem,
+  translationValueText,
 } = await import('../js/reader/semantic-content.js');
 const { createReaderNavigation } = await import('../js/reader/navigation.js');
 const { createReaderAudio } = await import('../js/reader/audio.js');
@@ -80,6 +82,11 @@ const existingBook = {
   schemaVersion: 2,
   currentChapter: 0,
   currentParagraph: 2,
+  readerTranslations: {
+    'ch_0:1': { translation: { ru: 'Старый перевод целого диалога' } },
+    'ch_0:2': '[object Object]',
+  },
+  readerAnalyses: { 'ch_0:1': { summary: 'Старый разбор' } },
   chapters: [{
     id: 'ch_0',
     paragraphs: [
@@ -106,6 +113,19 @@ assert(
 assert('italic formatting survives paragraph split', existingBook.chapters[0].paragraphs[2].runs.some(run => run.marks?.includes('italic')));
 assert('reading position follows content after split', existingBook.currentParagraph === 4, String(existingBook.currentParagraph));
 assert('dialogue migration is one-shot', normalizeSemanticBookLineItems(existingBook) === false);
+
+assert('stale translations are cleared after paragraph reindex', normalizeSemanticBookTranslations(existingBook) === true);
+assert('old translation keys removed', Object.keys(existingBook.readerTranslations).length === 0);
+assert('old analysis keys removed', Object.keys(existingBook.readerAnalyses).length === 0);
+assert(
+  'nested translation object extracts Russian string',
+  translationValueText({ data: { translation: { ru: 'Нормальный перевод' } } }) === 'Нормальный перевод',
+);
+assert('literal object placeholder is rejected', translationValueText('[object Object]') === '');
+assert('localized object placeholder is rejected', translationValueText('[объект Объект]') === '');
+existingBook.readerTranslations['ch_0:4'] = { data: { translatedText: 'Новый перевод повествования' } };
+assert('new object translation is normalized', normalizeSemanticBookTranslations(existingBook) === true);
+assert(existingBook.readerTranslations['ch_0:4'] === 'Новый перевод повествования', true, String(existingBook.readerTranslations['ch_0:4']));
 
 const spoken = [];
 const audio = createReaderAudio({
