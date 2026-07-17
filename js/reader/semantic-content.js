@@ -105,6 +105,72 @@ export function normalizeSemanticBookLineItems(book) {
   return changed;
 }
 
+const BAD_OBJECT_TEXT = /^\[\s*(?:object|объект)\s+(?:object|объект)\s*\]$/i;
+const TRANSLATION_VALUE_KEYS = [
+  'ru', 'translation', 'translatedText', 'translated_text', 'text',
+  'result', 'output', 'content', 'message', 'data',
+];
+
+export function translationValueText(value, seen = new Set()) {
+  if (value == null) return '';
+  if (typeof value === 'string') {
+    const text = value.replace(/\s+/g, ' ').trim();
+    return BAD_OBJECT_TEXT.test(text) ? '' : text;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    return value.map(item => translationValueText(item, seen)).filter(Boolean).join('\n').trim();
+  }
+  if (typeof value !== 'object' || seen.has(value)) return '';
+  seen.add(value);
+
+  for (const key of TRANSLATION_VALUE_KEYS) {
+    if (!(key in value)) continue;
+    const text = translationValueText(value[key], seen);
+    if (text) return text;
+  }
+
+  const values = Object.values(value);
+  if (values.length === 1) return translationValueText(values[0], seen);
+  return '';
+}
+
+export function normalizeSemanticBookTranslations(book) {
+  if (!book || Number(book.schemaVersion || 0) < 2) return false;
+  let changed = false;
+
+  // Dialogue splitting changes paragraph indexes. Old translation/analysis keys
+  // then point at the wrong sentences, so discard them once and let auto-translate
+  // rebuild help for the new independent paragraphs.
+  if (!book._semanticTranslationKeysV2) {
+    if (book._semanticLineItemsV1 && Object.keys(book.readerTranslations || {}).length) {
+      book.readerTranslations = {};
+      changed = true;
+    }
+    if (book._semanticLineItemsV1 && Object.keys(book.readerAnalyses || {}).length) {
+      book.readerAnalyses = {};
+      changed = true;
+    }
+    book._semanticTranslationKeysV2 = true;
+    changed = true;
+    return changed;
+  }
+
+  const translations = book.readerTranslations || {};
+  const normalized = {};
+  for (const [key, value] of Object.entries(translations)) {
+    const text = translationValueText(value);
+    if (!text) {
+      changed = true;
+      continue;
+    }
+    normalized[key] = text;
+    if (value !== text) changed = true;
+  }
+  if (changed) book.readerTranslations = normalized;
+  return changed;
+}
+
 function escapeHtml(value) {
   return String(value || '')
     .replace(/&/g, '&amp;')
