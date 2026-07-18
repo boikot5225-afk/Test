@@ -6,8 +6,8 @@ import { imgStoreDeleteBook } from './image-store.js?v=1';
 import {
   chapterContentText,
   firstReadableContentIndex,
-} from './semantic-content.js?v=1';
-import { parseSemanticEpubFile } from './semantic-import-stage1.js?v=1';
+} from './semantic-content.js?v=4';
+import { parseSemanticEpubFile } from './semantic-import-stage1.js?v=2';
 
 let pendingImport = null;
 let bridgeStarted = false;
@@ -103,8 +103,6 @@ async function handleSemanticEpub(event, originalImport) {
     });
     pendingImport = result;
 
-    // EPUB metadata must replace stale values left in the reusable modal.
-    // Keeping the previous title here saved El Narco under the prior Nada card.
     setInputValue('reader-import-title', result.title);
     setInputValue('reader-import-author', result.author);
     const languageSelect = document.getElementById('reader-import-lang');
@@ -119,8 +117,9 @@ async function handleSemanticEpub(event, originalImport) {
 
     const diag = result.diagnostics || {};
     const missing = diag.missingImages?.length || 0;
+    const footnotePart = diag.footnotes ? ` · ${diag.footnotes} сносок` : '';
     setStatus(
-      `✅ EPUB проверен: ${diag.chapters || 0} глав · ${diag.images || 0} изображений · ${diag.textChars || 0} знаков${missing ? ` · не найдено изображений: ${missing}` : ''}. Нажми «Сохранить».`,
+      `✅ EPUB проверен: ${diag.chapters || 0} глав · ${diag.images || 0} изображений${footnotePart} · ${diag.textChars || 0} знаков${missing ? ` · не найдено изображений: ${missing}` : ''}. Нажми «Сохранить».`,
       missing ? 'progress' : 'ok',
     );
   } catch (error) {
@@ -153,13 +152,15 @@ async function savePendingSemanticBook(originalSave) {
   const level = String(document.getElementById('reader-import-level')?.value || 'original');
   const now = new Date().toISOString();
   const chapters = pendingImport.chapters || [];
+  const footnotes = pendingImport.footnotes || {};
   const firstItems = chapters[0]?.paragraphs || [];
   const charCount = Number(pendingImport.diagnostics?.textChars || 0);
-  const importKey = `semantic-v2:${language}:${hashText(`${title}|${author}|${chapters.length}|${charCount}`)}`;
+  const footnoteCount = Object.keys(footnotes).length;
+  const importKey = `semantic-v3:${language}:${hashText(`${title}|${author}|${chapters.length}|${charCount}|${footnoteCount}`)}`;
 
   const book = {
     id: pendingImport.bookId,
-    schemaVersion: 2,
+    schemaVersion: 3,
     title,
     author,
     level,
@@ -175,6 +176,9 @@ async function savePendingSemanticBook(originalSave) {
     currentChapter: 0,
     currentParagraph: firstReadableContentIndex(firstItems),
     chapters,
+    footnotes,
+    _semanticLineItemsV1: true,
+    _semanticTextChunksV1: true,
     epubDiagnostics: pendingImport.diagnostics,
   };
 
@@ -239,8 +243,6 @@ function realHandler(name) {
 }
 
 function publishHandler(name, handler) {
-  // Inline handlers installed in index.html call __real_NAME through a stub.
-  // Updating only window[name] leaves the old implementation active forever.
   window[name] = handler;
   window[`__real_${name}`] = handler;
 }
@@ -268,7 +270,6 @@ function installWhenReady() {
   return true;
 }
 
-// Exported only so CI can verify the exact handler-bridge scenario used by index.html.
 export function installSemanticRouteNow() {
   return installWhenReady();
 }
