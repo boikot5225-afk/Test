@@ -1,1 +1,1 @@
-export { createReaderChapterRenderer } from './chapter-render-dialogue.js?v=2';
+export { createReaderChapterRenderer } from './chapter-render-dialogue.js?v=3';
