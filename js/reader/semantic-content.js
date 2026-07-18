@@ -72,6 +72,89 @@ export function splitSemanticItemLines(item) {
   return parts.length ? parts : [item];
 }
 
+function sliceSemanticRuns(runs = [], start = 0, end = 0) {
+  const out = [];
+  let cursor = 0;
+  for (const run of runs || []) {
+    const text = String(run?.text || '');
+    const runStart = cursor;
+    const runEnd = cursor + text.length;
+    cursor = runEnd;
+    if (runEnd <= start || runStart >= end) continue;
+    const from = Math.max(start, runStart) - runStart;
+    const to = Math.min(end, runEnd) - runStart;
+    const piece = text.slice(from, to);
+    if (piece) out.push({ ...run, text: piece });
+  }
+  return trimLineRuns(out);
+}
+
+function collectSemanticBoundaries(text, pattern) {
+  const positions = [];
+  const regex = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g');
+  let match;
+  while ((match = regex.exec(text))) {
+    positions.push(match.index + match[0].length);
+    if (!match[0].length) regex.lastIndex += 1;
+  }
+  return positions;
+}
+
+function lastBoundaryBetween(positions, minEnd, maxEnd) {
+  let picked = -1;
+  for (const pos of positions) {
+    if (pos < minEnd) continue;
+    if (pos > maxEnd) break;
+    picked = pos;
+  }
+  return picked;
+}
+
+function nextSemanticChunkEnd(text, start, maxChars, minChars) {
+  const maxEnd = Math.min(text.length, start + maxChars);
+  if (maxEnd >= text.length) return text.length;
+  const minEnd = Math.min(maxEnd, start + minChars);
+
+  const strong = collectSemanticBoundaries(text, /[.!?…]+(?:["'»”’\)\]]*)?(?=\s|$)/g);
+  const medium = collectSemanticBoundaries(text, /[;:](?=\s|$)/g);
+  const commas = collectSemanticBoundaries(text, /,(?=\s|$)/g);
+
+  let cut = lastBoundaryBetween(strong, minEnd, maxEnd);
+  if (cut < 0) cut = lastBoundaryBetween(medium, minEnd, maxEnd);
+  if (cut < 0) cut = lastBoundaryBetween(commas, minEnd, maxEnd);
+  if (cut < 0) {
+    const whitespace = text.lastIndexOf(' ', maxEnd);
+    cut = whitespace >= minEnd ? whitespace : maxEnd;
+  }
+  return Math.max(start + 1, cut);
+}
+
+export function splitSemanticItemChunks(item, {
+  maxChars = 280,
+  minChars = 120,
+} = {}) {
+  if (!isSemanticTextItem(item)) return [item];
+  const type = String(item.type || 'paragraph');
+  if (type !== 'paragraph' && type !== 'quote') return [item];
+
+  const text = contentItemText(item);
+  const max = Math.max(100, Number(maxChars) || 280);
+  const min = Math.max(50, Math.min(max - 20, Number(minChars) || 120));
+  if (text.trim().length <= max) return [item];
+
+  const parts = [];
+  let start = 0;
+  while (start < text.length) {
+    while (start < text.length && /\s/.test(text[start])) start += 1;
+    if (start >= text.length) break;
+    const end = nextSemanticChunkEnd(text, start, max, min);
+    const runs = sliceSemanticRuns(item.runs, start, end);
+    if (runs.length) parts.push({ ...item, runs });
+    start = end;
+  }
+  return parts.length > 1 ? parts : [item];
+}
+
 export function normalizeSemanticBookLineItems(book) {
   if (!book || book._semanticLineItemsV1) return false;
   const currentChapter = Math.max(0, Number(book.currentChapter) || 0);
@@ -105,7 +188,40 @@ export function normalizeSemanticBookLineItems(book) {
   return changed;
 }
 
-const BAD_OBJECT_TEXT = /^\[\s*(?:object|объект)\s+(?:object|объект)\s*\]$/i;
+export function normalizeSemanticBookTextChunks(book, options = {}) {
+  if (!book || book._semanticTextChunksV1) return false;
+  const currentChapter = Math.max(0, Number(book.currentChapter) || 0);
+  const oldCurrentParagraph = Math.max(0, Number(book.currentParagraph) || 0);
+  let mappedCurrentParagraph = oldCurrentParagraph;
+  let changed = false;
+
+  for (let chapterIndex = 0; chapterIndex < (book.chapters || []).length; chapterIndex += 1) {
+    const chapter = book.chapters[chapterIndex];
+    const items = Array.isArray(chapter?.paragraphs) ? chapter.paragraphs : [];
+    const next = [];
+
+    for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+      const parts = splitSemanticItemChunks(items[itemIndex], options);
+      if (parts.length !== 1 || parts[0] !== items[itemIndex]) changed = true;
+      if (chapterIndex === currentChapter && itemIndex === oldCurrentParagraph) {
+        mappedCurrentParagraph = next.length;
+      }
+      next.push(...parts);
+    }
+
+    if (next.length !== items.length || next.some((item, index) => item !== items[index])) {
+      chapter.paragraphs = next;
+    }
+  }
+
+  if (changed && book.chapters?.[currentChapter]?.paragraphs?.length) {
+    book.currentParagraph = Math.min(mappedCurrentParagraph, book.chapters[currentChapter].paragraphs.length - 1);
+  }
+  book._semanticTextChunksV1 = true;
+  return changed;
+}
+
+const BAD_OBJECT_TEXT = /^\s*\[?\s*(?:object|объект)\s+(?:object|объект)\s*\]?\s*$/i;
 const TRANSLATION_VALUE_KEYS = [
   'ru', 'translation', 'translatedText', 'translated_text', 'text',
   'result', 'output', 'content', 'message', 'data',
@@ -135,25 +251,24 @@ export function translationValueText(value, seen = new Set()) {
   return '';
 }
 
-export function normalizeSemanticBookTranslations(book) {
+export function normalizeSemanticBookTranslations(book, { reindexed = false } = {}) {
   if (!book || Number(book.schemaVersion || 0) < 2) return false;
   let changed = false;
 
-  // Dialogue splitting changes paragraph indexes. Old translation/analysis keys
-  // then point at the wrong sentences, so discard them once and let auto-translate
-  // rebuild help for the new independent paragraphs.
-  if (!book._semanticTranslationKeysV2) {
-    if (book._semanticLineItemsV1 && Object.keys(book.readerTranslations || {}).length) {
+  if (reindexed) {
+    if (Object.keys(book.readerTranslations || {}).length) {
       book.readerTranslations = {};
       changed = true;
     }
-    if (book._semanticLineItemsV1 && Object.keys(book.readerAnalyses || {}).length) {
+    if (Object.keys(book.readerAnalyses || {}).length) {
       book.readerAnalyses = {};
       changed = true;
     }
-    book._semanticTranslationKeysV2 = true;
+  }
+
+  if (!book._semanticTranslationKeysV3) {
+    book._semanticTranslationKeysV3 = true;
     changed = true;
-    return changed;
   }
 
   const translations = book.readerTranslations || {};
