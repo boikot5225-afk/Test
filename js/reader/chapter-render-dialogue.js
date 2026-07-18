@@ -1,15 +1,19 @@
 import { createReaderChapterRenderer as createStage1Renderer } from './chapter-render-stage1.js?v=5';
 import {
   normalizeSemanticBookLineItems,
+  normalizeSemanticBookTextChunks,
   normalizeSemanticBookTranslations,
   translationValueText,
-} from './semantic-content.js?v=3';
+} from './semantic-content.js?v=4';
 
 export function createReaderChapterRenderer(deps) {
   const getCurrentBook = () => {
     const book = deps.getCurrentBook?.();
-    normalizeSemanticBookLineItems(book);
-    normalizeSemanticBookTranslations(book);
+    const lineItemsChanged = normalizeSemanticBookLineItems(book);
+    const textChunksChanged = normalizeSemanticBookTextChunks(book);
+    normalizeSemanticBookTranslations(book, {
+      reindexed: lineItemsChanged || textChunksChanged,
+    });
     return book;
   };
 
