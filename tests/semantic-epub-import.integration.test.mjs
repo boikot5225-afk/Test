@@ -48,26 +48,36 @@ const opf = `<?xml version="1.0" encoding="UTF-8"?>
   </metadata>
   <manifest>
     <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+    <item id="notes" href="notes.xhtml" media-type="application/xhtml+xml"/>
     <item id="cover" href="images/pic.png" media-type="image/png" properties="cover-image"/>
   </manifest>
   <spine><itemref idref="chapter"/></spine>
 </package>`;
 
 const chapter = `<!doctype html>
-<html><body>
+<html xmlns:epub="http://www.idpf.org/2007/ops"><body>
   <h1>Capítulo de prueba</h1>
   <p>Texto <strong>negrita</strong> y <em>cursiva</em>.</p>
+  <p>La nota está aquí<a epub:type="noteref" href="notes.xhtml#n1"><sup>1</sup></a> y el texto continúa.</p>
   <p>— Primera réplica<br>— Segunda <em>réplica</em><br>— Tercera réplica</p>
   <figure><img src="images/pic.png" alt="Mapa"><figcaption>Mapa de prueba</figcaption></figure>
 </body></html>`;
 
-// Store all files without compression so the test exercises the EPUB reader,
-// metadata parser and persistence without depending on a platform inflater.
+const notes = `<!doctype html>
+<html xmlns:epub="http://www.idpf.org/2007/ops"><body>
+  <h1>Notas</h1>
+  <aside epub:type="footnote" id="n1">
+    <p>Primera nota <em>importante</em>.</p>
+    <a epub:type="backlink" href="chapter.xhtml#ref1">↩</a>
+  </aside>
+</body></html>`;
+
 const epubBytes = zipSync({
   mimetype: strToU8('application/epub+zip'),
   'META-INF/container.xml': strToU8(containerXml),
   'OEBPS/content.opf': strToU8(opf),
   'OEBPS/chapter.xhtml': strToU8(chapter),
+  'OEBPS/notes.xhtml': strToU8(notes),
   'OEBPS/images/pic.png': png,
 }, { level: 0 });
 
@@ -107,7 +117,7 @@ assert.doesNotMatch(importStatus, /^❌/, `semantic parser failed: ${importStatu
 assert.equal(browser.document.getElementById('reader-import-title').value, 'Integration Book', 'EPUB title must replace stale modal title');
 assert.equal(browser.document.getElementById('reader-import-author').value, 'Integration Author', 'EPUB author must replace stale modal author');
 assert.equal(browser.document.getElementById('reader-import-lang').value, 'es');
-assert.match(importStatus, /EPUB проверен: 1 глав · 1 изображений/);
+assert.match(importStatus, /EPUB проверен: 1 глав · 1 изображений · 1 сносок/);
 assert.match(browser.document.getElementById('reader-import-text').placeholder, /семантическим импортёром/);
 
 await browser.__real_saveReaderImport();
@@ -121,14 +131,17 @@ const books = JSON.parse(browser.localStorage.getItem('an2_reader_books_v1') || 
 assert.equal(books.length, 1);
 const book = books[0];
 assert.equal(book.id, openedBookId);
-assert.equal(book.schemaVersion, 2);
+assert.equal(book.schemaVersion, 3);
 assert.equal(book.source, 'epub-semantic-stage1');
 assert.equal(book.title, 'Integration Book');
 assert.equal(book.author, 'Integration Author');
 assert.equal(book.lang, 'es');
-assert.equal(book.chapters.length, 1);
+assert.equal(book.chapters.length, 1, 'notes-only XHTML must not become a chapter');
 assert.equal(book.epubDiagnostics.images, 1);
+assert.equal(book.epubDiagnostics.footnotes, 1);
 assert.ok(book.coverKey, 'cover key must be persisted');
+assert.equal(book._semanticLineItemsV1, true);
+assert.equal(book._semanticTextChunksV1, true);
 
 const items = book.chapters[0].paragraphs;
 assert.ok(items.some(item => item?.type === 'heading'), 'heading must survive import');
@@ -138,6 +151,20 @@ assert.equal(image.caption, 'Mapa de prueba');
 const runs = items.flatMap(item => item?.runs || []);
 assert.ok(runs.some(run => run.marks?.includes('bold')), 'bold formatting must survive import');
 assert.ok(runs.some(run => run.marks?.includes('italic')), 'italic formatting must survive import');
+
+const footnoteRun = runs.find(run => run?.footnote?.target);
+assert.ok(footnoteRun, 'noteref must become a semantic footnote run');
+assert.equal(footnoteRun.text, '', 'footnote marker must not enter TTS/translation text');
+assert.equal(footnoteRun.footnote.label, '1');
+assert.equal(footnoteRun.footnote.target, 'OEBPS/notes.xhtml#n1');
+const note = book.footnotes?.['OEBPS/notes.xhtml#n1'];
+assert.ok(note, 'footnote body must be stored by canonical file#id target');
+assert.equal((note.items || []).map(item => (item.runs || []).map(run => run.text || '').join('')).join(' '), 'Primera nota importante.');
+assert.ok(note.items.flatMap(item => item.runs || []).some(run => run.marks?.includes('italic')), 'footnote formatting must survive');
+
+const { contentItemText } = await import('../js/reader/semantic-content.js');
+const refParagraph = items.find(item => (item.runs || []).some(run => run?.footnote));
+assert.equal(contentItemText(refParagraph), 'La nota está aquí y el texto continúa.', 'footnote label must be excluded from plain paragraph text');
 
 const textOf = item => (item?.runs || []).map(run => String(run?.text || '')).join('');
 const dialogueItems = items.filter(item => /^— /.test(textOf(item)));
