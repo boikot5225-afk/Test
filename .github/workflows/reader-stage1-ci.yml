@@ -31,6 +31,8 @@ jobs:
       - name: Check JavaScript syntax
         run: |
           node --check js/reader/semantic-content.js
+          node --check js/reader/semantic-content-footnotes.js
+          node --check js/reader/footnote-ui-stage1.js
           node --check js/reader/semantic-import-stage1.js
           node --check js/reader/semantic-import-bridge.js
           node --check js/reader/library-cover-stage1.js
@@ -42,6 +44,7 @@ jobs:
           node --check js/reader/chapter-render-dialogue.js
           node --check js/reader/epub-stage1.js
           node --check js/reader/epub-stage1-real.js
+          node --check tests/footnote-stage1.test.mjs
           node --check tests/semantic-epub-import.integration.test.mjs
 
       - name: Run compatibility checks
@@ -50,6 +53,7 @@ jobs:
           node --experimental-default-type=module tests/semantic-reader-compat.test.mjs
           node --experimental-default-type=module tests/library-cover-stage1.test.mjs
           node --experimental-default-type=module tests/semantic-tts-target.test.mjs
+          node --experimental-default-type=module tests/footnote-stage1.test.mjs
 
       - name: Run full EPUB import integration
         shell: bash
