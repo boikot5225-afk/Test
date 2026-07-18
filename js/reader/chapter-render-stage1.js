@@ -4,10 +4,11 @@ import {
   firstReadableContentIndex,
   isImageContentItem,
   renderContentItem,
-} from './semantic-content.js?v=1';
-import { installSemanticImportBridge } from './semantic-import-bridge.js?v=1';
+} from './semantic-content-footnotes.js?v=1';
+import { installSemanticImportBridge } from './semantic-import-bridge.js?v=2';
 import { installSemanticLibraryCovers } from './library-cover-stage1.js?v=1';
 import { installSemanticTtsPrefetch } from './semantic-tts-prefetch-stage1.js?v=1';
+import { installFootnoteUi } from './footnote-ui-stage1.js?v=1';
 
 installSemanticImportBridge();
 installSemanticLibraryCovers();
@@ -197,6 +198,7 @@ function renderEmergencyFallback(deps, reason = '') {
 
 export function createReaderChapterRenderer(deps) {
   ensureReaderStage1Styles();
+  installFootnoteUi({ getCurrentBook: deps.getCurrentBook });
 
   const renderLegacy = deps.renderParagraphText;
   const trackLegacy = deps.trackParagraphSeen;
@@ -215,8 +217,6 @@ export function createReaderChapterRenderer(deps) {
       if (!text.trim()) return false;
       if (typeof original === 'string') return trackLegacy(index, options);
 
-      // The legacy tracker reads chapter.paragraphs[index] itself. Give it a
-      // transient plain-text view, then restore the semantic item immediately.
       items[index] = text;
       try { return trackLegacy(index, options); }
       finally { items[index] = original; }
@@ -237,9 +237,6 @@ export function createReaderChapterRenderer(deps) {
         return false;
       }
 
-      // A few Android WebView failures do not throw: the renderer finishes but
-      // leaves an empty chapter root. Verify the visible result on the next task
-      // and replace it with a plain, lossless fallback instead of showing blank.
       setTimeout(() => {
         const root = document.getElementById('reader-chapter-text');
         const book = deps.getCurrentBook?.();
