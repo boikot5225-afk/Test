@@ -4,8 +4,10 @@ const {
   contentItemText,
   chapterContentText,
   normalizeSemanticBookLineItems,
+  normalizeSemanticBookTextChunks,
   normalizeSemanticBookTranslations,
   renderContentItem,
+  splitSemanticItemChunks,
   translationValueText,
 } = await import('../js/reader/semantic-content.js');
 const { createReaderNavigation } = await import('../js/reader/navigation.js');
@@ -78,6 +80,27 @@ assert(
   markedDialogueHtml,
 );
 
+const longProse = {
+  type: 'paragraph',
+  runs: [
+    { text: 'La policía encontró una mina de plata con cincuenta y seis personas ya muertas. ', marks: [] },
+    { text: 'Algunas fueron arrojadas todavía con vida; otras habían sido secuestradas durante la noche. ', marks: ['italic'] },
+    { text: 'Las matanzas en México son comparables a bárbaros crímenes de guerra.', marks: [] },
+  ],
+};
+const proseChunks = splitSemanticItemChunks(longProse, { maxChars: 120, minChars: 55 });
+assert('oversized prose becomes several semantic blocks', proseChunks.length >= 2, String(proseChunks.length));
+assert(
+  'prose chunks stay under configured size',
+  proseChunks.every(item => contentItemText(item).length <= 120),
+  proseChunks.map(item => contentItemText(item).length).join(','),
+);
+assert(
+  'prose text survives chunking',
+  proseChunks.map(contentItemText).join(' ').replace(/\s+/g, ' ').trim() === contentItemText(longProse).replace(/\s+/g, ' ').trim(),
+);
+assert('inline formatting survives prose chunking', proseChunks.some(item => item.runs.some(run => run.marks?.includes('italic'))));
+
 const existingBook = {
   schemaVersion: 2,
   currentChapter: 0,
@@ -103,7 +126,8 @@ const existingBook = {
     ],
   }],
 };
-assert('existing semantic book dialogue migrates', normalizeSemanticBookLineItems(existingBook) === true);
+const lineItemsChanged = normalizeSemanticBookLineItems(existingBook);
+assert('existing semantic book dialogue migrates', lineItemsChanged === true);
 assert(
   'dialogue becomes three independent paragraphs',
   existingBook.chapters[0].paragraphs.map(contentItemText).join('|') ===
@@ -114,7 +138,10 @@ assert('italic formatting survives paragraph split', existingBook.chapters[0].pa
 assert('reading position follows content after split', existingBook.currentParagraph === 4, String(existingBook.currentParagraph));
 assert('dialogue migration is one-shot', normalizeSemanticBookLineItems(existingBook) === false);
 
-assert('stale translations are cleared after paragraph reindex', normalizeSemanticBookTranslations(existingBook) === true);
+assert(
+  'stale translations are cleared after paragraph reindex',
+  normalizeSemanticBookTranslations(existingBook, { reindexed: lineItemsChanged }) === true,
+);
 assert('old translation keys removed', Object.keys(existingBook.readerTranslations).length === 0);
 assert('old analysis keys removed', Object.keys(existingBook.readerAnalyses).length === 0);
 assert(
@@ -122,10 +149,39 @@ assert(
   translationValueText({ data: { translation: { ru: 'Нормальный перевод' } } }) === 'Нормальный перевод',
 );
 assert('literal object placeholder is rejected', translationValueText('[object Object]') === '');
-assert('localized object placeholder is rejected', translationValueText('[объект Объект]') === '');
+assert('localized bracketed object placeholder is rejected', translationValueText('[объект Объект]') === '');
+assert('localized bare object placeholder is rejected', translationValueText('Объект Объект') === '');
 existingBook.readerTranslations['ch_0:4'] = { data: { translatedText: 'Новый перевод повествования' } };
 assert('new object translation is normalized', normalizeSemanticBookTranslations(existingBook) === true);
-assert(existingBook.readerTranslations['ch_0:4'] === 'Новый перевод повествования', true, String(existingBook.readerTranslations['ch_0:4']));
+assert(
+  'normalized translation is stored as text',
+  existingBook.readerTranslations['ch_0:4'] === 'Новый перевод повествования',
+  String(existingBook.readerTranslations['ch_0:4']),
+);
+
+const chunkBook = {
+  schemaVersion: 2,
+  currentChapter: 0,
+  currentParagraph: 1,
+  _semanticLineItemsV1: true,
+  _semanticTranslationKeysV3: true,
+  readerTranslations: { 'ch_0:1': 'Перевод старого длинного абзаца' },
+  readerAnalyses: { 'ch_0:1': { summary: 'Разбор старого длинного абзаца' } },
+  chapters: [{
+    id: 'ch_0',
+    paragraphs: [
+      { type: 'heading', level: 1, runs: [{ text: 'Capítulo largo', marks: [] }] },
+      longProse,
+    ],
+  }],
+};
+const chunksChanged = normalizeSemanticBookTextChunks(chunkBook, { maxChars: 120, minChars: 55 });
+assert('existing oversized paragraph migrates', chunksChanged === true);
+assert('reading position follows first new prose chunk', chunkBook.currentParagraph === 1, String(chunkBook.currentParagraph));
+assert('chunk migration is one-shot', normalizeSemanticBookTextChunks(chunkBook, { maxChars: 120, minChars: 55 }) === false);
+normalizeSemanticBookTranslations(chunkBook, { reindexed: chunksChanged });
+assert('stale translation is cleared after prose chunking', Object.keys(chunkBook.readerTranslations).length === 0);
+assert('stale analysis is cleared after prose chunking', Object.keys(chunkBook.readerAnalyses).length === 0);
 
 const spoken = [];
 const audio = createReaderAudio({
