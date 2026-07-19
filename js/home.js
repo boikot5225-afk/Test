@@ -53,7 +53,7 @@ window.openReaderCandidate = function openReaderCandidate(index) {
   const variants = candidate.variants?.length
     ? `<div style="font-size:.76rem;color:var(--text-muted);margin-top:4px">формы: ${candidate.variants.map(homeEscape).join(', ')}</div>`
     : '';
-  const contexts = candidate.contexts.slice(0, 5).map((row, rowIndex) => `
+  const contexts = candidate.contexts.slice(0, 5).map((row) => `
     <div style="padding:11px 12px;border:1px solid var(--border);border-radius:11px;background:var(--surface2)">
       <div style="font-size:.68rem;color:var(--text-dim);margin-bottom:5px">${homeEscape(row.bookTitle || 'текст')}${row.chapterTitle ? ' · ' + homeEscape(row.chapterTitle) : ''}${row.form && row.form !== candidate.lemma ? ' · форма ' + homeEscape(row.form) : ''}</div>
       <div style="font-family:'Lora',serif;font-size:.94rem;line-height:1.55;color:var(--text)">${homeEscape(row.text || 'Контекст не сохранён')}</div>
@@ -91,7 +91,6 @@ export async function renderHome() {
   const lang = globalThis.AN2_LANG || 'fr';
   const isZh = lang === 'zh';
 
-  // ── Обновить UI переключателя языка ──
   if (typeof globalThis.updateLangUI === 'function') globalThis.updateLangUI();
   else {
     const btnFr = $('hlb-fr'); const btnEn = $('hlb-en'); const btnZh = $('hlb-zh'); const btnEs = $('hlb-es');
@@ -104,7 +103,6 @@ export async function renderHome() {
     if (label) label.textContent = isZh ? 'Символы' : 'Глаголы';
   }
 
-  // ── Дата и имя ──
   const username = globalThis.an2CurrentProfileName || '—';
   const avatarEl = $('home-username-avatar');
   if (avatarEl) avatarEl.textContent = username.slice(0, 1).toUpperCase() || '?';
@@ -114,18 +112,12 @@ export async function renderHome() {
     }));
   } catch { setText('home-date', 'сегодня'); }
 
-  // ── Книги ──
   let books = [];
   try {
     books = JSON.parse(localStorage.getItem(scopedKey('an2_reader_books_v1')) || '[]') || [];
   } catch { books = []; }
   if (!Array.isArray(books)) books = [];
 
-  // Same recovery the reader library itself does: a past localStorage quota
-  // failure can silently drop books from this snapshot (this reads localStorage
-  // directly, not through readerLibrary's hydrate) even though they're still
-  // safe in IndexedDB — merge them back in so the home screen doesn't undercount
-  // books the reader can still open just fine.
   try {
     const fromIdb = await libraryIdbGet(scopedKey('an2_reader_books_v1'));
     if (Array.isArray(fromIdb) && fromIdb.length) {
@@ -141,7 +133,6 @@ export async function renderHome() {
     }
   } catch (_) {}
 
-  // Фильтрация по текущему языку
   const langBooks = books.filter(b => {
     const bl = String(b.lang || b.sourceLang || 'fr').slice(0, 2);
     return bl === lang;
@@ -158,7 +149,6 @@ export async function renderHome() {
   };
 
   const langFlag = (l) => ({ fr: '🇫🇷', zh: '🇨🇳', en: '🇬🇧', de: '🇩🇪', es: '🇪🇸' }[String(l || 'fr').slice(0,2)] || '🌐');
-
   const sorted = [...langBooks].sort((a, b) =>
     new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
   const primary = sorted[0] || null;
@@ -169,11 +159,8 @@ export async function renderHome() {
 
   const section = $('home-continue-section');
   if (section) {
-    if (!primary) {
-      // Nothing to continue — the persistent "Добавить текст" button below
-      // already covers this case, no need for a second add prompt here.
-      section.innerHTML = '';
-    } else {
+    if (!primary) section.innerHTML = '';
+    else {
       const pct = bookProgress(primary);
       const chInfo = (() => {
         const ch = primary.chapters?.[primary.currentChapter || 0];
@@ -193,34 +180,23 @@ export async function renderHome() {
           </div>
           <button class="lib-cont-go" onclick="showScreen('reader');readerOpenBook('${escape(primary.id)}')">Читать</button>
         </div>
-        ${langBooks.length > 1 ? `
-          <button class="home-lib-link" onclick="showScreen('reader')">
-            Все тексты (${langBooks.length}) →
-          </button>` : ''}`;
+        ${langBooks.length > 1 ? `<button class="home-lib-link" onclick="showScreen('reader')">Все тексты (${langBooks.length}) →</button>` : ''}`;
     }
   }
 
-  // ── Статистика ──
   let wordState = {};
   try {
     wordState = JSON.parse(localStorage.getItem(scopedKey('an2_reader_word_state_v1')) || '{}') || {};
   } catch { wordState = {}; }
   const words = Object.values(wordState).filter(w => w && w.word);
-
-  // Фильтруем слова по языку
-  const langWords = words.filter(w => {
-    const wl = String(w.lang || 'fr').slice(0, 2);
-    return wl === lang;
-  });
+  const langWords = words.filter(w => String(w.lang || 'fr').slice(0, 2) === lang);
 
   const savedCount = langWords.filter(w => w.saved).length;
   const openedToday = langWords.filter(w => {
     if (!w.updatedAt) return false;
     const d = new Date(w.updatedAt);
     const now = new Date();
-    return d.getFullYear() === now.getFullYear() &&
-           d.getMonth() === now.getMonth() &&
-           d.getDate() === now.getDate();
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
   }).length;
 
   setText('home-stat-words', openedToday || langWords.filter(w => (w.clicked || 0) > 0).length);
@@ -232,13 +208,10 @@ export async function renderHome() {
     } catch { return 0; }
   })();
   setText('home-stat-minutes', readMinutes > 0 ? readMinutes : '—');
-
-  // Legacy
   setText('home-books-count', books.length);
   setText('home-books-count-new', langBooks.length);
   setText('home-saved-words-new', savedCount ? savedCount + ' сохранено' : 'сохранённые');
 
-  // ── Новости: один компактный линк, без отдельных карточек ──
   const newsSection = document.getElementById('home-news-section');
   if (newsSection) {
     const newsCount = books.filter(b => b.format === 'news' && String(b.lang || b.sourceLang || 'fr').slice(0,2) === lang).length;
@@ -247,17 +220,13 @@ export async function renderHome() {
       : `<button class="home-lib-link" onclick="showScreen('reader');setTimeout(()=>readerSetLibTab('news'),120)">📰 Добавить новость</button>`;
   }
 
-  // ── Последние слова / иероглифы ──
   const recentWords = $('home-recent-reader-words');
   if (recentWords) {
-    const rows = langWords
-      .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
-      .slice(0, 10);
+    const rows = langWords.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)).slice(0, 10);
     if (!rows.length) {
       const hint = isZh ? 'Иероглифы появятся здесь когда начнёшь читать.' : 'Слова появятся здесь когда начнёшь читать.';
       recentWords.innerHTML = `<div class="home-empty-note">${hint}</div>`;
     } else if (isZh) {
-      // Для ZH — карточки с иероглифом и пиньинем
       recentWords.innerHTML = rows.map(w => {
         const pinyin = w.pinyin || w.reading || '';
         return `<span class="home-word-chip zh-chip" onclick="showScreen('dict');setTimeout(()=>window.renderDictWords&&renderDictWords('zh','${escape(w.word)}'),80)">
@@ -268,40 +237,41 @@ export async function renderHome() {
     } else {
       recentWords.innerHTML = rows.map(w => {
         const status = w.saved ? 'сохранено' : w.known ? 'знаю' : 'открыто';
-        return `<span class="home-word-chip ${w.saved ? 'saved' : ''}">
-          <b>${escape(w.word)}</b><small>${escape(status)}</small>
-        </span>`;
+        return `<span class="home-word-chip ${w.saved ? 'saved' : ''}"><b>${escape(w.word)}</b><small>${escape(status)}</small></span>`;
       }).join('');
     }
   }
 
-  // Секция лейбл
   const recentLabel = document.querySelector('.home-recent-section .home-section-label');
   if (recentLabel) recentLabel.textContent = isZh ? 'последние иероглифы' : 'последние слова';
 
-  // ── Кандидаты на запоминание ──
-  // Only distinct paragraph contexts from the last 30 days count. Inflected
-  // forms are grouped by lemma after the word lookup returns its analysis.
   const topSection = $('home-top-clicked-section');
   const topWords = $('home-top-clicked-words');
   if (topSection && topWords) {
     currentHomeCandidates = buildWordCandidates(wordState, {
       lang,
       days: 30,
-      minContexts: 2,
-      limit: 10,
+      minContexts: 1,
+      limit: 12,
     });
     const label = topSection.querySelector('.home-section-label');
     if (label) label.textContent = '🔥 кандидаты на запоминание';
+    topSection.style.display = '';
     if (!currentHomeCandidates.length) {
-      topSection.style.display = 'none';
+      topWords.innerHTML = `<div class="reader-candidate-empty" style="padding:12px 14px;border:1px dashed var(--border);border-radius:12px;color:var(--text-muted);font-size:.8rem;line-height:1.5">Пока пусто. После первого открытия слово появится здесь как <b>1/2 конт.</b>, после второго абзаца станет кандидатом.</div>`;
     } else {
-      topSection.style.display = '';
-      topWords.innerHTML = currentHomeCandidates.map((candidate, index) => `
-        <button type="button" class="home-word-chip" onclick="openReaderCandidate(${index})" style="text-align:left;cursor:pointer">
-          <b>${escape(candidate.lemma)}</b>
-          <small>${candidate.contextCount} конт.</small>
-        </button>`).join('');
+      const ready = currentHomeCandidates.filter(candidate => candidate.contextCount >= 2);
+      const waiting = currentHomeCandidates.filter(candidate => candidate.contextCount === 1);
+      topWords.innerHTML = `
+        <div style="width:100%;font-size:.72rem;color:var(--text-muted);margin:0 0 8px;line-height:1.45">Один контекст — наблюдаем. Два разных абзаца — предлагаем запомнить.</div>
+        ${[...ready, ...waiting].map(candidate => {
+          const index = currentHomeCandidates.indexOf(candidate);
+          const pending = candidate.contextCount < 2;
+          return `<button type="button" class="home-word-chip" onclick="openReaderCandidate(${index})" style="text-align:left;cursor:pointer;${pending ? 'opacity:.68;border-style:dashed' : ''}">
+            <b>${escape(candidate.lemma)}</b>
+            <small>${pending ? '1/2 конт.' : candidate.contextCount + ' конт.'}</small>
+          </button>`;
+        }).join('')}`;
     }
   }
 }
