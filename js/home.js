@@ -7,7 +7,7 @@ import {
   buildWordCandidates,
   installWordCandidateBridge,
   setCandidateStatus,
-} from './reader/word-candidates.js?v=1';
+} from './reader/word-candidates.js?v=2';
 
 installWordCandidateBridge();
 let currentHomeCandidates = [];
@@ -53,10 +53,13 @@ window.openReaderCandidate = function openReaderCandidate(index) {
   const variants = candidate.variants?.length
     ? `<div style="font-size:.76rem;color:var(--text-muted);margin-top:4px">формы: ${candidate.variants.map(homeEscape).join(', ')}</div>`
     : '';
+  const contextSummary = candidate.hasLegacyContext
+    ? `${candidate.contextCount} открытия за 30 дней · один старый контекст без текста`
+    : `${candidate.contextCount} разных контекста за 30 дней`;
   const contexts = candidate.contexts.slice(0, 5).map((row) => `
     <div style="padding:11px 12px;border:1px solid var(--border);border-radius:11px;background:var(--surface2)">
-      <div style="font-size:.68rem;color:var(--text-dim);margin-bottom:5px">${homeEscape(row.bookTitle || 'текст')}${row.chapterTitle ? ' · ' + homeEscape(row.chapterTitle) : ''}${row.form && row.form !== candidate.lemma ? ' · форма ' + homeEscape(row.form) : ''}</div>
-      <div style="font-family:'Lora',serif;font-size:.94rem;line-height:1.55;color:var(--text)">${homeEscape(row.text || 'Контекст не сохранён')}</div>
+      <div style="font-size:.68rem;color:var(--text-dim);margin-bottom:5px">${row.legacy ? 'старое открытие' : homeEscape(row.bookTitle || 'текст')}${!row.legacy && row.chapterTitle ? ' · ' + homeEscape(row.chapterTitle) : ''}${!row.legacy && row.form && row.form !== candidate.lemma ? ' · форма ' + homeEscape(row.form) : ''}</div>
+      <div style="font-family:'Lora',serif;font-size:.94rem;line-height:1.55;color:${row.legacy ? 'var(--text-muted)' : 'var(--text)'}">${homeEscape(row.text || 'Контекст не сохранён')}</div>
     </div>`).join('');
   modal.innerHTML = `
     <section style="width:100%;max-width:620px;max-height:88vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:20px 20px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom));box-shadow:0 -14px 38px rgba(30,20,10,.24)">
@@ -64,7 +67,7 @@ window.openReaderCandidate = function openReaderCandidate(index) {
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
         <div>
           <div style="font-family:'Playfair Display',serif;font-size:1.65rem;font-weight:600;color:var(--text)">${homeEscape(candidate.lemma)}</div>
-          <div style="font-size:.76rem;color:var(--accent);margin-top:3px">${candidate.contextCount} разных контекста за 30 дней</div>
+          <div style="font-size:.76rem;color:var(--accent);margin-top:3px">${contextSummary}</div>
           ${variants}
         </div>
         <button onclick="closeReaderCandidateModal()" style="border:none;background:none;color:var(--text-muted);font-size:1.5rem;cursor:pointer">×</button>

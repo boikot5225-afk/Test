@@ -14,7 +14,7 @@ import { loadStats, saveStats, loadMeta, saveMeta, syncStatsFromCloud,
 import { speak, stopSpeak, initSpeech, applyKbMode, initTTSEngineUI, showFrKb, hideFrKb, isFrKbEnabled, setTTSEngine,
          frKbEnabled, autoSpeak, toggleAutoSpeak, toggleKbMode, insertFrChar,
          frBackspace, frEnter, frToggleShift } from './tts.js?v=68.43-zh-tts-cache-bust';
-import { renderHome } from './home.js';
+import { renderHome } from './home.js?v=77.23';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
 import { renderNumbersScreen, nextNumber, checkNumber, speakCurrentNumber } from './numbers.js';
@@ -2556,4 +2556,3 @@ function __finalizeHandlers() {
 __finalizeHandlers();
 // Defensive: re-run on next tick in case anything assigned late
 setTimeout(__finalizeHandlers, 0);
-

@@ -148,6 +148,7 @@ export function buildWordCandidates(states, {
         lang: language,
         variants: new Set(),
         contexts: new Map(),
+        legacyOpenedAt: 0,
         saved: false,
         known: false,
         proper: false,
@@ -164,7 +165,19 @@ export function buildWordCandidates(states, {
       .filter(Boolean)
       .forEach(value => group.variants.add(value));
 
-    for (const [place, raw] of Object.entries(state.clickContexts || {})) {
+    const storedContexts = Object.entries(state.clickContexts || {});
+    const updatedAt = new Date(state.updatedAt || 0).getTime();
+    if (Number(state.clicked || 0) > storedContexts.length && Number.isFinite(updatedAt) && updatedAt >= cutoff) {
+      // Older builds saved only `clicked`, without the paragraph context now
+      // required by the candidate list. Preserve one conservative piece of
+      // legacy evidence instead of making those real opens disappear. We cap
+      // it at one because the old counter cannot prove that repeated taps came
+      // from different paragraphs.
+      group.legacyOpenedAt = Math.max(group.legacyOpenedAt, updatedAt);
+      group.lastOpenedAt = Math.max(group.lastOpenedAt, updatedAt);
+    }
+
+    for (const [place, raw] of storedContexts) {
       const at = contextTimestamp(raw);
       if (!at || at < cutoff) continue;
       const previous = group.contexts.get(place);
@@ -186,12 +199,29 @@ export function buildWordCandidates(states, {
   return [...groups.values()]
     .map(group => {
       const contexts = [...group.contexts.values()].sort((a, b) => contextTimestamp(b) - contextTimestamp(a));
+      const verifiedContextCount = contexts.length;
+      if (contexts.length < DEFAULT_MIN_CONTEXTS && group.legacyOpenedAt) {
+        contexts.push({
+          place: `legacy:${group.lang}:${group.lemma}`,
+          at: new Date(group.legacyOpenedAt).toISOString(),
+          text: 'Контекст этого открытия не сохранился в предыдущей версии.',
+          bookTitle: 'старое открытие',
+          chapterTitle: '',
+          paragraphIndex: null,
+          form: group.lemma,
+          legacy: true,
+        });
+        contexts.sort((a, b) => contextTimestamp(b) - contextTimestamp(a));
+      }
+      const hasLegacyContext = contexts.some(context => context.legacy);
       return {
         lemma: group.lemma,
         lang: group.lang,
         variants: [...group.variants].filter(value => value !== group.lemma),
         contexts,
         contextCount: contexts.length,
+        verifiedContextCount,
+        hasLegacyContext,
         lastOpenedAt: group.lastOpenedAt,
         saved: group.saved,
         known: group.known,

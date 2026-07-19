@@ -78,6 +78,33 @@ const oneContext = buildWordCandidates({
 }, { lang: 'fr', now, days: 30, minContexts: 1 });
 assert('one context is available for visible 1/2 progress', oneContext.length === 1 && oneContext[0].contextCount === 1);
 
+const legacyClick = buildWordCandidates({
+  'es:pido': {
+    word: 'pido', lang: 'es', clicked: 1, saved: false, known: false,
+    status: 'looked', updatedAt: recentB, clickContexts: {},
+  },
+}, { lang: 'es', now, days: 30, minContexts: 1 });
+assert('legacy clicked word without context remains visible as 1/2', legacyClick.length === 1 && legacyClick[0].contextCount === 1);
+assert('legacy click is labelled instead of pretending its paragraph is known', legacyClick[0].hasLegacyContext && legacyClick[0].contexts[0].legacy === true);
+
+const legacyPlusNewContext = buildWordCandidates({
+  'es:pido': {
+    word: 'pido', lang: 'es', clicked: 2, saved: false, known: false,
+    status: 'looked', updatedAt: recentB,
+    clickContexts: { 'book:d:99': { at: recentB, text: 'Le pido una respuesta.', form: 'pido' } },
+  },
+}, { lang: 'es', now, days: 30, minContexts: 2 });
+assert('new exact context completes a legacy 1/2 candidate', legacyPlusNewContext.length === 1 && legacyPlusNewContext[0].contextCount === 2);
+assert('legacy plus new candidate keeps one verified paragraph', legacyPlusNewContext[0].verifiedContextCount === 1);
+
+const expiredLegacyClick = buildWordCandidates({
+  'es:antiguo': {
+    word: 'antiguo', lang: 'es', clicked: 1, saved: false, known: false,
+    status: 'looked', updatedAt: old, clickContexts: {},
+  },
+}, { lang: 'es', now, days: 30, minContexts: 1 });
+assert('legacy click older than candidate window stays excluded', expiredLegacyClick.length === 0);
+
 const lemmaStore = {
   'fr:eut': {
     word: 'eut', lang: 'fr', clicked: 2, saved: false, known: false, status: 'looked',
