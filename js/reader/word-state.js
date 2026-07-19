@@ -71,16 +71,20 @@ export function createReaderWordState(opts) {
       log.warn?.('[reader] word-state cache delayed');
     }
   };
+  const publishLiveSnapshot = (value) => {
+    try { globalThis.an2ReaderWordStateSnapshot = () => value; } catch {}
+    return value;
+  };
   const load = () => {
     const cached = cacheRead();
-    if (cached) return cached;
+    if (cached) return publishLiveSnapshot(cached);
     let data = {};
     try { data = JSON.parse(localStorage.getItem(storageKey()) || '{}') || {}; } catch (_) {}
     if (pruneAll(data)) {
       try { localStorage.setItem(storageKey(), JSON.stringify(data)); } catch (_) {}
     }
     cacheWrite(data);
-    return data;
+    return publishLiveSnapshot(data);
   };
   const save = () => {
     const data = load();

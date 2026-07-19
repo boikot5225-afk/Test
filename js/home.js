@@ -6,8 +6,9 @@ import { libraryIdbGet } from './reader/library-idb-store.js?v=1';
 import {
   buildWordCandidates,
   installWordCandidateBridge,
+  loadWordCandidateState,
   setCandidateStatus,
-} from './reader/word-candidates.js?v=2';
+} from './reader/word-candidates.js?v=3';
 
 installWordCandidateBridge();
 let currentHomeCandidates = [];
@@ -187,10 +188,7 @@ export async function renderHome() {
     }
   }
 
-  let wordState = {};
-  try {
-    wordState = JSON.parse(localStorage.getItem(scopedKey('an2_reader_word_state_v1')) || '{}') || {};
-  } catch { wordState = {}; }
+  const wordState = await loadWordCandidateState();
   const words = Object.values(wordState).filter(w => w && w.word);
   const langWords = words.filter(w => String(w.lang || 'fr').slice(0, 2) === lang);
 
@@ -225,7 +223,10 @@ export async function renderHome() {
 
   const recentWords = $('home-recent-reader-words');
   if (recentWords) {
-    const rows = langWords.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)).slice(0, 10);
+    const rows = langWords
+      .filter(w => Number(w.clicked || 0) > 0 || w.saved || w.known || ['looked', 'learning', 'problem', 'hard', 'familiar'].includes(w.status))
+      .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
+      .slice(0, 10);
     if (!rows.length) {
       const hint = isZh ? 'Иероглифы появятся здесь когда начнёшь читать.' : 'Слова появятся здесь когда начнёшь читать.';
       recentWords.innerHTML = `<div class="home-empty-note">${hint}</div>`;

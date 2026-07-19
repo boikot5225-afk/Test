@@ -71,13 +71,17 @@ jobs:
 
           sed -i 's#https://appassets.androidplatform.net/assets/index.html#https://appassets.androidplatform.net/assets/www/index.html#' "$JAVA_FILE"
           sed -i "s/applicationId 'space.saintjust.reader.stage1'/applicationId 'space.saintjust.reader.semanticstage1clean'/" "$BUILD_FILE"
-          sed -i "s/versionName 'stage1-test'/versionName 'semantic-v77.24'/" "$BUILD_FILE"
+          sed -i 's/versionCode 2/versionCode 3/' "$BUILD_FILE"
+          sed -i "s/versionName 'stage1-test'/versionName 'semantic-v77.25'/" "$BUILD_FILE"
           sed -i 's/Reader AI Stage 1/Reader AI EPUB Clean/' "$MANIFEST_FILE"
+          sed -i 's/v77.24-footnotes-chapter-search/v77.25-live-candidates/' '.stage1-android/app/src/main/assets/www/index.html'
+          sed -i 's/js\/app.js?v=77.24/js\/app.js?v=77.25/' '.stage1-android/app/src/main/assets/www/index.html'
+          sed -i 's/home.js?v=77.24/home.js?v=77.25/' '.stage1-android/app/src/main/assets/www/js/app.js'
 
           grep -F 'assets/www/index.html' "$JAVA_FILE"
           grep -F "applicationId 'space.saintjust.reader.semanticstage1clean'" "$BUILD_FILE"
-          grep -F 'versionCode 2' "$BUILD_FILE"
-          grep -F "versionName 'semantic-v77.24'" "$BUILD_FILE"
+          grep -F 'versionCode 3' "$BUILD_FILE"
+          grep -F "versionName 'semantic-v77.25'" "$BUILD_FILE"
           test -f '.stage1-android/app/src/main/assets/www/index.html'
           test -f '.stage1-android/app/src/main/assets/www/js/reader/semantic-import-bridge.js'
           test -f '.stage1-android/app/src/main/assets/www/js/reader/semantic-import-stage1.js'

@@ -12,6 +12,7 @@ const {
   buildWordCandidates,
   installWordCandidateBridge,
   mergeLemmaMetadata,
+  mergeWordStateStores,
 } = await import('../js/reader/word-candidates.js');
 const { createReaderWordState } = await import('../js/reader/word-state.js');
 
@@ -119,6 +120,27 @@ assert('canonical lemma entry created', !!lemmaStore['fr:avoir']);
 assert('surface links to lemma', lemmaStore['fr:eut'].linkedLemma === 'avoir');
 assert('click contexts copied to lemma', Object.keys(lemmaStore['fr:avoir'].clickContexts).length === 2);
 
+const staleLocal = {
+  'es:tipo': {
+    word: 'tipo', lang: 'es', clicked: 1, status: 'looked', updatedAt: recentA,
+    clickContexts: { 'book:old:1': { at: recentA, text: 'Un tipo antiguo.' } },
+  },
+};
+const freshLive = {
+  'es:tipo': {
+    word: 'tipo', lang: 'es', clicked: 2, status: 'looked', updatedAt: recentB,
+    clickContexts: { 'book:new:2': { at: recentB, text: 'Otro tipo apareció.' } },
+  },
+  'es:señales': {
+    word: 'señales', lang: 'es', clicked: 1, status: 'looked', updatedAt: recentB,
+    clickContexts: { 'book:new:3': { at: recentB, text: 'Había señales claras.' } },
+  },
+};
+const mergedSnapshots = mergeWordStateStores(staleLocal, freshLive);
+assert('fresh live words survive a stale local snapshot', !!mergedSnapshots['es:señales']);
+assert('paragraph evidence is unioned across snapshots', Object.keys(mergedSnapshots['es:tipo'].clickContexts).length === 2);
+assert('fresh merged candidates replace a stale home list', buildWordCandidates(mergedSnapshots, { lang: 'es', now, minContexts: 1 }).some(item => item.lemma === 'señales'));
+
 let cache = null;
 const storeKey = 'test-word-state';
 const wordState = createReaderWordState({
@@ -139,6 +161,7 @@ const wordState = createReaderWordState({
   idbPut: async () => {},
   idbGet: async () => null,
 });
+globalThis.an2ReaderWordStateSnapshot = () => cache;
 
 document.body.innerHTML = `
   <div id="reader-book-title">Nada</div>
@@ -178,5 +201,11 @@ assert('second exact paragraph counts despite stale active class', wordState.mar
 clicked = wordState.get('frappa', 'fr');
 assert('two exact paragraphs produce two contexts', clicked.clicked === 2 && Object.keys(clicked.clickContexts).length === 2);
 assert('candidate appears from two exact contexts', buildWordCandidates(cache, { lang: 'fr', minContexts: 2 }).some(item => item.lemma === 'frappa'));
+
+document.dispatchEvent(new window.CustomEvent('reader-word-analysis-ready', {
+  detail: { surface: 'frappa', lemma: 'frapper', pos: 'verb', lang: 'fr' },
+}));
+await new Promise(resolve => setTimeout(resolve, 0));
+assert('lemma analysis updates the live reader cache', cache['fr:frappa'].linkedLemma === 'frapper' && !!cache['fr:frapper']);
 
 console.log('word candidates: OK');

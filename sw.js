@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v77.24-footnotes-chapter-search';
+const CACHE_VERSION = 'v77.25-live-candidates';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

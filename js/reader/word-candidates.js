@@ -1,4 +1,4 @@
-import { wordStateIdbPut } from './word-state-idb-store.js?v=1';
+import { wordStateIdbGet, wordStateIdbPut } from './word-state-idb-store.js?v=1';
 
 const DEFAULT_WINDOW_DAYS = 30;
 const DEFAULT_MIN_CONTEXTS = 2;
@@ -36,13 +36,85 @@ function storageKey() {
   }
 }
 
-function readState() {
+function readLocalState() {
   try {
     const value = JSON.parse(localStorage.getItem(storageKey()) || '{}');
     return value && typeof value === 'object' ? value : {};
   } catch {
     return {};
   }
+}
+
+function readLiveState() {
+  try {
+    const value = globalThis.an2ReaderWordStateSnapshot?.();
+    return value && typeof value === 'object' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function newestContext(first, second) {
+  if (!first) return second;
+  if (!second) return first;
+  return contextTimestamp(second) >= contextTimestamp(first) ? second : first;
+}
+
+function mergeStateEntry(first, second) {
+  if (!first) return second && { ...second, places: { ...(second.places || {}) }, clickContexts: { ...(second.clickContexts || {}) } };
+  if (!second) return { ...first, places: { ...(first.places || {}) }, clickContexts: { ...(first.clickContexts || {}) } };
+  const firstAt = new Date(first.updatedAt || 0).getTime() || 0;
+  const secondAt = new Date(second.updatedAt || 0).getTime() || 0;
+  const newest = secondAt >= firstAt ? second : first;
+  const clickContexts = { ...(first.clickContexts || {}) };
+  for (const [place, context] of Object.entries(second.clickContexts || {})) {
+    clickContexts[place] = newestContext(clickContexts[place], context);
+  }
+  return {
+    ...newest,
+    seen: Math.max(Number(first.seen || 0), Number(second.seen || 0)),
+    clicked: Math.max(Number(first.clicked || 0), Number(second.clicked || 0), Object.keys(clickContexts).length),
+    places: { ...(first.places || {}), ...(second.places || {}) },
+    clickContexts,
+  };
+}
+
+export function mergeWordStateStores(...stores) {
+  const merged = {};
+  for (const store of stores) {
+    if (!store || typeof store !== 'object') continue;
+    for (const [key, value] of Object.entries(store)) {
+      if (!value || typeof value !== 'object') continue;
+      merged[key] = mergeStateEntry(merged[key], value);
+    }
+  }
+  return merged;
+}
+
+function readState() {
+  // The reader owns an in-memory cache. Mutations made by the candidate bridge
+  // must hit that same object; otherwise the next word tap saves the old cache
+  // over the lemma/context update that was just written to localStorage.
+  return readLiveState() || readLocalState();
+}
+
+export async function loadWordCandidateState() {
+  const key = storageKey();
+  const live = readLiveState();
+  const local = readLocalState();
+  let durable = null;
+  try { durable = await wordStateIdbGet(key); } catch {}
+
+  // Merge all three copies. Newer entry metadata wins, while paragraph evidence
+  // is unioned so an out-of-order IndexedDB write cannot make recent candidates
+  // disappear from the home screen.
+  const merged = mergeWordStateStores(live, durable, local);
+  if (live) {
+    for (const key of Object.keys(live)) delete live[key];
+    Object.assign(live, merged);
+  }
+  try { localStorage.setItem(key, JSON.stringify(merged)); } catch {}
+  return merged;
 }
 
 async function persistState(state) {
@@ -167,7 +239,11 @@ export function buildWordCandidates(states, {
 
     const storedContexts = Object.entries(state.clickContexts || {});
     const updatedAt = new Date(state.updatedAt || 0).getTime();
-    if (Number(state.clicked || 0) > storedContexts.length && Number.isFinite(updatedAt) && updatedAt >= cutoff) {
+    const validRecentContextCount = storedContexts.filter(([, raw]) => {
+      const at = contextTimestamp(raw);
+      return at && at >= cutoff;
+    }).length;
+    if (Number(state.clicked || 0) > validRecentContextCount && Number.isFinite(updatedAt) && updatedAt >= cutoff) {
       // Older builds saved only `clicked`, without the paragraph context now
       // required by the candidate list. Preserve one conservative piece of
       // legacy evidence instead of making those real opens disappear. We cap
