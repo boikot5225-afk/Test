@@ -19,6 +19,9 @@ const FOOTNOTE_TOKEN_START = '\uE000RFN';
 const FOOTNOTE_TOKEN_END = '\uE001';
 const FOOTNOTE_TOKEN_RE = /\uE000RFN(\d+)\uE001/g;
 const NOTE_NAME_RE = /(?:^|[-_\s])(footnote|endnote|fn|nota|note[-_ ]?(?:text|body|item))(?=$|[-_\s])/i;
+const IMPLICIT_NOTES_PATH_RE = /(?:^|[/_.\-\s])(notas?|notes?|footnotes?|endnotes?)(?=$|[/_.\-\s])/i;
+const IMPLICIT_CHAPTER_HEADING_RE = /^(?:cap[ií]tulo|chapter|chapitre|kapitel)\s+(\d{1,4})\b/i;
+const IMPLICIT_NOTE_ENTRY_RE = /^(\d{1,4})\s*[.)]\s+\S/;
 
 function cleanPath(value) {
   return String(value || '').replace(/^\/+/, '').replace(/\\/g, '/');
@@ -51,6 +54,93 @@ function uniqueExistingPaths(paths, entries) {
   return (paths || [])
     .map(cleanPath)
     .filter(path => path && entries.has(path) && !seen.has(path) && seen.add(path));
+}
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function implicitChapterKeyFromPath(sourcePath) {
+  const name = cleanPath(sourcePath).split('/').pop()?.replace(/\.[^.]+$/, '') || '';
+  const match = name.match(/^0*(\d{1,4})(?=__|[-_.\s]|$)/);
+  return match ? String(Number(match[1])) : '';
+}
+
+function implicitChapterKey(doc, sourcePath) {
+  const fromPath = implicitChapterKeyFromPath(sourcePath);
+  if (fromPath) return fromPath;
+  const candidates = [...doc.querySelectorAll('h1,h2,h3,h4,p')].slice(0, 12);
+  for (const node of candidates) {
+    const match = cleanText(node.textContent || '').match(IMPLICIT_CHAPTER_HEADING_RE);
+    if (match) return String(Number(match[1]));
+  }
+  return '';
+}
+
+function stripImplicitNoteLabel(items, label) {
+  const prefix = new RegExp(`^\\s*${escapeRegExp(label)}\\s*[.)]\\s*`);
+  let removed = false;
+  return (items || []).map(item => {
+    if (removed || !Array.isArray(item?.runs)) return item;
+    const runs = item.runs.map(run => {
+      if (removed || !String(run?.text || '')) return run;
+      const text = String(run.text || '');
+      if (!prefix.test(text)) return run;
+      removed = true;
+      return { ...run, text: text.replace(prefix, '') };
+    }).filter(run => String(run?.text || '') || run?.footnote);
+    return { ...item, runs };
+  }).filter(item => semanticItemText(item).trim() || item?.type === 'image');
+}
+
+function collectImplicitEndnotes(htmlDocuments) {
+  const notesByChapter = new Map();
+  const documentPaths = new Set();
+
+  for (const [sourcePath, html] of htmlDocuments) {
+    if (!IMPLICIT_NOTES_PATH_RE.test(cleanPath(sourcePath))) continue;
+    const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+    const basePath = sourcePath.split('/').slice(0, -1).join('/');
+    const found = [];
+    let chapterKey = '';
+
+    for (const paragraph of [...doc.querySelectorAll('p')]) {
+      const text = cleanText(paragraph.textContent || '');
+      const heading = text.match(IMPLICIT_CHAPTER_HEADING_RE);
+      if (heading) {
+        chapterKey = String(Number(heading[1]));
+        continue;
+      }
+      const entry = text.match(IMPLICIT_NOTE_ENTRY_RE);
+      if (!chapterKey || !entry) continue;
+      const label = String(Number(entry[1]));
+      const rawItems = htmlToSemanticItems(`<html><body>${paragraph.outerHTML}</body></html>`, { basePath })
+        .flatMap(item => splitSemanticItemLines(item));
+      const items = stripImplicitNoteLabel(rawItems, label);
+      if (!items.some(item => semanticItemText(item).trim())) continue;
+      found.push({ chapterKey, label, items });
+    }
+
+    // A standalone notes/endnotes document normally contains several numbered
+    // entries. Requiring at least two prevents an unrelated file whose name
+    // happens to contain "note" from being removed from the reading order.
+    if (found.length < 2) continue;
+    documentPaths.add(sourcePath);
+    for (const note of found) {
+      const chapterNotes = notesByChapter.get(note.chapterKey) || new Map();
+      const target = `${sourcePath}#reader-implicit-c${note.chapterKey}-n${note.label}`;
+      chapterNotes.set(note.label, {
+        id: `reader-implicit-c${note.chapterKey}-n${note.label}`,
+        sourcePath,
+        implicit: true,
+        items: note.items,
+        target,
+      });
+      notesByChapter.set(note.chapterKey, chapterNotes);
+    }
+  }
+
+  return { notesByChapter, documentPaths };
 }
 
 function epubType(node) {
@@ -132,7 +222,7 @@ function removeBacklinks(node) {
   }
 }
 
-function preprocessFootnotes(html, sourcePath, knownTargets) {
+function preprocessFootnotes(html, sourcePath, knownTargets, implicitEndnotes = null) {
   const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
   const basePath = sourcePath.split('/').slice(0, -1).join('/');
   const footnotes = {};
@@ -155,6 +245,28 @@ function preprocessFootnotes(html, sourcePath, knownTargets) {
   }
 
   const references = [];
+  const chapterKey = implicitChapterKey(doc, sourcePath);
+  const implicitChapterNotes = chapterKey ? implicitEndnotes?.notesByChapter?.get(chapterKey) : null;
+  if (implicitChapterNotes?.size) {
+    for (const marker of [...doc.querySelectorAll('sup')]) {
+      if (marker.closest?.('a[href]')) continue;
+      const rawLabel = cleanText(marker.textContent || '');
+      if (!/^\d{1,4}$/.test(rawLabel)) continue;
+      const label = String(Number(rawLabel));
+      const note = implicitChapterNotes.get(label);
+      if (!note?.target) continue;
+      const index = references.length;
+      references.push({ label: rawLabel, target: note.target, implicit: true });
+      footnotes[note.target] = {
+        id: note.id,
+        sourcePath: note.sourcePath,
+        implicit: true,
+        items: note.items,
+      };
+      marker.replaceWith(doc.createTextNode(`${FOOTNOTE_TOKEN_START}${index}${FOOTNOTE_TOKEN_END}`));
+    }
+  }
+
   for (const link of [...doc.querySelectorAll('a[href*="#"]')]) {
     const target = resolveFootnoteTarget(sourcePath, link.getAttribute('href') || '');
     if (!target || !knownTargets.has(target)) continue;
@@ -283,6 +395,7 @@ export async function parseSemanticEpubFile(file, {
       for (const target of collectFootnoteTargets(html, path)) knownFootnoteTargets.add(target);
     } catch {}
   }
+  const implicitEndnotes = collectImplicitEndnotes(htmlDocuments);
 
   const chapters = [];
   const footnotes = {};
@@ -296,8 +409,12 @@ export async function parseSemanticEpubFile(file, {
     onProgress?.(`Разбираю главу ${index + 1}/${htmlPaths.length}...`);
     try {
       const html = htmlDocuments.get(path) ?? await entries.get(path).text();
+      if (implicitEndnotes.documentPaths.has(path)) {
+        diagnostics.push({ path, implicitEndnotes: true, skippedAsNotesDocument: true });
+        continue;
+      }
       const basePath = path.split('/').slice(0, -1).join('/');
-      const prepared = preprocessFootnotes(html, path, knownFootnoteTargets);
+      const prepared = preprocessFootnotes(html, path, knownFootnoteTargets, implicitEndnotes);
       const parsedBeforeRefs = htmlToSemanticItems(prepared.html, { basePath })
         .flatMap(item => splitSemanticItemLines(item))
         .flatMap(item => splitSemanticItemChunks(item));

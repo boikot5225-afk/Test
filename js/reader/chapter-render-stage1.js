@@ -5,10 +5,14 @@ import {
   isImageContentItem,
   renderContentItem,
 } from './semantic-content-footnotes.js?v=1';
-import { installSemanticImportBridge } from './semantic-import-bridge.js?v=2';
+import { installSemanticImportBridge } from './semantic-import-bridge.js?v=3';
 import { installSemanticLibraryCovers } from './library-cover-stage1.js?v=1';
 import { installSemanticTtsPrefetch } from './semantic-tts-prefetch-stage1.js?v=1';
 import { installFootnoteUi } from './footnote-ui-stage1.js?v=1';
+import {
+  installChapterSearch,
+  refreshChapterSearchAfterRender,
+} from './chapter-search.js?v=1';
 
 installSemanticImportBridge();
 installSemanticLibraryCovers();
@@ -199,6 +203,7 @@ function renderEmergencyFallback(deps, reason = '') {
 export function createReaderChapterRenderer(deps) {
   ensureReaderStage1Styles();
   installFootnoteUi({ getCurrentBook: deps.getCurrentBook });
+  installChapterSearch({ getCurrentBook: deps.getCurrentBook });
 
   const renderLegacy = deps.renderParagraphText;
   const trackLegacy = deps.trackParagraphSeen;
@@ -235,6 +240,10 @@ export function createReaderChapterRenderer(deps) {
         console.error('[reader stage1] semantic render failed', error);
         renderEmergencyFallback(deps, error?.message || String(error));
         return false;
+      }
+
+      try { refreshChapterSearchAfterRender(); } catch (error) {
+        console.warn('[reader chapter search] refresh failed', error);
       }
 
       setTimeout(() => {

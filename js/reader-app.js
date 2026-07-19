@@ -27,7 +27,7 @@ import { createReaderLibraryStore } from './reader/library-store.js?v=5';
 import { createReaderDisplay } from './reader/display.js?v=4';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=2-per-paragraph-timer-guard';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
-import { createReaderChapterRenderer } from './reader/chapter-render.js?v=6';
+import { createReaderChapterRenderer } from './reader/chapter-render.js?v=7';
 import { createReaderPagesMode } from './reader/pages-mode.js?v=2';
 import { splitTextToChapters as readerImportSplitTextToChapters,
          splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';

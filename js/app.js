@@ -14,7 +14,7 @@ import { loadStats, saveStats, loadMeta, saveMeta, syncStatsFromCloud,
 import { speak, stopSpeak, initSpeech, applyKbMode, initTTSEngineUI, showFrKb, hideFrKb, isFrKbEnabled, setTTSEngine,
          frKbEnabled, autoSpeak, toggleAutoSpeak, toggleKbMode, insertFrChar,
          frBackspace, frEnter, frToggleShift } from './tts.js?v=68.43-zh-tts-cache-bust';
-import { renderHome } from './home.js?v=77.23';
+import { renderHome } from './home.js?v=77.24';
 import { renderZhTrainer } from './zh_trainer.js';
 import { renderStats, confirmReset } from './stats.js';
 import { renderNumbersScreen, nextNumber, checkNumber, speakCurrentNumber } from './numbers.js';
@@ -80,7 +80,7 @@ import {
   readerNormalizeWord, readerPosRu, readerScopedKey,
   readerSearchZhCoreJson, readerZhEntryFromSources,
   readerWordStatusRu, renderReaderChapter,
-} from './reader-app.js';
+} from './reader-app.js?v=77.24';
 import { dictNounsCache, dictPrepsCache, dictType, setDictTypeValue } from './dict-render.js';
 import { loadNounsFromCloud, initExercisesState, initExercisesAfterLoad, PREPS_DATA } from './exercises-fr.js';
 // ── Глобальное состояние ──

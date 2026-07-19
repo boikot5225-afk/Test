@@ -224,7 +224,7 @@
           📡 Проверить связь с сервером
         </button>
         <div id="health-result" style="display:none;margin-top:10px;font-size:0.78rem;line-height:1.5;padding:8px 12px;border-radius:8px;"></div>
-        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v77.23-restore-legacy-click-candidates</span></div>
+        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v77.24-footnotes-chapter-search</span></div>
       </div>
     </div>
 
@@ -464,6 +464,7 @@
           <div id="reader-book-title" class="rd-book"></div>
           <div id="reader-chapter-title" class="rd-chap"></div>
         </div>
+        <button id="reader-search-btn" class="rd-icon" onclick="readerToggleChapterSearch()" title="Поиск в главе" aria-label="Поиск в главе">🔎</button>
         <button id="reader-marks-btn" class="rd-icon" onclick="readerToggleWordMarks()" title="Подсветка слов" aria-label="Подсветка слов">🖍</button>
         <button id="reader-help-btn" class="rd-icon" onclick="toggleReaderTranslations()" title="Перевод и разбор" aria-label="Перевод и разбор">👁</button>
         <button id="reader-view-mode-btn" class="rd-icon" onclick="readerTogglePagesMode()" title="Скролл / страницы" aria-label="Скролл / страницы">📖</button>
@@ -573,6 +574,7 @@
         <button class="rd-menu" onclick="readerCopyCurrentParagraph();readerCloseMoreSheet()"><span class="ic">📋</span><span>Скопировать абзац</span></button>
         <div class="rd-divider"></div>
         <div class="rd-sect">глава</div>
+        <button class="rd-menu" onclick="readerCloseMoreSheet();readerOpenChapterSearch()"><span class="ic">🔎</span><span>Найти в главе<small>слово или фразу</small></span></button>
         <button class="rd-menu" onclick="readerCloseMoreSheet();readerOpenToc()"><span class="ic">≡</span><span>Оглавление<small>перейти к любой главе</small></span></button>
         <button class="rd-menu" onclick="readerSpeakChapter();readerCloseMoreSheet()"><span class="ic">🎧</span><span>Озвучить главу</span></button>
         <button class="rd-menu" onclick="readerPrevChapter();readerCloseMoreSheet()"><span class="ic">⟵</span><span>Предыдущая глава</span></button>
@@ -1968,6 +1970,6 @@
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=77.23"></script>
+<script type="module" src="js/app.js?v=77.24"></script>
 </body>
 </html>

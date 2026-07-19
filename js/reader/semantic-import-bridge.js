@@ -7,7 +7,7 @@ import {
   chapterContentText,
   firstReadableContentIndex,
 } from './semantic-content.js?v=4';
-import { parseSemanticEpubFile } from './semantic-import-stage1.js?v=2';
+import { parseSemanticEpubFile } from './semantic-import-stage1.js?v=3';
 
 let pendingImport = null;
 let bridgeStarted = false;
