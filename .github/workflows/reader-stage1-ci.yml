@@ -44,7 +44,12 @@ jobs:
           node --check js/reader/chapter-render-dialogue.js
           node --check js/reader/epub-stage1.js
           node --check js/reader/epub-stage1-real.js
+          node --check js/reader/word-state.js
+          node --check js/reader/word-candidates.js
+          node --check js/reader/word-panel.js
+          node --check js/home.js
           node --check tests/footnote-stage1.test.mjs
+          node --check tests/word-candidates.test.mjs
           node --check tests/semantic-epub-import.integration.test.mjs
 
       - name: Run compatibility checks
@@ -54,6 +59,7 @@ jobs:
           node --experimental-default-type=module tests/library-cover-stage1.test.mjs
           node --experimental-default-type=module tests/semantic-tts-target.test.mjs
           node --experimental-default-type=module tests/footnote-stage1.test.mjs
+          node --experimental-default-type=module tests/word-candidates.test.mjs
 
       - name: Run full EPUB import integration
         shell: bash
