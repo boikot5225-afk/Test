@@ -60,6 +60,7 @@ export function createReaderWordPanel({
     if (['adverb', 'adverbe', 'adv'].includes(value)) return 'adverb';
     if (['preposition', 'préposition', 'prep'].includes(value)) return 'preposition';
     if (['pronoun', 'pronom'].includes(value)) return 'pronoun';
+    if (['proper_noun', 'proper noun', 'name', 'person_name'].includes(value)) return 'proper_noun';
     return value || 'other';
   }
 
@@ -97,6 +98,21 @@ export function createReaderWordPanel({
     return { pos, lemma, ru, gender, level };
   }
 
+  function publishCandidateMetadata({ selectedWord, lemma, pos, lang, data }) {
+    try {
+      document.dispatchEvent(new CustomEvent('reader-word-analysis-ready', {
+        detail: {
+          surface: selectedWord,
+          lemma,
+          pos,
+          lang,
+          isProper: ['proper_noun', 'name', 'person_name'].includes(String(pos || '').toLowerCase()),
+          source: data?._source || '',
+        },
+      }));
+    } catch {}
+  }
+
   function renderAnalysis(data = {}, source = '') {
     const panel = ensure();
     const box = panel.querySelector('#reader-word-analysis');
@@ -119,6 +135,8 @@ export function createReaderWordPanel({
     const zhChars = isChinese ? String(data.chars || '').trim() : '';
     const ipa = lang === 'en' ? String(data.ipa || '').trim() : '';
     const ipaLine = ipa ? `<div class="reader-analysis-pinyin">${escape(ipa)}</div>` : '';
+
+    publishCandidateMetadata({ selectedWord, lemma, pos: filled.pos, lang, data });
 
     if (known) {
       known.textContent = source === 'local'
