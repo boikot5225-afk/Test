@@ -5,9 +5,12 @@ globalThis.window = window;
 globalThis.document = window.document;
 globalThis.localStorage = window.localStorage;
 globalThis.CustomEvent = window.CustomEvent;
+globalThis.MutationObserver = window.MutationObserver;
+globalThis.MouseEvent = window.MouseEvent;
 
 const {
   buildWordCandidates,
+  installWordCandidateBridge,
   mergeLemmaMetadata,
 } = await import('../js/reader/word-candidates.js');
 const { createReaderWordState } = await import('../js/reader/word-state.js');
@@ -106,18 +109,37 @@ document.body.innerHTML = `
   <div id="reader-book-title">Nada</div>
   <div id="reader-chapter-title">Chapitre 1</div>
   <div id="reader-chapter-text">
-    <div class="reader-paragraph active" data-p="4">Il frappa le vendeur.</div>
-  </div>`;
+    <div class="reader-paragraph active" data-p="4"><span class="reader-word" data-word="frappa">frappa</span> le vendeur.</div>
+    <div class="reader-paragraph" data-p="5">Puis il <span class="reader-word" data-word="frappa">frappa</span> encore.</div>
+  </div>
+  <section id="home-top-clicked-section" style="display:none">
+    <div class="home-section-label"></div>
+    <div id="home-top-clicked-words"></div>
+  </section>`;
 
-assert('first tap in paragraph counts', wordState.markClicked('frappa', 'fr') === true);
-assert('repeat tap in same paragraph does not count', wordState.markClicked('frappa', 'fr') === false);
+installWordCandidateBridge();
+await new Promise(resolve => setTimeout(resolve, 0));
+assert('empty candidate section remains visible with explanation', document.getElementById('home-top-clicked-section').style.display !== 'none');
+assert('empty candidate explanation is rendered', document.querySelector('.reader-candidate-empty')?.textContent.includes('двух разных абзацах'));
+
+const firstWord = document.querySelector('.reader-paragraph[data-p="4"] .reader-word');
+const secondWord = document.querySelector('.reader-paragraph[data-p="5"] .reader-word');
+
+// This reproduces the real failure: paragraph 4 is still active, but the user
+// taps the word in paragraph 5. Capture must switch active before markClicked().
+secondWord.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+assert('actual tapped paragraph becomes active before counter', secondWord.closest('.reader-paragraph').classList.contains('active'));
+assert('first tap in tapped paragraph counts', wordState.markClicked('frappa', 'fr') === true);
+assert('repeat tap in same tapped paragraph does not count', wordState.markClicked('frappa', 'fr') === false);
 let clicked = wordState.get('frappa', 'fr');
-assert('same paragraph has one click context', clicked.clicked === 1 && Object.keys(clicked.clickContexts).length === 1);
+assert('same tapped paragraph has one click context', clicked.clicked === 1 && Object.keys(clicked.clickContexts).length === 1);
+assert('stored first context uses paragraph 5', Object.values(clicked.clickContexts)[0].paragraphIndex === 5);
 
-document.querySelector('.reader-paragraph').dataset.p = '5';
-document.querySelector('.reader-paragraph').textContent = 'Puis il frappa encore.';
-assert('tap in another paragraph counts', wordState.markClicked('frappa', 'fr') === true);
+firstWord.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+assert('another tapped paragraph becomes active', firstWord.closest('.reader-paragraph').classList.contains('active'));
+assert('tap in another real paragraph counts', wordState.markClicked('frappa', 'fr') === true);
 clicked = wordState.get('frappa', 'fr');
-assert('two paragraphs produce two contexts', clicked.clicked === 2 && Object.keys(clicked.clickContexts).length === 2);
+assert('two real paragraphs produce two contexts', clicked.clicked === 2 && Object.keys(clicked.clickContexts).length === 2);
+assert('candidate appears from two captured contexts', buildWordCandidates(cache, { lang: 'fr', minContexts: 2 }).some(item => item.lemma === 'frappa'));
 
 console.log('word candidates: OK');
