@@ -231,16 +231,68 @@ export async function setCandidateStatus(candidate, status) {
   return changed;
 }
 
+function syncTappedParagraph(event) {
+  const word = event?.target?.closest?.('.reader-word');
+  const paragraph = word?.closest?.('.reader-paragraph');
+  if (!word || !paragraph) return;
+  const root = paragraph.closest('#reader-chapter-text') || paragraph.parentElement;
+  root?.querySelectorAll?.('.reader-paragraph.active').forEach(item => {
+    if (item !== paragraph) item.classList.remove('active');
+  });
+  paragraph.classList.add('active');
+  paragraph.dataset.readerWordTappedAt = String(Date.now());
+}
+
+function ensureEmptyCandidateHint() {
+  const section = document.getElementById('home-top-clicked-section');
+  const words = document.getElementById('home-top-clicked-words');
+  if (!section || !words || section.dataset.candidateHintBusy === '1') return;
+  if (section.style.display !== 'none') return;
+  section.dataset.candidateHintBusy = '1';
+  const label = section.querySelector('.home-section-label');
+  if (label) label.textContent = '🔥 кандидаты на запоминание';
+  words.innerHTML = '<div class="reader-candidate-empty" style="padding:12px 14px;border:1px dashed var(--border);border-radius:12px;color:var(--text-muted);font-size:.8rem;line-height:1.5">Пока нет кандидатов. Открой одно слово в двух разных абзацах — здесь появится карточка с контекстами.</div>';
+  section.style.display = '';
+  delete section.dataset.candidateHintBusy;
+}
+
+function bindEmptyCandidateHint() {
+  const section = document.getElementById('home-top-clicked-section');
+  if (!section || section.dataset.candidateHintBound === '1') {
+    ensureEmptyCandidateHint();
+    return;
+  }
+  section.dataset.candidateHintBound = '1';
+  const observer = new MutationObserver(() => queueMicrotask(ensureEmptyCandidateHint));
+  observer.observe(section, { attributes: true, attributeFilter: ['style'], childList: true, subtree: true });
+  ensureEmptyCandidateHint();
+}
+
 let bridgeInstalled = false;
 export function installWordCandidateBridge() {
   if (bridgeInstalled || typeof document === 'undefined') return;
   bridgeInstalled = true;
+
+  // Capture runs before the inline word handler. The old counter reads
+  // `.reader-paragraph.active`; without this, it often recorded the previously
+  // selected paragraph and collapsed real clicks from different paragraphs into
+  // one context.
+  document.addEventListener('click', syncTappedParagraph, true);
+
   document.addEventListener('reader-word-analysis-ready', async event => {
     const detail = event?.detail || {};
     const store = readState();
     if (!mergeLemmaMetadata(store, detail)) return;
     await persistState(store);
   });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindEmptyCandidateHint, { once: true });
+  } else {
+    bindEmptyCandidateHint();
+  }
+  setTimeout(bindEmptyCandidateHint, 0);
+  setTimeout(bindEmptyCandidateHint, 500);
 }
 
 export { canonicalLang as candidateCanonicalLang, normalizeWord as candidateNormalizeWord };
