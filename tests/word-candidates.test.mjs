@@ -70,6 +70,14 @@ assert('proper names excluded', !candidates.some(item => item.lemma === 'genevi�
 assert('old contexts excluded', !candidates.some(item => item.lemma === 'ancien'));
 assert('known words excluded', !candidates.some(item => item.lemma === 'connu'));
 
+const oneContext = buildWordCandidates({
+  'fr:perte': {
+    word: 'perte', lang: 'fr', clicked: 1,
+    clickContexts: { 'book:c:1': { at: recentB, text: 'Une perte importante.' } },
+  },
+}, { lang: 'fr', now, days: 30, minContexts: 1 });
+assert('one context is available for visible 1/2 progress', oneContext.length === 1 && oneContext[0].contextCount === 1);
+
 const lemmaStore = {
   'fr:eut': {
     word: 'eut', lang: 'fr', clicked: 2, saved: false, known: false, status: 'looked',
@@ -107,7 +115,7 @@ const wordState = createReaderWordState({
 
 document.body.innerHTML = `
   <div id="reader-book-title">Nada</div>
-  <div id="reader-chapter-title">Chapitre 1</div>
+  <div id="reader-chapter-title">🇫🇷 · Chapitre 1 · гл. 1/10 · абзац 5/20</div>
   <div id="reader-chapter-text">
     <div class="reader-paragraph active" data-p="4"><span class="reader-word" data-word="frappa">frappa</span> le vendeur.</div>
     <div class="reader-paragraph" data-p="5">Puis il <span class="reader-word" data-word="frappa">frappa</span> encore.</div>
@@ -125,21 +133,23 @@ assert('empty candidate explanation is rendered', document.querySelector('.reade
 const firstWord = document.querySelector('.reader-paragraph[data-p="4"] .reader-word');
 const secondWord = document.querySelector('.reader-paragraph[data-p="5"] .reader-word');
 
-// This reproduces the real failure: paragraph 4 is still active, but the user
-// taps the word in paragraph 5. Capture must switch active before markClicked().
+// Capture the real tapped paragraph, then deliberately restore the WRONG active
+// paragraph. The counter must use the exact captured index rather than CSS state.
 secondWord.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-assert('actual tapped paragraph becomes active before counter', secondWord.closest('.reader-paragraph').classList.contains('active'));
-assert('first tap in tapped paragraph counts', wordState.markClicked('frappa', 'fr') === true);
-assert('repeat tap in same tapped paragraph does not count', wordState.markClicked('frappa', 'fr') === false);
+firstWord.closest('.reader-paragraph').classList.add('active');
+secondWord.closest('.reader-paragraph').classList.remove('active');
+assert('first exact tapped paragraph counts despite stale active class', wordState.markClicked('frappa', 'fr') === true);
+assert('repeat tap in same exact paragraph does not count', wordState.markClicked('frappa', 'fr') === false);
 let clicked = wordState.get('frappa', 'fr');
-assert('same tapped paragraph has one click context', clicked.clicked === 1 && Object.keys(clicked.clickContexts).length === 1);
-assert('stored first context uses paragraph 5', Object.values(clicked.clickContexts)[0].paragraphIndex === 5);
+assert('stored first exact context uses paragraph 5', Object.values(clicked.clickContexts)[0].paragraphIndex === 5);
+assert('one exact context produces 1/2 progress', buildWordCandidates(cache, { lang: 'fr', minContexts: 1 })[0]?.contextCount === 1);
 
 firstWord.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-assert('another tapped paragraph becomes active', firstWord.closest('.reader-paragraph').classList.contains('active'));
-assert('tap in another real paragraph counts', wordState.markClicked('frappa', 'fr') === true);
+secondWord.closest('.reader-paragraph').classList.add('active');
+firstWord.closest('.reader-paragraph').classList.remove('active');
+assert('second exact paragraph counts despite stale active class', wordState.markClicked('frappa', 'fr') === true);
 clicked = wordState.get('frappa', 'fr');
-assert('two real paragraphs produce two contexts', clicked.clicked === 2 && Object.keys(clicked.clickContexts).length === 2);
-assert('candidate appears from two captured contexts', buildWordCandidates(cache, { lang: 'fr', minContexts: 2 }).some(item => item.lemma === 'frappa'));
+assert('two exact paragraphs produce two contexts', clicked.clicked === 2 && Object.keys(clicked.clickContexts).length === 2);
+assert('candidate appears from two exact contexts', buildWordCandidates(cache, { lang: 'fr', minContexts: 2 }).some(item => item.lemma === 'frappa'));
 
 console.log('word candidates: OK');
