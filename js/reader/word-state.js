@@ -41,7 +41,7 @@ export function createReaderWordState(opts) {
     const keys = Object.keys(data);
     if (keys.length <= TOTAL_CAP) return false;
     const candidates = keys.filter(k => isPrunable(data[k]))
-      .sort((a, b) => new Date(data[a]?.updatedAt || 0) - new Date(b?.updatedAt || 0));
+      .sort((a, b) => new Date(data[a]?.updatedAt || 0) - new Date(data[b]?.updatedAt || 0));
     const over = keys.length - TOTAL_CAP;
     for (const k of candidates.slice(0, over)) delete data[k];
     return over > 0 && candidates.length > 0;
