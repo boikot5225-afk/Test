@@ -3,12 +3,85 @@
 // ════════════════════════════════════════════════
 
 import { libraryIdbGet } from './reader/library-idb-store.js?v=1';
+import {
+  buildWordCandidates,
+  installWordCandidateBridge,
+  setCandidateStatus,
+} from './reader/word-candidates.js?v=1';
+
+installWordCandidateBridge();
+let currentHomeCandidates = [];
+
+function homeEscape(s) {
+  return String(s || '').replace(/[&<>"']/g, c =>
+    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+function ensureCandidateModal() {
+  let modal = document.getElementById('reader-candidate-modal');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'reader-candidate-modal';
+  modal.style.cssText = 'display:none;position:fixed;inset:0;z-index:1200;background:rgba(35,25,15,.48);align-items:flex-end;justify-content:center;padding:0;';
+  modal.addEventListener('click', event => {
+    if (event.target === modal) window.closeReaderCandidateModal?.();
+  });
+  document.body.appendChild(modal);
+  return modal;
+}
+
+window.closeReaderCandidateModal = function closeReaderCandidateModal() {
+  const modal = document.getElementById('reader-candidate-modal');
+  if (modal) modal.style.display = 'none';
+};
+
+window.readerCandidateAction = async function readerCandidateAction(index, status) {
+  const candidate = currentHomeCandidates[Number(index)];
+  if (!candidate) return;
+  await setCandidateStatus(candidate, status);
+  window.closeReaderCandidateModal?.();
+  await renderHome();
+  try {
+    globalThis.showToast?.(status === 'known' ? '✓ Убрано как знакомое' : '＋ Добавлено в изучение');
+  } catch {}
+};
+
+window.openReaderCandidate = function openReaderCandidate(index) {
+  const candidate = currentHomeCandidates[Number(index)];
+  if (!candidate) return;
+  const modal = ensureCandidateModal();
+  const variants = candidate.variants?.length
+    ? `<div style="font-size:.76rem;color:var(--text-muted);margin-top:4px">формы: ${candidate.variants.map(homeEscape).join(', ')}</div>`
+    : '';
+  const contexts = candidate.contexts.slice(0, 5).map((row, rowIndex) => `
+    <div style="padding:11px 12px;border:1px solid var(--border);border-radius:11px;background:var(--surface2)">
+      <div style="font-size:.68rem;color:var(--text-dim);margin-bottom:5px">${homeEscape(row.bookTitle || 'текст')}${row.chapterTitle ? ' · ' + homeEscape(row.chapterTitle) : ''}${row.form && row.form !== candidate.lemma ? ' · форма ' + homeEscape(row.form) : ''}</div>
+      <div style="font-family:'Lora',serif;font-size:.94rem;line-height:1.55;color:var(--text)">${homeEscape(row.text || 'Контекст не сохранён')}</div>
+    </div>`).join('');
+  modal.innerHTML = `
+    <section style="width:100%;max-width:620px;max-height:88vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:20px 20px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom));box-shadow:0 -14px 38px rgba(30,20,10,.24)">
+      <div style="width:42px;height:4px;border-radius:4px;background:var(--border);margin:0 auto 15px"></div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+        <div>
+          <div style="font-family:'Playfair Display',serif;font-size:1.65rem;font-weight:600;color:var(--text)">${homeEscape(candidate.lemma)}</div>
+          <div style="font-size:.76rem;color:var(--accent);margin-top:3px">${candidate.contextCount} разных контекста за 30 дней</div>
+          ${variants}
+        </div>
+        <button onclick="closeReaderCandidateModal()" style="border:none;background:none;color:var(--text-muted);font-size:1.5rem;cursor:pointer">×</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin:15px 0">${contexts}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">
+        <button onclick="readerCandidateAction(${Number(index)},'learning')" class="btn btn-primary" style="padding:11px 12px">＋ В изучение</button>
+        <button onclick="readerCandidateAction(${Number(index)},'known')" class="btn btn-secondary" style="padding:11px 12px">✓ Уже знаю</button>
+      </div>
+    </section>`;
+  modal.style.display = 'flex';
+};
 
 export async function renderHome() {
   const $ = (id) => document.getElementById(id);
   const setText = (id, val) => { const el = $(id); if (el) el.textContent = val; };
-  const escape = (s) => String(s || '').replace(/[&<>"']/g, c =>
-    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  const escape = homeEscape;
 
   const scopedKey = (base) =>
     typeof globalThis.an2ReaderStorageKey === 'function'
@@ -206,33 +279,29 @@ export async function renderHome() {
   const recentLabel = document.querySelector('.home-recent-section .home-section-label');
   if (recentLabel) recentLabel.textContent = isZh ? 'последние иероглифы' : 'последние слова';
 
-  // ── Часто открываемые (по кликам, для текущего языка) ──
+  // ── Кандидаты на запоминание ──
+  // Only distinct paragraph contexts from the last 30 days count. Inflected
+  // forms are grouped by lemma after the word lookup returns its analysis.
   const topSection = $('home-top-clicked-section');
   const topWords = $('home-top-clicked-words');
   if (topSection && topWords) {
-    const topClicked = [...langWords]
-      .filter(w => !w.saved && !w.known && (w.clicked || 0) > 0)
-      .sort((a, b) => (b.clicked || 0) - (a.clicked || 0))
-      .slice(0, 10);
-    if (!topClicked.length) {
+    currentHomeCandidates = buildWordCandidates(wordState, {
+      lang,
+      days: 30,
+      minContexts: 2,
+      limit: 10,
+    });
+    const label = topSection.querySelector('.home-section-label');
+    if (label) label.textContent = '🔥 кандидаты на запоминание';
+    if (!currentHomeCandidates.length) {
       topSection.style.display = 'none';
     } else {
       topSection.style.display = '';
-      if (isZh) {
-        topWords.innerHTML = topClicked.map(w => {
-          const pinyin = w.pinyin || w.reading || '';
-          return `<span class="home-word-chip zh-chip" onclick="showScreen('dict');setTimeout(()=>window.renderDictWords&&renderDictWords('zh','${escape(w.word)}'),80)">
-            <b style="font-size:1.1rem;line-height:1">${escape(w.word)}</b>
-            ${pinyin ? `<small style="font-size:.65rem;opacity:.7">${escape(pinyin)}</small>` : ''}
-          </span>`;
-        }).join('');
-      } else {
-        topWords.innerHTML = topClicked.map(w =>
-          `<span class="home-word-chip ${w.saved ? 'saved' : ''}">
-            <b>${escape(w.word)}</b><small>${w.clicked}×</small>
-          </span>`
-        ).join('');
-      }
+      topWords.innerHTML = currentHomeCandidates.map((candidate, index) => `
+        <button type="button" class="home-word-chip" onclick="openReaderCandidate(${index})" style="text-align:left;cursor:pointer">
+          <b>${escape(candidate.lemma)}</b>
+          <small>${candidate.contextCount} конт.</small>
+        </button>`).join('');
     }
   }
 }
