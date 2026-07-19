@@ -241,6 +241,27 @@ function syncTappedParagraph(event) {
   });
   paragraph.classList.add('active');
   paragraph.dataset.readerWordTappedAt = String(Date.now());
+
+  const clone = paragraph.cloneNode(true);
+  clone.querySelectorAll?.('.reader-translation,.reader-analysis-actions,.reader-footnote-ref,button').forEach(el => el.remove());
+  const bookTitle = String(document.getElementById('reader-book-title')?.textContent || '').trim();
+  const chapterTitle = String(document.getElementById('reader-chapter-title')?.textContent || '')
+    .replace(/\s*·\s*абзац\s+\d+\s*\/\s*\d+.*$/i, '')
+    .trim();
+  const paragraphIndex = Number(paragraph.dataset?.p);
+  const rawWord = String(word.dataset?.word || word.textContent || '').trim();
+  const place = `${bookTitle || 'book'}::${chapterTitle || 'chapter'}::${Number.isFinite(paragraphIndex) ? paragraphIndex : paragraph.dataset?.p || '0'}`;
+  globalThis.__readerCandidateTapContext = {
+    word: rawWord,
+    form: rawWord,
+    paragraphIndex: Number.isFinite(paragraphIndex) ? paragraphIndex : null,
+    text: String(clone.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 320),
+    bookTitle,
+    chapterTitle,
+    place,
+    at: new Date().toISOString(),
+    capturedAt: Date.now(),
+  };
 }
 
 function ensureEmptyCandidateHint() {
@@ -272,20 +293,13 @@ let bridgeInstalled = false;
 export function installWordCandidateBridge() {
   if (bridgeInstalled || typeof document === 'undefined') return;
   bridgeInstalled = true;
-
-  // Capture runs before the inline word handler. The old counter reads
-  // `.reader-paragraph.active`; without this, it often recorded the previously
-  // selected paragraph and collapsed real clicks from different paragraphs into
-  // one context.
   document.addEventListener('click', syncTappedParagraph, true);
-
   document.addEventListener('reader-word-analysis-ready', async event => {
     const detail = event?.detail || {};
     const store = readState();
     if (!mergeLemmaMetadata(store, detail)) return;
     await persistState(store);
   });
-
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', bindEmptyCandidateHint, { once: true });
   } else {
