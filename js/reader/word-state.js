@@ -18,6 +18,10 @@ export function createReaderWordState(opts) {
   // places is only needed to count distinct paragraphs up to the fade threshold;
   // without a cap it grows unbounded and eventually blows the localStorage quota.
   const PLACES_CAP = 12;
+  // Separate click contexts are the evidence used by the home-screen learning
+  // candidates. Keep enough recent examples to rank a word and show snippets,
+  // but never allow this history to grow without limit.
+  const CLICK_CONTEXTS_CAP = 32;
   // A large multi-language vocabulary can still blow the ~5MB localStorage quota
   // even with places capped per word, once the total WORD COUNT itself grows
   // large — every "looked at" or "seen" word is tracked forever with no cap.
@@ -40,6 +44,16 @@ export function createReaderWordState(opts) {
     return true;
   };
 
+  const pruneClickContexts = (state) => {
+    const contexts = state?.clickContexts;
+    if (!contexts || typeof contexts !== 'object') return false;
+    const rows = Object.entries(contexts);
+    if (rows.length <= CLICK_CONTEXTS_CAP) return false;
+    rows.sort((a, b) => new Date(b[1]?.at || 0) - new Date(a[1]?.at || 0));
+    state.clickContexts = Object.fromEntries(rows.slice(0, CLICK_CONTEXTS_CAP));
+    return true;
+  };
+
   const pruneOverflow = (data) => {
     const keys = Object.keys(data);
     if (keys.length <= TOTAL_CAP) return false;
@@ -52,7 +66,10 @@ export function createReaderWordState(opts) {
 
   const pruneAll = (data) => {
     let pruned = false;
-    for (const k of Object.keys(data)) pruned = prunePlaces(data[k]) || pruned;
+    for (const k of Object.keys(data)) {
+      pruned = prunePlaces(data[k]) || pruned;
+      pruned = pruneClickContexts(data[k]) || pruned;
+    }
     pruned = pruneOverflow(data) || pruned;
     return pruned;
   };
@@ -87,6 +104,7 @@ export function createReaderWordState(opts) {
     // The in-memory cache only runs pruneAll() once (at first load), so a long
     // session that keeps adding new words needs the overflow check re-run on
     // every save — otherwise the total count only gets capped again on reload.
+    for (const item of Object.values(data)) pruneClickContexts(item);
     pruneOverflow(data);
     // localStorage is only the fast in-session cache now — IndexedDB below is
     // the durable store (no ~5MB ceiling) and cloud sync mirrors it. A quota
@@ -144,7 +162,7 @@ export function createReaderWordState(opts) {
   };
   const get = (word, lang = null) => {
     const language = canonicalLang(lang || currentLang()), k = key(word, language), state = load();
-    if (!state[k]) state[k] = { word: normalizeWord(word, language), lang: language, seen: 0, clicked: 0, saved: false, known: false, status: 'new', places: {}, updatedAt: new Date().toISOString() };
+    if (!state[k]) state[k] = { word: normalizeWord(word, language), lang: language, seen: 0, clicked: 0, saved: false, known: false, status: 'new', places: {}, clickContexts: {}, updatedAt: new Date().toISOString() };
     return state[k];
   };
   const touch = (word, lang = null) => { const state = get(word, lang); state.updatedAt = new Date().toISOString(); return state; };
@@ -168,10 +186,60 @@ export function createReaderWordState(opts) {
     if (changed) save();
     return changed;
   };
-  const markClicked = (word, lang = null) => { if (!word || isCommonWord(word, lang)) return; const state = touch(word, lang); state.clicked = (state.clicked || 0) + 1; if (!state.saved && !state.known) state.status = 'looked'; save(); };
+
+  const activeClickContext = (word) => {
+    if (typeof document === 'undefined') return null;
+    const root = document.getElementById('reader-chapter-text');
+    const active = root?.querySelector('.reader-paragraph.active') || root?.querySelector('.reader-paragraph');
+    if (!active) return null;
+    const paragraphIndex = Number(active.dataset?.p);
+    const bookTitle = String(document.getElementById('reader-book-title')?.textContent || '').trim();
+    const chapterTitle = String(document.getElementById('reader-chapter-title')?.textContent || '').trim();
+    const clone = active.cloneNode(true);
+    clone.querySelectorAll?.('.reader-translation,.reader-analysis-actions,.reader-footnote-ref,button').forEach(el => el.remove());
+    const text = String(clone.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 320);
+    const place = `${bookTitle || 'book'}::${chapterTitle || 'chapter'}::${Number.isFinite(paragraphIndex) ? paragraphIndex : active.dataset?.p || '0'}`;
+    return {
+      place,
+      at: new Date().toISOString(),
+      text,
+      bookTitle,
+      chapterTitle,
+      paragraphIndex: Number.isFinite(paragraphIndex) ? paragraphIndex : null,
+      form: normalizeWord(word, currentLang()),
+    };
+  };
+
+  const markClicked = (word, lang = null) => {
+    if (!word || isCommonWord(word, lang)) return false;
+    const state = touch(word, lang);
+    state.clickContexts ||= {};
+    const context = activeClickContext(word);
+    let counted = false;
+    if (context?.place) {
+      if (!state.clickContexts[context.place]) {
+        state.clickContexts[context.place] = context;
+        state.clicked = (state.clicked || 0) + 1;
+        counted = true;
+      } else {
+        // Keep the latest snippet/date for diagnostics, but repeated taps in the
+        // same paragraph are not new evidence that the word deserves learning.
+        state.clickContexts[context.place] = { ...state.clickContexts[context.place], ...context };
+      }
+    } else {
+      // Non-reader callers do not have a paragraph identity. Preserve the old
+      // counter behaviour for compatibility, but home candidates only trust
+      // distinct clickContexts, so these calls cannot game the ranking.
+      state.clicked = (state.clicked || 0) + 1;
+      counted = true;
+    }
+    if (!state.saved && !state.known) state.status = 'looked';
+    save();
+    return counted;
+  };
   const markSaved = (word, lemma = null, lang = null, ru = '') => {
     const state = touch(lemma || word, lang); state.saved = true; state.known = false; state.status = state.seen >= familiarAfter ? 'familiar' : 'learning'; if (ru) state.ru = ru;
-    if (word && lemma && key(word, lang) !== key(lemma, lang)) { const form = touch(word, lang); form.saved = true; form.linkedLemma = normalizeWord(lemma, lang); form.status = 'learning'; if (ru) form.ru = ru; }
+    if (word && lemma && key(word, lang) !== key(lemma, lang)) { const form = touch(word, lang); form.saved = true; form.linkedLemma = normalizeWord(lemma, lang); form.lemma = normalizeWord(lemma, lang); form.status = 'learning'; if (ru) form.ru = ru; }
     save();
   };
   const markKnown = (word, lang = null) => { const state = touch(word, lang); state.known = true; state.status = 'known'; state.autoKnown = false; save(); };
