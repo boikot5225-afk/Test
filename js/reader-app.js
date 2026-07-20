@@ -5126,7 +5126,7 @@ export {
   readerSwitchStorageOwner,
   // Book management
   readerCurrentBook,
-  loadReaderBooks, saveReaderBooks, loadReaderBooksFromCloud,
+  loadReaderBooks, saveReaderBooks, loadReaderBooksFromCloud, hydrateReaderBooksFromIndexedDB,
   scheduleReaderCloudSave, saveReaderBooksToCloud, syncReaderCloudNow,
   readerSplitTextToChapters, readerSplitSongToChapters,
   readerBookProgress, readerContinueBook,
