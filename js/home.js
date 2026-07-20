@@ -8,7 +8,7 @@ import {
   installWordCandidateBridge,
   loadWordCandidateState,
   setCandidateStatus,
-} from './reader/word-candidates.js?v=3';
+} from './reader/word-candidates.js?v=4';
 
 installWordCandidateBridge();
 let currentHomeCandidates = [];
@@ -62,6 +62,9 @@ window.openReaderCandidate = function openReaderCandidate(index) {
       <div style="font-size:.68rem;color:var(--text-dim);margin-bottom:5px">${row.legacy ? 'старое открытие' : homeEscape(row.bookTitle || 'текст')}${!row.legacy && row.chapterTitle ? ' · ' + homeEscape(row.chapterTitle) : ''}${!row.legacy && row.form && row.form !== candidate.lemma ? ' · форма ' + homeEscape(row.form) : ''}</div>
       <div style="font-family:'Lora',serif;font-size:.94rem;line-height:1.55;color:${row.legacy ? 'var(--text-muted)' : 'var(--text)'}">${homeEscape(row.text || 'Контекст не сохранён')}</div>
     </div>`).join('');
+  const studyAction = candidate.studying
+    ? '<button type="button" class="btn btn-primary" disabled style="padding:11px 12px;opacity:.72;cursor:default">✓ Уже в изучении</button>'
+    : `<button onclick="readerCandidateAction(${Number(index)},'learning')" class="btn btn-primary" style="padding:11px 12px">＋ В изучение</button>`;
   modal.innerHTML = `
     <section style="width:100%;max-width:620px;max-height:88vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:20px 20px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom));box-shadow:0 -14px 38px rgba(30,20,10,.24)">
       <div style="width:42px;height:4px;border-radius:4px;background:var(--border);margin:0 auto 15px"></div>
@@ -75,7 +78,7 @@ window.openReaderCandidate = function openReaderCandidate(index) {
       </div>
       <div style="display:flex;flex-direction:column;gap:8px;margin:15px 0">${contexts}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">
-        <button onclick="readerCandidateAction(${Number(index)},'learning')" class="btn btn-primary" style="padding:11px 12px">＋ В изучение</button>
+        ${studyAction}
         <button onclick="readerCandidateAction(${Number(index)},'known')" class="btn btn-secondary" style="padding:11px 12px">✓ Уже знаю</button>
       </div>
     </section>`;
@@ -271,9 +274,10 @@ export async function renderHome() {
         ${[...ready, ...waiting].map(candidate => {
           const index = currentHomeCandidates.indexOf(candidate);
           const pending = candidate.contextCount < 2;
+          const contextLabel = pending ? '1/2 конт.' : candidate.contextCount + ' конт.';
           return `<button type="button" class="home-word-chip" onclick="openReaderCandidate(${index})" style="text-align:left;cursor:pointer;${pending ? 'opacity:.68;border-style:dashed' : ''}">
             <b>${escape(candidate.lemma)}</b>
-            <small>${pending ? '1/2 конт.' : candidate.contextCount + ' конт.'}</small>
+            <small>${candidate.studying ? 'изучается · ' : ''}${contextLabel}</small>
           </button>`;
         }).join('')}`;
     }

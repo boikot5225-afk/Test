@@ -3,6 +3,7 @@ import { wordStateIdbGet, wordStateIdbPut } from './word-state-idb-store.js?v=1'
 const DEFAULT_WINDOW_DAYS = 30;
 const DEFAULT_MIN_CONTEXTS = 2;
 const DEFAULT_LIMIT = 10;
+const CANDIDATE_STUDY_STATUSES = new Set(['learning', 'problem', 'hard', 'familiar']);
 
 function canonicalLang(lang) {
   const raw = String(lang || '').trim().toLowerCase();
@@ -222,6 +223,7 @@ export function buildWordCandidates(states, {
         contexts: new Map(),
         legacyOpenedAt: 0,
         saved: false,
+        studying: false,
         known: false,
         proper: false,
         lastOpenedAt: 0,
@@ -229,8 +231,13 @@ export function buildWordCandidates(states, {
       groups.set(lemma, group);
     }
 
+    const status = String(state.status || '').trim().toLowerCase();
     group.saved ||= !!state.saved;
-    group.known ||= !!state.known || state.status === 'known';
+    // Older/synced records can retain an active study status while losing the
+    // parallel `saved` flag. Keep the derived state so the candidate UI still
+    // labels those words correctly; studying words remain valid candidates.
+    group.studying ||= !!state.saved || CANDIDATE_STUDY_STATUSES.has(status);
+    group.known ||= !!state.known || status === 'known';
     group.proper ||= !!state.isProper || isProperPos(state.pos);
     [state.word, state.lemma, state.linkedLemma, ...(Array.isArray(state.variants) ? state.variants : [])]
       .map(value => normalizeWord(value, language))
@@ -300,12 +307,13 @@ export function buildWordCandidates(states, {
         hasLegacyContext,
         lastOpenedAt: group.lastOpenedAt,
         saved: group.saved,
+        studying: group.studying,
         known: group.known,
         proper: group.proper,
         score: contexts.length * 10000000000000 + group.lastOpenedAt,
       };
     })
-    .filter(item => !item.saved && !item.known && !item.proper && item.contextCount >= minContexts)
+    .filter(item => !item.known && !item.proper && item.contextCount >= minContexts)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 }

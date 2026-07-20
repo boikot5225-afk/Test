@@ -71,6 +71,23 @@ assert('proper names excluded', !candidates.some(item => item.lemma === 'geneviÃ
 assert('old contexts excluded', !candidates.some(item => item.lemma === 'ancien'));
 assert('known words excluded', !candidates.some(item => item.lemma === 'connu'));
 
+const studyContexts = {
+  'book:study:1': { at: recentA, text: 'Premier contexte.' },
+  'book:study:2': { at: recentB, text: 'DeuxiÃ¨me contexte.' },
+};
+const studyingWords = buildWordCandidates({
+  'fr:sauve': {
+    word: 'sauve', lang: 'fr', saved: true, known: false, status: 'learning', clicked: 2,
+    clickContexts: studyContexts,
+  },
+  'fr:legacy-learning': {
+    word: 'legacy-learning', lang: 'fr', saved: false, known: false, status: 'learning', clicked: 2,
+    clickContexts: studyContexts,
+  },
+}, { lang: 'fr', now, days: 30, minContexts: 2 });
+assert('saved learning words remain candidates', studyingWords.some(item => item.lemma === 'sauve' && item.studying));
+assert('status-only learning words remain candidates and keep their study label', studyingWords.some(item => item.lemma === 'legacy-learning' && item.studying));
+
 const oneContext = buildWordCandidates({
   'fr:perte': {
     word: 'perte', lang: 'fr', clicked: 1,
