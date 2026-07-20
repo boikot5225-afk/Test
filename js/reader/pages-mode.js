@@ -7,12 +7,30 @@
 // list, exactly as it was.
 
 const MODE_KEY = 'an2_reader_view_mode_v1';
+const ANIMATION_KEY = 'an2_reader_page_animation_v1';
+const PAGE_ANIMATIONS = new Set(['flip', 'slide', 'stack', 'fade', 'none']);
+
+export function normalizePageAnimation(value) {
+  const normalized = String(value || 'flip').trim().toLowerCase();
+  return PAGE_ANIMATIONS.has(normalized) ? normalized : 'flip';
+}
 
 function loadMode() {
   try { return localStorage.getItem(MODE_KEY) || 'scroll'; } catch { return 'scroll'; }
 }
 function saveMode(mode) {
   try { localStorage.setItem(MODE_KEY, mode); } catch {}
+}
+function loadAnimation() {
+  try { return normalizePageAnimation(localStorage.getItem(ANIMATION_KEY)); }
+  catch { return 'flip'; }
+}
+function saveAnimation(animation) {
+  try { localStorage.setItem(ANIMATION_KEY, normalizePageAnimation(animation)); } catch {}
+}
+function prefersReducedMotion() {
+  try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; }
+  catch { return false; }
 }
 
 // Race a transitionend against a timeout so a dropped/never-fired event
@@ -39,13 +57,23 @@ export function createReaderPagesMode({
   onPageChange,
 }) {
   let enabled = loadMode() === 'pages';
+  let animation = loadAnimation();
   let pages = []; // [{ start, end, el }]
   let currentPageIndex = 0;
   let animating = false;
   let resizeBound = false;
   let resizeTimer = null;
+  const turnClasses = [
+    'rd-page-in', 'rd-page-in-active', 'rd-page-out',
+    'rd-page-forward', 'rd-page-backward', 'rd-page-flip',
+  ];
 
   function isEnabled() { return enabled; }
+  function getAnimation() { return animation; }
+
+  function clearTurnClasses(element) {
+    element?.classList.remove(...turnClasses);
+  }
 
   function unwrap(chapterText) {
     const wraps = [...chapterText.querySelectorAll(':scope > .rd-page')];
@@ -105,7 +133,7 @@ export function createReaderPagesMode({
     pages.forEach((p, i) => {
       p.el.classList.toggle('rd-page-show', i === index);
       p.el.classList.toggle('rd-page-current', i === index);
-      p.el.classList.remove('rd-page-flip');
+      clearTurnClasses(p.el);
     });
     currentPageIndex = index;
     onPageChange?.(currentPageIndex, pages.length);
@@ -116,6 +144,7 @@ export function createReaderPagesMode({
     const scroller = getScroller();
     if (!chapterText || !scroller) return;
     const readingView = scroller.closest('#reader-reading-view');
+    scroller.dataset.rdPageAnimation = animation;
 
     unwrap(chapterText);
     if (!enabled) {
@@ -159,20 +188,46 @@ export function createReaderPagesMode({
     // throw after `animating` is already true, leaving it stuck forever and
     // every future tap/swipe silently doing nothing ("иногда не листается").
     if (!curPage?.el || !nextPage?.el) return false;
+    const directionClass = delta > 0 ? 'rd-page-forward' : 'rd-page-backward';
+    const finishTurn = () => {
+      curPage.el.classList.remove('rd-page-show', 'rd-page-current');
+      clearTurnClasses(curPage.el);
+      clearTurnClasses(nextPage.el);
+      nextPage.el.classList.add('rd-page-show', 'rd-page-current');
+      currentPageIndex = target;
+      animating = false;
+      onPageChange?.(currentPageIndex, pages.length);
+      setActiveParagraphIndex(pages[target].start);
+    };
+
     animating = true;
     try {
-      nextPage.el.classList.add('rd-page-show');
-      requestAnimationFrame(() => curPage.el.classList.add('rd-page-flip'));
-      onceTransitionOrTimeout(curPage.el, () => {
-        curPage.el.classList.remove('rd-page-show', 'rd-page-current', 'rd-page-flip');
-        nextPage.el.classList.add('rd-page-current');
-        currentPageIndex = target;
-        animating = false;
-        onPageChange?.(currentPageIndex, pages.length);
-        setActiveParagraphIndex(pages[target].start);
+      clearTurnClasses(curPage.el);
+      clearTurnClasses(nextPage.el);
+      curPage.el.classList.add(directionClass);
+      nextPage.el.classList.add('rd-page-show', 'rd-page-in', directionClass);
+
+      if (animation === 'none' || prefersReducedMotion()) {
+        finishTurn();
+        return true;
+      }
+
+      // Commit the incoming page's starting transform before activating both
+      // transitions. Without this layout read, WebView may coalesce the two
+      // class changes and skip the incoming motion altogether.
+      void nextPage.el.offsetWidth;
+      requestAnimationFrame(() => {
+        curPage.el.classList.add('rd-page-out');
+        nextPage.el.classList.add('rd-page-in-active');
       });
+      const timeout = animation === 'flip' ? 620 : animation === 'fade' ? 380 : 500;
+      onceTransitionOrTimeout(curPage.el, finishTurn, timeout);
     } catch (_) {
       animating = false;
+      clearTurnClasses(curPage.el);
+      clearTurnClasses(nextPage.el);
+      nextPage.el.classList.remove('rd-page-show', 'rd-page-current');
+      curPage.el.classList.add('rd-page-show', 'rd-page-current');
       return false;
     }
     return true;
@@ -189,6 +244,14 @@ export function createReaderPagesMode({
   }
   function toggleMode() { return setMode(enabled ? 'scroll' : 'pages'); }
 
+  function setAnimation(value) {
+    animation = normalizePageAnimation(value);
+    saveAnimation(animation);
+    const scroller = getScroller();
+    if (scroller) scroller.dataset.rdPageAnimation = animation;
+    return animation;
+  }
+
   function handleResize() {
     if (!enabled) return;
     clearTimeout(resizeTimer);
@@ -201,5 +264,5 @@ export function createReaderPagesMode({
   }
   bindResize();
 
-  return { isEnabled, syncAfterRender, next, prev, setMode, toggleMode, handleResize };
+  return { isEnabled, getAnimation, syncAfterRender, next, prev, setMode, toggleMode, setAnimation, handleResize };
 }

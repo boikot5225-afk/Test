@@ -24,11 +24,11 @@ import { createReaderWordPanel } from './reader/word-panel.js?v=5';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
 import { createReaderWordState } from './reader/word-state.js?v=3';
 import { createReaderLibraryStore } from './reader/library-store.js?v=5';
-import { createReaderDisplay } from './reader/display.js?v=4';
+import { createReaderDisplay } from './reader/display.js?v=5';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=2-per-paragraph-timer-guard';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
 import { createReaderChapterRenderer } from './reader/chapter-render.js?v=7';
-import { createReaderPagesMode } from './reader/pages-mode.js?v=2';
+import { createReaderPagesMode } from './reader/pages-mode.js?v=3';
 import { splitTextToChapters as readerImportSplitTextToChapters,
          splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
 
@@ -183,7 +183,10 @@ function readerSyncVoicePicker() {
 }
 function readerToggleDisplayPanel() {
   const open = readerDisplay.togglePanel();
-  if (open) readerSyncVoiceEnginePanel();
+  if (open) {
+    readerSyncVoiceEnginePanel();
+    readerSyncPageAnimationPanel();
+  }
   return open;
 }
 function readerCloseDisplayPanel() { return readerDisplay.closePanel(); }
@@ -191,6 +194,27 @@ function rdSetFont(name, element) { return readerDisplay.setFont(name, element);
 function rdSetSize(input) { return readerDisplay.setSize(input); }
 function rdSetLH(input) { return readerDisplay.setLineHeight(input); }
 function rdSetTheme(theme, element) { return readerDisplay.setTheme(theme, element); }
+function readerSyncPageAnimationPanel() {
+  const panel = document.getElementById('rd-display-panel');
+  if (!panel) return;
+  const current = readerPagesMode.getAnimation();
+  panel.querySelectorAll('.rd-dp-page-animation').forEach((button) => {
+    button.classList.toggle('rd-dp-active', button.dataset.animation === current);
+  });
+}
+function rdSetPageAnimation(animation, element) {
+  const selected = readerPagesMode.setAnimation(animation);
+  element?.closest('.rd-dp-row')?.querySelectorAll('.rd-dp-page-animation').forEach((button) => {
+    button.classList.toggle('rd-dp-active', button.dataset.animation === selected);
+  });
+  const labels = {
+    flip: 'лист', slide: 'сдвиг', stack: 'стопка', fade: 'плавно', none: 'без анимации',
+  };
+  showToast(readerPagesMode.isEnabled()
+    ? `📖 Листание: ${labels[selected]}`
+    : `📖 Выбрано: ${labels[selected]}. Эффект работает в режиме страниц`);
+  return selected;
+}
 function rdSetVoiceEngine(engine, element) {
   setTtsVoiceEngine(engine);
   element?.closest('.rd-dp-row')?.querySelectorAll('.rd-dp-voice').forEach(btn => btn.classList.remove('rd-dp-active'));
@@ -3992,6 +4016,7 @@ window.rdSetFont  = rdSetFont;
 window.rdSetSize  = rdSetSize;
 window.rdSetLH    = rdSetLH;
 window.rdSetTheme = rdSetTheme;
+window.rdSetPageAnimation = rdSetPageAnimation;
 window.rdSetVoiceEngine = rdSetVoiceEngine;
 window.rdSetVoice = rdSetVoice;
 window.readerNextChapter = readerNextChapter;
@@ -5156,7 +5181,7 @@ export {
   readerCycleZhPinyinMode, readerLookupChineseWord, readerEnsureZhCoreJsonLoaded, readerZhCoreJsonCount,
   readerSetLibTab, readerSetLibFilter,
   readerImportFromFile, saveReaderImport, showReaderImportModal, closeReaderImportModal,
-  readerToggleDisplayPanel, readerCloseDisplayPanel, rdSetFont, rdSetSize, rdSetLH, rdSetTheme,
+  readerToggleDisplayPanel, readerCloseDisplayPanel, rdSetFont, rdSetSize, rdSetLH, rdSetTheme, rdSetPageAnimation,
   readerToggleSongMeaning,
 };
 

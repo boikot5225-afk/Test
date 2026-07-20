@@ -48,10 +48,13 @@ jobs:
           node --check js/reader/word-candidates.js
           node --check js/reader/word-source-filters.js
           node --check js/reader/word-panel.js
+          node --check js/reader/display.js
+          node --check js/reader/pages-mode.js
           node --check js/home.js
           node --check tests/footnote-stage1.test.mjs
           node --check tests/word-candidates.test.mjs
           node --check tests/reader-word-sources.test.mjs
+          node --check tests/reader-display-options.test.mjs
           node --check tests/semantic-epub-import.integration.test.mjs
 
       - name: Run compatibility checks
@@ -63,6 +66,7 @@ jobs:
           node --experimental-default-type=module tests/footnote-stage1.test.mjs
           node --experimental-default-type=module tests/word-candidates.test.mjs
           node --experimental-default-type=module tests/reader-word-sources.test.mjs
+          node --experimental-default-type=module tests/reader-display-options.test.mjs
 
       - name: Run full EPUB import integration
         shell: bash
