@@ -1,6 +1,7 @@
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
+const { resolveDeepSeekModel } = require('./deepseek-model');
 
 const DEEPSEEK_API_KEY = defineSecret('DEEPSEEK_API_KEY');
 const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');
@@ -431,7 +432,10 @@ exports.readerAI = onCall(
           Authorization: `Bearer ${key}`,
         },
         body: JSON.stringify({
-          model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+          // DeepSeek retired the legacy deepseek-chat/deepseek-reasoner aliases
+          // on 2026-07-24. Normalize even a stale environment override so an
+          // old DEEPSEEK_MODEL value cannot randomly break warm instances.
+          model: resolveDeepSeekModel(),
           temperature: 0.1,
           max_tokens: maxTokensForTask(task),
           messages: [
@@ -777,4 +781,3 @@ exports.transcribeAudio = onRequest(
     return res.status(200).json({ text, segments, engine: usedSelfhost ? 'selfhost' : 'openrouter' });
   }
 );
-
