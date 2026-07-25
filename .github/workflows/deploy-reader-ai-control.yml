@@ -46,11 +46,11 @@ jobs:
           section_at = source.rfind("// ─", 0, marker_at)
           if section_at < 0:
               raise SystemExit("ReaderAI section boundary not found")
-          source = source[:section_at].rstrip() + "\\n"
+          source = source[:section_at].rstrip() + "\n"
           for declaration in (
-              "const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');\\n",
-              "const SELFHOST_TTS_STT_URL = defineSecret('SELFHOST_TTS_STT_URL');\\n",
-              "const SELFHOST_TOKEN = defineSecret('SELFHOST_TOKEN');\\n",
+              "const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');\n",
+              "const SELFHOST_TTS_STT_URL = defineSecret('SELFHOST_TTS_STT_URL');\n",
+              "const SELFHOST_TOKEN = defineSecret('SELFHOST_TOKEN');\n",
           ):
               source = source.replace(declaration, "")
           if "exports.readerAI = onCall(" not in source:
