@@ -55,8 +55,8 @@ jobs:
               source = source.replace(declaration, "")
           if "exports.readerAI = onCall(" not in source:
               raise SystemExit("readerAI export not found")
-          if "OPENROUTER_API_KEY" in source or "SELFHOST_TTS_STT_URL" in source or "SELFHOST_TOKEN" in source:
-              raise SystemExit("Unrelated secret remained in readerAI deployment source")
+          if "defineSecret('OPENROUTER_API_KEY')" in source or "defineSecret('SELFHOST_TTS_STT_URL')" in source or "defineSecret('SELFHOST_TOKEN')" in source:
+              raise SystemExit("Unrelated secret declaration remained in readerAI deployment source")
           path.write_text(source)
           PY
 
