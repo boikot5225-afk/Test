@@ -75,20 +75,44 @@ jobs:
           echo "GOOGLE_APPLICATION_CREDENTIALS=${credentials_file}" >> "${GITHUB_ENV}"
           echo "FIREBASE_AUTH_MODE=adc" >> "${GITHUB_ENV}"
 
-      - name: Deploy only readerAI
-        id: deploy
-        continue-on-error: true
+      - name: Prepare Firebase CLI without Service Usage preflight
         shell: bash
         run: |
           set -euo pipefail
+          cli_root="${RUNNER_TEMP}/firebase-cli"
+          npm --prefix "${cli_root}" install --no-save --ignore-scripts firebase-tools@15.24.0
+          check_file="${cli_root}/node_modules/firebase-tools/lib/ensureApiEnabled.js"
+          python3 - "${check_file}" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          source = path.read_text()
+          marker = "async function check(projectId, apiUri, prefix, silent = false) {\n"
+          replacement = marker + '    if (process.env.FIREBASE_ASSUME_APIS_ENABLED === "1") return true;\n'
+          if replacement not in source:
+              if marker not in source:
+                  raise SystemExit("Firebase CLI API-check marker not found")
+              source = source.replace(marker, replacement, 1)
+              path.write_text(source)
+          PY
+          node "${cli_root}/node_modules/firebase-tools/lib/bin/firebase.js" --version
+
+      - name: Deploy only readerAI
+        id: deploy
+        shell: bash
+        env:
+          FIREBASE_ASSUME_APIS_ENABLED: '1'
+        run: |
+          set -euo pipefail
+          firebase_cli="${RUNNER_TEMP}/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
           if [[ "${FIREBASE_AUTH_MODE}" == "token" ]]; then
-            npx --yes firebase-tools@latest deploy \
+            node "${firebase_cli}" deploy \
               --only functions:readerAI \
               --project french-da79a \
               --token "${FIREBASE_TOKEN}" \
               --non-interactive
           else
-            npx --yes firebase-tools@latest deploy \
+            node "${firebase_cli}" deploy \
               --only functions:readerAI \
               --project french-da79a \
               --non-interactive
