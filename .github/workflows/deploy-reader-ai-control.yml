@@ -39,16 +39,24 @@ jobs:
           from pathlib import Path
           path = Path("functions/index.js")
           source = path.read_text()
-          replacements = {
-              "exports.ttsAudio = onRequest(": "const ttsAudioNotExported = onRequest(",
-              "exports.transcribeAudio = onRequest(": "const transcribeAudioNotExported = onRequest(",
-          }
-          for old, new in replacements.items():
-              if old not in source:
-                  raise SystemExit(f"Expected export not found: {old}")
-              source = source.replace(old, new, 1)
+          marker = "// Cloud TTS proxy:"
+          marker_at = source.find(marker)
+          if marker_at < 0:
+              raise SystemExit("Cloud TTS marker not found")
+          section_at = source.rfind("// ─", 0, marker_at)
+          if section_at < 0:
+              raise SystemExit("ReaderAI section boundary not found")
+          source = source[:section_at].rstrip() + "\\n"
+          for declaration in (
+              "const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');\\n",
+              "const SELFHOST_TTS_STT_URL = defineSecret('SELFHOST_TTS_STT_URL');\\n",
+              "const SELFHOST_TOKEN = defineSecret('SELFHOST_TOKEN');\\n",
+          ):
+              source = source.replace(declaration, "")
           if "exports.readerAI = onCall(" not in source:
               raise SystemExit("readerAI export not found")
+          if "OPENROUTER_API_KEY" in source or "SELFHOST_TTS_STT_URL" in source or "SELFHOST_TOKEN" in source:
+              raise SystemExit("Unrelated secret remained in readerAI deployment source")
           path.write_text(source)
           PY
 
