@@ -11,6 +11,7 @@ on:
       - 'index.html'
       - 'css/**'
       - 'js/**'
+      - 'scripts/**'
       - 'icons/**'
       - 'data/**'
       - 'manifest.json'
