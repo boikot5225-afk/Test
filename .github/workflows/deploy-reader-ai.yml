@@ -72,11 +72,27 @@ jobs:
             }
             source = source.replace(before, `const ${localName} =`);
           }
+          const hiddenSecrets = [
+            'OPENROUTER_API_KEY',
+            'SELFHOST_TTS_STT_URL',
+            'SELFHOST_TOKEN',
+          ];
+          for (const secretName of hiddenSecrets) {
+            const before = `const ${secretName} = defineSecret('${secretName}');`;
+            if (!source.includes(before)) {
+              throw new Error(`Expected secret declaration not found: ${before}`);
+            }
+            source = source.replace(
+              before,
+              `const ${secretName} = { value: () => '' };`,
+            );
+          }
           fs.writeFileSync(path, source);
           NODE
           node --check functions/index.js
           test "$(grep -c '^exports\.readerAI = ' functions/index.js)" -eq 1
           test "$(grep -c '^exports\.' functions/index.js)" -eq 1
+          test "$(grep -c '= defineSecret(' functions/index.js)" -eq 1
 
       - name: Select deployment credential
         shell: bash
