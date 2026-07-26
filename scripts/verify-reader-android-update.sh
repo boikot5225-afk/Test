@@ -27,8 +27,8 @@ grep -F 'versionName=semantic-v77.32-debug' /tmp/reader-package.txt
 
 adb logcat -c
 adb shell am force-stop "$PACKAGE"
-adb shell am start -W -n "$PACKAGE/$ACTIVITY"
-sleep 22
+adb shell am start -n "$PACKAGE/$ACTIVITY"
+sleep 45
 
 adb shell uiautomator dump /sdcard/reader-update-ui.xml
 adb pull /sdcard/reader-update-ui.xml dist/android-update-ui.xml
