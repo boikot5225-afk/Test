@@ -1,4 +1,9 @@
 import { wordStateIdbGet, wordStateIdbPut } from './word-state-idb-store.js?v=1';
+import {
+  buildStableContextAnchor,
+  normalizeContextText,
+  paragraphTextOccurrence,
+} from './context-anchor.js?v=1';
 
 const DEFAULT_WINDOW_DAYS = 30;
 const DEFAULT_MIN_CONTEXTS = 2;
@@ -318,6 +323,56 @@ export function buildWordCandidates(states, {
     .slice(0, limit);
 }
 
+export function describeWordCandidateState(states, sourceState, {
+  lang = sourceState?.lang || 'fr',
+  now = Date.now(),
+  days = DEFAULT_WINDOW_DAYS,
+} = {}) {
+  if (!sourceState) return { label: 'нет данных', reason: 'missing', contextCount: 0, eligible: false };
+  const language = canonicalLang(lang);
+  if (canonicalLang(sourceState.lang) !== language) {
+    return { label: 'другой язык', reason: 'other-language', contextCount: 0, eligible: false };
+  }
+  const lemma = stateCanonicalWord(sourceState, language);
+  const related = Object.values(states || {}).filter(state =>
+    state && canonicalLang(state.lang) === language && stateCanonicalWord(state, language) === lemma
+  );
+  const cutoff = Number(now) - Math.max(1, Number(days) || DEFAULT_WINDOW_DAYS) * 86400000;
+  const contexts = new Map();
+  let known = false;
+  let common = false;
+  let proper = false;
+  let studying = false;
+  let legacy = false;
+
+  for (const state of related) {
+    const status = String(state.status || '').trim().toLowerCase();
+    known ||= !!state.known || status === 'known';
+    common ||= state.autoKnown === true || state.autoKnown === 'common';
+    proper ||= !!state.isProper || isProperPos(state.pos);
+    studying ||= !!state.saved || CANDIDATE_STUDY_STATUSES.has(status);
+    const stored = Object.entries(state.clickContexts || {});
+    let recentStored = 0;
+    for (const [place, raw] of stored) {
+      const at = contextTimestamp(raw);
+      if (!at || at < cutoff) continue;
+      recentStored += 1;
+      contexts.set(place, newestContext(contexts.get(place), raw));
+    }
+    const updatedAt = new Date(state.updatedAt || 0).getTime();
+    if (Number(state.clicked || 0) > recentStored && updatedAt >= cutoff) legacy = true;
+  }
+
+  const contextCount = contexts.size + (legacy && contexts.size < 2 ? 1 : 0);
+  if (common) return { label: 'частое', reason: 'common', contextCount, eligible: false };
+  if (known) return { label: 'известное', reason: 'known', contextCount, eligible: false };
+  if (proper) return { label: 'имя', reason: 'proper-name', contextCount, eligible: false };
+  if (studying) return { label: 'изучается', reason: 'studying', contextCount, eligible: contextCount >= 2 };
+  if (contextCount >= 2) return { label: `${contextCount} конт.`, reason: 'candidate', contextCount, eligible: true };
+  if (contextCount === 1) return { label: '1/2 конт.', reason: 'waiting-context', contextCount, eligible: false };
+  return { label: 'контекст не сохранён', reason: 'no-context', contextCount: 0, eligible: false };
+}
+
 function groupMatches(state, candidate) {
   if (!state || canonicalLang(state.lang) !== canonicalLang(candidate.lang)) return false;
   return stateCanonicalWord(state, candidate.lang) === normalizeWord(candidate.lemma, candidate.lang);
@@ -364,15 +419,27 @@ function syncTappedParagraph(event) {
     .trim();
   const paragraphIndex = Number(paragraph.dataset?.p);
   const rawWord = String(word.dataset?.word || word.textContent || '').trim();
-  const place = `${bookTitle || 'book'}::${chapterTitle || 'chapter'}::${Number.isFinite(paragraphIndex) ? paragraphIndex : paragraph.dataset?.p || '0'}`;
+  const text = normalizeContextText(clone.textContent || '').slice(0, 320);
+  const rootBookId = String(root?.dataset?.readerBookId || bookTitle || 'book');
+  const rootChapterKey = String(root?.dataset?.readerChapterKey || chapterTitle || 'chapter');
+  const occurrenceInfo = paragraphTextOccurrence(root, paragraph, text);
+  const anchor = buildStableContextAnchor({
+    bookId: rootBookId,
+    chapterKey: rootChapterKey,
+    text,
+    occurrence: occurrenceInfo.occurrence,
+  });
   globalThis.__readerCandidateTapContext = {
     word: rawWord,
     form: rawWord,
     paragraphIndex: Number.isFinite(paragraphIndex) ? paragraphIndex : null,
-    text: String(clone.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 320),
+    text,
     bookTitle,
     chapterTitle,
-    place,
+    bookId: rootBookId,
+    chapterKey: rootChapterKey,
+    ...anchor,
+    textOccurrenceCount: occurrenceInfo.count,
     at: new Date().toISOString(),
     capturedAt: Date.now(),
   };

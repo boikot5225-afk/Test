@@ -1,3 +1,9 @@
+import {
+  buildStableContextAnchor,
+  normalizeContextText,
+  paragraphTextOccurrence,
+} from './context-anchor.js?v=1';
+
 export function createReaderWordState(opts) {
   const {
     getCache, setCache, storageKey, canonicalLang, currentLang, normalizeWord,
@@ -149,7 +155,11 @@ export function createReaderWordState(opts) {
       if (!state.places[place] && Object.keys(state.places).length < PLACES_CAP) { state.places[place] = true; changed = true; }
       const seen = Math.max(state.seen || 0, Object.keys(state.places).length);
       if (state.seen !== seen) { state.seen = seen; changed = true; }
-      if (isCommonWord(word, language)) { state.known = true; state.status = 'known'; }
+      if (isCommonWord(word, language)) {
+        state.known = true;
+        state.autoKnown = 'common';
+        state.status = 'known';
+      }
     });
     if (changed) save();
     return changed;
@@ -184,16 +194,52 @@ export function createReaderWordState(opts) {
       clone.querySelectorAll?.('.reader-translation,.reader-analysis-actions,.reader-footnote-ref,button').forEach(el => el.remove());
       text = String(clone.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 320);
     }
-    const place = String(supplied?.place || `${bookTitle || 'book'}::${chapterTitle || 'chapter'}::${Number.isFinite(paragraphIndex) ? paragraphIndex : active?.dataset?.p || '0'}`);
+    const rootBookId = String(supplied?.bookId || root?.dataset?.readerBookId || bookTitle || 'book');
+    const rootChapterKey = String(supplied?.chapterKey || root?.dataset?.readerChapterKey || chapterTitle || 'chapter');
+    const occurrenceInfo = active
+      ? paragraphTextOccurrence(root, active, text)
+      : { occurrence: Number(supplied?.textOccurrence) || 0, count: Number(supplied?.textOccurrenceCount) || 1 };
+    const anchor = supplied?.place
+      ? {
+          place: supplied.place,
+          elementPath: supplied.elementPath || '',
+          textFingerprint: supplied.textFingerprint || '',
+          textOccurrence: Number(supplied.textOccurrence) || 0,
+        }
+      : buildStableContextAnchor({
+          bookId: rootBookId,
+          chapterKey: rootChapterKey,
+          text,
+          occurrence: occurrenceInfo.occurrence,
+        });
     return {
-      place,
+      ...anchor,
       at: supplied?.at || new Date().toISOString(),
       text,
       bookTitle,
       chapterTitle,
+      bookId: rootBookId,
+      chapterKey: rootChapterKey,
+      textOccurrenceCount: Number(supplied?.textOccurrenceCount) || occurrenceInfo.count,
       paragraphIndex: Number.isFinite(paragraphIndex) ? paragraphIndex : null,
       form: normalizeWord(supplied?.form || word, language),
     };
+  };
+
+  const equivalentLegacyContextKey = (contexts, next) => {
+    const nextText = normalizeContextText(next?.text);
+    if (!nextText) return '';
+    for (const [place, previous] of Object.entries(contexts || {})) {
+      if (place === next.place) return place;
+      if (normalizeContextText(previous?.text) !== nextText) continue;
+      if (previous?.bookTitle && next.bookTitle && previous.bookTitle !== next.bookTitle) continue;
+      if (previous?.chapterTitle && next.chapterTitle && previous.chapterTitle !== next.chapterTitle) continue;
+      const sameIndex = Number.isFinite(Number(previous?.paragraphIndex))
+        && Number(previous.paragraphIndex) === Number(next.paragraphIndex);
+      const uniqueText = Number(next.textOccurrenceCount || 1) === 1;
+      if (sameIndex || uniqueText) return place;
+    }
+    return '';
   };
 
   const markClicked = (word, lang = null, explicitContext = null) => {
@@ -204,9 +250,15 @@ export function createReaderWordState(opts) {
     let counted = false;
     if (context?.place) {
       if (!state.clickContexts[context.place]) {
-        state.clickContexts[context.place] = context;
-        state.clicked = (state.clicked || 0) + 1;
-        counted = true;
+        const legacyKey = equivalentLegacyContextKey(state.clickContexts, context);
+        if (legacyKey) {
+          delete state.clickContexts[legacyKey];
+          state.clickContexts[context.place] = context;
+        } else {
+          state.clickContexts[context.place] = context;
+          state.clicked = (state.clicked || 0) + 1;
+          counted = true;
+        }
       } else {
         state.clickContexts[context.place] = { ...state.clickContexts[context.place], ...context };
       }

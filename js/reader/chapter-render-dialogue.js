@@ -1,4 +1,4 @@
-import { createReaderChapterRenderer as createStage1Renderer } from './chapter-render-stage1.js?v=7';
+import { createReaderChapterRenderer as createStage1Renderer } from './chapter-render-stage1.js?v=8';
 import {
   normalizeSemanticBookLineItems,
   normalizeSemanticBookTextChunks,

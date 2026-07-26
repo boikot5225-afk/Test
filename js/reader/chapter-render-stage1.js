@@ -173,6 +173,16 @@ function rootHasVisibleContent(root) {
   return String(root.textContent || '').replace(/\s+/g, '').length > 0;
 }
 
+function stampContextRoot(deps) {
+  const root = document.getElementById('reader-chapter-text');
+  const book = deps.getCurrentBook?.();
+  const chapterIndex = Math.max(0, Number(book?.currentChapter) || 0);
+  const chapter = book?.chapters?.[chapterIndex];
+  if (!root || !book || !chapter) return;
+  root.dataset.readerBookId = String(book.id || book.importKey || book.title || 'book');
+  root.dataset.readerChapterKey = String(chapter.sourcePath || chapter.id || chapterIndex);
+}
+
 function renderEmergencyFallback(deps, reason = '') {
   const root = document.getElementById('reader-chapter-text');
   const book = deps.getCurrentBook?.();
@@ -193,6 +203,7 @@ function renderEmergencyFallback(deps, reason = '') {
 
   const detail = String(reason || '').replace(/\s+/g, ' ').trim().slice(0, 180);
   root.innerHTML = `<div class="reader-stage1-fallback-note">⚠ Включён упрощённый режим отображения: основной рендер вернул пустую страницу${detail ? ` · ${escapeHtml(detail)}` : ''}</div>${rows}`;
+  stampContextRoot(deps);
   try { globalThis.__readerStage1FallbackReason = detail || 'empty semantic render'; } catch {}
   try { deps.loadEpubImages?.(); } catch (error) { console.warn('[reader stage1 fallback] image load failed', error); }
   try { deps.bindParagraphEvents?.(); } catch {}
@@ -236,6 +247,7 @@ export function createReaderChapterRenderer(deps) {
       let result;
       try {
         result = base.render();
+        stampContextRoot(deps);
       } catch (error) {
         console.error('[reader stage1] semantic render failed', error);
         renderEmergencyFallback(deps, error?.message || String(error));

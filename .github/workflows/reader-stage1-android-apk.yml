@@ -131,10 +131,44 @@ jobs:
               <activity
                 android:name=".MainActivity"
                 android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+                android:launchMode="singleTask"
                 android:exported="true">
                 <intent-filter>
                   <action android:name="android.intent.action.MAIN" />
                   <category android:name="android.intent.category.LAUNCHER" />
+                </intent-filter>
+                <intent-filter>
+                  <action android:name="android.intent.action.VIEW" />
+                  <category android:name="android.intent.category.DEFAULT" />
+                  <category android:name="android.intent.category.BROWSABLE" />
+                  <data android:scheme="content" />
+                  <data android:scheme="file" />
+                  <data android:mimeType="application/epub+zip" />
+                  <data android:mimeType="application/x-fictionbook+xml" />
+                  <data android:mimeType="application/x-fictionbook" />
+                  <data android:mimeType="text/plain" />
+                </intent-filter>
+                <intent-filter>
+                  <action android:name="android.intent.action.VIEW" />
+                  <category android:name="android.intent.category.DEFAULT" />
+                  <category android:name="android.intent.category.BROWSABLE" />
+                  <data android:scheme="content" />
+                  <data android:scheme="file" />
+                  <data android:mimeType="*/*" />
+                  <data android:pathPattern=".*\\.epub" />
+                  <data android:pathPattern=".*\\.EPUB" />
+                  <data android:pathPattern=".*\\.fb2" />
+                  <data android:pathPattern=".*\\.FB2" />
+                  <data android:pathPattern=".*\\.txt" />
+                  <data android:pathPattern=".*\\.TXT" />
+                </intent-filter>
+                <intent-filter>
+                  <action android:name="android.intent.action.SEND" />
+                  <category android:name="android.intent.category.DEFAULT" />
+                  <data android:mimeType="application/epub+zip" />
+                  <data android:mimeType="application/x-fictionbook+xml" />
+                  <data android:mimeType="application/x-fictionbook" />
+                  <data android:mimeType="text/plain" />
                 </intent-filter>
               </activity>
             </application>
@@ -162,10 +196,13 @@ jobs:
           import android.content.ActivityNotFoundException;
           import android.content.Intent;
           import android.graphics.Color;
+          import android.database.Cursor;
           import android.net.Uri;
           import android.os.Bundle;
+          import android.provider.OpenableColumns;
           import android.view.ViewGroup;
           import android.webkit.CookieManager;
+          import android.webkit.MimeTypeMap;
           import android.webkit.ValueCallback;
           import android.webkit.WebChromeClient;
           import android.webkit.WebResourceRequest;
@@ -178,10 +215,21 @@ jobs:
           import androidx.annotation.Nullable;
           import androidx.webkit.WebViewAssetLoader;
 
+          import org.json.JSONObject;
+
+          import java.io.InputStream;
+          import java.util.Locale;
+
           public class MainActivity extends Activity {
             private static final int FILE_CHOOSER_REQUEST = 2201;
+            private static final String APP_URL = "https://appassets.androidplatform.net/assets/index.html";
             private WebView webView;
             private ValueCallback<Uri[]> fileCallback;
+            private Uri pendingImportUri;
+            private String pendingImportName = "";
+            private String pendingImportMime = "";
+            private long pendingImportToken = 0L;
+            private boolean pageReady = false;
 
             @Override
             protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -218,7 +266,21 @@ jobs:
               webView.setWebViewClient(new WebViewClient() {
                 @Override
                 public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                  Uri requestUri = request.getUrl();
+                  if ("appassets.androidplatform.net".equals(requestUri.getHost())
+                    && "/android-import/current".equals(requestUri.getPath())) {
+                    return openPendingImportResponse();
+                  }
                   return assetLoader.shouldInterceptRequest(request.getUrl());
+                }
+
+                @Override
+                public void onPageFinished(WebView view, String url) {
+                  super.onPageFinished(view, url);
+                  if (url != null && url.startsWith("https://appassets.androidplatform.net/")) {
+                    pageReady = true;
+                    dispatchPendingImport();
+                  }
                 }
               });
 
@@ -253,11 +315,129 @@ jobs:
                 }
               });
 
+              captureExternalIntent(getIntent());
               if (savedInstanceState == null) {
-                webView.loadUrl("https://appassets.androidplatform.net/assets/index.html");
+                webView.loadUrl(APP_URL);
               } else {
                 webView.restoreState(savedInstanceState);
               }
+            }
+
+            private void captureExternalIntent(@Nullable Intent intent) {
+              if (intent == null) return;
+              Uri uri = null;
+              String action = intent.getAction();
+              if (Intent.ACTION_VIEW.equals(action)) {
+                uri = intent.getData();
+              } else if (Intent.ACTION_SEND.equals(action)) {
+                if (android.os.Build.VERSION.SDK_INT >= 33) {
+                  uri = intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri.class);
+                } else {
+                  //noinspection deprecation
+                  uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+                }
+              }
+              if (uri == null) return;
+
+              pendingImportUri = uri;
+              pendingImportName = displayName(uri);
+              pendingImportMime = getContentResolver().getType(uri);
+              if (pendingImportMime == null || pendingImportMime.isEmpty()) {
+                pendingImportMime = mimeFromName(pendingImportName);
+              }
+              pendingImportToken = System.nanoTime();
+              dispatchPendingImport();
+            }
+
+            private String displayName(Uri uri) {
+              if ("content".equalsIgnoreCase(uri.getScheme())) {
+                try (Cursor cursor = getContentResolver().query(
+                  uri,
+                  new String[]{OpenableColumns.DISPLAY_NAME},
+                  null,
+                  null,
+                  null
+                )) {
+                  if (cursor != null && cursor.moveToFirst()) {
+                    int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                    if (index >= 0) {
+                      String value = cursor.getString(index);
+                      if (value != null && !value.trim().isEmpty()) return value;
+                    }
+                  }
+                } catch (Exception ignored) {}
+              }
+              String segment = uri.getLastPathSegment();
+              return segment == null || segment.trim().isEmpty() ? "book" : segment;
+            }
+
+            private String mimeFromName(String name) {
+              String clean = name == null ? "" : name.toLowerCase(Locale.ROOT);
+              if (clean.endsWith(".epub")) return "application/epub+zip";
+              if (clean.endsWith(".fb2")) return "application/x-fictionbook+xml";
+              String extension = MimeTypeMap.getFileExtensionFromUrl(clean);
+              String detected = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
+              return detected == null ? "application/octet-stream" : detected;
+            }
+
+            @Nullable
+            private WebResourceResponse openPendingImportResponse() {
+              Uri uri = pendingImportUri;
+              if (uri == null) {
+                return new WebResourceResponse(
+                  "text/plain",
+                  "utf-8",
+                  404,
+                  "Not Found",
+                  java.util.Collections.emptyMap(),
+                  new java.io.ByteArrayInputStream(new byte[0])
+                );
+              }
+              try {
+                InputStream stream = getContentResolver().openInputStream(uri);
+                if (stream == null) throw new IllegalStateException("empty stream");
+                return new WebResourceResponse(
+                  pendingImportMime == null ? "application/octet-stream" : pendingImportMime,
+                  null,
+                  stream
+                );
+              } catch (Exception error) {
+                return new WebResourceResponse(
+                  "text/plain",
+                  "utf-8",
+                  500,
+                  "Read failed",
+                  java.util.Collections.emptyMap(),
+                  new java.io.ByteArrayInputStream(
+                    String.valueOf(error.getMessage()).getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                  )
+                );
+              }
+            }
+
+            private void dispatchPendingImport() {
+              if (!pageReady || webView == null || pendingImportUri == null) return;
+              try {
+                JSONObject payload = new JSONObject();
+                payload.put("name", pendingImportName);
+                payload.put("mime", pendingImportMime);
+                payload.put("url", "https://appassets.androidplatform.net/android-import/current?t=" + pendingImportToken);
+                String json = payload.toString();
+                String script = "(function retryReaderImport(n){"
+                  + "if(typeof window.readerImportAndroidFile==='function'){window.readerImportAndroidFile(" + json + ");return;}"
+                  + "if(n<300)setTimeout(function(){retryReaderImport(n+1)},100);"
+                  + "})(0);";
+                webView.evaluateJavascript(script, null);
+              } catch (Exception error) {
+                Toast.makeText(this, "Не удалось передать книгу в Reader AI", Toast.LENGTH_LONG).show();
+              }
+            }
+
+            @Override
+            protected void onNewIntent(Intent intent) {
+              super.onNewIntent(intent);
+              setIntent(intent);
+              captureExternalIntent(intent);
             }
 
             @Override

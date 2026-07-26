@@ -10,6 +10,7 @@ globalThis.MouseEvent = window.MouseEvent;
 
 const {
   buildWordCandidates,
+  describeWordCandidateState,
   installWordCandidateBridge,
   mergeLemmaMetadata,
   mergeWordStateStores,
@@ -70,6 +71,22 @@ assert('variants retained', candidates[0].variants.includes('frappa') && candida
 assert('proper names excluded', !candidates.some(item => item.lemma === 'geneviève'));
 assert('old contexts excluded', !candidates.some(item => item.lemma === 'ancien'));
 assert('known words excluded', !candidates.some(item => item.lemma === 'connu'));
+assert(
+  'known exclusion gets an explicit explanation',
+  describeWordCandidateState(state, state['fr:connu'], { lang: 'fr', now }).label === 'известное',
+);
+const commonState = {
+  word: 'avec', lang: 'fr', known: true, autoKnown: 'common', status: 'known', clicked: 0,
+  clickContexts: {},
+};
+assert(
+  'automatic common-word exclusion is distinguished from manually known',
+  describeWordCandidateState({ 'fr:avec': commonState }, commonState, { lang: 'fr', now }).label === 'частое',
+);
+assert(
+  'proper-name exclusion gets an explicit explanation',
+  describeWordCandidateState(state, state['fr:geneviève'], { lang: 'fr', now }).label === 'имя',
+);
 
 const studyContexts = {
   'book:study:1': { at: recentA, text: 'Premier contexte.' },
@@ -209,7 +226,13 @@ assert('first exact tapped paragraph counts despite stale active class', wordSta
 assert('repeat tap in same exact paragraph does not count', wordState.markClicked('frappa', 'fr') === false);
 let clicked = wordState.get('frappa', 'fr');
 assert('stored first exact context uses paragraph 5', Object.values(clicked.clickContexts)[0].paragraphIndex === 5);
+assert('new context uses a stable v2 text anchor', Object.keys(clicked.clickContexts)[0].startsWith('ctx2:'));
 assert('one exact context produces 1/2 progress', buildWordCandidates(cache, { lang: 'fr', minContexts: 1 })[0]?.contextCount === 1);
+
+secondWord.closest('.reader-paragraph').dataset.p = '9';
+document.getElementById('reader-chapter-title').textContent = '🇫🇷 · Chapitre 1 · гл. 1/10 · абзац 10/20';
+secondWord.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+assert('same text after paragraph renumbering keeps the same context anchor', wordState.markClicked('frappa', 'fr') === false);
 
 firstWord.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
 secondWord.closest('.reader-paragraph').classList.add('active');

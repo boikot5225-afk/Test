@@ -5,10 +5,12 @@
 import { libraryIdbGet } from './reader/library-idb-store.js?v=1';
 import {
   buildWordCandidates,
+  candidateNormalizeWord,
+  describeWordCandidateState,
   installWordCandidateBridge,
   loadWordCandidateState,
   setCandidateStatus,
-} from './reader/word-candidates.js?v=4';
+} from './reader/word-candidates.js?v=5';
 
 installWordCandidateBridge();
 let currentHomeCandidates = [];
@@ -243,8 +245,10 @@ export async function renderHome() {
       }).join('');
     } else {
       recentWords.innerHTML = rows.map(w => {
-        const status = w.saved ? 'сохранено' : w.known ? 'знаю' : 'открыто';
-        return `<span class="home-word-chip ${w.saved ? 'saved' : ''}"><b>${escape(w.word)}</b><small>${escape(status)}</small></span>`;
+        const detail = describeWordCandidateState(wordState, w, { lang, days: 30 });
+        const canonical = candidateNormalizeWord(w.lemma || w.linkedLemma || w.word, lang);
+        const shownWord = canonical || w.word;
+        return `<span class="home-word-chip ${w.saved ? 'saved' : ''}"><b>${escape(shownWord)}</b><small>${escape(detail.label)}</small></span>`;
       }).join('');
     }
   }
