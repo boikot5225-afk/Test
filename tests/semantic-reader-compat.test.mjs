@@ -155,6 +155,10 @@ assert(
   'model missing-text error is not stored as a translation',
   translationValueText('Ошибка: не предоставлен текст для перевода.') === '',
 );
+assert(
+  'model wrong-language error is not stored as a translation',
+  translationValueText('Ошибка: входные данные не являются испанским текстом.') === '',
+);
 existingBook.readerTranslations['ch_0:4'] = { data: { translatedText: 'Новый перевод повествования' } };
 assert('new object translation is normalized', normalizeSemanticBookTranslations(existingBook) === true);
 assert(

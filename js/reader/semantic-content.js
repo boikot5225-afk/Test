@@ -222,7 +222,10 @@ export function normalizeSemanticBookTextChunks(book, options = {}) {
 }
 
 const BAD_OBJECT_TEXT = /^\s*\[?\s*(?:object|объект)\s+(?:object|объект)\s*\]?\s*$/i;
-const BAD_TRANSLATION_TEXT = /^(?:ошибка|error)\s*:\s*(?:не\s+предоставлен|не\s+передан|no\s+(?:source\s+)?text\b)/i;
+// A provider/wrapper error is not a translation. Reject the whole class,
+// rather than chasing individual messages such as "no text" or
+// "input is not Spanish" one at a time.
+const BAD_TRANSLATION_TEXT = /^(?:ошибка|error)\s*:/i;
 const TRANSLATION_VALUE_KEYS = [
   'ru', 'translation', 'translatedText', 'translated_text', 'text',
   'result', 'output', 'content', 'message', 'data',

@@ -4,7 +4,7 @@ import {
   normalizeSemanticBookTextChunks,
   normalizeSemanticBookTranslations,
   translationValueText,
-} from './semantic-content.js?v=5';
+} from './semantic-content.js?v=6';
 
 export function createReaderChapterRenderer(deps) {
   const getCurrentBook = () => {
