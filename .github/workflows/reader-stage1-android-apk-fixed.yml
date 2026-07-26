@@ -151,7 +151,7 @@ jobs:
       - name: Verify v77.31 to v77.32 update on Android
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 34
           target: google_apis
           arch: x86_64
           disable-animations: true
