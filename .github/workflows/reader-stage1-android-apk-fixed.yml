@@ -132,7 +132,7 @@ jobs:
           grep -F 'versionCode 9' "$BUILD_FILE"
           grep -F "versionName 'semantic-v77.31'" "$BUILD_FILE"
           grep -F 'v77.31-translation-cleanup' '.stage1-android/app/src/main/assets/www/index.html'
-          grep -F '^Warning: truncated output' '.stage1-android/app/src/main/assets/www/js/reader-app.js'
+          grep -q '^Warning: truncated output' '.stage1-android/app/src/main/assets/www/js/reader-app.js'
 
           gradle --no-daemon -p .stage1-android :app:assembleDebug
           popd
