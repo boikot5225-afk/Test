@@ -80,7 +80,7 @@ import {
   readerNormalizeWord, readerPosRu, readerScopedKey,
   readerSearchZhCoreJson, readerZhEntryFromSources,
   readerWordStatusRu, renderReaderChapter,
-} from './reader-app.js?v=77.31';
+} from './reader-app.js?v=77.32';
 import { dictNounsCache, dictPrepsCache, dictType, setDictTypeValue } from './dict-render.js';
 import { loadNounsFromCloud, initExercisesState, initExercisesAfterLoad, PREPS_DATA } from './exercises-fr.js';
 import './reader/android-external-import.js?v=1';
@@ -1387,6 +1387,7 @@ function stopBackgroundSync() {
 
 // ── Инициализация ──
 async function init() {
+  window.AN2_STARTUP_READY = true;
   showLoading('Reader AI — запуск...');
   initSpeech();
   applyKbMode();

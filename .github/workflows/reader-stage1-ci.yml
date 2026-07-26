@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - test/reader-epub-format-stage1
+      - fix/reader-v77.32-startup
   pull_request:
     branches:
       - claude/epic-hawking-540kte
@@ -26,7 +27,7 @@ jobs:
           node-version: '22'
 
       - name: Install browser integration test dependencies
-        run: npm install --no-save --no-package-lock --ignore-scripts happy-dom fake-indexeddb fflate
+        run: npm install --no-save --no-package-lock --ignore-scripts happy-dom fake-indexeddb fflate esbuild
 
       - name: Check JavaScript syntax
         run: |
@@ -50,7 +51,9 @@ jobs:
           node --check js/reader/word-panel.js
           node --check js/reader/display.js
           node --check js/reader/pages-mode.js
+          node --check js/reader-app.js
           node --check functions/deepseek-json.js
+          node --check tests/startup-module-integrity.test.mjs
           node --check tests/deepseek-json.test.mjs
           node --check js/home.js
           node --check tests/footnote-stage1.test.mjs
@@ -58,6 +61,7 @@ jobs:
           node --check tests/reader-word-sources.test.mjs
           node --check tests/reader-display-options.test.mjs
           node --check tests/semantic-epub-import.integration.test.mjs
+          npx esbuild js/app.js --bundle --platform=browser --format=esm --outfile=/tmp/reader-ai-app.bundle.js
 
       - name: Run compatibility checks
         run: |
@@ -70,6 +74,7 @@ jobs:
           node --experimental-default-type=module tests/reader-word-sources.test.mjs
           node --experimental-default-type=module tests/reader-display-options.test.mjs
           node --experimental-default-type=module tests/deepseek-json.test.mjs
+          node --experimental-default-type=module tests/startup-module-integrity.test.mjs
 
       - name: Run full EPUB import integration
         shell: bash
