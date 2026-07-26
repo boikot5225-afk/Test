@@ -29,6 +29,7 @@ import { createReaderTimeTracker } from './reader/reading-time.js?v=2-per-paragr
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
 import { createReaderChapterRenderer } from './reader/chapter-render.js?v=8';
 import { createReaderPagesMode } from './reader/pages-mode.js?v=3';
+import { translationValueText } from './reader/semantic-content.js?v=5';
 import { splitTextToChapters as readerImportSplitTextToChapters,
          splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
 
@@ -3965,7 +3966,7 @@ async function readerTranslateParagraphAI(i = null, opts = {}) {
   if (!silent) showToast('⏳ DeepSeek переводит абзац...');
   try {
     const d = await readerAI({ task: 'translate_paragraph', text, sourceLang: readerBookLang(book), targetLang: 'ru' });
-    const ru = d.ru || d.translation || d.text || '';
+    const ru = translationValueText(d);
     if (!ru) throw new Error('Пустой ответ от DeepSeek');
     book.readerTranslations = book.readerTranslations || {};
     book.readerTranslations[`${ch.id}:${index}`] = ru;
@@ -5002,7 +5003,7 @@ async function readerTranslateSelection() {
   panel?.classList.add('show');
   try {
     const d = await readerAI({ task: 'translate_paragraph', text, sourceLang: readerBookLang(readerCurrentBook?.()), targetLang: 'ru' });
-    const ru = d.ru || d.translation || d.text || '';
+    const ru = translationValueText(d);
     if (!ru) throw new Error('пустой ответ');
     readerSelectionCache.set(key, ru);
     if (ruEl) ruEl.textContent = ru;
@@ -5124,7 +5125,7 @@ async function readerPrefetchNext() {
     if (book.readerTranslations[key]) return;       // already cached
     const text = paras[next]; if (!text) return;
     const d = await readerAI({ task: 'translate_paragraph', text, sourceLang: readerBookLang(book), targetLang: 'ru' });
-    const ru = d.ru || d.translation || d.text || '';
+    const ru = translationValueText(d);
     if (ru) { book.readerTranslations[key] = ru; saveReaderBooks(); }
   } catch {}
 }

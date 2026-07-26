@@ -43,6 +43,7 @@ jobs:
       - name: Verify DeepSeek model normalization
         run: |
           node --check functions/index.js
+          node tests/deepseek-json.test.mjs
           node - <<'NODE'
           const assert = require('node:assert/strict');
           const { resolveDeepSeekModel } = require('./functions/deepseek-model');

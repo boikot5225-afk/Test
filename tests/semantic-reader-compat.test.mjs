@@ -151,6 +151,10 @@ assert(
 assert('literal object placeholder is rejected', translationValueText('[object Object]') === '');
 assert('localized bracketed object placeholder is rejected', translationValueText('[объект Объект]') === '');
 assert('localized bare object placeholder is rejected', translationValueText('Объект Объект') === '');
+assert(
+  'model missing-text error is not stored as a translation',
+  translationValueText('Ошибка: не предоставлен текст для перевода.') === '',
+);
 existingBook.readerTranslations['ch_0:4'] = { data: { translatedText: 'Новый перевод повествования' } };
 assert('new object translation is normalized', normalizeSemanticBookTranslations(existingBook) === true);
 assert(

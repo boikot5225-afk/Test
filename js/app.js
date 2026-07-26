@@ -80,7 +80,7 @@ import {
   readerNormalizeWord, readerPosRu, readerScopedKey,
   readerSearchZhCoreJson, readerZhEntryFromSources,
   readerWordStatusRu, renderReaderChapter,
-} from './reader-app.js?v=77.29';
+} from './reader-app.js?v=77.30';
 import { dictNounsCache, dictPrepsCache, dictType, setDictTypeValue } from './dict-render.js';
 import { loadNounsFromCloud, initExercisesState, initExercisesAfterLoad, PREPS_DATA } from './exercises-fr.js';
 import './reader/android-external-import.js?v=1';

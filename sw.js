@@ -1,5 +1,5 @@
 // An II service worker.
-const CACHE_VERSION = 'v77.29-open-with-stable-context';
+const CACHE_VERSION = 'v77.30-deepseek-json';
 const CACHE_NAME = `an2-cache-${CACHE_VERSION}`;
 const fromScope = (path = '') => new URL(path, self.registration.scope).toString();
 const CORE_ASSETS = [

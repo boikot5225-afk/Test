@@ -50,6 +50,8 @@ jobs:
           node --check js/reader/word-panel.js
           node --check js/reader/display.js
           node --check js/reader/pages-mode.js
+          node --check functions/deepseek-json.js
+          node --check tests/deepseek-json.test.mjs
           node --check js/home.js
           node --check tests/footnote-stage1.test.mjs
           node --check tests/word-candidates.test.mjs
@@ -67,6 +69,7 @@ jobs:
           node --experimental-default-type=module tests/word-candidates.test.mjs
           node --experimental-default-type=module tests/reader-word-sources.test.mjs
           node --experimental-default-type=module tests/reader-display-options.test.mjs
+          node --experimental-default-type=module tests/deepseek-json.test.mjs
 
       - name: Run full EPUB import integration
         shell: bash

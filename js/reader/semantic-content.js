@@ -222,6 +222,7 @@ export function normalizeSemanticBookTextChunks(book, options = {}) {
 }
 
 const BAD_OBJECT_TEXT = /^\s*\[?\s*(?:object|объект)\s+(?:object|объект)\s*\]?\s*$/i;
+const BAD_TRANSLATION_TEXT = /^(?:ошибка|error)\s*:\s*(?:не\s+предоставлен|не\s+передан|no\s+(?:source\s+)?text\b)/i;
 const TRANSLATION_VALUE_KEYS = [
   'ru', 'translation', 'translatedText', 'translated_text', 'text',
   'result', 'output', 'content', 'message', 'data',
@@ -231,7 +232,7 @@ export function translationValueText(value, seen = new Set()) {
   if (value == null) return '';
   if (typeof value === 'string') {
     const text = value.replace(/\s+/g, ' ').trim();
-    return BAD_OBJECT_TEXT.test(text) ? '' : text;
+    return BAD_OBJECT_TEXT.test(text) || BAD_TRANSLATION_TEXT.test(text) ? '' : text;
   }
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   if (Array.isArray(value)) {
