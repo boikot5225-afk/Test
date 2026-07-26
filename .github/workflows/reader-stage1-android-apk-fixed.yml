@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - test/reader-epub-format-stage1
+      - fix/reader-v77.32-startup
     paths:
       - '.github/workflows/reader-stage1-android-apk-fixed.yml'
       - '.github/workflows/reader-stage1-android-apk.yml'

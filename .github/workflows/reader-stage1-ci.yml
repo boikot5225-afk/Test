@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - test/reader-epub-format-stage1
+      - fix/reader-v77.32-startup
   pull_request:
     branches:
       - claude/epic-hawking-540kte
