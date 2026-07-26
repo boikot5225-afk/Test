@@ -148,6 +148,16 @@ jobs:
           cp .stage1-android/app/build/outputs/apk/debug/app-debug.apk dist/Reader-AI-EPUB-Stage1-Clean.apk
           sha256sum dist/Reader-AI-EPUB-Stage1-Clean.apk | tee dist/Reader-AI-EPUB-Stage1-Clean.apk.sha256
 
+      - name: Upload clean semantic EPUB APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-EPUB-Stage1-Clean-APK
+          path: |
+            dist/Reader-AI-EPUB-Stage1-Clean.apk
+            dist/Reader-AI-EPUB-Stage1-Clean.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Verify v77.31 to v77.32 update on Android
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -168,13 +178,3 @@ jobs:
             dist/android-update-screen.png
           if-no-files-found: warn
           retention-days: 7
-
-      - name: Upload clean semantic EPUB APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Reader-AI-EPUB-Stage1-Clean-APK
-          path: |
-            dist/Reader-AI-EPUB-Stage1-Clean.apk
-            dist/Reader-AI-EPUB-Stage1-Clean.apk.sha256
-          if-no-files-found: error
-          retention-days: 14
