@@ -30,8 +30,8 @@ adb shell am force-stop "$PACKAGE"
 adb shell am start -n "$PACKAGE/$ACTIVITY"
 sleep 45
 
-adb shell uiautomator dump /sdcard/reader-update-ui.xml
-adb pull /sdcard/reader-update-ui.xml dist/android-update-ui.xml
+adb shell uiautomator dump /data/local/tmp/reader-update-ui.xml
+adb pull /data/local/tmp/reader-update-ui.xml dist/android-update-ui.xml
 adb exec-out screencap -p > dist/android-update-screen.png
 adb logcat -d > dist/android-update-logcat.txt
 
