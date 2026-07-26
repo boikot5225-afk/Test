@@ -75,8 +75,8 @@ jobs:
           fs.writeFileSync(path, source);
           NODE
           node --check functions/index.js
-          test "$(grep -c '^exports\\.readerAI = ' functions/index.js)" -eq 1
-          test "$(grep -c '^exports\\.' functions/index.js)" -eq 1
+          test "$(grep -c '^exports\.readerAI = ' functions/index.js)" -eq 1
+          test "$(grep -c '^exports\.' functions/index.js)" -eq 1
 
       - name: Select deployment credential
         shell: bash
