@@ -1,4 +1,4 @@
-name: Reader v77.30 formatting and footnotes test APK
+name: Reader v77.31 formatting, footnotes and translation test APK
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
       - '.github/workflows/reader-stage1-android-apk-fixed.yml'
       - '.github/workflows/reader-stage1-android-apk.yml'
       - '.github/scripts/patch-reader-v7730.py'
+      - '.github/scripts/patch-reader-v7731.py'
   pull_request:
     branches:
       - claude/epic-hawking-540kte
@@ -17,7 +18,7 @@ permissions:
   contents: read
 
 jobs:
-  build-v7730-test:
+  build-v7731-test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -41,7 +42,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Generate v77.29 wrapper and apply narrow fix
+      - name: Generate v77.29 wrapper and apply isolated fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -66,11 +67,12 @@ jobs:
 
           sed -i 's#https://appassets.androidplatform.net/assets/index.html#https://appassets.androidplatform.net/assets/www/index.html#' "$JAVA_FILE"
           sed -i "s/applicationId 'space.saintjust.reader.stage1'/applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'/" "$BUILD_FILE"
-          sed -i 's/versionCode 2/versionCode 8/' "$BUILD_FILE"
-          sed -i "s/versionName 'stage1-test'/versionName 'semantic-v77.30-formatfix'/" "$BUILD_FILE"
-          sed -i 's/Reader AI Stage 1/Reader AI Test 77.30/' "$MANIFEST_FILE"
+          sed -i 's/versionCode 2/versionCode 9/' "$BUILD_FILE"
+          sed -i "s/versionName 'stage1-test'/versionName 'semantic-v77.31-formatfix'/" "$BUILD_FILE"
+          sed -i 's/Reader AI Stage 1/Reader AI Test 77.31/' "$MANIFEST_FILE"
 
           python3 .github/scripts/patch-reader-v7730.py "$WWW"
+          python3 .github/scripts/patch-reader-v7731.py "$WWW"
 
           node --check "$WWW/js/reader/semantic-import-stage1.js"
           node --check "$WWW/js/reader/semantic-content-footnotes.js"
@@ -81,7 +83,7 @@ jobs:
           node --check "$WWW/js/reader-app.js"
           node --check "$WWW/js/app.js"
 
-          cat > /tmp/test-v7730-chunks.mjs <<EOF
+          cat > /tmp/test-v7731-chunks.mjs <<EOF
           import { splitSemanticItemChunksPreservingFootnotes } from 'file://${GITHUB_WORKSPACE}/$WWW/js/reader/semantic-import-stage1.js';
           const before = 'Palabra '.repeat(35);
           const after = ' continuación '.repeat(20);
@@ -99,18 +101,20 @@ jobs:
           if (parts.length < 2) throw new Error('paragraph was not chunked');
           if (refs.length !== 1 || refs[0].footnote.target !== 'Notas.html#n7') throw new Error('footnote was lost');
           if (!parts.every((part, index) => part.semanticChunkIndex === index && part.semanticChunkCount === parts.length)) throw new Error('chunk metadata mismatch');
-          if (!parts.every(part => part.blockStyle?.textAlign === 'justify')) throw new Error('paragraph style was lost');
           console.log(JSON.stringify({ ok: true, chunks: parts.length, footnotes: refs.length }));
           EOF
-          node --experimental-default-type=module /tmp/test-v7730-chunks.mjs
+          node --experimental-default-type=module /tmp/test-v7731-chunks.mjs
 
           grep -F 'assets/www/index.html' "$JAVA_FILE"
           grep -F "applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'" "$BUILD_FILE"
-          grep -F 'versionCode 8' "$BUILD_FILE"
-          grep -F "versionName 'semantic-v77.30-formatfix'" "$BUILD_FILE"
-          grep -F 'v77.30-footnotes-formatting-test' "$WWW/index.html"
+          grep -F 'versionCode 9' "$BUILD_FILE"
+          grep -F "versionName 'semantic-v77.31-formatfix'" "$BUILD_FILE"
+          grep -F 'v77.31-footnotes-formatting-translation-test' "$WWW/index.html"
           grep -F 'splitSemanticItemChunksPreservingFootnotes' "$WWW/js/reader/semantic-import-stage1.js"
           grep -F 'reader-semantic-layout' "$WWW/js/reader/chapter-render-stage1.js"
+          grep -F 'const text = readerCurrentParagraphText(next); if (!text) return;' "$WWW/js/reader-app.js"
+          grep -F 'не является строкой|предоставьте текст в виде строки' "$WWW/js/reader/chapter-render-dialogue.js"
+          ! grep -Fq "center|justify|start|end" "$WWW/js/reader/semantic-content-footnotes.js"
 
       - name: Build isolated test APK
         working-directory: .stage1-android
@@ -119,15 +123,15 @@ jobs:
       - name: Prepare artifact
         run: |
           mkdir -p dist
-          cp .stage1-android/app/build/outputs/apk/debug/app-debug.apk dist/Reader-AI-v77.30-Formatting-Footnotes-Test.apk
-          sha256sum dist/Reader-AI-v77.30-Formatting-Footnotes-Test.apk | tee dist/Reader-AI-v77.30-Formatting-Footnotes-Test.apk.sha256
+          cp .stage1-android/app/build/outputs/apk/debug/app-debug.apk dist/Reader-AI-v77.31-Formatting-Footnotes-Translation-Test.apk
+          sha256sum dist/Reader-AI-v77.31-Formatting-Footnotes-Translation-Test.apk | tee dist/Reader-AI-v77.31-Formatting-Footnotes-Translation-Test.apk.sha256
 
       - name: Upload isolated test APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-v77.30-Formatting-Footnotes-Test-APK
+          name: Reader-AI-v77.31-Formatting-Footnotes-Translation-Test-APK
           path: |
-            dist/Reader-AI-v77.30-Formatting-Footnotes-Test.apk
-            dist/Reader-AI-v77.30-Formatting-Footnotes-Test.apk.sha256
+            dist/Reader-AI-v77.31-Formatting-Footnotes-Translation-Test.apk
+            dist/Reader-AI-v77.31-Formatting-Footnotes-Translation-Test.apk.sha256
           if-no-files-found: error
           retention-days: 14
