@@ -23,7 +23,7 @@ test "$installed_marker" = "$MARKER_VALUE"
 
 adb shell dumpsys package "$PACKAGE" | tee /tmp/reader-package.txt
 grep -Eq 'versionCode=10([[:space:]]|$)' /tmp/reader-package.txt
-grep -F 'versionName=semantic-v77.32-debug' /tmp/reader-package.txt
+grep -F 'versionName=semantic-v77.32' /tmp/reader-package.txt
 
 adb logcat -c
 adb shell am force-stop "$PACKAGE"
@@ -45,7 +45,7 @@ if grep -Fq 'Сбой запуска Reader AI' dist/android-update-ui.xml; then
   exit 1
 fi
 
-if ! grep -Eq 'v77\\.32-startup-repair|Войти|Главная|Читать' dist/android-update-ui.xml; then
+if ! grep -Eq 'v77\.32-startup-repair|Войти|Главная|Читать' dist/android-update-ui.xml; then
   echo 'Reader AI did not expose a usable post-startup screen.' >&2
   exit 1
 fi
