@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   deploy-reader-ai:
-    if: github.event_name == 'workflow_dispatch' || github.event.issue.title == 'deploy-readerAI-0061bac-20260724'
+    if: github.event_name == 'workflow_dispatch' || github.event.issue.title == 'deploy-readerAI-v77.32-stable-20260727'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -25,38 +25,72 @@ jobs:
       GCP_SA_KEY_JSON: ${{ secrets.GCP_SA_KEY }}
 
     steps:
-      - name: Checkout verified Reader AI fix
+      - name: Checkout verified Reader AI source
         uses: actions/checkout@v4
         with:
           ref: 0061bacb48356da56ac931ccdd071f81c7ad8bdb
           fetch-depth: 1
 
-      - name: Limit Firebase discovery to readerAI
+      - name: Prepare isolated stable readerAI source
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+
           path = Path("functions/index.js")
           source = path.read_text()
+
+          # Preserve the old deepseek-chat semantics after moving to V4:
+          # non-thinking mode and a guaranteed JSON object response.
+          needle = "          model: resolveDeepSeekModel(),\n          temperature: 0.1,"
+          replacement = (
+              "          model: resolveDeepSeekModel(),\n"
+              "          thinking: { type: 'disabled' },\n"
+              "          response_format: { type: 'json_object' },\n"
+              "          temperature: 0.1,"
+          )
+          if source.count(needle) != 1:
+              raise SystemExit(f"Expected exactly one DeepSeek request block, found {source.count(needle)}")
+          source = source.replace(needle, replacement)
+
+          # Deploy only readerAI. The remaining exports reference unrelated
+          # secrets, so create an isolated deployment source after the exact
+          # behavior patch above has been validated.
           marker = "// Cloud TTS proxy:"
           marker_at = source.find(marker)
           if marker_at < 0:
               raise SystemExit("Cloud TTS marker not found")
           section_at = source.rfind("// ─", 0, marker_at)
           if section_at < 0:
-              raise SystemExit("ReaderAI section boundary not found")
+              raise SystemExit("readerAI section boundary not found")
           source = source[:section_at].rstrip() + "\n"
+
           for declaration in (
               "const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');\n",
               "const SELFHOST_TTS_STT_URL = defineSecret('SELFHOST_TTS_STT_URL');\n",
               "const SELFHOST_TOKEN = defineSecret('SELFHOST_TOKEN');\n",
           ):
               source = source.replace(declaration, "")
-          if "exports.readerAI = onCall(" not in source:
-              raise SystemExit("readerAI export not found")
-          if "defineSecret('OPENROUTER_API_KEY')" in source or "defineSecret('SELFHOST_TTS_STT_URL')" in source or "defineSecret('SELFHOST_TOKEN')" in source:
-              raise SystemExit("Unrelated secret declaration remained in readerAI deployment source")
+
+          required = (
+              "exports.readerAI = onCall(",
+              "thinking: { type: 'disabled' }",
+              "response_format: { type: 'json_object' }",
+          )
+          for item in required:
+              if item not in source:
+                  raise SystemExit(f"Required readerAI behavior missing: {item}")
+
+          forbidden = (
+              "defineSecret('OPENROUTER_API_KEY')",
+              "defineSecret('SELFHOST_TTS_STT_URL')",
+              "defineSecret('SELFHOST_TOKEN')",
+          )
+          for item in forbidden:
+              if item in source:
+                  raise SystemExit(f"Unrelated secret declaration remained: {item}")
+
           path.write_text(source)
           PY
 
@@ -73,11 +107,16 @@ jobs:
           node --check functions/index.js
           node - <<'NODE'
           const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const source = fs.readFileSync('functions/index.js', 'utf8');
           const { resolveDeepSeekModel } = require('./functions/deepseek-model');
           assert.equal(resolveDeepSeekModel(), 'deepseek-v4-flash');
           assert.equal(resolveDeepSeekModel('deepseek-chat'), 'deepseek-v4-flash');
           assert.equal(resolveDeepSeekModel('deepseek-reasoner'), 'deepseek-v4-flash');
           assert.equal(resolveDeepSeekModel('deepseek-v4-pro'), 'deepseek-v4-pro');
+          assert.match(source, /thinking:\s*\{\s*type:\s*'disabled'\s*\}/);
+          assert.match(source, /response_format:\s*\{\s*type:\s*'json_object'\s*\}/);
+          assert.equal((source.match(/exports\.readerAI\s*=\s*onCall/g) || []).length, 1);
           NODE
 
       - name: Select deployment credential
@@ -140,8 +179,8 @@ jobs:
         run: |
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           if [[ "${DEPLOY_OUTCOME}" == "success" ]]; then
-            gh issue comment "${{ github.event.issue.number }}" --body "DEPLOY_OK readerAI 0061bac ${run_url}"
+            gh issue comment "${{ github.event.issue.number }}" --body "DEPLOY_OK readerAI v77.32-stable ${run_url}"
           else
-            gh issue comment "${{ github.event.issue.number }}" --body "DEPLOY_FAILED readerAI 0061bac ${run_url}"
+            gh issue comment "${{ github.event.issue.number }}" --body "DEPLOY_FAILED readerAI v77.32-stable ${run_url}"
             exit 1
           fi
