@@ -8,6 +8,9 @@ on:
       - '.github/workflows/reader-stage1-android-apk-fixed.yml'
       - '.github/workflows/reader-stage1-android-apk.yml'
       - '.github/scripts/patch-reader-v7730.py'
+  pull_request:
+    branches:
+      - claude/epic-hawking-540kte
   workflow_dispatch:
 
 permissions:
