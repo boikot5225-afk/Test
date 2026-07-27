@@ -5,6 +5,7 @@
 import { showToast, normalizeImportKey, escapeHtml, escapeAttr } from './utils.js';
 import { sb } from './supabase.js';
 import { NOUNS, NOUNS_LOADED, setNounsLoaded, isGuest } from './state.js';
+import { buildReaderWordSources } from './reader/word-source-filters.js?v=1';
 import {
   readerAI, readerCanonicalLang, readerEnsureZhCoreJsonLoaded,
   readerEscape, readerGetCachedLexical, readerLexicalCacheKey,
@@ -13,9 +14,10 @@ import {
   readerTouchWordState, readerWordStateKey, readerWordStatusRu,
   readerZhCoreJson, readerZhCoreJsonCount, readerZhCoreJsonPromise,
   readerZhEntryFromSources,
+  hydrateReaderBooksFromIndexedDB, loadReaderBooks,
   loadReaderLexicalCache, loadReaderWordState,
   saveReaderLexicalCache, saveReaderWordState,
-  renderReaderChapter,
+  renderReaderChapter, READER_BOOKS_KEY,
 } from './reader-app.js';
 
 // ════════════════════════════════════════════════
@@ -89,11 +91,11 @@ window.setDictType = function(type) {
   }
 
   if (manualBtn) {
-    manualBtn.style.display = (type === 'verbs' ? 'none' : 'inline-block');
+    manualBtn.style.display = ['nouns', 'preps', 'zh'].includes(type) ? 'inline-block' : 'none';
     manualBtn.textContent = type === 'zh' ? '+ Китайское' : '+ Вручную';
     manualBtn.setAttribute('onclick', type === 'zh' ? 'showManualChineseWordModal()' : 'showManualWordModal()');
   }
-  if (xlsxBtn) xlsxBtn.style.display = type === 'zh' ? 'none' : 'inline-block';
+  if (xlsxBtn) xlsxBtn.style.display = ['nouns', 'preps'].includes(type) ? 'inline-block' : 'none';
   if (clearWordsBtn) clearWordsBtn.style.display = (type === 'nouns' && window.isAdmin && window.isAdmin()) ? 'inline-block' : 'none';
 
   // Clear search and reset gen button
@@ -103,6 +105,7 @@ window.setDictType = function(type) {
     if (type === 'nouns') inp.placeholder = 'Поиск: chien, beau, rapidement...';
     else if (type === 'preps') inp.placeholder = 'Поиск конструкции: penser à, parler de...';
     else if (type === 'zh') inp.placeholder = 'Поиск: 塑料布, pinyin, перевод...';
+    else if (type === 'reader') inp.placeholder = 'Поиск слова или перевода...';
     else inp.placeholder = 'Поиск глагола...';
     inp.focus();
   }
@@ -151,48 +154,46 @@ window.onDictSearch = function() {
   renderDictWords(dictType, val);
 };
 
-function renderReaderWords(activeBookFilter, search = '') {
+let readerWordsRenderSequence = 0;
+let readerBooksHydrationKey = '';
+let readerBooksHydrationPromise = null;
+
+async function loadReaderWordBooks() {
+  const key = readerScopedKey(READER_BOOKS_KEY);
+  if (key !== readerBooksHydrationKey || !readerBooksHydrationPromise) {
+    readerBooksHydrationKey = key;
+    readerBooksHydrationPromise = Promise.resolve(hydrateReaderBooksFromIndexedDB()).catch(() => false);
+  }
+  await readerBooksHydrationPromise;
+  return loadReaderBooks();
+}
+
+async function renderReaderWords(activeBookFilter, search = '') {
   const card = document.getElementById('dict-reader-card');
   if (!card) return;
+  const sequence = ++readerWordsRenderSequence;
   const q = String(search || '').trim().toLowerCase();
 
   const escape = readerEscape;
   const wordState = loadReaderWordState();
-  const words = Object.values(wordState).filter(w => w && w.word);
+  const books = await loadReaderWordBooks();
+  if (sequence !== readerWordsRenderSequence) return;
+  const { words, byBook, sources } = buildReaderWordSources(wordState, books, globalThis.AN2_LANG || 'fr');
 
-  // Загружаем книги для имён
-  let books = [];
-  try { books = JSON.parse(localStorage.getItem(readerScopedKey(READER_BOOKS_KEY)) || '[]') || []; } catch {}
-  const bookMap = {};
-  books.forEach(b => { bookMap[b.id] = b.title || 'Текст'; });
-
-  // Группируем слова по книге через places
-  const byBook = {}; // bookId → [wordState]
-  const noBook = [];
-  words.forEach(w => {
-    const places = Object.keys(w.places || {});
-    if (!places.length) { noBook.push(w); return; }
-    const bookIds = [...new Set(places.map(p => p.split(':')[0]))];
-    bookIds.forEach(bid => {
-      if (!byBook[bid]) byBook[bid] = [];
-      byBook[bid].push(w);
-    });
-  });
-
-  // Список источников для фильтра
-  const sources = Object.keys(byBook).filter(bid => byBook[bid].length);
-  const currentFilter = activeBookFilter || card.dataset.filter || (sources[0] || 'all');
+  const requestedFilter = activeBookFilter || card.dataset.filter || 'all';
+  const currentFilter = requestedFilter === 'all' || sources.some(source => source.id === requestedFilter)
+    ? requestedFilter
+    : 'all';
   card.dataset.filter = currentFilter;
 
   const filterHTML = `
-    <div class="lib-filters" style="margin-bottom:12px">
-      <button class="lib-filter-pill ${currentFilter === 'all' ? 'active' : ''}"
-        onclick="renderReaderWords('all')">Все (${words.filter(w=>w.saved).length} сохр.)</button>
-      ${sources.map(bid => `
-        <button class="lib-filter-pill ${currentFilter === bid ? 'active' : ''}"
-          onclick="renderReaderWords('${escape(bid)}')">
-          ${escape(bookMap[bid] || bid).slice(0, 20)}
-        </button>`).join('')}
+    <div style="display:flex;align-items:center;gap:9px;margin-bottom:14px">
+      <label for="dict-reader-source" style="font-size:.76rem;color:var(--text-muted);white-space:nowrap">Текст:</label>
+      <select id="dict-reader-source" class="select-control" style="min-width:0;max-width:100%;flex:1"
+        onchange="renderReaderWords(this.value, document.getElementById('dict-search')?.value || '')">
+        <option value="all" ${currentFilter === 'all' ? 'selected' : ''}>Все тексты · ${words.filter(word => word.saved).length} сохранено</option>
+        ${sources.map(source => `<option value="${escapeAttr(source.id)}" ${currentFilter === source.id ? 'selected' : ''}>${escape(source.title)} · ${source.count}</option>`).join('')}
+      </select>
     </div>`;
 
   // Слова для показа
@@ -200,7 +201,7 @@ function renderReaderWords(activeBookFilter, search = '') {
   if (currentFilter === 'all') {
     shown = [...words].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
   } else {
-    shown = (byBook[currentFilter] || []).sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+    shown = [...(byBook.get(currentFilter) || [])].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
   }
 
   if (q) {

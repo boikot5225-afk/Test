@@ -1,3 +1,9 @@
+import {
+  buildStableContextAnchor,
+  normalizeContextText,
+  paragraphTextOccurrence,
+} from './context-anchor.js?v=1';
+
 export function createReaderWordState(opts) {
   const {
     getCache, setCache, storageKey, canonicalLang, currentLang, normalizeWord,
@@ -5,25 +11,12 @@ export function createReaderWordState(opts) {
     getBookLang, tokenizeParagraph, findVerbByForm, log = console,
     onSaveError = null,
     onSaved = null,
-    // localStorage caps out around 5MB/origin — a large enough vocabulary across
-    // languages/books can exceed it, and the write below then fails silently,
-    // quietly discarding word marks made since the last snapshot that fit.
-    // IndexedDB has a much larger practical quota, so it's used as the durable
-    // backing store; idbGet/idbPut are optional so this module still works
-    // (minus the durability) if they aren't wired up.
     idbGet = async () => null,
     idbPut = async () => {},
   } = opts;
 
-  // places is only needed to count distinct paragraphs up to the fade threshold;
-  // without a cap it grows unbounded and eventually blows the localStorage quota.
   const PLACES_CAP = 12;
-  // A large multi-language vocabulary can still blow the ~5MB localStorage quota
-  // even with places capped per word, once the total WORD COUNT itself grows
-  // large — every "looked at" or "seen" word is tracked forever with no cap.
-  // Evict oldest low-value entries (never saved/known/problem/familiar — pure
-  // seen/looked churn) once the total is past this, so real learning progress
-  // (saved words, known words, problem words) is never at risk.
+  const CLICK_CONTEXTS_CAP = 32;
   const TOTAL_CAP = 6000;
 
   const isPrunable = (state) => !state?.saved && !state?.known
@@ -40,6 +33,16 @@ export function createReaderWordState(opts) {
     return true;
   };
 
+  const pruneClickContexts = (state) => {
+    const contexts = state?.clickContexts;
+    if (!contexts || typeof contexts !== 'object') return false;
+    const rows = Object.entries(contexts);
+    if (rows.length <= CLICK_CONTEXTS_CAP) return false;
+    rows.sort((a, b) => new Date(b[1]?.at || 0) - new Date(a[1]?.at || 0));
+    state.clickContexts = Object.fromEntries(rows.slice(0, CLICK_CONTEXTS_CAP));
+    return true;
+  };
+
   const pruneOverflow = (data) => {
     const keys = Object.keys(data);
     if (keys.length <= TOTAL_CAP) return false;
@@ -52,7 +55,10 @@ export function createReaderWordState(opts) {
 
   const pruneAll = (data) => {
     let pruned = false;
-    for (const k of Object.keys(data)) pruned = prunePlaces(data[k]) || pruned;
+    for (const k of Object.keys(data)) {
+      pruned = prunePlaces(data[k]) || pruned;
+      pruned = pruneClickContexts(data[k]) || pruned;
+    }
     pruned = pruneOverflow(data) || pruned;
     return pruned;
   };
@@ -71,31 +77,29 @@ export function createReaderWordState(opts) {
       log.warn?.('[reader] word-state cache delayed');
     }
   };
+  const publishLiveSnapshot = (value) => {
+    try { globalThis.an2ReaderWordStateSnapshot = () => value; } catch {}
+    return value;
+  };
   const load = () => {
     const cached = cacheRead();
-    if (cached) return cached;
+    if (cached) return publishLiveSnapshot(cached);
     let data = {};
     try { data = JSON.parse(localStorage.getItem(storageKey()) || '{}') || {}; } catch (_) {}
     if (pruneAll(data)) {
       try { localStorage.setItem(storageKey(), JSON.stringify(data)); } catch (_) {}
     }
     cacheWrite(data);
-    return data;
+    return publishLiveSnapshot(data);
   };
   const save = () => {
     const data = load();
-    // The in-memory cache only runs pruneAll() once (at first load), so a long
-    // session that keeps adding new words needs the overflow check re-run on
-    // every save — otherwise the total count only gets capped again on reload.
+    for (const item of Object.values(data)) pruneClickContexts(item);
     pruneOverflow(data);
-    // localStorage is only the fast in-session cache now — IndexedDB below is
-    // the durable store (no ~5MB ceiling) and cloud sync mirrors it. A quota
-    // failure here alone doesn't endanger the data, so it's logged, not surfaced.
     let localOk = true;
     try {
       localStorage.setItem(storageKey(), JSON.stringify(data));
     } catch (e) {
-      // quota hit: shed legacy places bloat and retry once before giving up
       pruneAll(data);
       try {
         localStorage.setItem(storageKey(), JSON.stringify(data));
@@ -104,19 +108,13 @@ export function createReaderWordState(opts) {
         log.warn?.('[reader] word-state localStorage cache write failed (IndexedDB still holds the data)', e2);
       }
     }
-    // The durable write. Only when BOTH this and localStorage fail is the data
-    // actually at risk (in-memory + cloud only) — that's the case worth a toast.
     idbPut(storageKey(), data).catch(e => {
       log.warn?.('[reader] word-state IndexedDB save failed', e);
       if (!localOk) onSaveError?.(e);
     });
-    // schedule cloud sync even when local writes failed — cloud works off the in-memory state
     onSaved?.();
   };
 
-  // Call once when the reader UI opens to recover any word marks a past
-  // localStorage quota failure silently dropped. Newer-wins merge by
-  // updatedAt, same rule used for the Firebase cloud sync.
   const hydrateFromIndexedDB = async () => {
     let fromIdb;
     try { fromIdb = await idbGet(storageKey()); }
@@ -144,7 +142,7 @@ export function createReaderWordState(opts) {
   };
   const get = (word, lang = null) => {
     const language = canonicalLang(lang || currentLang()), k = key(word, language), state = load();
-    if (!state[k]) state[k] = { word: normalizeWord(word, language), lang: language, seen: 0, clicked: 0, saved: false, known: false, status: 'new', places: {}, updatedAt: new Date().toISOString() };
+    if (!state[k]) state[k] = { word: normalizeWord(word, language), lang: language, seen: 0, clicked: 0, saved: false, known: false, status: 'new', places: {}, clickContexts: {}, updatedAt: new Date().toISOString() };
     return state[k];
   };
   const touch = (word, lang = null) => { const state = get(word, lang); state.updatedAt = new Date().toISOString(); return state; };
@@ -157,21 +155,124 @@ export function createReaderWordState(opts) {
       if (!state.places[place] && Object.keys(state.places).length < PLACES_CAP) { state.places[place] = true; changed = true; }
       const seen = Math.max(state.seen || 0, Object.keys(state.places).length);
       if (state.seen !== seen) { state.seen = seen; changed = true; }
-      if (isCommonWord(word, language)) { state.known = true; state.status = 'known'; }
-      // Do NOT bump updatedAt here: this fires on every rendered paragraph for
-      // every word in view, purely from passive "seen" tracking, not a real
-      // interaction. The cloud merge picks whichever side has the newer
-      // updatedAt — if merely opening a book on one device re-stamped every
-      // visible word as "just changed now", it would always beat a genuine
-      // save/click made on another device, silently discarding it on sync.
+      if (isCommonWord(word, language)) {
+        state.known = true;
+        state.autoKnown = 'common';
+        state.status = 'known';
+      }
     });
     if (changed) save();
     return changed;
   };
-  const markClicked = (word, lang = null) => { if (!word || isCommonWord(word, lang)) return; const state = touch(word, lang); state.clicked = (state.clicked || 0) + 1; if (!state.saved && !state.known) state.status = 'looked'; save(); };
+
+  const activeClickContext = (word, explicitContext = null) => {
+    if (typeof document === 'undefined') return explicitContext || null;
+    const root = document.getElementById('reader-chapter-text');
+    const language = currentLang();
+    const normalizedWord = normalizeWord(word, language);
+    const globalTap = globalThis.__readerCandidateTapContext;
+    const freshGlobalTap = globalTap
+      && Date.now() - Number(globalTap.capturedAt || 0) < 5000
+      && normalizeWord(globalTap.word || '', language) === normalizedWord
+      ? globalTap
+      : null;
+    const supplied = explicitContext || freshGlobalTap;
+    const suppliedIndex = Number(supplied?.paragraphIndex);
+    const exact = Number.isFinite(suppliedIndex)
+      ? root?.querySelector(`.reader-paragraph[data-p="${suppliedIndex}"]`)
+      : null;
+    const active = exact || root?.querySelector('.reader-paragraph.active') || root?.querySelector('.reader-paragraph');
+    if (!active && !supplied) return null;
+    const paragraphIndex = Number.isFinite(suppliedIndex) ? suppliedIndex : Number(active?.dataset?.p);
+    const bookTitle = String(supplied?.bookTitle || document.getElementById('reader-book-title')?.textContent || '').trim();
+    const chapterTitle = String(supplied?.chapterTitle || document.getElementById('reader-chapter-title')?.textContent || '')
+      .replace(/\s*·\s*абзац\s+\d+\s*\/\s*\d+.*$/i, '')
+      .trim();
+    let text = String(supplied?.text || '').replace(/\s+/g, ' ').trim().slice(0, 320);
+    if (!text && active) {
+      const clone = active.cloneNode(true);
+      clone.querySelectorAll?.('.reader-translation,.reader-analysis-actions,.reader-footnote-ref,button').forEach(el => el.remove());
+      text = String(clone.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 320);
+    }
+    const rootBookId = String(supplied?.bookId || root?.dataset?.readerBookId || bookTitle || 'book');
+    const rootChapterKey = String(supplied?.chapterKey || root?.dataset?.readerChapterKey || chapterTitle || 'chapter');
+    const occurrenceInfo = active
+      ? paragraphTextOccurrence(root, active, text)
+      : { occurrence: Number(supplied?.textOccurrence) || 0, count: Number(supplied?.textOccurrenceCount) || 1 };
+    const anchor = supplied?.place
+      ? {
+          place: supplied.place,
+          elementPath: supplied.elementPath || '',
+          textFingerprint: supplied.textFingerprint || '',
+          textOccurrence: Number(supplied.textOccurrence) || 0,
+        }
+      : buildStableContextAnchor({
+          bookId: rootBookId,
+          chapterKey: rootChapterKey,
+          text,
+          occurrence: occurrenceInfo.occurrence,
+        });
+    return {
+      ...anchor,
+      at: supplied?.at || new Date().toISOString(),
+      text,
+      bookTitle,
+      chapterTitle,
+      bookId: rootBookId,
+      chapterKey: rootChapterKey,
+      textOccurrenceCount: Number(supplied?.textOccurrenceCount) || occurrenceInfo.count,
+      paragraphIndex: Number.isFinite(paragraphIndex) ? paragraphIndex : null,
+      form: normalizeWord(supplied?.form || word, language),
+    };
+  };
+
+  const equivalentLegacyContextKey = (contexts, next) => {
+    const nextText = normalizeContextText(next?.text);
+    if (!nextText) return '';
+    for (const [place, previous] of Object.entries(contexts || {})) {
+      if (place === next.place) return place;
+      if (normalizeContextText(previous?.text) !== nextText) continue;
+      if (previous?.bookTitle && next.bookTitle && previous.bookTitle !== next.bookTitle) continue;
+      if (previous?.chapterTitle && next.chapterTitle && previous.chapterTitle !== next.chapterTitle) continue;
+      const sameIndex = Number.isFinite(Number(previous?.paragraphIndex))
+        && Number(previous.paragraphIndex) === Number(next.paragraphIndex);
+      const uniqueText = Number(next.textOccurrenceCount || 1) === 1;
+      if (sameIndex || uniqueText) return place;
+    }
+    return '';
+  };
+
+  const markClicked = (word, lang = null, explicitContext = null) => {
+    if (!word || isCommonWord(word, lang)) return false;
+    const state = touch(word, lang);
+    state.clickContexts ||= {};
+    const context = activeClickContext(word, explicitContext);
+    let counted = false;
+    if (context?.place) {
+      if (!state.clickContexts[context.place]) {
+        const legacyKey = equivalentLegacyContextKey(state.clickContexts, context);
+        if (legacyKey) {
+          delete state.clickContexts[legacyKey];
+          state.clickContexts[context.place] = context;
+        } else {
+          state.clickContexts[context.place] = context;
+          state.clicked = (state.clicked || 0) + 1;
+          counted = true;
+        }
+      } else {
+        state.clickContexts[context.place] = { ...state.clickContexts[context.place], ...context };
+      }
+    } else {
+      state.clicked = (state.clicked || 0) + 1;
+      counted = true;
+    }
+    if (!state.saved && !state.known) state.status = 'looked';
+    save();
+    return counted;
+  };
   const markSaved = (word, lemma = null, lang = null, ru = '') => {
     const state = touch(lemma || word, lang); state.saved = true; state.known = false; state.status = state.seen >= familiarAfter ? 'familiar' : 'learning'; if (ru) state.ru = ru;
-    if (word && lemma && key(word, lang) !== key(lemma, lang)) { const form = touch(word, lang); form.saved = true; form.linkedLemma = normalizeWord(lemma, lang); form.status = 'learning'; if (ru) form.ru = ru; }
+    if (word && lemma && key(word, lang) !== key(lemma, lang)) { const form = touch(word, lang); form.saved = true; form.linkedLemma = normalizeWord(lemma, lang); form.lemma = normalizeWord(lemma, lang); form.status = 'learning'; if (ru) form.ru = ru; }
     save();
   };
   const markKnown = (word, lang = null) => { const state = touch(word, lang); state.known = true; state.status = 'known'; state.autoKnown = false; save(); };

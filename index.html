@@ -224,7 +224,7 @@
           📡 Проверить связь с сервером
         </button>
         <div id="health-result" style="display:none;margin-top:10px;font-size:0.78rem;line-height:1.5;padding:8px 12px;border-radius:8px;"></div>
-        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v77.22-fix-book-not-found-race-on-continue</span></div>
+        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v77.29-open-with-stable-context</span></div>
       </div>
     </div>
 
@@ -464,6 +464,7 @@
           <div id="reader-book-title" class="rd-book"></div>
           <div id="reader-chapter-title" class="rd-chap"></div>
         </div>
+        <button id="reader-search-btn" class="rd-icon" onclick="readerToggleChapterSearch()" title="Поиск в главе" aria-label="Поиск в главе">🔎</button>
         <button id="reader-marks-btn" class="rd-icon" onclick="readerToggleWordMarks()" title="Подсветка слов" aria-label="Подсветка слов">🖍</button>
         <button id="reader-help-btn" class="rd-icon" onclick="toggleReaderTranslations()" title="Перевод и разбор" aria-label="Перевод и разбор">👁</button>
         <button id="reader-view-mode-btn" class="rd-icon" onclick="readerTogglePagesMode()" title="Скролл / страницы" aria-label="Скролл / страницы">📖</button>
@@ -509,8 +510,24 @@
           <span class="rd-dp-label">Фон</span>
           <div class="rd-dp-pills">
             <button class="rd-dp-theme rd-dp-pill" data-theme="paper" onclick="rdSetTheme('paper',this)">Бумага</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="ivory" onclick="rdSetTheme('ivory',this)">Слоновая кость</button>
             <button class="rd-dp-theme rd-dp-pill" data-theme="sepia" onclick="rdSetTheme('sepia',this)">Сепия</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="vellum" onclick="rdSetTheme('vellum',this)">Пергамент</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="sage" onclick="rdSetTheme('sage',this)">Шалфей</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="mist" onclick="rdSetTheme('mist',this)">Туман</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="eink" onclick="rdSetTheme('eink',this)">E-ink</button>
             <button class="rd-dp-theme rd-dp-pill" data-theme="ink"   onclick="rdSetTheme('ink',this)">Чернила</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="amoled" onclick="rdSetTheme('amoled',this)">AMOLED</button>
+          </div>
+        </div>
+        <div class="rd-dp-row">
+          <span class="rd-dp-label">Листание · в режиме страниц</span>
+          <div class="rd-dp-pills">
+            <button class="rd-dp-page-animation rd-dp-pill" data-animation="flip" onclick="rdSetPageAnimation('flip',this)">Лист</button>
+            <button class="rd-dp-page-animation rd-dp-pill" data-animation="slide" onclick="rdSetPageAnimation('slide',this)">Сдвиг</button>
+            <button class="rd-dp-page-animation rd-dp-pill" data-animation="stack" onclick="rdSetPageAnimation('stack',this)">Стопка</button>
+            <button class="rd-dp-page-animation rd-dp-pill" data-animation="fade" onclick="rdSetPageAnimation('fade',this)">Плавно</button>
+            <button class="rd-dp-page-animation rd-dp-pill" data-animation="none" onclick="rdSetPageAnimation('none',this)">Без анимации</button>
           </div>
         </div>
         <div class="rd-dp-row">
@@ -573,6 +590,7 @@
         <button class="rd-menu" onclick="readerCopyCurrentParagraph();readerCloseMoreSheet()"><span class="ic">📋</span><span>Скопировать абзац</span></button>
         <div class="rd-divider"></div>
         <div class="rd-sect">глава</div>
+        <button class="rd-menu" onclick="readerCloseMoreSheet();readerOpenChapterSearch()"><span class="ic">🔎</span><span>Найти в главе<small>слово или фразу</small></span></button>
         <button class="rd-menu" onclick="readerCloseMoreSheet();readerOpenToc()"><span class="ic">≡</span><span>Оглавление<small>перейти к любой главе</small></span></button>
         <button class="rd-menu" onclick="readerSpeakChapter();readerCloseMoreSheet()"><span class="ic">🎧</span><span>Озвучить главу</span></button>
         <button class="rd-menu" onclick="readerPrevChapter();readerCloseMoreSheet()"><span class="ic">⟵</span><span>Предыдущая глава</span></button>
@@ -1968,6 +1986,6 @@
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=77.22"></script>
+<script type="module" src="js/app.js?v=77.29"></script>
 </body>
 </html>

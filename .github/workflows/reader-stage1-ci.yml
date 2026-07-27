@@ -1,0 +1,87 @@
+name: Reader stage 1 checks
+
+on:
+  push:
+    branches:
+      - test/reader-epub-format-stage1
+  pull_request:
+    branches:
+      - claude/epic-hawking-540kte
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-reader:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install browser integration test dependencies
+        run: npm install --no-save --no-package-lock --ignore-scripts happy-dom fake-indexeddb fflate
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check js/reader/semantic-content.js
+          node --check js/reader/semantic-content-footnotes.js
+          node --check js/reader/footnote-ui-stage1.js
+          node --check js/reader/semantic-import-stage1.js
+          node --check js/reader/semantic-import-bridge.js
+          node --check js/reader/library-cover-stage1.js
+          node --check js/reader/semantic-tts-target.js
+          node --check js/reader/semantic-tts-prefetch-stage1.js
+          node --check js/reader/navigation.js
+          node --check js/reader/audio.js
+          node --check js/reader/chapter-render-stage1.js
+          node --check js/reader/chapter-render-dialogue.js
+          node --check js/reader/epub-stage1.js
+          node --check js/reader/epub-stage1-real.js
+          node --check js/reader/word-state.js
+          node --check js/reader/word-candidates.js
+          node --check js/reader/word-source-filters.js
+          node --check js/reader/word-panel.js
+          node --check js/reader/display.js
+          node --check js/reader/pages-mode.js
+          node --check js/home.js
+          node --check tests/footnote-stage1.test.mjs
+          node --check tests/word-candidates.test.mjs
+          node --check tests/reader-word-sources.test.mjs
+          node --check tests/reader-display-options.test.mjs
+          node --check tests/semantic-epub-import.integration.test.mjs
+
+      - name: Run compatibility checks
+        run: |
+          node --experimental-default-type=module tests/semantic-handler-route.test.mjs
+          node --experimental-default-type=module tests/semantic-reader-compat.test.mjs
+          node --experimental-default-type=module tests/library-cover-stage1.test.mjs
+          node --experimental-default-type=module tests/semantic-tts-target.test.mjs
+          node --experimental-default-type=module tests/footnote-stage1.test.mjs
+          node --experimental-default-type=module tests/word-candidates.test.mjs
+          node --experimental-default-type=module tests/reader-word-sources.test.mjs
+          node --experimental-default-type=module tests/reader-display-options.test.mjs
+
+      - name: Run full EPUB import integration
+        shell: bash
+        run: |
+          set +e
+          node --experimental-default-type=module tests/semantic-epub-import.integration.test.mjs > semantic-epub-integration.log 2>&1
+          code=$?
+          cat semantic-epub-integration.log
+          exit $code
+
+      - name: Upload EPUB integration output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semantic-epub-integration-output
+          path: semantic-epub-integration.log
+          if-no-files-found: warn
+          retention-days: 3

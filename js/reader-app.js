@@ -22,13 +22,13 @@ import { wordStateIdbPut, wordStateIdbGet } from './reader/word-state-idb-store.
 import { lexicalCacheIdbPut, lexicalCacheIdbGet } from './reader/lexical-cache-idb-store.js?v=1';
 import { createReaderWordPanel } from './reader/word-panel.js?v=5';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
-import { createReaderWordState } from './reader/word-state.js?v=3';
+import { createReaderWordState } from './reader/word-state.js?v=4';
 import { createReaderLibraryStore } from './reader/library-store.js?v=5';
-import { createReaderDisplay } from './reader/display.js?v=4';
+import { createReaderDisplay } from './reader/display.js?v=5';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=2-per-paragraph-timer-guard';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
-import { createReaderChapterRenderer } from './reader/chapter-render.js?v=6';
-import { createReaderPagesMode } from './reader/pages-mode.js?v=2';
+import { createReaderChapterRenderer } from './reader/chapter-render.js?v=8';
+import { createReaderPagesMode } from './reader/pages-mode.js?v=3';
 import { splitTextToChapters as readerImportSplitTextToChapters,
          splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
 
@@ -183,7 +183,10 @@ function readerSyncVoicePicker() {
 }
 function readerToggleDisplayPanel() {
   const open = readerDisplay.togglePanel();
-  if (open) readerSyncVoiceEnginePanel();
+  if (open) {
+    readerSyncVoiceEnginePanel();
+    readerSyncPageAnimationPanel();
+  }
   return open;
 }
 function readerCloseDisplayPanel() { return readerDisplay.closePanel(); }
@@ -191,6 +194,27 @@ function rdSetFont(name, element) { return readerDisplay.setFont(name, element);
 function rdSetSize(input) { return readerDisplay.setSize(input); }
 function rdSetLH(input) { return readerDisplay.setLineHeight(input); }
 function rdSetTheme(theme, element) { return readerDisplay.setTheme(theme, element); }
+function readerSyncPageAnimationPanel() {
+  const panel = document.getElementById('rd-display-panel');
+  if (!panel) return;
+  const current = readerPagesMode.getAnimation();
+  panel.querySelectorAll('.rd-dp-page-animation').forEach((button) => {
+    button.classList.toggle('rd-dp-active', button.dataset.animation === current);
+  });
+}
+function rdSetPageAnimation(animation, element) {
+  const selected = readerPagesMode.setAnimation(animation);
+  element?.closest('.rd-dp-row')?.querySelectorAll('.rd-dp-page-animation').forEach((button) => {
+    button.classList.toggle('rd-dp-active', button.dataset.animation === selected);
+  });
+  const labels = {
+    flip: 'лист', slide: 'сдвиг', stack: 'стопка', fade: 'плавно', none: 'без анимации',
+  };
+  showToast(readerPagesMode.isEnabled()
+    ? `📖 Листание: ${labels[selected]}`
+    : `📖 Выбрано: ${labels[selected]}. Эффект работает в режиме страниц`);
+  return selected;
+}
 function rdSetVoiceEngine(engine, element) {
   setTtsVoiceEngine(engine);
   element?.closest('.rd-dp-row')?.querySelectorAll('.rd-dp-voice').forEach(btn => btn.classList.remove('rd-dp-active'));
@@ -1790,7 +1814,7 @@ function showReaderImportModal(mode) {
           <div><label style="font-size:.74rem;color:var(--text-muted);display:block;margin-bottom:5px">Название</label><input id="reader-import-title" placeholder="Bel-Ami, chapitre 1" style="width:100%;box-sizing:border-box;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text)"></div>
           <div><label style="font-size:.74rem;color:var(--text-muted);display:block;margin-bottom:5px">Автор / пометка</label><input id="reader-import-author" placeholder="Maupassant · A2" style="width:100%;box-sizing:border-box;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text)"></div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px" onchange="this.dataset.userChanged='1'"><option value="" selected disabled>Язык — выбери</option><option value="fr">🇫🇷 Français</option><option value="en">🇬🇧 English</option><option value="zh">🇨🇳 中文</option><option value="es">🇪🇸 Español</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option><option value="news">📰 Новость</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px" onchange="this.dataset.userChanged='1'"><option value="" selected disabled>Язык — выбери</option><option value="fr">🇫🇷 Français</option><option value="en">🇬🇧 English</option><option value="zh">🇨🇳 中文</option><option value="es">🇪🇸 Español</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option><option value="news">📰 Новость</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub,.fb2,application/epub+zip,application/x-fictionbook+xml,text/plain" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
         <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding:12px;background:var(--surface2);border:1px solid var(--accent);border-radius:10px">
           <span style="font-size:.82rem;font-weight:700;color:var(--text)">🎙 Аудио/видео → текст</span>
           <span style="font-size:.74rem;color:var(--text-muted)">Сначала выбери язык записи в списке выше — иначе распознавание может перепутать язык (например принять китайский за французский).</span>
@@ -2443,6 +2467,106 @@ async function readerImportEpubFromFile(file) {
   if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = `✅ EPUB загружен: ${chapters.length} глав · ${totalPara} абз.${imgCount ? ' · ' + imgCount + ' фото' : ''} · ${importChars} зн. [${diagnostics[0] || ''} · ${buildStamp}] Нажми «Сохранить».`; st.title = diagnostics.slice(0, 80).join('\n'); }
 }
 
+function readerXmlFirst(root, localName) {
+  return root?.getElementsByTagNameNS?.('*', localName)?.[0]
+    || root?.getElementsByTagName?.(localName)?.[0]
+    || null;
+}
+
+function readerXmlText(root, localName) {
+  return String(readerXmlFirst(root, localName)?.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+function readerXmlHasAncestor(node, localName) {
+  let current = node?.parentElement || null;
+  while (current) {
+    if (current.localName === localName) return true;
+    current = current.parentElement;
+  }
+  return false;
+}
+
+async function readerReadTextFile(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const header = new TextDecoder('ascii').decode(bytes.slice(0, 240));
+  const declared = header.match(/<\?xml[^>]*encoding=["']([^"']+)["']/i)?.[1]?.trim() || 'utf-8';
+  try { return new TextDecoder(declared).decode(bytes); }
+  catch { return new TextDecoder('utf-8').decode(bytes); }
+}
+
+async function readerImportFb2FromFile(file) {
+  const st = document.getElementById('reader-import-status');
+  const xml = await readerReadTextFile(file);
+  const doc = new DOMParser().parseFromString(xml, 'application/xml');
+  if (doc.querySelector('parsererror')) throw new Error('FB2 повреждён или содержит некорректный XML');
+
+  const description = readerXmlFirst(doc, 'description');
+  const titleInfo = readerXmlFirst(description, 'title-info') || description;
+  const title = readerXmlText(titleInfo, 'book-title') || file.name.replace(/\.fb2$/i, '');
+  const declaredLanguage = readerXmlText(titleInfo, 'lang').toLowerCase();
+  const language = /^(?:fr|fra|fre|fr-fr)$/.test(declaredLanguage)
+    ? 'fr'
+    : /^(?:en|eng|en-us|en-gb)$/.test(declaredLanguage)
+      ? 'en'
+      : /^(?:es|spa|esp|es-es)$/.test(declaredLanguage)
+        ? 'es'
+        : /^(?:zh|zho|chi|cn|zh-cn|zh-tw)$/.test(declaredLanguage)
+          ? 'zh'
+          : readerCanonicalLang(globalThis.AN2_LANG || 'fr');
+  const authors = [...(titleInfo?.getElementsByTagNameNS?.('*', 'author') || [])].map(author =>
+    [
+      readerXmlText(author, 'first-name'),
+      readerXmlText(author, 'middle-name'),
+      readerXmlText(author, 'last-name'),
+    ].filter(Boolean).join(' ')
+  ).filter(Boolean);
+
+  const bodies = [...(doc.getElementsByTagNameNS?.('*', 'body') || [])];
+  const mainBody = bodies.find(body => String(body.getAttribute('name') || '').toLowerCase() !== 'notes') || bodies[0];
+  if (!mainBody) throw new Error('В FB2 не найден текст книги');
+
+  let sections = [...mainBody.children].filter(node => node.localName === 'section');
+  if (!sections.length) sections = [mainBody];
+  const chapters = sections.map((section, sectionIndex) => {
+    const directTitle = [...(section.children || [])].find(node => node.localName === 'title');
+    const chapterTitle = String(directTitle?.textContent || '').replace(/\s+/g, ' ').trim()
+      || `Глава ${sectionIndex + 1}`;
+    const paragraphs = [...(section.getElementsByTagNameNS?.('*', 'p') || [])]
+      .filter(node => !readerXmlHasAncestor(node, 'title'))
+      .map(node => String(node.textContent || '').replace(/\s+/g, ' ').trim())
+      .filter(text => text.length > 0);
+    return {
+      id: `fb2_${sectionIndex}`,
+      sourcePath: `fb2:section:${sectionIndex}`,
+      title: chapterTitle,
+      paragraphs,
+    };
+  }).filter(chapter => chapter.paragraphs.length);
+  if (!chapters.length) throw new Error('В FB2 не найдено читаемых абзацев');
+
+  readerPendingImportChapters = chapters;
+  readerPendingImportSource = 'fb2';
+  readerPendingImportBookId = null;
+  const titleEl = document.getElementById('reader-import-title');
+  const authorEl = document.getElementById('reader-import-author');
+  const langEl = document.getElementById('reader-import-lang');
+  const previewEl = document.getElementById('reader-import-text');
+  if (titleEl) titleEl.value = title;
+  if (authorEl) authorEl.value = authors.join(', ');
+  if (langEl && langEl.dataset.userChanged !== '1') langEl.value = language;
+  if (previewEl) {
+    previewEl.value = chapters.slice(0, 5)
+      .map(chapter => `${chapter.title}\n\n${chapter.paragraphs.slice(0, 4).join('\n\n')}`)
+      .join('\n\n---\n\n');
+  }
+  const total = chapters.reduce((sum, chapter) => sum + chapter.paragraphs.length, 0);
+  if (st) {
+    st.style.display = 'block';
+    st.style.color = 'var(--good)';
+    st.textContent = `✅ FB2 загружен: ${chapters.length} глав · ${total} абз. Нажми «Сохранить».`;
+  }
+}
+
 async function readerImportFromFile(event) {
   const file = event?.target?.files?.[0]; if (!file) return;
   const st = document.getElementById('reader-import-status');
@@ -2462,16 +2586,25 @@ async function readerImportFromFile(event) {
     }
     return;
   }
-  const reader = new FileReader();
-  reader.onload = () => {
+  if (file.name.toLowerCase().endsWith('.fb2')) {
+    try { await readerImportFb2FromFile(file); }
+    catch (e) {
+      if (st) { st.style.display = 'block'; st.style.color = 'var(--bad)'; st.textContent = '❌ FB2 не импортировался: ' + (e?.message || e); }
+    }
+    return;
+  }
+  try {
+    const text = await readerReadTextFile(file);
     const textEl = document.getElementById('reader-import-text');
     const titleEl = document.getElementById('reader-import-title');
-    if (textEl) textEl.value = String(reader.result || '');
+    const langEl = document.getElementById('reader-import-lang');
+    if (textEl) textEl.value = text;
     if (titleEl && !titleEl.value.trim()) titleEl.value = file.name.replace(/\.[^.]+$/, '');
+    if (langEl && !langEl.value) langEl.value = globalThis.AN2_LANG || 'fr';
     if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = 'TXT загружен. Проверь название и сохрани.'; }
-  };
-  reader.onerror = () => { if (st) { st.style.display = 'block'; st.style.color = 'var(--bad)'; st.textContent = 'Не смог прочитать файл.'; } };
-  reader.readAsText(file);
+  } catch (error) {
+    if (st) { st.style.display = 'block'; st.style.color = 'var(--bad)'; st.textContent = '❌ Не смог прочитать файл: ' + (error?.message || error); }
+  }
 }
 
 function saveReaderImport() {
@@ -3992,6 +4125,7 @@ window.rdSetFont  = rdSetFont;
 window.rdSetSize  = rdSetSize;
 window.rdSetLH    = rdSetLH;
 window.rdSetTheme = rdSetTheme;
+window.rdSetPageAnimation = rdSetPageAnimation;
 window.rdSetVoiceEngine = rdSetVoiceEngine;
 window.rdSetVoice = rdSetVoice;
 window.readerNextChapter = readerNextChapter;
@@ -5126,7 +5260,7 @@ export {
   readerSwitchStorageOwner,
   // Book management
   readerCurrentBook,
-  loadReaderBooks, saveReaderBooks, loadReaderBooksFromCloud,
+  loadReaderBooks, saveReaderBooks, loadReaderBooksFromCloud, hydrateReaderBooksFromIndexedDB,
   scheduleReaderCloudSave, saveReaderBooksToCloud, syncReaderCloudNow,
   readerSplitTextToChapters, readerSplitSongToChapters,
   readerBookProgress, readerContinueBook,
@@ -5156,7 +5290,7 @@ export {
   readerCycleZhPinyinMode, readerLookupChineseWord, readerEnsureZhCoreJsonLoaded, readerZhCoreJsonCount,
   readerSetLibTab, readerSetLibFilter,
   readerImportFromFile, saveReaderImport, showReaderImportModal, closeReaderImportModal,
-  readerToggleDisplayPanel, readerCloseDisplayPanel, rdSetFont, rdSetSize, rdSetLH, rdSetTheme,
+  readerToggleDisplayPanel, readerCloseDisplayPanel, rdSetFont, rdSetSize, rdSetLH, rdSetTheme, rdSetPageAnimation,
   readerToggleSongMeaning,
 };
 

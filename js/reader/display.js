@@ -1,5 +1,18 @@
 const ZH_PINYIN_KEY = 'an2_reader_zh_pinyin_mode_v1';
 
+const READER_THEMES = new Set([
+  'paper', 'ivory', 'sepia', 'vellum', 'sage', 'mist', 'eink', 'ink', 'amoled',
+]);
+
+export function normalizeReaderTheme(theme) {
+  const raw = String(theme || '').trim().toLowerCase();
+  // Keep legacy values stable: the old `parchment` was the original plain
+  // warm theme, while the new textured parchment deliberately uses `vellum`.
+  const legacy = { '': 'paper', parchment: 'paper', night: 'ink' };
+  const normalized = legacy[raw] || raw;
+  return READER_THEMES.has(normalized) ? normalized : 'paper';
+}
+
 function zhPinyinOn() {
   try { return (localStorage.getItem(ZH_PINYIN_KEY) || 'unknown') !== 'off'; }
   catch { return true; }
@@ -44,20 +57,11 @@ export function createReaderDisplay({
     'IBM Plex Sans': '"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif',
   };
 
-  // Old theme names map onto the calm-reader trio so saved settings keep
-  // working: parchment was the warm light look (→ paper), night the dark one
-  // (→ ink); the old dark "sepia" becomes ink too — the new sepia is light.
-  // '' (the old default) also becomes paper.
-  function normalizeTheme(theme) {
-    const map = { '': 'paper', parchment: 'paper', night: 'ink', sepia: 'sepia', paper: 'paper', ink: 'ink' };
-    return map[String(theme || '')] ?? 'paper';
-  }
-
   function load() {
     let settings;
     try { settings = { ...defaults, ...JSON.parse(localStorage.getItem(key) || '{}') }; }
     catch { settings = { ...defaults }; }
-    settings.theme = normalizeTheme(settings.theme);
+    settings.theme = normalizeReaderTheme(settings.theme);
     return settings;
   }
 
@@ -76,7 +80,7 @@ export function createReaderDisplay({
     // Chinese needs extra line-height when pinyin is visible above characters
     const zhLh = zhPinyinOn() ? Math.max(lh, 1.85).toFixed(2) : lh.toFixed(2);
     root.style.setProperty('--rd-zh-lh', zhLh);
-    root.dataset.rdTheme = normalizeTheme(settings.theme);
+    root.dataset.rdTheme = normalizeReaderTheme(settings.theme);
   }
 
   // Dragging the size/line-height sliders fires 'input' far faster than once
@@ -103,7 +107,7 @@ export function createReaderDisplay({
     const panel = document.getElementById(panelId);
     if (!panel) return settings;
     panel.querySelectorAll('.rd-dp-font').forEach(button => button.classList.toggle('rd-dp-active', button.dataset.font === settings.font));
-    panel.querySelectorAll('.rd-dp-theme').forEach(button => button.classList.toggle('rd-dp-active', button.dataset.theme === normalizeTheme(settings.theme)));
+    panel.querySelectorAll('.rd-dp-theme').forEach(button => button.classList.toggle('rd-dp-active', button.dataset.theme === normalizeReaderTheme(settings.theme)));
     const size = panel.querySelector('#rd-dp-size');
     const lineHeight = panel.querySelector('#rd-dp-lh');
     if (size) { size.value = settings.size; panel.querySelector('#rd-dp-size-val').textContent = settings.size; }
@@ -153,7 +157,7 @@ export function createReaderDisplay({
 
   function setTheme(theme, element) {
     const settings = load();
-    settings.theme = theme;
+    settings.theme = normalizeReaderTheme(theme);
     save(settings);
     apply(settings);
     element?.closest('.rd-dp-row')?.querySelectorAll('.rd-dp-theme').forEach(button => button.classList.remove('rd-dp-active'));
