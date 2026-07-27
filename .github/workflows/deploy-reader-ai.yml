@@ -1,0 +1,136 @@
+name: Deploy Reader AI function
+
+on:
+  push:
+    branches:
+      - test/reader-epub-format-stage1
+    paths:
+      - '.github/workflows/deploy-reader-ai.yml'
+      - 'functions/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-reader-ai-french-da79a
+  cancel-in-progress: false
+
+jobs:
+  deploy-reader-ai:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS }}
+      GCP_SA_KEY_JSON: ${{ secrets.GCP_SA_KEY }}
+
+    steps:
+      - name: Checkout exact branch revision
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install function dependencies
+        run: npm --prefix functions ci --ignore-scripts
+
+      - name: Verify DeepSeek model normalization
+        run: |
+          node --check functions/index.js
+          node tests/deepseek-json.test.mjs
+          node - <<'NODE'
+          const assert = require('node:assert/strict');
+          const { resolveDeepSeekModel } = require('./functions/deepseek-model');
+          assert.equal(resolveDeepSeekModel(), 'deepseek-v4-flash');
+          assert.equal(resolveDeepSeekModel('deepseek-chat'), 'deepseek-v4-flash');
+          assert.equal(resolveDeepSeekModel('deepseek-reasoner'), 'deepseek-v4-flash');
+          assert.equal(resolveDeepSeekModel('deepseek-v4-pro'), 'deepseek-v4-pro');
+          NODE
+
+      - name: Limit function discovery to readerAI
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = 'functions/index.js';
+          let source = fs.readFileSync(path, 'utf8');
+          const hiddenExports = [
+            ['ttsAudio', '__readerAiDeployHiddenTtsAudio'],
+            ['transcribeAudio', '__readerAiDeployHiddenTranscribeAudio'],
+          ];
+          for (const [exportName, localName] of hiddenExports) {
+            const before = `exports.${exportName} =`;
+            if (!source.includes(before)) {
+              throw new Error(`Expected export not found: ${before}`);
+            }
+            source = source.replace(before, `const ${localName} =`);
+          }
+          const hiddenSecrets = [
+            'OPENROUTER_API_KEY',
+            'SELFHOST_TTS_STT_URL',
+            'SELFHOST_TOKEN',
+          ];
+          for (const secretName of hiddenSecrets) {
+            const before = `const ${secretName} = defineSecret('${secretName}');`;
+            if (!source.includes(before)) {
+              throw new Error(`Expected secret declaration not found: ${before}`);
+            }
+            source = source.replace(
+              before,
+              `const ${secretName} = { value: () => '' };`,
+            );
+          }
+          fs.writeFileSync(path, source);
+          NODE
+          node --check functions/index.js
+          test "$(grep -c '^exports\.readerAI = ' functions/index.js)" -eq 1
+          test "$(grep -c '^exports\.' functions/index.js)" -eq 1
+          test "$(grep -c '= defineSecret(' functions/index.js)" -eq 1
+
+      - name: Select deployment credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${FIREBASE_TOKEN}" ]]; then
+            echo "FIREBASE_AUTH_MODE=token" >> "${GITHUB_ENV}"
+            exit 0
+          fi
+
+          credentials="${FIREBASE_SERVICE_ACCOUNT_JSON}"
+          [[ -n "${credentials}" ]] || credentials="${GOOGLE_CREDENTIALS_JSON}"
+          [[ -n "${credentials}" ]] || credentials="${GCP_SA_KEY_JSON}"
+
+          if [[ -z "${credentials}" ]]; then
+            echo "::error::No Firebase deployment credential is configured in repository secrets."
+            exit 1
+          fi
+
+          credentials_file="${RUNNER_TEMP}/firebase-service-account.json"
+          printf '%s' "${credentials}" > "${credentials_file}"
+          chmod 600 "${credentials_file}"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=${credentials_file}" >> "${GITHUB_ENV}"
+          echo "FIREBASE_AUTH_MODE=adc" >> "${GITHUB_ENV}"
+
+      - name: Deploy only readerAI
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${FIREBASE_AUTH_MODE}" == "token" ]]; then
+            npx --yes firebase-tools@latest deploy \
+              --only functions:readerAI \
+              --project french-da79a \
+              --token "${FIREBASE_TOKEN}" \
+              --non-interactive
+          else
+            npx --yes firebase-tools@latest deploy \
+              --only functions:readerAI \
+              --project french-da79a \
+              --non-interactive
+          fi

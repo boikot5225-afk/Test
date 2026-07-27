@@ -5,6 +5,16 @@
 // doesn't share that ceiling, so it backs up the same data as the durable copy;
 // the existing localStorage path stays as the fast in-session cache.
 
+// Highlight visibility is a device-local preference. A clean APK install can
+// restore the actual word states from cloud while this key is absent, which made
+// all restored highlights look as if they had been deleted. Default to visible;
+// keep an explicit user choice of "0" untouched.
+try {
+  if (localStorage.getItem('an2_reader_marks_on') === null) {
+    localStorage.setItem('an2_reader_marks_on', '1');
+  }
+} catch {}
+
 const DB_NAME = 'reader-word-state';
 const STORE_NAME = 'state';
 const BLOB_KEY = 'all-words';
