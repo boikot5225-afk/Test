@@ -1,15 +1,15 @@
 :root {
-  /* ── An II — «документ эпохи»: состаренная бумага + революционные чернила ── */
-  --bg: #d8c9a8;            /* пергамент, основной фон */
-  --surface: #e4d8bd;       /* светлая бумага — карточки */
-  --surface2: #cdbd97;      /* бумага потемнее — вложенные блоки */
-  --surface3: #c0ad84;      /* ещё темнее */
-  --border: #a89668;        /* выцветшая линия/рамка */
-  --text: #2a2118;          /* тёмно-коричневые чернила */
-  --text-muted: #6b5d42;    /* блёклые чернила */
-  --text-dim: #8a7a58;      /* очень блёклые */
-  --accent: #a62a21;        /* революционный красный (знамёна, сургуч) */
-  --accent-dim: #d9b8a0;    /* размытый красный фон */
+  /* ── calm reader palette, app-wide (matches reader's "Бумага" theme) ── */
+  --bg: #FAF6F0;
+  --surface: #FFFFFF;
+  --surface2: #F1EBE2;
+  --surface3: #E9E1D4;
+  --border: #E5DDD1;
+  --text: #241E17;
+  --text-muted: #6E6356;
+  --text-dim: #9C9184;
+  --accent: #8A4B2D;
+  --accent-dim: #F3E4DA;
   /* Группы глаголов — приглушённые «чернильные» оттенки на бумаге */
   --er: #2f6b4a;            /* зелёные чернила */
   --er-dim: #c2d4be;
@@ -46,7 +46,7 @@ body {
 /* ── NAV ── */
 nav {
   position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-  background: rgba(228,216,189,0.95);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
   display: flex; align-items: center; gap: 0;
@@ -99,6 +99,7 @@ main {
 }
 .screen { display: none; padding: 40px 24px; max-width: 900px; margin: 0 auto; }
 .screen.active { display: block; }
+#screen-profile.active { display: flex; max-width: none; padding: 24px; }
 /* Practice screen: pin content to top, no vertical stretching */
 #screen-phrases.active { display: flex; flex-direction: column; }
 
@@ -203,8 +204,8 @@ main {
   transition: all 0.2s;
   font-family: 'IBM Plex Sans', sans-serif;
 }
-.btn-primary { background: var(--accent); color: #f5ecd8; border: 1px solid #7a1e17; box-shadow: 0 1px 0 rgba(0,0,0,0.12); }
-.btn-primary:hover { background: #8f231b; transform: translateY(-1px); }
+.btn-primary { background: var(--accent); color: #fbf3e8; border: 1px solid color-mix(in srgb, var(--accent) 75%, black); box-shadow: 0 1px 0 rgba(0,0,0,0.12); }
+.btn-primary:hover { background: color-mix(in srgb, var(--accent) 88%, black); transform: translateY(-1px); }
 .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
 .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
 .btn-danger { background: var(--re-dim); color: var(--re); border: 1px solid var(--re); }
@@ -348,7 +349,7 @@ main {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: inset 0 0 0 1px rgba(166,42,33,0.12), 0 1px 3px rgba(60,40,20,0.1);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent), 0 1px 3px rgba(60,40,20,0.1);
   padding: 40px;
   text-align: center;
   margin-bottom: 24px;
@@ -710,11 +711,11 @@ input:-webkit-autofill:focus {
 .fr-key {
   padding: 0;
   height: 42px;
-  background: #d8c4a0;
+  background: var(--surface2);
   border: none;
-  border-bottom: 2px solid #b09868;
+  border-bottom: 2px solid var(--border);
   border-radius: 8px;
-  color: #2a2118;
+  color: var(--text);
   font-size: 1rem;
   font-family: 'IBM Plex Sans', sans-serif;
   cursor: pointer;
@@ -737,12 +738,12 @@ input:-webkit-autofill:focus {
 .fr-key-wide  { max-width: 58px; font-size: 0.78rem; color: var(--text-muted); }
 .fr-key-space { max-width: 160px; flex: 4; font-size: 0.82rem; color: var(--text-muted); }
 .fr-key-shift { max-width: 52px; }
-.fr-key-action { background: #c4ad84; border-bottom-color: #a89060; }
+.fr-key-action { background: var(--surface3); border-bottom-color: var(--border); }
 
 /* Accent popup */
 .fr-accent-popup {
   position: fixed;
-  background: #d8c4a0;
+  background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 4px;
@@ -772,23 +773,28 @@ input:-webkit-autofill:focus {
     display: flex;
     position: fixed;
     bottom: 0; left: 0; right: 0;
-    background: rgba(228,216,189,0.97);
-    backdrop-filter: blur(12px);
-    border-top: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 90%, transparent);
+    backdrop-filter: blur(14px);
+    border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
     z-index: 200;
     justify-content: space-around;
-    padding: 6px 0 calc(6px + env(safe-area-inset-bottom));
+    padding: 7px 0 calc(7px + env(safe-area-inset-bottom));
   }
   .bottom-nav-item {
     display: flex; flex-direction: column; align-items: center;
-    gap: 3px; cursor: pointer; padding: 4px 8px;
-    color: var(--text-muted); font-size: 0.58rem;
-    text-transform: uppercase; letter-spacing: 0.05em;
+    gap: 3px; cursor: pointer; padding: 4px 10px;
+    color: var(--text-dim); font-size: .64rem;
+    font-weight: 500; letter-spacing: normal;
     transition: color 0.2s; min-width: 44px;
     -webkit-tap-highlight-color: transparent;
   }
-  .bottom-nav-item .bn-icon { font-size: 1.3rem; line-height: 1; }
+  .bottom-nav-item .bn-icon {
+    font-size: 1.28rem; line-height: 1;
+    filter: grayscale(.55) opacity(.75);
+    transition: filter .2s;
+  }
   .bottom-nav-item.active { color: var(--accent); }
+  .bottom-nav-item.active .bn-icon { filter: none; }
   /* Push content above bottom nav */
   main { padding-bottom: 80px; }
   /* Hide top nav tabs on mobile */
@@ -1053,6 +1059,12 @@ input:-webkit-autofill:focus {
 .reader-analysis-meta {
   font-size: .76rem;
   color: var(--text-muted);
+}
+.reader-analysis-chars {
+  font-size: .72rem;
+  color: var(--text-muted);
+  margin-top: 3px;
+  opacity: .85;
 }
 .reader-gender-chip {
   display: inline-flex;
@@ -1575,7 +1587,7 @@ input:-webkit-autofill:focus {
     padding: 8px !important;
     border: 1px solid var(--border) !important;
     border-radius: 18px !important;
-    background: rgba(228,216,189,.96) !important;
+    background: color-mix(in srgb, var(--bg) 94%, transparent) !important;
     backdrop-filter: blur(12px);
     pointer-events: auto !important;
     box-shadow: 0 -8px 28px rgba(0,0,0,.12);
@@ -1651,6 +1663,14 @@ input:-webkit-autofill:focus {
 .home-word-chip b { font-family:'Playfair Display',serif; font-size:.98rem; }
 .home-word-chip small { color:var(--text-muted); font-size:.65rem; }
 .home-empty-note { color:var(--text-muted); background:var(--surface); border:1px dashed var(--border); border-radius:13px; padding:13px; font-size:.82rem; line-height:1.45; }
+
+/* The reader screen hides the top nav below (mobile only) and relies on
+   the bottom nav instead — but that bottom nav only shows itself under its
+   own separate (max-width:700px) media query. If that query ever fails to
+   match for any reason while this one does, the reader screen would be
+   left with no navigation at all. Force the bottom bar on for this screen,
+   unconditionally, so the two can never both be hidden together. */
+body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
 
 /* hide old top nav in active reading view on phones */
 @media (max-width: 700px) {
@@ -1928,6 +1948,23 @@ input:-webkit-autofill:focus {
 #reader-reading-view .rd-prog{position:absolute; left:0; right:0; bottom:0; height:3px; background:transparent;}
 #reader-reading-view .rd-prog > i{display:block; height:100%; width:0%; background:var(--accent); border-radius:0 3px 3px 0; transition:width .25s;}
 
+/* Original audio player — shown only for books imported from a recording */
+#reader-orig-audio-wrap{
+  flex:0 0 auto; position:relative;
+  display:flex; align-items:center; gap:8px;
+  padding:8px 40px 8px 12px;
+  background:color-mix(in srgb, var(--bg) 92%, transparent);
+  border-bottom:1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+#reader-orig-audio-wrap audio{ height:32px; }
+#reader-orig-audio-close{
+  position:absolute; right:8px; top:50%; transform:translateY(-50%);
+  width:26px; height:26px; border-radius:8px; border:1px solid var(--border);
+  background:var(--surface); color:var(--text-muted); font-size:1rem; line-height:1;
+  display:flex; align-items:center; justify-content:center; cursor:pointer;
+}
+#reader-orig-audio-close:hover{border-color:var(--accent); color:var(--accent);}
+
 /* READING SURFACE */
 #reader-reading-view .rd-scroll{
   flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch;
@@ -1943,9 +1980,9 @@ input:-webkit-autofill:focus {
   border-left:3px solid transparent; border-radius:10px;
   transition:background .18s, border-color .18s; cursor:pointer;
 }
-#reader-reading-view .reader-paragraph.active{border-left-color:var(--accent); background:rgba(166,42,33,.06);}
+#reader-reading-view .reader-paragraph.active{border-left-color:var(--accent); background:color-mix(in srgb, var(--accent) 6%, transparent);}
 #reader-reading-view .reader-word{border-radius:4px; padding:0 1px; cursor:pointer; transition:.1s;}
-#reader-reading-view .reader-word:hover{background:rgba(166,42,33,.14); color:var(--accent);}
+#reader-reading-view .reader-word:hover{background:color-mix(in srgb, var(--accent) 14%, transparent); color:var(--accent);}
 
 /* inline help (translation / analysis) — only under the active paragraph */
 #reader-reading-view .reader-translation,
@@ -1963,6 +2000,7 @@ input:-webkit-autofill:focus {
   background:color-mix(in srgb, var(--bg) 94%, transparent);
   backdrop-filter:blur(10px);
   border-top:1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  max-width:100%; overflow:hidden; /* never let controls spill past the viewport edge */
 }
 #reader-reading-view .rd-nav,
 #reader-reading-view .rd-more{
@@ -1979,8 +2017,50 @@ input:-webkit-autofill:focus {
   display:flex; align-items:center; justify-content:center; gap:8px; transition:.15s;
 }
 #reader-reading-view .rd-listen:active{transform:translateY(1px);}
-#reader-reading-view .rd-listen.playing{background:var(--surface); color:var(--accent);}
+#reader-reading-view .rd-listen.playing{background:var(--surface); color:var(--accent); border-color:var(--accent); animation:rd-listen-pulse 1.8s ease-in-out infinite;}
+@keyframes rd-listen-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 40%,transparent);}50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 0%,transparent);}}
 #reader-reading-view .rd-desk{display:none;}
+
+/* ── v76.62 calm reader ──
+   1) Quiet text by default: word-status colors only show in the explicit
+      "marks" mode (🖍). Outside it, saved/learning words keep a thin dotted
+      underline and problem words a solid one — everything else is plain text.
+      !important is needed to beat the per-status rules and zh-specific
+      overrides regardless of their specificity. */
+#reader-reading-view:not(.rd-marks-on) .reader-word{
+  background:transparent !important;
+  border-bottom-color:transparent !important;
+}
+#reader-reading-view:not(.rd-marks-on) .reader-word.rw-saved,
+#reader-reading-view:not(.rd-marks-on) .reader-word.rw-learning,
+#reader-reading-view:not(.rd-marks-on) .reader-word.rw-familiar{
+  border-bottom:1.5px dotted color-mix(in srgb, var(--accent) 65%, transparent) !important;
+}
+#reader-reading-view:not(.rd-marks-on) .reader-word.rw-problem{
+  border-bottom:2px solid rgba(255,69,58,.65) !important;
+}
+#reader-reading-view:not(.rd-marks-on) .reader-word:hover,
+#reader-reading-view:not(.rd-marks-on) .reader-word.rw-sel{
+  background:color-mix(in srgb, var(--accent) 14%, transparent) !important;
+}
+/* quieter active paragraph in calm mode: thin rule, no tinted card */
+#reader-reading-view:not(.rd-marks-on) .reader-paragraph.active{
+  background:transparent;
+  border-left-color:var(--accent);
+}
+
+/* 2) Auto-hiding chrome: mechanics live in the phase-2 block at the end of
+      this file (absolute bars + transform-only animation, no reflow). */
+/* keep the chapter progress line visible even with hidden chrome */
+#reader-reading-view .rd-free-prog{
+  position:absolute; top:0; left:0; right:0; height:3px; z-index:30;
+  pointer-events:none; opacity:0; transition:opacity .25s;
+}
+#reader-reading-view .rd-free-prog > i{
+  display:block; height:100%; width:0%;
+  background:var(--accent); border-radius:0 3px 3px 0; transition:width .25s;
+}
+#reader-reading-view.rd-chrome-hidden .rd-free-prog{opacity:1;}
 
 /* desktop: roomier column + a couple of inline actions */
 @media (min-width:760px){
@@ -1988,16 +2068,26 @@ input:-webkit-autofill:focus {
   #reader-reading-view .rd-scroll{padding:18px max(16px,calc((100% - 720px)/2)) 24px;}
   #reader-reading-view .reader-paragraph{font-size:1.18rem;}
   #reader-reading-view .rd-bot{
-    grid-template-columns:46px auto 1fr auto 46px 46px;
+    /* minmax(0,...) lets these tracks shrink below their content size instead of
+       overflowing the viewport when button text is wider than expected (larger
+       system font scale on tablets, etc.) — the strip must never spill off-screen. */
+    grid-template-columns:46px minmax(0,auto) minmax(0,1fr) minmax(0,auto) 46px 46px;
     padding-left:max(14px,calc((100% - 720px)/2)); padding-right:max(14px,calc((100% - 720px)/2));
   }
   #reader-reading-view .rd-desk{
-    display:flex; align-items:center; gap:7px; height:46px; padding:0 14px;
+    display:flex; align-items:center; justify-content:center; gap:7px; height:46px; padding:0 14px;
+    min-width:0; overflow:hidden;
     border-radius:12px; border:1px solid var(--border); background:var(--surface);
     color:var(--text); cursor:pointer; font-family:'IBM Plex Sans',sans-serif; font-size:.84rem;
     white-space:nowrap; transition:.15s;
   }
   #reader-reading-view .rd-desk:hover{border-color:var(--accent); color:var(--accent);}
+  #reader-reading-view .rd-desk-label{overflow:hidden; text-overflow:ellipsis;}
+}
+/* medium/tablet widths: icon-only desk buttons so the strip has guaranteed room */
+@media (min-width:760px) and (max-width:899px){
+  #reader-reading-view .rd-desk{padding:0 12px;}
+  #reader-reading-view .rd-desk-label{display:none;}
 }
 
 /* MORE SHEET + backdrop (inside the fixed reading view) */
@@ -2010,12 +2100,15 @@ input:-webkit-autofill:focus {
   position:absolute; left:0; right:0; bottom:0; z-index:21;
   background:var(--surface); border-top:1px solid var(--border); border-radius:18px 18px 0 0;
   padding:14px 16px calc(16px + env(safe-area-inset-bottom));
-  transform:translateY(110%); transition:transform .24s cubic-bezier(.2,.8,.2,1);
+  /* hide distance must cover own height + bottom offset + shadow, otherwise a
+     short sheet peeks above the bottom bar on tablet/desktop */
+  transform:translateY(calc(100% + 140px)); visibility:hidden;
+  transition:transform .24s cubic-bezier(.2,.8,.2,1), visibility 0s .24s;
   box-shadow:0 -14px 40px rgba(40,30,15,.28); max-height:80%; overflow-y:auto;
 }
-#reader-reading-view .rd-sheet.show{transform:none;}
+#reader-reading-view .rd-sheet.show{transform:none; visibility:visible; transition:transform .24s cubic-bezier(.2,.8,.2,1), visibility 0s 0s;}
 @media (min-width:760px){
-  #reader-reading-view .rd-sheet{left:50%; right:auto; transform:translate(-50%,110%); width:460px; border-radius:18px; bottom:80px;}
+  #reader-reading-view .rd-sheet{left:50%; right:auto; transform:translate(-50%,calc(100% + 140px)); width:460px; border-radius:18px; bottom:80px;}
   #reader-reading-view .rd-sheet.show{transform:translate(-50%,0);}
 }
 #reader-reading-view .rd-grab{width:38px; height:4px; border-radius:4px; background:var(--border); opacity:.7; margin:0 auto 12px;}
@@ -2100,10 +2193,10 @@ input:-webkit-autofill:focus {
   -webkit-touch-callout:default;
 }
 #reader-reading-view .reader-word.rw-sel{
-  background:rgba(166,42,33,.24) !important;
+  background:color-mix(in srgb, var(--accent) 24%, transparent) !important;
   color:var(--text) !important;
   border-radius:4px;
-  box-shadow:0 0 0 1px rgba(166,42,33,.30);
+  box-shadow:0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 /* v68.2 — dictionary mobile search layout fix */
@@ -2129,9 +2222,13 @@ input:-webkit-autofill:focus {
 
 /* v68.4 — Chinese reader readability + pinyin in word card */
 #reader-reading-view[data-reader-lang="zh"] .reader-paragraph{
-  font-family:"Noto Serif SC","Noto Sans CJK SC","Microsoft YaHei","PingFang SC","Heiti SC",system-ui,sans-serif !important;
-  font-size:1.36rem !important;
-  line-height:2.05 !important;
+  /* No Аа font has CJK glyphs, so the picker used to have zero visible effect
+     on Chinese text — --rd-font-zh (set in display.js) maps each pick onto a
+     real serif/sans CJK counterpart instead, so choosing a font actually
+     changes something here too. */
+  font-family:var(--rd-font-zh, "Noto Serif SC"),"Noto Sans CJK SC","Microsoft YaHei","PingFang SC","Heiti SC",system-ui,sans-serif !important;
+  font-size:var(--rd-size) !important;
+  line-height:var(--rd-zh-lh, 2.05) !important;
   letter-spacing:.035em !important;
 }
 #reader-reading-view[data-reader-lang="zh"] .reader-paragraph-text{
@@ -2177,8 +2274,8 @@ input:-webkit-autofill:focus {
 }
 @media (max-width:700px){
   #reader-reading-view[data-reader-lang="zh"] .reader-paragraph{
-    font-size:1.42rem !important;
-    line-height:2.08 !important;
+    font-size:var(--rd-size) !important;
+    line-height:var(--rd-zh-lh, 2.08) !important;
   }
   .reader-word-panel[data-lang="zh"] #reader-word-title,
   .reader-word-panel.zh-word-panel #reader-word-title{
@@ -2229,6 +2326,8 @@ input:-webkit-autofill:focus {
   --rd-font: 'Playfair Display', serif;
   --rd-size: 17px;
   --rd-lh:   1.82;
+  --rd-bg-image: none;
+  --rd-bg-size: auto;
 }
 #reader-reading-view .reader-paragraph {
   font-family: var(--rd-font) !important;
@@ -2236,28 +2335,103 @@ input:-webkit-autofill:focus {
   line-height: var(--rd-lh)   !important;
 }
 
-/* --- Themes --- */
+/* --- Calm reader themes. Textures are tiny CSS gradients rather than bitmap
+   assets: they stay sharp, add almost no APK weight, and do not flash while a
+   page is turning. */
+#reader-reading-view[data-rd-theme="paper"] {
+  --bg: #FAF6F0; --text: #241E17; --surface: #FFFFFF;
+  --surface2: #F1EBE2; --surface3: #E9E1D4;
+  --border: #E5DDD1; --text-muted: #6E6356;
+  --text-dim: #9C9184; --accent: #8A4B2D;
+  --rd-bg-image: linear-gradient(180deg, rgba(255,255,255,.18), rgba(144,103,65,.018));
+  --rd-bg-size: auto;
+}
+#reader-reading-view[data-rd-theme="ivory"] {
+  --bg: #FFFDF7; --text: #28231C; --surface: #FFFFFF;
+  --surface2: #F5F1E8; --surface3: #ECE6DA;
+  --border: #E8E1D5; --text-muted: #6C645A;
+  --text-dim: #9B9287; --accent: #76533A;
+  --rd-bg-image:
+    radial-gradient(circle at 18% 22%, rgba(104,83,55,.035) 0 1px, transparent 1.25px),
+    radial-gradient(circle at 72% 64%, rgba(104,83,55,.025) 0 1px, transparent 1.2px);
+  --rd-bg-size: 23px 23px, 31px 31px;
+}
 #reader-reading-view[data-rd-theme="sepia"] {
-  --bg: #2a2016; --text: #d4c4a0; --surface: #241c12;
-  --surface2: #2e2518; --surface3: #342b1e;
-  --border: rgba(180,140,60,.22); --text-muted: #806a4a;
-  --text-dim: #6a5a3a; --accent: #b08030;
+  --bg: #EFE6D8; --text: #332A1F; --surface: #F7F0E4;
+  --surface2: #E6DBC8; --surface3: #DDD0B9;
+  --border: #D8CBB4; --text-muted: #71634F;
+  --text-dim: #98896F; --accent: #7A5232;
+  --rd-bg-image: linear-gradient(135deg, rgba(123,82,45,.035), transparent 42%, rgba(255,255,255,.08));
+  --rd-bg-size: auto;
 }
-#reader-reading-view[data-rd-theme="parchment"] {
-  --bg: #f5efe0; --text: #2a2018; --surface: #ede4cf;
-  --surface2: #e0d4b8; --surface3: #d4c8a8;
-  --border: rgba(160,120,40,.22); --text-muted: #7a6040;
-  --text-dim: #9a8060; --accent: #9a7a20;
+#reader-reading-view[data-rd-theme="vellum"] {
+  --bg: #E8D7B9; --text: #352719; --surface: #F1E3CA;
+  --surface2: #DDC8A5; --surface3: #D1B98F;
+  --border: #CDB48D; --text-muted: #725E44;
+  --text-dim: #998269; --accent: #814825;
+  --rd-bg-image:
+    radial-gradient(ellipse at 12% 8%, rgba(255,255,255,.18), transparent 32%),
+    radial-gradient(ellipse at 88% 76%, rgba(107,67,31,.075), transparent 38%),
+    repeating-linear-gradient(2deg, rgba(93,58,25,.018) 0 1px, transparent 1px 4px);
+  --rd-bg-size: auto, auto, 7px 7px;
 }
-#reader-reading-view[data-rd-theme="parchment"] .rd-top,
-#reader-reading-view[data-rd-theme="parchment"] .rd-bot {
-  background: color-mix(in srgb, #f5efe0 94%, transparent);
+#reader-reading-view[data-rd-theme="sage"] {
+  --bg: #E7ECE2; --text: #263028; --surface: #F0F4EC;
+  --surface2: #DCE4D7; --surface3: #CFDAC9;
+  --border: #C7D2C1; --text-muted: #5E6B60;
+  --text-dim: #89958A; --accent: #526B51;
+  --rd-bg-image: linear-gradient(145deg, rgba(255,255,255,.13), transparent 46%, rgba(71,94,69,.025));
+  --rd-bg-size: auto;
 }
-#reader-reading-view[data-rd-theme="night"] {
-  --bg: #0e0e12; --text: #c8c8d8; --surface: #141418;
-  --surface2: #1a1a20; --surface3: #1e1e26;
-  --border: rgba(100,100,160,.22); --text-muted: #606070;
-  --text-dim: #484858; --accent: #7070bb;
+#reader-reading-view[data-rd-theme="mist"] {
+  --bg: #E8EEF2; --text: #222B32; --surface: #F2F6F8;
+  --surface2: #DCE5EA; --surface3: #CFDCE3;
+  --border: #C7D3DA; --text-muted: #5C6972;
+  --text-dim: #87939B; --accent: #49697C;
+  --rd-bg-image:
+    radial-gradient(ellipse at 20% 0%, rgba(255,255,255,.24), transparent 42%),
+    linear-gradient(180deg, transparent, rgba(64,93,110,.018));
+  --rd-bg-size: auto;
+}
+#reader-reading-view[data-rd-theme="eink"] {
+  --bg: #D9D9D4; --text: #20211F; --surface: #E3E3DE;
+  --surface2: #CECEC8; --surface3: #C3C3BD;
+  --border: #BDBDB6; --text-muted: #5C5D59;
+  --text-dim: #858681; --accent: #4F5652;
+  --rd-bg-image:
+    radial-gradient(circle, rgba(20,22,20,.035) 0 .7px, transparent .85px),
+    radial-gradient(circle, rgba(255,255,255,.10) 0 .7px, transparent .9px);
+  --rd-bg-size: 4px 4px, 5px 5px;
+}
+#reader-reading-view[data-rd-theme="ink"] {
+  --bg: #14120F; --text: #E8E2D8; --surface: #1D1A16;
+  --surface2: #26221D; --surface3: #2E2922;
+  --border: #37322A; --text-muted: #A79D8F;
+  --text-dim: #7A7164; --accent: #D9A15F;
+  --rd-bg-image: radial-gradient(ellipse at 50% -10%, rgba(217,161,95,.045), transparent 46%);
+  --rd-bg-size: auto;
+}
+#reader-reading-view[data-rd-theme="amoled"] {
+  --bg: #000000; --text: #D8D8D6; --surface: #090909;
+  --surface2: #121212; --surface3: #191919;
+  --border: #292929; --text-muted: #989895;
+  --text-dim: #666663; --accent: #D3A35F;
+  --rd-bg-image: none;
+  --rd-bg-size: auto;
+}
+/* dark theme: accent-on-dark needs dark label text on filled controls */
+#reader-reading-view[data-rd-theme="ink"] .rd-listen.playing,
+#reader-reading-view[data-rd-theme="ink"] .rd-icon.on,
+#reader-reading-view[data-rd-theme="amoled"] .rd-listen.playing,
+#reader-reading-view[data-rd-theme="amoled"] .rd-icon.on {
+  color: #14120F;
+}
+
+#reader-reading-view,
+#reader-reading-view .rd-page {
+  background-color: var(--bg);
+  background-image: var(--rd-bg-image);
+  background-size: var(--rd-bg-size);
 }
 
 /* Word panel buttons — explicit contrast in all themes */
@@ -2295,14 +2469,17 @@ input:-webkit-autofill:focus {
   border-radius: 18px 18px 0 0;
   padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
   display: flex; flex-direction: column; gap: 12px;
-  transform: translateY(110%);
-  transition: transform .25s cubic-bezier(.32,.72,0,1);
+  /* hide distance must cover own height + bottom offset + shadow, otherwise a
+     short panel peeks above the bottom bar on tablet/desktop */
+  transform: translateY(calc(100% + 140px)); visibility: hidden;
+  transition: transform .25s cubic-bezier(.32,.72,0,1), visibility 0s .25s;
+  max-height: min(86vh, 760px); overflow-y: auto;
 }
-#reader-reading-view .rd-display-panel.show { transform: translateY(0); }
+#reader-reading-view .rd-display-panel.show { transform: translateY(0); visibility: visible; transition: transform .25s cubic-bezier(.32,.72,0,1), visibility 0s 0s; }
 
 @media (min-width: 760px) {
   #reader-reading-view .rd-display-panel {
-    left: 50%; right: auto; transform: translate(-50%, 110%);
+    left: 50%; right: auto; transform: translate(-50%, calc(100% + 140px));
     width: 480px; border-radius: 18px; bottom: 72px;
     border: 1px solid var(--border);
   }
@@ -2350,9 +2527,11 @@ input:-webkit-autofill:focus {
    NEW ANALYSIS BLOCK  ra2-*  (v69)
    ════════════════════════════════════════════════════════ */
 .ra2-block {
-  display: flex; flex-direction: column; gap: 7px;
   margin: 8px 2px 4px;
   font-family: 'IBM Plex Sans', sans-serif;
+}
+.ra2-block .reader-help-body {
+  display: flex; flex-direction: column; gap: 7px;
 }
 
 /* Map: из чего состоит */
@@ -2448,7 +2627,7 @@ input:-webkit-autofill:focus {
 }
 .song-verse.song-chorus {
   border-left-color: var(--accent);
-  background: rgba(196,151,58,.05);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 .song-verse.song-bridge {
   border-left-color: #7eb8f0;
@@ -2500,7 +2679,7 @@ input:-webkit-autofill:focus {
 .song-meaning-btn.loaded {
   border-color: var(--accent);
   color: var(--accent);
-  background: rgba(196,151,58,.08);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 .song-meaning-btn:disabled {
   opacity: .6;
@@ -2552,9 +2731,9 @@ input:-webkit-autofill:focus {
 .reader-book-card .song-badge,
 .reader-book-card-main .song-badge {
   font-size: .6rem;
-  background: rgba(196,151,58,.15);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
   color: var(--accent);
-  border: 1px solid rgba(196,151,58,.25);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
   border-radius: 4px;
   padding: 2px 5px;
   margin-left: 5px;
@@ -2580,8 +2759,8 @@ input:-webkit-autofill:focus {
 
 .home-topbar-user {
   width: 36px; height: 36px; border-radius: 50%;
-  background: rgba(196,151,58,.15);
-  border: 1px solid rgba(196,151,58,.28);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
   color: var(--accent); font-size: .85rem; font-weight: 600;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
 }
@@ -2606,51 +2785,6 @@ input:-webkit-autofill:focus {
 }
 
 /* Continue cards */
-.home-continue-card-v2 {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 13px 14px;
-  margin-bottom: 9px;
-}
-.home-continue-card-v2.primary {
-  border-color: rgba(196,151,58,.35);
-  background: rgba(196,151,58,.05);
-}
-.hcc-top {
-  display: flex; align-items: flex-start; gap: 10px; margin-bottom: 9px;
-}
-.hcc-icon { font-size: 1.25rem; flex-shrink: 0; line-height: 1.3; }
-.hcc-meta { flex: 1; min-width: 0; }
-.hcc-title {
-  font-size: .95rem; font-weight: 600;
-  color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.hcc-sub { font-size: .72rem; color: var(--text-muted); margin-top: 2px; }
-.hcc-pct {
-  font-size: .75rem; color: var(--accent);
-  font-family: 'IBM Plex Mono', monospace; flex-shrink: 0;
-}
-.hcc-bar {
-  height: 3px; background: var(--border); border-radius: 2px;
-  overflow: hidden; margin-bottom: 10px;
-}
-.hcc-fill { height: 100%; background: var(--accent); border-radius: 2px; }
-.hcc-actions { display: flex; gap: 7px; }
-.hcc-btn {
-  flex: 1; padding: 8px 6px; border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--surface2); color: var(--text-muted);
-  font-size: .78rem; cursor: pointer; font-family: inherit;
-  transition: all .15s;
-}
-.hcc-btn:hover { border-color: var(--accent); color: var(--accent); }
-.hcc-btn.primary {
-  background: rgba(196,151,58,.12);
-  border-color: rgba(196,151,58,.35); color: var(--accent); font-weight: 500;
-}
-
 /* Add card */
 .home-add-card {
   width: 100%; display: flex; align-items: center; gap: 14px;
@@ -2740,8 +2874,8 @@ input:-webkit-autofill:focus {
   transition: all .15s;
 }
 .lib-filter-pill.active {
-  background: rgba(196,151,58,.12);
-  border-color: rgba(196,151,58,.4);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   color: var(--accent);
 }
 
@@ -2752,7 +2886,7 @@ input:-webkit-autofill:focus {
   overflow: hidden;
   transition: border-color .15s;
 }
-.lib-book-card:hover { border-color: rgba(196,151,58,.35); }
+.lib-book-card:hover { border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
 .lib-book-card.done { opacity: .65; }
 
 .lib-book-main {
@@ -2835,7 +2969,7 @@ input:-webkit-autofill:focus {
    Do NOT leave .rw-known / .rw-saved global: the reader uses the same state
    classes on inline words, and a global .rw-known rule painted all known/common
    words green in every reader theme. */
-.rw-status.rw-saved  { background: rgba(196,151,58,.12); color: var(--accent); border: 1px solid rgba(196,151,58,.25); }
+.rw-status.rw-saved  { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); }
 .rw-status.rw-known  { background: rgba(39,174,96,.08); color: #27ae60; border: 1px solid rgba(39,174,96,.2); }
 .rw-status.rw-opened { background: var(--surface2); color: var(--text-muted); border: 1px solid var(--border); }
 
@@ -2940,8 +3074,8 @@ input:-webkit-autofill:focus {
   transition: all .15s;
 }
 .zh-btn-reveal {
-  background: rgba(196,151,58,.1);
-  border-color: rgba(196,151,58,.3);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   color: var(--accent);
 }
 .zh-btn-row { display: flex; gap: 8px; }
@@ -3082,4 +3216,348 @@ input:-webkit-autofill:focus {
   color: var(--text-muted); font-size: .85rem;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; flex-shrink: 0;
+}
+.epub-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 8px auto;
+  contain: layout;
+}
+.epub-img:not([src]) {
+  min-height: 160px;
+  background: var(--border);
+  border-radius: 8px;
+}
+.epub-img-missing {
+  margin: 8px auto;
+  padding: 8px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: .74rem;
+  color: var(--text-dim);
+  text-align: center;
+}
+.reader-paragraph:has(.epub-img) {
+  cursor: default;
+  pointer-events: none;
+  background: none !important;
+  border: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   v76.63 calm reader phase 2 — appended last on purpose: these must win
+   the cascade over the earlier .rd-top/.rd-bot position:relative rules.
+
+   1) Bars overlay the text (position:absolute) and hide with pure
+      transform/opacity — compositor-only, no layout recalc, which is what
+      made the phase-1 margin animation janky on the phone.
+      z-index stays below the more-sheet (20/21) so sheets still cover bars. */
+#reader-reading-view .rd-top{
+  position:absolute !important; top:0; left:0; right:0; z-index:15;
+  margin:0 !important;
+  transition:transform .25s ease, opacity .2s ease;
+  will-change:transform;
+}
+#reader-reading-view .rd-bot{
+  position:absolute !important; left:0; right:0; bottom:0; z-index:15;
+  margin:0 !important;
+  transition:transform .25s ease, opacity .2s ease;
+  will-change:transform;
+}
+#reader-reading-view.rd-chrome-hidden .rd-top{ transform:translateY(-106%); opacity:0; pointer-events:none; }
+#reader-reading-view.rd-chrome-hidden .rd-bot{ transform:translateY(108%); opacity:0; pointer-events:none; }
+
+/* text flows under the bars; padding reserves space while they're shown */
+#reader-reading-view .rd-scroll{
+  padding-top:calc(var(--rd-top-h, 64px) + var(--rd-audio-h, 0px) + 10px) !important;
+  padding-bottom:calc(var(--rd-bot-h, 70px) + var(--rd-tts-h, 0px) + 18px) !important;
+}
+/* TTS mini-player: docks right above the bottom bar, only while listening */
+#reader-tts-player{
+  position:absolute; left:0; right:0; bottom:var(--rd-bot-h, 70px); z-index:14;
+  display:none; align-items:center; justify-content:center; gap:22px;
+  padding:8px 16px calc(8px + env(safe-area-inset-bottom, 0px));
+  background:color-mix(in srgb, var(--bg) 94%, transparent);
+  border-top:1px solid color-mix(in srgb, var(--border) 75%, transparent);
+}
+#reader-tts-player button{
+  background:none; border:none; color:var(--text); font-size:1.15rem; line-height:1;
+  cursor:pointer; padding:6px;
+}
+#reader-tts-player #reader-tts-playpause{ font-size:1.5rem; color:var(--accent); }
+#reader-tts-player #reader-tts-rate{
+  font-size:.78rem; font-weight:600; color:var(--accent);
+  border:1px solid var(--border); border-radius:8px; padding:4px 10px;
+}
+/* original-recording strip docks right under the absolute top bar */
+#reader-orig-audio-wrap{
+  position:absolute; top:var(--rd-top-h, 64px); left:0; right:0; z-index:14;
+}
+
+/* 2) Book column: comfortable measure, roomier side padding,
+      paragraphs read as text, not as cards */
+#reader-reading-view #reader-chapter-text{
+  max-width:660px; margin:0 auto; padding:0 8px;
+}
+#reader-reading-view .reader-paragraph{
+  padding:3px 2px 3px 14px;
+  margin:0 0 .9em;
+  border-radius:0;
+  border-left-width:2.5px;
+}
+
+/* 3) Bottom bar: quiet ghost controls + outline listen pill */
+#reader-reading-view .rd-nav,
+#reader-reading-view .rd-more{
+  border:none; background:transparent;
+  color:var(--text-muted); font-size:1.28rem;
+}
+#reader-reading-view .rd-listen{
+  background:transparent; color:var(--accent);
+  border:1.5px solid var(--accent); border-radius:99px; font-weight:600;
+}
+#reader-reading-view .rd-listen.playing{
+  background:var(--accent); color:#f3e7cf;
+}
+
+/* ── calm reader phase 3: word panel as a bottom sheet with chip actions ── */
+.reader-word-panel .rwp-grab{
+  width:38px; height:4px; border-radius:2px; background:var(--border);
+  margin:0 auto 12px;
+}
+.reader-word-panel .reader-word-actions{
+  display:flex; flex-wrap:wrap; gap:8px; margin-top:14px;
+}
+.reader-word-panel .reader-word-actions .btn{
+  padding:9px 14px; border-radius:99px; font-size:.82rem;
+  letter-spacing:0; height:auto;
+}
+.reader-word-panel .reader-word-actions .rwp-main{
+  flex:1 0 100%; justify-content:center; font-weight:600;
+  background:var(--accent); border-color:var(--accent);
+}
+/* Several legacy reader-mode rules elsewhere in this file target
+   .reader-word-panel with !important at this same breakpoint — matching
+   here so this, the current styling, reliably wins as the last declaration. */
+@media (max-width:700px){
+  .reader-word-panel{
+    left:0 !important; right:0 !important; bottom:0 !important; transform:none !important;
+    width:100% !important; max-width:100% !important;
+    border-radius:22px 22px 0 0 !important; border-left:none !important; border-right:none !important; border-bottom:none !important;
+    padding:10px 18px calc(18px + env(safe-area-inset-bottom)) !important;
+    max-height:76vh !important; overflow-y:auto !important;
+  }
+  .reader-word-panel::before{ content:none !important; }
+  .reader-word-panel #reader-word-title{ font-size:1.7rem !important; }
+  /* Beat the older grid-of-equal-buttons layout at this same breakpoint
+     (see the `v65 Android reader mode` block above) with the chip row. */
+  .reader-word-panel .reader-word-actions{
+    display:flex !important; grid-template-columns:none !important;
+    gap:8px !important; margin:14px 0 0 !important;
+  }
+  .reader-word-panel .reader-word-actions .btn,
+  .reader-word-panel .reader-word-actions button{
+    width:auto !important; flex:0 0 auto;
+    padding:9px 14px !important; font-size:.82rem !important; white-space:nowrap !important;
+  }
+  .reader-word-panel #reader-word-save-btn{
+    grid-column:auto !important; flex:1 0 100% !important;
+  }
+}
+@media (min-width:701px){
+  .reader-word-panel .rwp-grab{ display:none; }
+}
+
+/* ── calm reader phase 4: library — continue card + colored covers + compact rows ── */
+.lib-cover{
+  flex:none; width:40px; height:56px; border-radius:8px;
+  display:flex; align-items:center; justify-content:center;
+  font-family:'Lora',serif; font-size:1.15rem; font-weight:600; color:#fff;
+}
+.lib-cover-fr{ background:linear-gradient(160deg,#4C6285,#2E3F58); }
+.lib-cover-en{ background:linear-gradient(160deg,#7A4C85,#4A2E58); }
+.lib-cover-zh{ background:linear-gradient(160deg,#A84C3F,#6E2A22); }
+.lib-cover-de,.lib-cover-es{ background:linear-gradient(160deg,#4C8570,#2E5842); }
+
+.lib-cont-card{
+  display:flex; gap:14px; align-items:center;
+  background:var(--surface); border:1px solid var(--border); border-radius:16px;
+  padding:12px; box-shadow:0 6px 20px rgba(0,0,0,.06);
+}
+.lib-cont-card .lib-cover{ width:52px; height:72px; font-size:1.4rem; }
+.lib-cont-body{ flex:1; min-width:0; cursor:pointer; }
+.lib-cont-title{
+  font-family:'Lora',serif; font-size:1rem; font-weight:600; color:var(--text);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.lib-cont-meta{ font-size:.74rem; color:var(--text-dim); margin:2px 0 8px; }
+.lib-cont-go{
+  flex:none; border:none; background:var(--accent); color:var(--bg,#fff);
+  font-family:inherit; font-weight:600; font-size:.82rem;
+  padding:10px 16px; border-radius:99px; cursor:pointer;
+}
+
+/* rows instead of bordered cards: cover + text + slim ghost icon actions */
+.lib-book-card{
+  background:transparent; border:none; border-radius:0;
+  border-bottom:1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.lib-book-card:hover{ border-color:color-mix(in srgb, var(--border) 60%, transparent); }
+.lib-book-card:last-child{ border-bottom:none; }
+.lib-book-main{ padding:10px 2px; align-items:center; gap:12px; }
+.lib-book-title{ font-family:'Lora',serif; font-weight:500; font-size:.94rem; }
+.lib-book-meta{ margin-bottom:6px; }
+.lib-book-pct{ align-self:center; }
+.lib-book-actions{
+  border-top:none; justify-content:flex-end; gap:2px; padding:0 2px 8px;
+}
+.lib-book-actions .lib-action-btn{
+  flex:none; border-right:none; width:34px; height:30px;
+  border-radius:8px; font-size:.86rem;
+}
+.lib-book-actions .lib-action-btn:hover{ background:var(--surface2); border-radius:8px; }
+
+/* ── calm reader phase 5: simplified home screen ── */
+.home-add{
+  width:100%; display:flex; align-items:center; gap:14px;
+  text-align:left; padding:16px; margin-bottom:18px;
+  background:none; border:1.5px dashed var(--border);
+  border-radius:16px; cursor:pointer; color:var(--text);
+  font-family:inherit;
+}
+.home-add:hover{ border-color:var(--accent); }
+.home-add-icon{ font-size:1.6rem; flex:none; }
+.home-add b{ display:block; font-size:.92rem; }
+.home-add small{ color:var(--text-muted); font-size:.76rem; }
+
+.home-stat-line{
+  display:flex; gap:22px; margin:18px 0 6px;
+}
+.home-stat-line div{ display:flex; flex-direction:column; }
+.home-stat-line b{
+  font-family:'Lora',serif; font-size:1.1rem; color:var(--text); line-height:1.2;
+}
+.home-stat-line .home-stat-lbl{ font-size:.72rem; color:var(--text-dim); }
+
+/* ── pages mode: book-like page-flip, alternative to the default scroll ──
+   Real chapter content (paragraphs, translations, word taps) stays exactly
+   as rendered for scroll mode — pages-mode.js only groups the SAME live
+   paragraph nodes into .rd-page wrappers and shows one at a time, so all
+   existing interactions keep working unchanged. */
+#reader-reading-view .rd-scroll.rd-pages-mode{
+  overflow:hidden !important; perspective:1800px; position:relative;
+  /* Tells the browser upfront that horizontal gestures here are ours — without
+     it, the browser's own gesture recognizer spends the first several pixels
+     of a touch deciding whether it's a scroll/zoom, which can delay or drop
+     the swipe handler and reads as "sometimes doesn't turn the page". */
+  touch-action:pan-y;
+}
+#reader-reading-view .rd-scroll.rd-pages-mode #reader-chapter-text{
+  position:relative; height:100%;
+}
+/* Blurring the fixed top/bottom bars every frame while a 3D transform
+   animates underneath is expensive enough on mid-range phones to drop
+   frames (and even whole transitionend events) mid-flip — same finding as
+   the pagination-preview.html prototype. Only turn it off while pages mode
+   is actually active; scroll mode has no concurrent transform animation, so
+   the blur there is cheap and stays. */
+#reader-reading-view.rd-pages-active .rd-top,
+#reader-reading-view.rd-pages-active .rd-bot{
+  backdrop-filter:none;
+  background:color-mix(in srgb, var(--bg) 97%, transparent);
+}
+#reader-reading-view .rd-page{
+  position:absolute; inset:0; overflow-y:auto;
+  background-color:var(--bg); background-image:var(--rd-bg-image); background-size:var(--rd-bg-size);
+  backface-visibility:hidden; transform:translateZ(0); opacity:1;
+  will-change:transform,opacity; display:none;
+}
+#reader-reading-view .rd-page.rd-page-show{ display:block; }
+#reader-reading-view .rd-page.rd-page-current{ z-index:3; }
+#reader-reading-view .rd-page.rd-page-in{ z-index:2; }
+#reader-reading-view .rd-page-fold{
+  position:absolute; inset:0; pointer-events:none; opacity:0;
+  background:linear-gradient(to left, rgba(0,0,0,.2), rgba(0,0,0,0) 35%);
+}
+
+/* Physical sheet. Forward and backward turns now bend in opposite directions;
+   the old implementation always rotated left, even while going back. */
+#reader-reading-view .rd-scroll[data-rd-page-animation="flip"] .rd-page{
+  transition:transform .46s cubic-bezier(.38,.04,.18,1), opacity .46s ease;
+}
+#reader-reading-view .rd-scroll[data-rd-page-animation="flip"] .rd-page.rd-page-forward.rd-page-out{
+  transform-origin:left center; transform:perspective(1400px) rotateY(-108deg); opacity:.42;
+}
+#reader-reading-view .rd-scroll[data-rd-page-animation="flip"] .rd-page.rd-page-backward.rd-page-out{
+  transform-origin:right center; transform:perspective(1400px) rotateY(108deg); opacity:.42;
+}
+#reader-reading-view .rd-scroll[data-rd-page-animation="flip"] .rd-page.rd-page-out .rd-page-fold{
+  transition:opacity .46s ease; opacity:1;
+}
+#reader-reading-view .rd-scroll[data-rd-page-animation="flip"] .rd-page.rd-page-backward .rd-page-fold{
+  background:linear-gradient(to right, rgba(0,0,0,.2), rgba(0,0,0,0) 35%);
+}
+
+/* Fast horizontal slide. The next page moves a shorter distance underneath,
+   avoiding a blank frame on slower WebViews. */
+#reader-reading-view .rd-scroll[data-rd-page-animation="slide"] .rd-page{
+  transition:transform .34s cubic-bezier(.22,.72,.2,1), opacity .34s ease;
+}
+#reader-reading-view .rd-scroll[data-rd-page-animation="slide"] .rd-page.rd-page-in.rd-page-forward{ transform:translateX(28%); }
+#reader-reading-view .rd-scroll[data-rd-page-animation="slide"] .rd-page.rd-page-in.rd-page-backward{ transform:translateX(-28%); }
+#reader-reading-view .rd-scroll[data-rd-page-animation="slide"] .rd-page.rd-page-in-active{ transform:translateX(0); }
+#reader-reading-view .rd-scroll[data-rd-page-animation="slide"] .rd-page.rd-page-forward.rd-page-out{ transform:translateX(-104%); opacity:.88; }
+#reader-reading-view .rd-scroll[data-rd-page-animation="slide"] .rd-page.rd-page-backward.rd-page-out{ transform:translateX(104%); opacity:.88; }
+
+/* Card-stack motion: quieter than a full slide, with a small depth cue. */
+#reader-reading-view .rd-scroll[data-rd-page-animation="stack"] .rd-page{
+  transition:transform .38s cubic-bezier(.2,.74,.18,1), opacity .32s ease;
+}
+#reader-reading-view .rd-scroll[data-rd-page-animation="stack"] .rd-page.rd-page-in.rd-page-forward{ transform:translateX(10%) scale(.975); opacity:.35; }
+#reader-reading-view .rd-scroll[data-rd-page-animation="stack"] .rd-page.rd-page-in.rd-page-backward{ transform:translateX(-10%) scale(.975); opacity:.35; }
+#reader-reading-view .rd-scroll[data-rd-page-animation="stack"] .rd-page.rd-page-in-active{ transform:translateX(0) scale(1); opacity:1; }
+#reader-reading-view .rd-scroll[data-rd-page-animation="stack"] .rd-page.rd-page-forward.rd-page-out{ transform:translateX(-18%) scale(.96) rotate(-.35deg); opacity:0; }
+#reader-reading-view .rd-scroll[data-rd-page-animation="stack"] .rd-page.rd-page-backward.rd-page-out{ transform:translateX(18%) scale(.96) rotate(.35deg); opacity:0; }
+
+/* Minimal cross-fade for readers who dislike spatial motion. */
+#reader-reading-view .rd-scroll[data-rd-page-animation="fade"] .rd-page{
+  transition:transform .24s ease, opacity .24s ease;
+}
+#reader-reading-view .rd-scroll[data-rd-page-animation="fade"] .rd-page.rd-page-in{ transform:scale(.992); opacity:.2; }
+#reader-reading-view .rd-scroll[data-rd-page-animation="fade"] .rd-page.rd-page-in-active{ transform:scale(1); opacity:1; }
+#reader-reading-view .rd-scroll[data-rd-page-animation="fade"] .rd-page.rd-page-out{ transform:scale(.985); opacity:0; }
+
+#reader-reading-view .rd-scroll[data-rd-page-animation="none"] .rd-page{ transition:none !important; }
+@media (prefers-reduced-motion: reduce) {
+  #reader-reading-view .rd-scroll.rd-pages-mode .rd-page,
+  #reader-reading-view .rd-scroll.rd-pages-mode .rd-page-fold{
+    transition:none !important;
+  }
+}
+#reader-reading-view .rd-pages-indicator{
+  display:none;
+  position:absolute; left:0; right:0; bottom:8px; z-index:2; text-align:center;
+  font-family:'IBM Plex Mono',monospace; font-size:.7rem; color:var(--text-dim);
+  pointer-events:none;
+}
+#reader-reading-view .rd-scroll.rd-pages-mode .rd-pages-indicator{ display:block; }
+#reader-reading-view #reader-view-mode-btn.on{ background:var(--accent); border-color:var(--accent); color:#f3e7cf; }
+/* A long-press-to-select on a word is exactly what a slow page-turn swipe
+   looks like at first — text selection is deliberately allowed elsewhere in
+   the reader (v66.9 above), but here it hijacks every touch that follows
+   (the OS owns the gesture for extending the selection, not the page), which
+   read as "перелистывание виснет" until the selection was cleared some other
+   way. Only page-turn swipes/taps are meaningful in this mode, so turn
+   selection off — more specific than the #reader-chapter-text rule above, so
+   it wins despite both using !important. */
+#reader-reading-view .rd-scroll.rd-pages-mode .rd-page,
+#reader-reading-view .rd-scroll.rd-pages-mode .reader-paragraph-text,
+#reader-reading-view .rd-scroll.rd-pages-mode .reader-word{
+  -webkit-user-select:none !important;
+  -moz-user-select:none !important;
+  user-select:none !important;
+  -webkit-touch-callout:none !important;
 }

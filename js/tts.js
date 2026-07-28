@@ -3,10 +3,8 @@
 // Browser TTS exists only as an explicit emergency switch.
 // ════════════════════════════════════════════════
 
-import { fetchWithTimeout } from './supabase.js';
-
 const TTS_MEM_CACHE = new Map();
-const TTS_CACHE_NAME = 'an2-tts-audio-v3';
+const TTS_CACHE_NAME = 'an2-tts-audio-v7';
 const TTS_CACHE_LIMIT = 60;
 
 let ttsAudio = null;
@@ -15,10 +13,19 @@ let ttsCtx = null;
 let ttsCurrentSource = null;
 let ttsAudioPrimed = false;
 let ttsUnlockInstalled = false;
+// The Firebase/OpenRouter TTS request can take 20+ seconds under load
+// (observed in Cloud Function logs) — without this, pressing "stop" while a
+// fetch was still in flight didn't actually cancel the network request, it
+// just discarded whatever came back once it eventually finished. That read
+// as "кнопка стоп не работает": stop DID work, just up to ~27s late.
+let ttsFetchController = null;
 
 function normalizeLang(lang = 'fr') {
   const raw = String(lang || 'fr').trim().toLowerCase();
-  return (raw === 'zh' || raw.startsWith('zh') || raw === 'cn' || raw === 'chinese') ? 'zh' : 'fr';
+  if (raw === 'zh' || raw.startsWith('zh') || raw === 'cn' || raw === 'chinese') return 'zh';
+  if (raw === 'en' || raw.startsWith('en-') || raw === 'english') return 'en';
+  if (raw === 'es' || raw.startsWith('es-') || raw === 'spanish') return 'es';
+  return 'fr';
 }
 
 function cloudTtsUrl() {
@@ -140,21 +147,50 @@ async function firebaseIdToken() {
   return user.getIdToken(false);
 }
 
-async function requestFirebaseAudio(text, { lang = 'fr', rate = 1 } = {}) {
+async function requestFirebaseAudio(text, { lang = 'fr', engine = 'kokoro', voice = '', track = true } = {}) {
   const token = await firebaseIdToken();
   const normalizedLang = normalizeLang(lang);
-  const response = await fetchWithTimeout(cloudTtsUrl(), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      text,
-      lang: normalizedLang,
-      speed: Number(rate) || 1,
-    }),
-  }, 60000);
+  // Own AbortController (not fetchWithTimeout's internal one) so stopSpeak()
+  // can actually cancel this specific in-flight request instead of only being
+  // able to discard its result once it eventually arrives. Background
+  // prefetches pass track:false so they never claim this slot — otherwise a
+  // prefetch would be aborted by (or worse, survive) the user's stop.
+  // 85s, just under the Cloud Function's own 90s cap: observed real Kokoro
+  // latencies reach 52-65s under provider load, and the old 60s timeout was
+  // killing requests that were about to succeed.
+  const controller = new AbortController();
+  if (track) ttsFetchController = controller;
+  const timer = setTimeout(() => controller.abort(), 85000);
+  let response;
+  // Speed is now always requested neutral and applied client-side via
+  // AudioBufferSourceNode.playbackRate (see playAudioBuffer) instead of being
+  // baked into the generated audio — one cached generation then serves any
+  // playback speed instantly, and a mid-paragraph speed change (the player's
+  // speed button) can take effect immediately instead of waiting for a fresh
+  // TTS request at the new speed.
+  try {
+    response = await fetch(cloudTtsUrl(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        text,
+        lang: normalizedLang,
+        engine,
+        voice: voice || undefined,
+        speed: 1,
+      }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error('Озвучка остановлена или сервер не ответил вовремя.');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    if (track && ttsFetchController === controller) ttsFetchController = null;
+  }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
@@ -170,34 +206,69 @@ async function requestFirebaseAudio(text, { lang = 'fr', rate = 1 } = {}) {
   };
 }
 
-async function playAudioBuffer(buffer, mimeType = 'audio/mpeg', token = ++ttsToken) {
+async function playAudioBuffer(buffer, mimeType = 'audio/mpeg', token = ++ttsToken, rate = 1) {
   if (ttsCurrentSource) { try { ttsCurrentSource.stop(); } catch (_) {} ttsCurrentSource = null; }
   if (ttsAudio) { try { ttsAudio.pause(); } catch (_) {} ttsAudio = null; }
-  const ctx = getAudioContext();
-  if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+
+  // <audio> is the primary path now, not Web Audio API. AudioContext gets
+  // suspended by Android when the screen locks/the tab backgrounds, and
+  // nothing here was resuming it mid-playback — the current paragraph's
+  // audio just died with no `onended` ever firing, which is exactly
+  // "прерывается когда включаю экран". A plain <audio> element is what
+  // Android (and Media Session) actually expect for background/lock-screen
+  // audio and reliably keeps playing through both.
+  const blob = new Blob([buffer], { type: mimeType });
+  const url = URL.createObjectURL(blob);
   try {
-    const decoded = await ctx.decodeAudioData(buffer.slice(0));
-    if (token !== ttsToken) return false;
-    const source = ctx.createBufferSource();
-    source.buffer = decoded;
-    source.connect(ctx.destination);
-    ttsCurrentSource = source;
-    source.onended = () => { if (ttsCurrentSource === source) ttsCurrentSource = null; };
-    source.start(0);
-    return true;
-  } catch (_) {
-    const blob = new Blob([buffer], { type: mimeType });
-    const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
+    audio.playbackRate = rate;
     ttsAudio = audio;
-    audio.onended = () => { URL.revokeObjectURL(url); if (ttsAudio === audio) ttsAudio = null; };
-    await audio.play();
-    return true;
+    const ok = await new Promise((resolve, reject) => {
+      audio.onended = () => resolve(token === ttsToken);
+      audio.onerror = () => reject(new Error('audio element playback error'));
+      // stopSpeak() calls .pause() to stop playback early, but pausing fires
+      // neither 'ended' nor 'error' — without this, the promise never
+      // settled, so the autoplay loop hung forever awaiting a paragraph that
+      // had already been stopped (readerAutoPlayAbort was set, but the code
+      // never got back around to checking it). ttsToken is already bumped by
+      // the time stopSpeak's pause() reaches here, so this always resolves
+      // false (stopped early) and never fires on a real natural finish.
+      audio.onpause = () => resolve(token === ttsToken);
+      audio.play().catch(reject);
+    });
+    URL.revokeObjectURL(url);
+    if (ttsAudio === audio) ttsAudio = null;
+    return ok;
+  } catch (_) {
+    URL.revokeObjectURL(url);
+    ttsAudio = null;
+    // Fallback only: some format edge case <audio> couldn't play directly.
+    const ctx = getAudioContext();
+    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+    try {
+      const decoded = await ctx.decodeAudioData(buffer.slice(0));
+      if (token !== ttsToken) return false;
+      const source = ctx.createBufferSource();
+      source.buffer = decoded;
+      source.playbackRate.value = rate;
+      source.connect(ctx.destination);
+      ttsCurrentSource = source;
+      return new Promise((resolve) => {
+        source.onended = () => {
+          if (ttsCurrentSource === source) ttsCurrentSource = null;
+          resolve(token === ttsToken);
+        };
+        source.start(0);
+      });
+    } catch (_) {
+      return false;
+    }
   }
 }
 
 function pickBrowserVoice(lang = 'fr') {
-  const prefix = normalizeLang(lang) === 'zh' ? 'zh' : 'fr';
+  const n = normalizeLang(lang);
+  const prefix = n === 'zh' ? 'zh' : n === 'en' ? 'en' : n === 'es' ? 'es' : 'fr';
   const voices = window.speechSynthesis?.getVoices?.() || [];
   return voices.find((v) => v.lang.toLowerCase().startsWith(prefix) && v.localService)
     || voices.find((v) => v.lang.toLowerCase().startsWith(prefix))
@@ -208,22 +279,100 @@ function speakViaWebSpeech(text, { lang = 'fr', rate = 1 } = {}) {
   if (!window.speechSynthesis) throw new Error('В браузере нет локальной озвучки.');
   const normalizedLang = normalizeLang(lang);
   const prepared = normalizeSpeechText(text, normalizedLang);
-  if (!prepared) return false;
+  if (!prepared) return Promise.resolve(false);
   window.speechSynthesis.cancel();
   const utt = new SpeechSynthesisUtterance(prepared);
-  utt.lang = normalizedLang === 'zh' ? 'zh-CN' : 'fr-FR';
+  utt.lang = normalizedLang === 'zh' ? 'zh-CN' : normalizedLang === 'en' ? 'en-US' : normalizedLang === 'es' ? 'es-ES' : 'fr-FR';
   utt.rate = Math.max(0.65, Math.min(1.25, Number(rate) || 1));
   const voice = pickBrowserVoice(normalizedLang);
   if (voice) utt.voice = voice;
-  window.speechSynthesis.speak(utt);
-  return true;
+  return new Promise((resolve) => {
+    utt.onend = () => resolve(true);
+    utt.onerror = () => resolve(false);
+    window.speechSynthesis.speak(utt);
+  });
 }
 
 export function stopSpeak() {
   ttsToken += 1;
+  if (ttsFetchController) { try { ttsFetchController.abort(); } catch (_) {} ttsFetchController = null; }
   if (ttsCurrentSource) { try { ttsCurrentSource.stop(); } catch (_) {} ttsCurrentSource = null; }
   if (ttsAudio) { try { ttsAudio.pause(); } catch (_) {} ttsAudio = null; }
   try { window.speechSynthesis?.cancel?.(); } catch (_) {}
+}
+
+// User-adjustable playback speed for the reader's listen/player controls,
+// decoupled from TTS generation (see requestFirebaseAudio) — persisted so it
+// carries over between paragraphs/books, and live-applied to whatever is
+// currently playing so a mid-paragraph speed change is instant.
+const TTS_RATE_KEY = 'an2_tts_rate';
+export function getTtsRate() {
+  const v = Number(localStorage.getItem(TTS_RATE_KEY));
+  return Number.isFinite(v) && v > 0 ? v : 1;
+}
+export function setTtsRate(rate) {
+  const r = Math.max(0.6, Math.min(2, Number(rate) || 1));
+  try { localStorage.setItem(TTS_RATE_KEY, String(r)); } catch (_) {}
+  try { if (ttsCurrentSource) ttsCurrentSource.playbackRate.value = r; } catch (_) {}
+  try { if (ttsAudio) ttsAudio.playbackRate = r; } catch (_) {}
+  return r;
+}
+
+// Which cloud voice to generate with — separate from the ttsEngine setting
+// above (that one picks firebase-vs-webspeech delivery). 'kokoro' is the
+// free-ish default already in use; 'gpt4o' is a noticeably more natural
+// voice for about 4x the per-character cost.
+const TTS_VOICE_ENGINE_KEY = 'an2_tts_voice_engine';
+// 'gpt4o' is temporarily force-disabled here (not just in the UI) — every
+// OpenRouter model id tried for it so far has failed, and anyone who tapped
+// the button before it was disabled already has 'gpt4o' persisted, which
+// would otherwise keep hitting the broken engine silently. Flip this back
+// once a verified working model id is confirmed.
+const TTS_VOICE_ENGINE_GPT4O_ENABLED = false;
+export function getTtsVoiceEngine() {
+  const stored = String(localStorage.getItem(TTS_VOICE_ENGINE_KEY) || 'kokoro').toLowerCase();
+  return stored === 'gpt4o' && TTS_VOICE_ENGINE_GPT4O_ENABLED ? 'gpt4o' : 'kokoro';
+}
+export function setTtsVoiceEngine(voiceEngine) {
+  const v = String(voiceEngine || 'kokoro').toLowerCase() === 'gpt4o' ? 'gpt4o' : 'kokoro';
+  try { localStorage.setItem(TTS_VOICE_ENGINE_KEY, v); } catch (_) {}
+  return v;
+}
+
+// Specific Kokoro voice per language, selectable instead of the one fixed
+// default per language — live-probed against OpenRouter on 2026-07-08 (every
+// id below returned 200 OK), not guessed. French only ever had one Kokoro
+// voice, so there's nothing to pick there.
+export const KOKORO_VOICES = Object.freeze({
+  en: [
+    { id: 'af_heart', label: 'Heart (US, ж)' },
+    { id: 'af_bella', label: 'Bella (US, ж)' },
+    { id: 'af_nicole', label: 'Nicole (US, ж)' },
+    { id: 'am_adam', label: 'Adam (US, м)' },
+    { id: 'am_onyx', label: 'Onyx (US, м)' },
+    { id: 'bf_emma', label: 'Emma (UK, ж)' },
+    { id: 'bm_george', label: 'George (UK, м)' },
+  ],
+  zh: [
+    { id: 'zf_xiaobei', label: '晓贝 (ж)' },
+    { id: 'zf_xiaoxiao', label: '晓晓 (ж)' },
+    { id: 'zm_yunjian', label: '云健 (м)' },
+    { id: 'zm_yunxi', label: '云希 (м)' },
+    { id: 'zm_yunyang', label: '云扬 (м)' },
+  ],
+  es: [
+    { id: 'ef_dora', label: 'Dora (ж)' },
+    { id: 'em_alex', label: 'Alex (м)' },
+    { id: 'em_santa', label: 'Santa (м)' },
+  ],
+});
+
+function ttsVoiceKey(lang) { return `an2_tts_voice_${normalizeLang(lang)}`; }
+export function getTtsVoice(lang) {
+  try { return localStorage.getItem(ttsVoiceKey(lang)) || ''; } catch (_) { return ''; }
+}
+export function setTtsVoice(lang, voiceId) {
+  try { localStorage.setItem(ttsVoiceKey(lang), String(voiceId || '')); } catch (_) {}
 }
 
 export async function speak(text, opts = {}) {
@@ -233,29 +382,71 @@ export async function speak(text, opts = {}) {
   if (!prepared) return false;
 
   const engine = String(localStorage.getItem('ttsEngine') || 'firebase').toLowerCase() === 'webspeech' ? 'webspeech' : 'firebase';
-  if (engine === 'webspeech') return speakViaWebSpeech(prepared, { lang, rate: opts.rate });
+  const rate = opts.rate != null ? Math.max(0.6, Math.min(2, Number(opts.rate))) : getTtsRate();
+  if (engine === 'webspeech') return speakViaWebSpeech(prepared, { lang, rate });
 
-  const rate = Math.max(0.7, Math.min(1.2, Number(opts.rate) || (lang === 'zh' ? 0.92 : 0.9)));
-  const key = cacheHash(`${lang}|${rate}|${prepared}`);
+  const voiceEngine = getTtsVoiceEngine();
+  const voice = getTtsVoice(lang);
+  const key = cacheHash(`${lang}|${voiceEngine}|${voice}|${prepared}`);
   stopSpeak();
   const token = ++ttsToken;
   try {
     let cached = TTS_MEM_CACHE.get(key) || null;
     if (!cached) cached = await readPersistentAudio(key);
     if (!cached) {
-      cached = await requestFirebaseAudio(prepared, { lang, rate });
+      // Kokoro on OpenRouter can take a minute under load — tell the UI the
+      // silence is generation, not a freeze (mini-player shows ⏳).
+      emitTtsState('loading');
+      cached = await requestFirebaseAudio(prepared, { lang, engine: voiceEngine, voice });
       TTS_MEM_CACHE.set(key, cached);
       writePersistentAudio(key, cached.buffer, cached.mimeType);
     } else {
       TTS_MEM_CACHE.set(key, cached);
     }
     if (token !== ttsToken) return false;
-    return await playAudioBuffer(cached.buffer, cached.mimeType, token);
+    emitTtsState('playing');
+    return await playAudioBuffer(cached.buffer, cached.mimeType, token, rate);
   } catch (error) {
     console.warn('[tts] Firebase/OpenRouter TTS failed:', error);
     const msg = String(error?.message || error || 'неизвестная ошибка');
     if (window.showToast) window.showToast(`⚠️ Firebase-озвучка: ${msg.slice(0, 220)}`, 6500);
     return false;
+  } finally {
+    emitTtsState('idle');
+  }
+}
+
+function emitTtsState(state) {
+  try { window.dispatchEvent(new CustomEvent('an2-tts-state', { detail: state })); } catch (_) {}
+}
+
+// Warm the audio cache for a paragraph WITHOUT playing it — fired for the
+// next paragraph while the current one plays, so the huge (up to ~1 min
+// under provider load) generation latency is only ever felt on the very
+// first paragraph of a listening session, not between every pair.
+const ttsPrefetchInFlight = new Set();
+export async function prefetchSpeech(text, opts = {}) {
+  try {
+    const lang = normalizeLang(opts.lang || 'fr');
+    const prepared = normalizeSpeechText(text, lang);
+    if (!prepared) return;
+    const engine = String(localStorage.getItem('ttsEngine') || 'firebase').toLowerCase();
+    if (engine === 'webspeech') return; // nothing to prefetch, synthesis is local
+    const voiceEngine = getTtsVoiceEngine();
+    const voice = getTtsVoice(lang);
+    const key = cacheHash(`${lang}|${voiceEngine}|${voice}|${prepared}`);
+    if (TTS_MEM_CACHE.has(key) || ttsPrefetchInFlight.has(key)) return;
+    if (await readPersistentAudio(key)) return;
+    ttsPrefetchInFlight.add(key);
+    try {
+      const audio = await requestFirebaseAudio(prepared, { lang, engine: voiceEngine, voice, track: false });
+      TTS_MEM_CACHE.set(key, audio);
+      writePersistentAudio(key, audio.buffer, audio.mimeType);
+    } finally {
+      ttsPrefetchInFlight.delete(key);
+    }
+  } catch (_) {
+    // Prefetch is best-effort; the real playback request will retry anyway.
   }
 }
 

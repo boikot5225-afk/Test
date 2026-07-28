@@ -3,20 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>An II — Французский язык</title>
+  <title>Reader AI</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#a62a21">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="An II">
+  <meta name="apple-mobile-web-app-title" content="Reader AI">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
   <link rel="shortcut icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="css/style.css?v=69.9-reader-known-fix">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital@0;1&family=IBM+Plex+Sans:wght@300;400;500&family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Lora:ital,wght@0,400;0,500;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;1,8..60,300;1,8..60,400&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital@0;1&family=IBM+Plex+Sans:wght@300;400;500&family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Lora:ital,wght@0,400;0,500;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;1,8..60,300;1,8..60,400&family=Noto+Serif+SC:wght@400;600&family=Noto+Sans+SC:wght@400;500&display=swap" rel="stylesheet">
   <script src="js/firebase-config.js?v=28.0-dict-tools"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script>
@@ -72,9 +72,10 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
-<div id="loading-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--bg);flex-direction:column;align-items:center;justify-content:center;gap:16px;">
-  <div style="width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;"></div>
-  <div id="loading-text" style="font-size:0.85rem;color:var(--text-muted)">Загружаем данные...</div>
+<div id="loading-overlay" style="display:flex;position:fixed;inset:0;z-index:9999;background:var(--bg);flex-direction:column;align-items:center;justify-content:center;gap:20px;">
+  <div style="font-family:'Playfair Display',serif;font-size:2rem;color:var(--accent);font-weight:700;letter-spacing:0.04em">Reader AI</div>
+  <div style="width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+  <div id="loading-text" style="font-size:0.8rem;color:var(--text-muted)">Reader AI — запуск...</div>
 </div>
 
 <!-- Toast notification -->
@@ -89,14 +90,61 @@
   80% { transform: translateX(4px); }
 }
 .shake { animation: shake 0.35s ease; }
+
+/* TOC panel */
+#reader-toc-back{
+  position:absolute;inset:0;z-index:24;background:rgba(30,22,10,.38);
+  opacity:0;pointer-events:none;transition:.2s;
+}
+#reader-toc-back.show{opacity:1;pointer-events:auto;}
+#reader-toc-sheet{
+  position:absolute;left:0;right:0;bottom:0;z-index:25;
+  background:var(--surface);border-top:1px solid var(--border);border-radius:18px 18px 0 0;
+  padding:14px 0 calc(16px + env(safe-area-inset-bottom));
+  /* hide distance must cover own height + bottom offset + shadow, otherwise a
+     short sheet peeks above the bottom bar on tablet/desktop */
+  transform:translateY(calc(100% + 140px));visibility:hidden;
+  transition:transform .24s cubic-bezier(.2,.8,.2,1),visibility 0s .24s;
+  box-shadow:0 -14px 40px rgba(40,30,15,.28);max-height:88%;display:flex;flex-direction:column;
+}
+#reader-toc-sheet.show{transform:none;visibility:visible;transition:transform .24s cubic-bezier(.2,.8,.2,1),visibility 0s 0s;}
+@media(min-width:760px){
+  #reader-toc-sheet{left:50%;right:auto;transform:translate(-50%,calc(100% + 140px));width:460px;border-radius:18px;bottom:80px;}
+  #reader-toc-sheet.show{transform:translate(-50%,0);}
+}
+#reader-toc-header{
+  flex:0 0 auto;padding:0 16px 10px;border-bottom:1px solid var(--border);
+  font-family:'IBM Plex Mono',monospace;font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--text-dim);font-weight:700;
+}
+#reader-toc-list{flex:1;overflow-y:auto;padding:6px 0;}
+.rd-toc-item{
+  display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;
+  border:none;background:none;cursor:pointer;text-align:left;
+  font-family:'IBM Plex Sans',sans-serif;color:var(--text);transition:.12s;
+}
+.rd-toc-item:hover{background:var(--surface2);}
+.rd-toc-item.current{background:color-mix(in srgb,var(--accent) 12%,transparent);}
+.rd-toc-item.current .rd-toc-title{color:var(--accent);font-weight:600;}
+.rd-toc-num{
+  flex:0 0 28px;text-align:center;font-size:.78rem;color:var(--text-muted);
+  font-family:'IBM Plex Mono',monospace;
+}
+.rd-toc-item.done .rd-toc-num{color:var(--good);}
+.rd-toc-item.current .rd-toc-num{color:var(--accent);}
+.rd-toc-title{flex:1;font-size:.92rem;line-height:1.3;min-width:0;}
+.rd-toc-count{flex:0 0 auto;font-size:.7rem;color:var(--text-dim);white-space:nowrap;}
+/* Clickable chapter title hint */
+#reader-reading-view .rd-head{cursor:pointer;}
+#reader-reading-view .rd-head:hover .rd-chap{color:var(--accent);}
 </style>
 
 
-<div id="screen-profile" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg);">
+<div id="screen-profile" class="screen" style="min-height:100vh;align-items:center;justify-content:center;background:var(--bg);">
   <div style="width:100%;max-width:400px;">
     <div style="text-align:center;margin-bottom:36px;">
-      <div style="font-family:'Playfair Display',serif;font-size:2.8rem;color:var(--accent);margin-bottom:2px;letter-spacing:0.04em;font-weight:700">An&nbsp;II</div><div style="font-family:'Playfair Display',serif;font-style:italic;font-size:0.95rem;color:var(--text-muted);margin-bottom:8px">apprendre le français · l'an deux</div>
-      <div style="color:var(--text-muted);font-size:0.9rem">Тренажёр французских глаголов</div>
+      <div style="font-family:'Playfair Display',serif;font-size:2.8rem;color:var(--accent);margin-bottom:2px;letter-spacing:0.04em;font-weight:700">Reader&nbsp;AI</div>
+      <div style="color:var(--text-muted);font-size:0.9rem">Читалка с AI-переводом и словарём</div>
     </div>
 
     <!-- Tab switcher -->
@@ -176,7 +224,7 @@
           📡 Проверить связь с сервером
         </button>
         <div id="health-result" style="display:none;margin-top:10px;font-size:0.78rem;line-height:1.5;padding:8px 12px;border-radius:8px;"></div>
-        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v67.2-trim-nav</span></div>
+        <div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">сборка <span id="build-label">v77.31-footnotes-formatting-translation-test</span></div>
       </div>
     </div>
 
@@ -188,15 +236,13 @@
 <div id="main-app" style="display:none">
 <nav>
   <div style="display:flex;align-items:center;gap:8px;margin-right:auto">
-    <span class="cockade" title="cocarde tricolore"></span>
-    <div class="nav-brand" style="margin-right:0">An II <span style="font-size:0.5rem;color:var(--accent);vertical-align:super">v65</span></div>
+    <div class="nav-brand" style="margin-right:0">Reader AI <span style="font-size:0.5rem;color:var(--accent);vertical-align:super">v75</span></div>
   </div>
   <div class="nav-tabs" style="overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;flex-shrink:1;min-width:0">
     <div class="nav-tab active" onclick="showScreen('home')">🏠 Главная</div>
     <div class="nav-tab" onclick="showScreen('reader')">📖 Читать</div>
     <div class="nav-tab" onclick="showScreen('dict')">📚 Слова</div>
-    <div class="nav-tab" onclick="showScreen('trainer')">⚡ Глаголы</div>
-    <div class="nav-tab" onclick="toggleMoreMenu()" style="white-space:nowrap">⋯ Ещё</div>
+    <div class="nav-tab" onclick="showScreen('profile')">👤 Профиль</div>
   </div>
 </nav>
 
@@ -211,20 +257,18 @@
   <div class="bottom-nav-item" id="bn-dict" onclick="showScreen('dict')">
     <span class="bn-icon">📚</span><span>Слова</span>
   </div>
-  <div class="bottom-nav-item" id="bn-practice" onclick="navPracticeBtn()">
-    <span class="bn-icon" id="bn-practice-icon">⚡</span><span id="bn-practice-label">Глаголы</span>
+  <div class="bottom-nav-item" id="bn-profile" onclick="showScreen('profile')">
+    <span class="bn-icon">👤</span><span>Профиль</span>
   </div>
-  <div class="bottom-nav-item" id="bn-more" onclick="toggleMoreMenu()">
-    <span class="bn-icon">⋯</span><span>Ещё</span>
-  </div>
+  <!-- hidden stubs so JS refs to bn-practice / bn-more don't break -->
+  <div id="bn-practice" style="display:none"><span id="bn-practice-icon"></span><span id="bn-practice-label"></span></div>
+  <div id="bn-more" style="display:none"></div>
 </div>
 
-<!-- MORE MENU — slides up on mobile -->
+<!-- MORE MENU — kept in DOM so JS refs don't break; hidden via never-opened -->
 <div id="more-menu" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:300;background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:20px 16px calc(20px + env(safe-area-inset-bottom));">
   <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 20px"></div>
   <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;">
-    <div onclick="showScreen('trainer');closeMoreMenu()" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 8px;background:var(--surface2);border-radius:12px;cursor:pointer;font-size:0.75rem;color:var(--text-muted)"><span style="font-size:1.6rem">✏️</span>Тренажёр</div>
-    <div onclick="showScreen('phrases');closeMoreMenu()" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 8px;background:var(--surface2);border-radius:12px;cursor:pointer;font-size:0.75rem;color:var(--text-muted)"><span style="font-size:1.6rem">💬</span>Фразы</div>
     <div onclick="logoutProfile();closeMoreMenu()" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 8px;background:var(--surface2);border-radius:12px;cursor:pointer;font-size:0.75rem;color:#e05555"><span style="font-size:1.6rem">⇠</span>Выйти</div>
   </div>
 
@@ -270,7 +314,7 @@
 
         <div style="margin-bottom:16px">
           <div style="font-size:1rem;font-weight:600;margin-bottom:6px">🎹 Виртуальная клавиатура AZERTY</div>
-          <div style="font-size:0.83rem;color:var(--text-muted);line-height:1.6">Полная французская раскладка — андроидная клавиатура не появляется. Долгое нажатие на <b>a e i o u c</b> показывает акценты: à â é è ê ë... Переключение на родную клавиатуру кнопкой «⌨ Своя клавиатура».</div>
+          <div style="font-size:0.83rem;color:var(--text-muted);line-height:1.6">Виртуальная раскладка — системная клавиатура не появляется. Долгое нажатие на <b>a e i o u c</b> показывает акценты: à â é è ê ë... Переключение на родную клавиатуру кнопкой «⌨ Своя клавиатура».</div>
         </div>
 
         <div style="margin-bottom:16px">
@@ -304,15 +348,9 @@
         </div>
 
         <div>
-          <div style="font-size:1rem;font-weight:600;margin-bottom:10px">🔊 Установка французского голоса</div>
-          <div style="font-size:0.83rem;color:var(--text-muted);line-height:1.6;margin-bottom:10px">Без установленного французского голоса браузер говорит по-английски. Исправляется за 1 минуту:</div>
-          <div style="background:var(--surface2);border-radius:10px;padding:14px 16px;font-size:0.8rem;line-height:1.9;color:var(--text-muted);">
-            <div>🤖 <b style="color:var(--text)">Android:</b> Настройки → Язык и ввод → Синтез речи → Google TTS → Установить голосовые данные → <b>Français</b></div>
-            <div>🍎 <b style="color:var(--text)">iOS:</b> Настройки → Универсальный доступ → Озвученный контент → Голоса → Français → скачать <b>Enhanced</b></div>
-            <div>🪟 <b style="color:var(--text)">Windows:</b> Настройки → Время и язык → Речь → Управление голосами → добавить <b>французский</b></div>
-            <div>🍏 <b style="color:var(--text)">macOS:</b> Системные настройки → Универсальный доступ → Озвученный контент → Управление голосами → <b>французский</b></div>
-          </div>
-          <div style="font-size:0.76rem;color:var(--text-dim);margin-top:8px">Также в меню ⋯ Ещё можно выбрать движок озвучки вручную и протестировать.</div>
+          <div style="font-size:1rem;font-weight:600;margin-bottom:10px">🔊 Озвучка текстов</div>
+          <div style="font-size:0.83rem;color:var(--text-muted);line-height:1.6;margin-bottom:10px">Используется облачный TTS. При отсутствии интернета — встроенный голос устройства.</div>
+          <div style="font-size:0.76rem;color:var(--text-dim);margin-top:8px">В меню ⋯ Ещё можно выбрать движок озвучки вручную и протестировать.</div>
         </div>
 
       </div>
@@ -327,13 +365,15 @@
     <!-- TOP BAR -->
     <div class="home-topbar">
       <div class="home-topbar-left">
-        <div class="home-app-name">An II</div>
+        <div class="home-app-name">Reader AI</div>
         <div id="home-date" class="home-date"></div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <div class="home-lang-switcher" id="home-lang-switcher">
           <button class="home-lang-btn" id="hlb-fr" onclick="setAppLang('fr')" title="Французский">🇫🇷</button>
+          <button class="home-lang-btn" id="hlb-en" onclick="setAppLang('en')" title="Английский">🇬🇧</button>
           <button class="home-lang-btn" id="hlb-zh" onclick="setAppLang('zh')" title="Китайский">🇨🇳</button>
+          <button class="home-lang-btn" id="hlb-es" onclick="setAppLang('es')" title="Испанский">🇪🇸</button>
         </div>
         <button class="home-topbar-user" onclick="showScreen('profile')" title="Профиль">
           <span id="home-username-avatar">—</span>
@@ -341,50 +381,36 @@
       </div>
     </div>
 
-    <!-- CONTINUE CARDS -->
+    <!-- CONTINUE CARD -->
     <div id="home-continue-section"></div>
-    <div id="home-news-section" style="margin-top:4px"></div>
 
-    <!-- STATS ROW -->
-    <div class="home-stats-row" id="home-stats-row-new">
-      <div class="home-stat-card">
-        <span class="home-stat-num" id="home-stat-minutes">0</span>
-        <span class="home-stat-lbl">мин сегодня</span>
-      </div>
-      <div class="home-stat-card">
-        <span class="home-stat-num" id="home-stat-chapters">0</span>
-        <span class="home-stat-lbl">глав</span>
-      </div>
-      <div class="home-stat-card">
-        <span class="home-stat-num" id="home-stat-words">0</span>
-        <span class="home-stat-lbl">слов открыто</span>
-      </div>
-    </div>
+    <!-- ADD TEXT — always available, one button -->
+    <button class="home-add" onclick="showScreen('reader');setTimeout(()=>showReaderImportModal(),120)">
+      <span class="home-add-icon">📖</span>
+      <div><b>Добавить текст</b><small>вставка, TXT, EPUB или аудио</small></div>
+    </button>
 
-    <!-- QUICK ACCESS -->
-    <div class="home-quick-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
-      <button class="home-quick-card" onclick="showScreen('reader')">
-        <i class="hq-icon">📚</i>
-        <b>Библиотека</b>
-        <small id="home-books-count-new">0 текстов</small>
-      </button>
-      <button class="home-quick-card" onclick="showScreen('trainer')">
-        <i class="hq-icon">⚡</i>
-        <b>Глаголы</b>
-        <small>тренажёр</small>
-      </button>
-      <button class="home-quick-card" onclick="toggleMoreMenu()">
-        <i class="hq-icon">···</i>
-        <b>Ещё</b>
-        <small>фразы, выход</small>
-      </button>
-    </div>
-
-    <!-- RECENT WORDS (collapsed) -->
+    <!-- RECENT WORDS -->
     <div class="home-recent-section">
       <div class="home-section-label">последние слова</div>
       <div id="home-recent-reader-words" class="home-recent-words"></div>
     </div>
+
+    <!-- TOP CLICKED WORDS (frequency tracker) -->
+    <div class="home-recent-section" id="home-top-clicked-section" style="display:none">
+      <div class="home-section-label">🔥 часто открываемые</div>
+      <div id="home-top-clicked-words" class="home-recent-words"></div>
+    </div>
+
+    <!-- one compact stat line -->
+    <div class="home-stat-line" id="home-stats-row-new">
+      <div><b id="home-stat-minutes">0</b><span class="home-stat-lbl">мин сегодня</span></div>
+      <div><b id="home-stat-words">0</b><span class="home-stat-lbl">слов открыто</span></div>
+      <div><b id="home-books-count-new">0</b><span class="home-stat-lbl">текстов</span></div>
+    </div>
+
+    <!-- news: slim link only when there's something to show -->
+    <div id="home-news-section" style="margin-top:2px"></div>
 
     <!-- Hidden legacy ids for compatibility -->
     <div id="srs-widget" style="display:none"></div>
@@ -429,17 +455,29 @@
     </div>
 
     <div id="reader-reading-view" style="display:none;">
+      <!-- thin progress line that stays visible when the chrome auto-hides -->
+      <div class="rd-free-prog"><i id="rd-free-prog-fill"></i></div>
       <!-- TOP BAR -->
       <div class="rd-top">
         <button class="rd-icon" onclick="readerBackToLibrary()" title="Библиотека" aria-label="Библиотека">←</button>
-        <div class="rd-head">
+        <div class="rd-head" onclick="readerOpenToc()" title="Оглавление">
           <div id="reader-book-title" class="rd-book"></div>
           <div id="reader-chapter-title" class="rd-chap"></div>
         </div>
+        <button id="reader-search-btn" class="rd-icon" onclick="readerToggleChapterSearch()" title="Поиск в главе" aria-label="Поиск в главе">🔎</button>
+        <button id="reader-marks-btn" class="rd-icon" onclick="readerToggleWordMarks()" title="Подсветка слов" aria-label="Подсветка слов">🖍</button>
         <button id="reader-help-btn" class="rd-icon" onclick="toggleReaderTranslations()" title="Перевод и разбор" aria-label="Перевод и разбор">👁</button>
+        <button id="reader-view-mode-btn" class="rd-icon" onclick="readerTogglePagesMode()" title="Скролл / страницы" aria-label="Скролл / страницы">📖</button>
         <button class="rd-icon" onclick="readerToggleDisplayPanel()" title="Настройки текста" aria-label="Настройки текста" style="font-size:.82rem;font-family:'IBM Plex Sans',sans-serif;font-weight:600;letter-spacing:-.02em">Аа</button>
         <button id="reader-pinyin-btn" class="rd-icon rd-pinyin-btn" onclick="readerCycleZhPinyinMode()" title="Пиньинь" aria-label="Пиньинь" style="display:none">拼</button>
+        <button id="reader-orig-audio-btn" class="rd-icon" onclick="readerToggleOriginalAudioPlayer()" title="Оригинальная запись" aria-label="Оригинальная запись" style="display:none">🎧</button>
         <div class="rd-prog"><i id="reader-progress-bar"></i></div>
+      </div>
+
+      <!-- ORIGINAL AUDIO PLAYER (shown only for books imported from an audio recording) -->
+      <div id="reader-orig-audio-wrap" style="display:none">
+        <button id="reader-orig-audio-close" onclick="readerToggleOriginalAudioPlayer()" title="Скрыть" aria-label="Скрыть">×</button>
+        <audio id="reader-orig-audio-el" controls preload="none" style="width:100%"></audio>
       </div>
 
       <!-- DISPLAY SETTINGS PANEL -->
@@ -471,11 +509,40 @@
         <div class="rd-dp-row">
           <span class="rd-dp-label">Фон</span>
           <div class="rd-dp-pills">
-            <button class="rd-dp-theme rd-dp-pill" data-theme=""          onclick="rdSetTheme('',this)">Тёмный</button>
-            <button class="rd-dp-theme rd-dp-pill" data-theme="sepia"     onclick="rdSetTheme('sepia',this)">Сепия</button>
-            <button class="rd-dp-theme rd-dp-pill" data-theme="parchment" onclick="rdSetTheme('parchment',this)">Пергамент</button>
-            <button class="rd-dp-theme rd-dp-pill" data-theme="night"     onclick="rdSetTheme('night',this)">Ночь</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="paper" onclick="rdSetTheme('paper',this)">Бумага</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="ivory" onclick="rdSetTheme('ivory',this)">Слоновая кость</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="sepia" onclick="rdSetTheme('sepia',this)">Сепия</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="vellum" onclick="rdSetTheme('vellum',this)">Пергамент</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="sage" onclick="rdSetTheme('sage',this)">Шалфей</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="mist" onclick="rdSetTheme('mist',this)">Туман</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="eink" onclick="rdSetTheme('eink',this)">E-ink</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="ink"   onclick="rdSetTheme('ink',this)">Чернила</button>
+            <button class="rd-dp-theme rd-dp-pill" data-theme="amoled" onclick="rdSetTheme('amoled',this)">AMOLED</button>
           </div>
+        </div>
+        <div class="rd-dp-row">
+          <span class="rd-dp-label">Листание · в режиме страниц</span>
+          <div class="rd-dp-pills">
+            <button class="rd-dp-page-animation rd-dp-pill" data-animation="flip" onclick="rdSetPageAnimation('flip',this)">Лист</button>
+            <button class="rd-dp-page-animation rd-dp-pill" data-animation="slide" onclick="rdSetPageAnimation('slide',this)">Сдвиг</button>
+            <button class="rd-dp-page-animation rd-dp-pill" data-animation="stack" onclick="rdSetPageAnimation('stack',this)">Стопка</button>
+            <button class="rd-dp-page-animation rd-dp-pill" data-animation="fade" onclick="rdSetPageAnimation('fade',this)">Плавно</button>
+            <button class="rd-dp-page-animation rd-dp-pill" data-animation="none" onclick="rdSetPageAnimation('none',this)">Без анимации</button>
+          </div>
+        </div>
+        <div class="rd-dp-row">
+          <span class="rd-dp-label">Голос</span>
+          <div class="rd-dp-pills">
+            <button class="rd-dp-voice rd-dp-pill" data-voice="kokoro" onclick="rdSetVoiceEngine('kokoro',this)">Kokoro</button>
+            <!-- Disabled: OpenRouter rejects every model id tried so far for
+                 GPT-4o Mini TTS (404, then "does not exist" on the dated
+                 slug) — re-enable once a verified working id is confirmed. -->
+            <button class="rd-dp-voice rd-dp-pill" data-voice="gpt4o" disabled title="Временно недоступно — уточняется правильный id модели" style="opacity:.45;cursor:not-allowed">GPT-4o (скоро)</button>
+          </div>
+        </div>
+        <div class="rd-dp-row" id="rd-dp-voice-picker-row" style="display:none">
+          <span class="rd-dp-label">Тембр</span>
+          <div class="rd-dp-pills" id="rd-dp-voice-picker"></div>
         </div>
       </div>
 
@@ -483,16 +550,33 @@
       <div class="rd-scroll">
         <div id="reader-chapter-text"></div>
         <div class="rd-end"></div>
+        <div id="reader-pages-indicator" class="rd-pages-indicator"></div>
+      </div>
+
+      <!-- TTS MINI-PLAYER: appears only while listening; docks above the bottom bar -->
+      <div id="reader-tts-player" style="display:none">
+        <button id="reader-tts-prev" onclick="readerTtsSkip(-1)" title="Предыдущий абзац" aria-label="Предыдущий абзац">⏮</button>
+        <button id="reader-tts-playpause" onclick="readerListenToggle()" title="Пауза / продолжить" aria-label="Пауза / продолжить">⏸</button>
+        <button id="reader-tts-next" onclick="readerTtsSkip(1)" title="Следующий абзац" aria-label="Следующий абзац">⏭</button>
+        <button id="reader-tts-rate" onclick="readerTtsCycleRate()" title="Скорость озвучки" aria-label="Скорость озвучки">1×</button>
       </div>
 
       <!-- BOTTOM BAR -->
       <div class="rd-bot">
         <button class="rd-nav" onclick="readerPrevParagraph()" title="Назад" aria-label="Назад">◀</button>
-        <button class="rd-desk" onclick="readerAction(event,'translate',null)">🌐 Перевод</button>
+        <button class="rd-desk" onclick="readerAction(event,'translate',null)">🌐 <span class="rd-desk-label">Перевод</span></button>
         <button id="reader-listen-btn" class="rd-listen" onclick="readerListenToggle()">🔊 Слушать</button>
-        <button class="rd-desk" onclick="readerAction(event,'analyze',null)">🧩 Разбор</button>
+        <button class="rd-desk" onclick="readerAction(event,'analyze',null)">🧩 <span class="rd-desk-label">Разбор</span></button>
         <button class="rd-more" onclick="readerOpenMoreSheet()" title="Ещё" aria-label="Ещё">⋯</button>
         <button class="rd-nav" onclick="readerNextParagraph()" title="Дальше" aria-label="Дальше">▶</button>
+      </div>
+
+      <!-- TOC SHEET -->
+      <div id="reader-toc-back" onclick="readerCloseToc()"></div>
+      <div id="reader-toc-sheet">
+        <div class="rd-grab" style="flex:0 0 auto;width:38px;height:4px;border-radius:4px;background:var(--border);opacity:.7;margin:0 auto 10px"></div>
+        <div id="reader-toc-header">Оглавление</div>
+        <div id="reader-toc-list"></div>
       </div>
 
       <!-- MORE SHEET -->
@@ -506,6 +590,8 @@
         <button class="rd-menu" onclick="readerCopyCurrentParagraph();readerCloseMoreSheet()"><span class="ic">📋</span><span>Скопировать абзац</span></button>
         <div class="rd-divider"></div>
         <div class="rd-sect">глава</div>
+        <button class="rd-menu" onclick="readerCloseMoreSheet();readerOpenChapterSearch()"><span class="ic">🔎</span><span>Найти в главе<small>слово или фразу</small></span></button>
+        <button class="rd-menu" onclick="readerCloseMoreSheet();readerOpenToc()"><span class="ic">≡</span><span>Оглавление<small>перейти к любой главе</small></span></button>
         <button class="rd-menu" onclick="readerSpeakChapter();readerCloseMoreSheet()"><span class="ic">🎧</span><span>Озвучить главу</span></button>
         <button class="rd-menu" onclick="readerPrevChapter();readerCloseMoreSheet()"><span class="ic">⟵</span><span>Предыдущая глава</span></button>
         <button class="rd-menu" onclick="readerNextChapter();readerCloseMoreSheet()"><span class="ic">⟶</span><span>Следующая глава</span></button>
@@ -1198,7 +1284,7 @@
     <div id="check-feedback" style="min-height:40px;"></div>
 
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
-      <div id="learn-kb-indicator" style="font-size:0.72rem;color:var(--text-dim);display:none">⌨ французская клавиатура активна</div>
+      <div id="learn-kb-indicator" style="font-size:0.72rem;color:var(--text-dim);display:none">⌨ виртуальная клавиатура активна</div>
       <button class="kb-toggle-btn" id="kb-toggle-learn" onclick="toggleKbMode('learn')" style="margin-left:auto">⌨ Своя клавиатура</button>
     </div>
     <div class="fr-keyboard" id="fr-kb-learn"></div>
@@ -1226,7 +1312,7 @@
     </div>
     <div id="phrase-feedback" style="min-height:40px;"></div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
-      <div id="phrase-kb-indicator" style="font-size:0.72rem;color:var(--text-dim);display:none">⌨ французская клавиатура активна</div>
+      <div id="phrase-kb-indicator" style="font-size:0.72rem;color:var(--text-dim);display:none">⌨ виртуальная клавиатура активна</div>
       <button class="kb-toggle-btn" id="kb-toggle-phrase-learn" onclick="toggleKbMode('phrase-learn')" style="margin-left:auto">⌨ Своя клавиатура</button>
     </div>
     <div class="fr-keyboard" id="fr-kb-phrase-learn"></div>
@@ -1862,6 +1948,44 @@
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=70.5"></script>
+<!-- PROFILE (logged-in view) -->
+<div id="screen-profile-user" class="screen">
+  <div style="max-width:480px;margin:0 auto;padding:24px 16px 80px">
+    <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin:0 0 20px">Профиль</h2>
+
+    <!-- User card -->
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:14px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:16px;">
+      <div id="pu-avatar" style="width:52px;height:52px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:1.4rem;color:#f5ecd8;font-weight:700;flex-shrink:0"></div>
+      <div style="min-width:0">
+        <div id="pu-name" style="font-size:1rem;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+        <div id="pu-email" style="font-size:0.78rem;color:var(--text-muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+      </div>
+    </div>
+
+    <!-- Word stats -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 20px;margin-bottom:12px;">
+      <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);margin-bottom:12px">Статистика слов</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px" id="pu-stats"></div>
+    </div>
+
+    <!-- Language -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 20px;margin-bottom:12px;">
+      <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);margin-bottom:8px">Текущий язык</div>
+      <div id="pu-lang" style="font-size:0.92rem;color:var(--text)"></div>
+    </div>
+
+    <!-- Cloud sync -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 20px;margin-bottom:20px;">
+      <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);margin-bottom:8px">Облачная синхронизация</div>
+      <div id="pu-sync-status" style="font-size:0.82rem;color:var(--text-muted);margin-bottom:10px"></div>
+      <button onclick="window.syncWordStateNow?.()" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:0.82rem;cursor:pointer">☁️ Синхронизировать сейчас</button>
+    </div>
+
+    <!-- Logout -->
+    <button onclick="logoutProfile()" style="width:100%;padding:12px;background:none;border:1px solid var(--bad);border-radius:10px;color:var(--bad);font-family:'IBM Plex Sans',sans-serif;font-size:0.9rem;cursor:pointer;font-weight:500">Выйти из аккаунта</button>
+  </div>
+</div>
+
+<script type="module" src="js/app.js?v=77.31"></script>
 </body>
 </html>

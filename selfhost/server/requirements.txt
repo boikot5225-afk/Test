@@ -1,0 +1,8 @@
+fastapi==0.115.*
+uvicorn[standard]==0.32.*
+pydantic==2.9.*
+kokoro-onnx==0.4.*
+faster-whisper==1.0.*
+soundfile==0.12.*
+requests==2.32.*
+misaki[zh]==0.9.*

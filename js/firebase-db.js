@@ -237,7 +237,7 @@ async function readTableValue(table) {
   if (isDictTable(table)) {
     const base = dictBasePath(table);
     if (!base) return { path: table, value: null };       // гость / не вошёл → пустая база
-    const snap = await fbDb.ref(base).get();
+    const snap = await refGetResilient(base);
     return { path: base, value: snap.exists() ? snap.val() : null };
   }
 
@@ -246,7 +246,7 @@ async function readTableValue(table) {
 
   for (const path of paths) {
     try {
-      const snap = await fbDb.ref(path).get();
+      const snap = await refGetResilient(path);
       if (snap.exists()) {
         if (path !== table) console.warn(`[firebase] using legacy uppercase path /${path}. Лучше переимпортировать данные в /${table}.`);
         return { path, value: snap.val() };
@@ -317,6 +317,121 @@ async function writeProfileBestEffort(user, username, email) {
   } catch (e) {
     console.warn('[firebase] profile write failed but auth account may exist:', e);
     return humanFirebaseError(e);
+  }
+}
+
+// The compat SDK writes over its realtime (websocket) connection, and when that
+// connection can't be established (some mobile networks/proxies silently block
+// it) the update() promise never settles — no error, just an infinite hang,
+// while plain HTTPS fetches (Cloud Functions, etc.) keep working fine on the
+// same device. So: race the SDK write against a short deadline, and on timeout
+// finish the exact same multi-path update over the RTDB REST API (plain HTTPS).
+// If the SDK write later lands too, it's the identical data — harmless.
+async function rootUpdateViaRest(updates) {
+  const config = getFirebaseConfig();
+  const base = String(config?.databaseURL || '').replace(/\/+$/, '');
+  if (!base) throw new Error('Не настроен databaseURL в FIREBASE_CONFIG');
+  const token = await getIdTokenSafe(false);
+  const response = await fetch(`${base}/.json${token ? `?auth=${encodeURIComponent(token)}` : ''}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.error || `Firebase REST HTTP ${response.status}`);
+  }
+}
+
+async function resilientRootUpdate(updates, sdkTimeoutMs = 6000) {
+  const timedOut = Symbol('sdk-write-timeout');
+  const winner = await Promise.race([
+    fbDb.ref().update(updates),
+    new Promise((resolve) => setTimeout(() => resolve(timedOut), sdkTimeoutMs)),
+  ]);
+  if (winner === timedOut) {
+    console.warn('[firebase] realtime write stalled, retrying over REST');
+    await rootUpdateViaRest(updates);
+  }
+}
+
+// Same websocket-stall guard for single-path set() writes (see rootUpdateViaRest).
+async function pathSetViaRest(path, value) {
+  const config = getFirebaseConfig();
+  const base = String(config?.databaseURL || '').replace(/\/+$/, '');
+  if (!base) throw new Error('Не настроен databaseURL в FIREBASE_CONFIG');
+  const token = await getIdTokenSafe(false);
+  const clean = String(path || '').replace(/^\/+|\/+$/g, '');
+  const response = await fetch(`${base}/${clean}.json${token ? `?auth=${encodeURIComponent(token)}` : ''}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(value),
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.error || `Firebase REST HTTP ${response.status}`);
+  }
+}
+
+async function resilientPathSet(path, value, sdkTimeoutMs = 6000) {
+  const timedOut = Symbol('sdk-write-timeout');
+  const winner = await Promise.race([
+    fbDb.ref(path).set(value),
+    new Promise((resolve) => setTimeout(() => resolve(timedOut), sdkTimeoutMs)),
+  ]);
+  if (winner === timedOut) {
+    console.warn('[firebase] realtime set stalled, retrying over REST:', path);
+    await pathSetViaRest(path, value);
+  }
+}
+
+// Same guard for get(): reads over the realtime channel stall exactly like
+// writes on networks that block the websocket — and a hanging read keeps
+// whole screens (library, dictionaries) waiting on a promise that never
+// settles. Fall back to a plain REST GET of the same path.
+async function refGetResilient(path, sdkTimeoutMs = 6000) {
+  const timedOut = Symbol('sdk-read-timeout');
+  const winner = await Promise.race([
+    fbDb.ref(path).get(),
+    new Promise((resolve) => setTimeout(() => resolve(timedOut), sdkTimeoutMs)),
+  ]);
+  if (winner !== timedOut) return winner;
+  console.warn('[firebase] realtime get stalled, retrying over REST:', path);
+  const config = getFirebaseConfig();
+  const base = String(config?.databaseURL || '').replace(/\/+$/, '');
+  if (!base) throw new Error('Не настроен databaseURL в FIREBASE_CONFIG');
+  const token = await getIdTokenSafe(false);
+  const clean = String(path || '').replace(/^\/+|\/+$/g, '');
+  const response = await fetch(`${base}/${clean}.json${token ? `?auth=${encodeURIComponent(token)}` : ''}`);
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.error || `Firebase REST HTTP ${response.status}`);
+  }
+  const value = await response.json();
+  return { exists: () => value !== null && value !== undefined, val: () => value };
+}
+
+// Same guard for remove(): a silently-stalled delete is worse than a stalled
+// write — the cloud copy survives and the "deleted" record resurrects on the
+// next cloud merge.
+async function resilientPathRemove(path, sdkTimeoutMs = 6000) {
+  const timedOut = Symbol('sdk-write-timeout');
+  const winner = await Promise.race([
+    fbDb.ref(path).remove(),
+    new Promise((resolve) => setTimeout(() => resolve(timedOut), sdkTimeoutMs)),
+  ]);
+  if (winner === timedOut) {
+    console.warn('[firebase] realtime remove stalled, retrying over REST:', path);
+    const config = getFirebaseConfig();
+    const base = String(config?.databaseURL || '').replace(/\/+$/, '');
+    if (!base) throw new Error('Не настроен databaseURL в FIREBASE_CONFIG');
+    const token = await getIdTokenSafe(false);
+    const clean = String(path || '').replace(/^\/+|\/+$/g, '');
+    const response = await fetch(`${base}/${clean}.json${token ? `?auth=${encodeURIComponent(token)}` : ''}`, { method: 'DELETE' });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => null);
+      throw new Error(detail?.error || `Firebase REST HTTP ${response.status}`);
+    }
   }
 }
 
@@ -399,7 +514,7 @@ class FirebaseQueryBuilder {
     // the old Supabase-style query asks for eq('user_id', uid).
     if (userFilter && ['stats', 'srs', 'meta', 'reader_books'].includes(this.table)) {
       await ensureAuthenticatedForPrivatePath(userFilter.value, 8000);
-      const snap = await fbDb.ref(`${this.table}/${userFilter.value}`).get();
+      const snap = await refGetResilient(`${this.table}/${userFilter.value}`);
       const value = snap.exists() ? snap.val() : null;
       if (this.table === 'meta') {
         rows = value ? [{ user_id: userFilter.value, ...value }] : [];
@@ -451,7 +566,7 @@ class FirebaseQueryBuilder {
       const path = recordPath(this.table, row);
       updates[path] = normalizeRecordForWrite(this.table, row);
     }
-    if (Object.keys(updates).length) await fbDb.ref().update(updates);
+    if (Object.keys(updates).length) await resilientRootUpdate(updates);
     return { data: Array.isArray(this._writePayload) ? rows : rows[0] || null, error: null };
   }
 
@@ -460,12 +575,12 @@ class FirebaseQueryBuilder {
     const idFilter = this._filters.find((f) => f.field === 'id');
     if (this.table === 'reader_books' && uidFilter?.value && idFilter?.value) {
       await ensureAuthenticatedForPrivatePath(uidFilter.value, 8000);
-      await fbDb.ref(`reader_books/${uidFilter.value}/${safeFirebaseKey(idFilter.value)}`).remove();
+      await resilientPathRemove(`reader_books/${uidFilter.value}/${safeFirebaseKey(idFilter.value)}`);
       return { data: null, error: null };
     }
     if (['stats', 'srs', 'meta', 'reader_books'].includes(this.table) && uidFilter?.value) {
       await ensureAuthenticatedForPrivatePath(uidFilter.value, 8000);
-      await fbDb.ref(`${this.table}/${uidFilter.value}`).remove();
+      await resilientPathRemove(`${this.table}/${uidFilter.value}`);
       return { data: null, error: null };
     }
 
@@ -475,7 +590,7 @@ class FirebaseQueryBuilder {
     if (tableNeedsAuth(this.table)) await ensureAuthenticatedForPrivatePath(rows[0]?.user_id || rows[0]?.id || sbUser?.id || sbUser?.uid || null, 8000);
     const updates = {};
     for (const row of rows) updates[recordPath(this.table, row)] = null;
-    if (Object.keys(updates).length) await fbDb.ref().update(updates);
+    if (Object.keys(updates).length) await resilientRootUpdate(updates);
     return { data: null, error: null };
   }
 
@@ -770,4 +885,26 @@ export async function fbLoadTable(table, orderField = null) {
   let rows = snapToRows(value, table);
   if (orderField) rows.sort((a, b) => String(a?.[orderField] || '').localeCompare(String(b?.[orderField] || ''), 'fr'));
   return rows;
+}
+
+export async function fbSaveWordState(uid, state) {
+  if (!fbDb || !uid || !state) return false;
+  try {
+    await resilientPathSet(`reader_word_state/${uid}`, state);
+    return true;
+  } catch (e) {
+    console.warn('[word-state cloud] save failed:', e?.message);
+    return false;
+  }
+}
+
+export async function fbLoadWordState(uid) {
+  if (!fbDb || !uid) return null;
+  try {
+    const snap = await refGetResilient(`reader_word_state/${uid}`);
+    return snap.exists() ? snap.val() : null;
+  } catch (e) {
+    console.warn('[word-state cloud] load failed:', e?.message);
+    return null;
+  }
 }

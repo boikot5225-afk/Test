@@ -1,0 +1,27 @@
+# Copy to /etc/nginx/sites-available/tts-stt, symlink into sites-enabled,
+# then run certbot (see README) to fill in the ssl_certificate lines.
+# This only terminates TLS and forwards to the container — auth (the
+# Bearer token) is checked by app.py itself, not here.
+
+server {
+    listen 80;
+    server_name YOUR_DOMAIN_HERE;
+    location / { return 301 https://$host$request_uri; }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name YOUR_DOMAIN_HERE;
+
+    # Filled in by: certbot --nginx -d YOUR_DOMAIN_HERE
+    # ssl_certificate     /etc/letsencrypt/live/YOUR_DOMAIN_HERE/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/YOUR_DOMAIN_HERE/privkey.pem;
+
+    client_max_body_size 30m;  # STT requests carry base64 audio, can be sizable
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_read_timeout 300s;  # Kokoro/whisper on a 1 vCPU box can take a while
+    }
+}

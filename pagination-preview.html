@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reader AI — пагинация, тест</title>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#FAF6F0; --surface:#FFFFFF; --surface2:#F1EBE2; --border:#E5DDD1;
+  --text:#241E17; --text-mid:#6E6356; --text-dim:#9C9184;
+  --accent:#8A4B2D; --accent-soft:#F3E4DA;
+  --shadow:0 10px 34px rgba(60,40,20,.16);
+}
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
+html,body { height:100%; overscroll-behavior:none; }
+body {
+  background:var(--bg); color:var(--text);
+  font-family:'IBM Plex Sans',system-ui,sans-serif;
+  overflow:hidden;
+}
+
+/* ── top bar (static chrome, same idea as the real reader) ──
+   No backdrop-filter here: blurring a large fixed element every frame while
+   a 3D transform animates underneath is expensive on mid-range Android GPUs
+   and was very likely most of the "тормозит" — a solid near-opaque
+   background reads almost the same visually for a lot less compositing cost. */
+#top {
+  position:fixed; top:0; left:0; right:0; z-index:20;
+  display:flex; align-items:center; gap:10px;
+  padding:12px 16px 10px;
+  background:color-mix(in srgb, var(--bg) 97%, transparent);
+  border-bottom:1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+#top .back { font-size:1.05rem; color:var(--text-mid); background:none; border:none; }
+#top .ttl { flex:1; font-family:'Lora',serif; font-size:.92rem; font-weight:600; }
+#top .sub { display:block; font-size:.68rem; font-weight:400; color:var(--text-dim); font-family:'IBM Plex Sans',sans-serif; }
+#top .mode {
+  border:1.5px solid var(--accent); color:var(--accent); background:none;
+  font:inherit; font-weight:600; font-size:.76rem; padding:6px 12px; border-radius:99px;
+}
+
+/* ── the book viewport: this is what makes the flip feel 3D ── */
+#book {
+  position:fixed; inset:0; padding-top:66px; padding-bottom:52px;
+  perspective:1800px;
+  /* Tells the browser upfront that horizontal gestures here are ours —
+     without it, the browser's own gesture recognizer spends the first
+     several pixels of movement deciding whether this is a scroll/zoom,
+     delaying (or on some devices dropping) our touchend handling, which is
+     a very plausible cause of "листается не всегда". */
+  touch-action:pan-y;
+}
+.page-slot {
+  position:absolute; inset:66px 0 52px;
+  transform-style:preserve-3d;
+}
+.page {
+  position:absolute; inset:0;
+  background:var(--surface);
+  overflow:hidden;
+  backface-visibility:hidden;
+  transform-origin:right center;
+  /* Promote to its own compositor layer up front instead of the browser
+     deciding mid-gesture — that decision + the layer-creation cost is real
+     work, and doing it for the first time exactly when a finger is already
+     down is a classic source of a janky first frame. */
+  will-change:transform;
+}
+.page .inner {
+  max-width:640px; margin:0 auto; height:100%;
+  padding:30px 26px 26px;
+  font-family:'Lora',serif; font-size:1.12rem; line-height:1.85;
+  overflow:hidden;
+}
+.page .inner p { margin-bottom:1.2em; }
+.page .fold-shade {
+  position:absolute; inset:0; pointer-events:none;
+  background:linear-gradient(to left, rgba(0,0,0,.22), rgba(0,0,0,0) 35%);
+  opacity:0;
+}
+
+/* the page currently animating away sits on top */
+#pFront { z-index:3; transform:rotateY(0deg); }
+#pBehind { z-index:1; }
+#pFront.flip-fwd {
+  transition:transform .46s cubic-bezier(.4,.05,.2,1);
+  transform:rotateY(-160deg);
+}
+#pFront.flip-fwd .fold-shade { transition:opacity .46s; opacity:1; }
+
+/* subtle static page-edge shadow so the book looks like it has depth even at rest */
+.page::after {
+  content:''; position:absolute; top:0; bottom:0; right:0; width:14px;
+  background:linear-gradient(to left, rgba(0,0,0,.07), rgba(0,0,0,0));
+  pointer-events:none;
+}
+
+/* ── bottom bar ── */
+#bottom {
+  position:fixed; left:0; right:0; bottom:0; z-index:20;
+  display:flex; align-items:center; justify-content:center; gap:14px;
+  padding:10px 16px 14px;
+  background:color-mix(in srgb, var(--bg) 97%, transparent);
+  border-top:1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+#bottom .page-dots { font-family:'IBM Plex Mono',monospace; font-size:.78rem; color:var(--text-dim); }
+#bottom .bar { flex:1; max-width:220px; height:3px; background:var(--surface2); border-radius:2px; overflow:hidden; }
+#bottom .bar i { display:block; height:100%; background:var(--accent); transition:width .3s; }
+
+/* ── scroll-mode (for comparison) ── */
+#scrollMode {
+  position:fixed; inset:0; padding:66px 0 60px; overflow-y:auto; display:none;
+}
+#scrollMode .inner {
+  max-width:640px; margin:0 auto; padding:20px 26px 60px;
+  font-family:'Lora',serif; font-size:1.12rem; line-height:1.85;
+}
+#scrollMode .inner p { margin-bottom:1.3em; }
+
+/* ── note banner ── */
+#note {
+  position:fixed; left:14px; right:14px; bottom:64px; z-index:30;
+  background:var(--text); color:var(--bg);
+  font-size:.78rem; line-height:1.4; padding:10px 14px; border-radius:12px;
+  box-shadow:var(--shadow); opacity:0; pointer-events:none; transition:opacity .25s, transform .25s;
+  transform:translateY(6px);
+}
+#note.show { opacity:.94; transform:none; }
+</style>
+</head>
+<body>
+
+<div id="top">
+  <button class="back">←</button>
+  <div class="ttl">The Guns of August<span class="sub" id="subline">🇬🇧 глава 1 · страница 1 / 8</span></div>
+  <button class="mode" id="modeBtn">📜 Скролл</button>
+</div>
+
+<div id="book">
+  <div class="page-slot">
+    <div class="page" id="pBehind"><div class="inner" id="pBehindInner"></div></div>
+    <div class="page" id="pFront"><div class="inner" id="pFrontInner"></div><div class="fold-shade"></div></div>
+  </div>
+</div>
+
+<div id="scrollMode"><div class="inner" id="scrollInner"></div></div>
+
+<div id="bottom">
+  <div class="page-dots" id="pageDots">1 / 8</div>
+  <div class="bar"><i id="pageBar" style="width:12%"></i></div>
+</div>
+
+<div id="note">Тапни справа → следующая страница · слева → назад. Свайп тоже работает.</div>
+
+<script>
+const PARAGRAPHS = [
+"Palmerston. Belgium's coast was England's frontier; on the plains of Belgium, Wellington had defeated the greatest threat to England since the Armada.",
+"Thereafter England was determined to make that patch of open, easily traversible territory a neutral zone and, under the post-Napoleon settlement of the Congress of Vienna, agreed with the other powers to attach it to the Kingdom of the Netherlands.",
+"Resenting union with a Protestant power, burning with the fever of nineteenth-century nationalism, the Belgians revolted in 1830, setting off an international scramble to make sure no single power should benefit from Belgium's coastline.",
+"The upshot was a treaty, signed in 1839 by the five great powers of Europe — Britain, France, Russia, Austria, and Prussia — guaranteeing Belgium as an \"independent and perpetually neutral State.\"",
+"It was this treaty that came to be known, with unforeseen consequences, as \"the Scrap of Paper.\"",
+"Seventy-five years later, in 1914, the German Chancellor, Theobald von Bethmann-Hollweg, would ask incredulously whether Britain really intended to go to war over \"just for a word — 'neutrality' — a word which in wartime has so often been disregarded.\"",
+"The British ambassador's reply became one of the most quoted exchanges of the war's opening days.",
+"He said simply that for Britain, the treaty was not a scrap of paper — it was a promise, and a small nation's only defense against annihilation.",
+"That single exchange, more than any speech in Parliament, crystallized why the guns of August would not stay silent.",
+"Within a week, the armies that had been massing since the assassination at Sarajevo were moving — and Belgium, quiet and neutral for seventy-five years, lay directly in their path."
+];
+
+// Simulate what real pagination would produce: group consecutive paragraphs
+// into "pages" sized to roughly fit a phone screen at normal reading size.
+// A real implementation would measure actual rendered height; this demo
+// fakes it with a fixed paragraph count per page so the flip can be tested
+// without wiring up the real chapter data yet.
+const PARAS_PER_PAGE = 2;
+const pages = [];
+for (let i = 0; i < PARAGRAPHS.length; i += PARAS_PER_PAGE) {
+  pages.push(PARAGRAPHS.slice(i, i + PARAS_PER_PAGE));
+}
+
+let cur = 0;
+let scrollMode = false;
+const pFront = document.getElementById('pFront');
+const pBehind = document.getElementById('pBehind');
+const pFrontInner = document.getElementById('pFrontInner');
+const pBehindInner = document.getElementById('pBehindInner');
+
+function pageHtml(idx) {
+  const p = pages[idx];
+  if (!p) return '';
+  return p.map(t => `<p>${t}</p>`).join('');
+}
+
+function updateChrome() {
+  document.getElementById('subline').textContent = `🇬🇧 глава 1 · страница ${cur + 1} / ${pages.length}`;
+  document.getElementById('pageDots').textContent = `${cur + 1} / ${pages.length}`;
+  document.getElementById('pageBar').style.width = Math.round(((cur + 1) / pages.length) * 100) + '%';
+}
+
+function renderStatic() {
+  pFrontInner.innerHTML = pageHtml(cur);
+  pBehindInner.innerHTML = '';
+  updateChrome();
+}
+renderStatic();
+
+let animating = false;
+
+// Runs `handler` once, whichever comes first: the real transitionend event or
+// a fallback timer — a device that for whatever reason never fires
+// transitionend (backgrounded tab, dropped frame, etc.) would otherwise leave
+// `animating` stuck true forever and every future tap would silently no-op.
+function onceTransitionOrTimeout(el, handler, timeoutMs = 600) {
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    el.removeEventListener('transitionend', onEnd);
+    clearTimeout(timer);
+    handler();
+  };
+  const onEnd = (e) => { if (e.target === el && e.propertyName === 'transform') finish(); };
+  el.addEventListener('transitionend', onEnd);
+  const timer = setTimeout(finish, timeoutMs);
+}
+
+// Both directions use the exact same mechanism: pFront (always showing the
+// CURRENT page at rest) peels away to reveal pBehind (holding whichever page
+// we're turning TO — next or previous, doesn't matter which), then pFront's
+// content is swapped to that page and its rotation reset to resting, instantly
+// and invisibly, ready for the next turn. Trying to give "back" a mirrored
+// reverse animation (peel the other way) was the earlier, buggier version —
+// it needed an inline style to fake a starting pose, and that inline style
+// permanently outranked the CSS class's transform in the cascade, silently
+// killing the animation. One direction for both ways is simpler and reliable.
+function turn(targetIndex) {
+  if (animating || targetIndex < 0 || targetIndex >= pages.length) { flash(); return; }
+  animating = true;
+  pBehindInner.innerHTML = pageHtml(targetIndex);
+  pFront.classList.add('flip-fwd');
+  onceTransitionOrTimeout(pFront, () => {
+    cur = targetIndex;
+    pFront.classList.remove('flip-fwd');
+    pFrontInner.innerHTML = pageHtml(cur);
+    pBehindInner.innerHTML = '';
+    updateChrome();
+    animating = false;
+  });
+}
+function goNext() { turn(cur + 1); }
+function goBack() { turn(cur - 1); }
+
+let noteTimer = null;
+function flash() {
+  const n = document.getElementById('note');
+  n.classList.add('show');
+  clearTimeout(noteTimer);
+  noteTimer = setTimeout(() => n.classList.remove('show'), 1400);
+}
+
+document.addEventListener('keydown', (e) => {
+  if (scrollMode) return;
+  if (e.key === 'ArrowRight') goNext();
+  if (e.key === 'ArrowLeft') goBack();
+});
+
+// One handler for both tap and swipe, instead of a separate 'click' on the
+// zones plus a separate touchstart/touchend swipe listener. Splitting them
+// left a dead zone: a real finger tap almost always drifts a few pixels,
+// which is often enough for the browser to decide "this isn't a click" (so
+// no click event fires) but not enough to cross the swipe's 50px threshold —
+// so neither handler fired and the page silently didn't turn. Now every
+// touch is classified once, by its own total movement: small movement = tap
+// (use where it started to pick a side), larger = swipe (use direction).
+const bookEl0 = document.getElementById('book');
+let touchStartX = null, touchStartY = null;
+bookEl0.addEventListener('touchstart', (e) => {
+  touchStartX = e.touches[0].clientX;
+  touchStartY = e.touches[0].clientY;
+}, { passive: true });
+bookEl0.addEventListener('touchend', (e) => {
+  if (scrollMode || touchStartX == null) return;
+  const endX = e.changedTouches[0].clientX;
+  const dx = endX - touchStartX;
+  const dy = e.changedTouches[0].clientY - touchStartY;
+  touchStartX = null;
+  if (Math.abs(dy) > Math.abs(dx) * 1.5) return; // vertical drift — not a page-turn gesture
+  if (Math.abs(dx) > 18) { dx < 0 ? goNext() : goBack(); return; }
+  // Treated as a tap: which third of the screen it landed in decides direction.
+  endX < window.innerWidth * 0.3 ? goBack() : goNext();
+}, { passive: true });
+// Desktop/mouse fallback (no touch events) — click still works there.
+bookEl0.addEventListener('click', (e) => {
+  if (scrollMode || 'ontouchstart' in window) return;
+  e.clientX < window.innerWidth * 0.3 ? goBack() : goNext();
+});
+
+// scroll-mode toggle, for an honest side-by-side comparison
+const modeBtn = document.getElementById('modeBtn');
+const bookEl = document.getElementById('book');
+const scrollEl = document.getElementById('scrollMode');
+const bottomEl = document.getElementById('bottom');
+modeBtn.onclick = () => {
+  scrollMode = !scrollMode;
+  if (scrollMode) {
+    document.getElementById('scrollInner').innerHTML = PARAGRAPHS.map(t => `<p>${t}</p>`).join('');
+    bookEl.style.display = 'none';
+    scrollEl.style.display = 'block';
+    bottomEl.style.display = 'none';
+    modeBtn.textContent = '📖 Страницы';
+    document.getElementById('subline').textContent = '🇬🇧 глава 1 · непрерывный скролл';
+  } else {
+    bookEl.style.display = '';
+    scrollEl.style.display = 'none';
+    bottomEl.style.display = '';
+    modeBtn.textContent = '📜 Скролл';
+    updateChrome();
+  }
+};
+
+setTimeout(flash, 500);
+</script>
+</body>
+</html>

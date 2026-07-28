@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="paper">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reader AI — макет редизайна v2</title>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Serif+SC:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* ─────────────────────────────────────────────
+   Темы: Бумага / Сепия / Чернила
+   Один акцент на всё. Никаких золотых заливок.
+────────────────────────────────────────────── */
+:root[data-theme="paper"] {
+  --bg:#FAF6F0; --surface:#FFFFFF; --surface2:#F1EBE2; --border:#E5DDD1;
+  --text:#241E17; --text-mid:#6E6356; --text-dim:#9C9184;
+  --accent:#8A4B2D; --accent-soft:#F3E4DA;
+  --mark-saved:#8A4B2D; --mark-problem:#C24141;
+  --hl-new:#FFF3D6; --hl-learn:#F8E3D8; --hl-problem:#F9DBDB; --hl-familiar:#E8EEDF;
+  --shadow:0 8px 32px rgba(60,40,20,.14);
+}
+:root[data-theme="sepia"] {
+  --bg:#EFE6D8; --surface:#F7F0E4; --surface2:#E6DBC8; --border:#D8CBB4;
+  --text:#332A1F; --text-mid:#71634F; --text-dim:#98896F;
+  --accent:#7A5232; --accent-soft:#E7D8C4;
+  --mark-saved:#7A5232; --mark-problem:#B04A3A;
+  --hl-new:#F4E5C2; --hl-learn:#EDD9C4; --hl-problem:#EFCEC4; --hl-familiar:#DDE2C6;
+  --shadow:0 8px 32px rgba(60,45,20,.18);
+}
+:root[data-theme="ink"] {
+  --bg:#14120F; --surface:#1D1A16; --surface2:#26221D; --border:#37322A;
+  --text:#E8E2D8; --text-mid:#A79D8F; --text-dim:#7A7164;
+  --accent:#D9A15F; --accent-soft:#332A1E;
+  --mark-saved:#D9A15F; --mark-problem:#E07B6A;
+  --hl-new:#3A331F; --hl-learn:#3C2E22; --hl-problem:#442824; --hl-familiar:#2C3322;
+  --shadow:0 8px 32px rgba(0,0,0,.5);
+}
+
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body { height:100%; }
+body {
+  background:var(--bg); color:var(--text);
+  font-family:'IBM Plex Sans',system-ui,sans-serif;
+  overflow:hidden;
+  transition:background .35s,color .35s;
+}
+
+/* ── Панель управления макетом (не часть приложения) ── */
+#demo-bar {
+  position:fixed; left:0; right:0; bottom:0; z-index:99;
+  display:flex; gap:6px; align-items:center; justify-content:center;
+  padding:8px 10px calc(8px + env(safe-area-inset-bottom));
+  background:color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter:blur(12px); border-top:1px solid var(--border);
+  font-size:.72rem;
+}
+#demo-bar .grp { display:flex; gap:4px; background:var(--surface2); border-radius:99px; padding:3px; }
+#demo-bar button {
+  border:none; background:none; color:var(--text-mid); font:inherit;
+  padding:6px 10px; border-radius:99px; cursor:pointer; white-space:nowrap;
+}
+#demo-bar button.on { background:var(--accent); color:var(--bg); }
+
+/* ── Экраны ── */
+.screen { display:none; position:fixed; inset:0; bottom:52px; overflow:hidden; }
+.screen.on { display:block; }
+
+/* ═════════ ЧИТАЛКА ═════════ */
+#rd-scroll { height:100%; overflow-y:auto; scroll-behavior:smooth; }
+
+#rd-progress {
+  position:absolute; top:0; left:0; height:3px; z-index:5;
+  background:var(--accent); width:22%; transition:width .3s;
+}
+#rd-top {
+  position:absolute; top:0; left:0; right:0; z-index:4;
+  display:flex; align-items:center; gap:10px;
+  padding:12px 14px 10px;
+  background:color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter:blur(14px);
+  border-bottom:1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  transition:transform .28s ease, opacity .28s ease;
+}
+#rd-top .back { font-size:1.05rem; color:var(--text-mid); background:none; border:none; padding:4px 6px; }
+#rd-top .ttl { flex:1; min-width:0; }
+#rd-top .ttl b { display:block; font-family:'Lora',serif; font-size:.95rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#rd-top .ttl span { font-size:.68rem; color:var(--text-dim); }
+#rd-top .ic { background:none; border:none; font-size:1.02rem; color:var(--text-mid); padding:6px 7px; border-radius:10px; }
+#rd-top .ic.on { color:var(--accent); background:var(--accent-soft); }
+
+#rd-bottom {
+  position:absolute; left:0; right:0; bottom:0; z-index:4;
+  display:flex; gap:10px; align-items:center; justify-content:center;
+  padding:10px 16px 14px;
+  background:color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter:blur(14px);
+  border-top:1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  transition:transform .28s ease, opacity .28s ease;
+}
+#rd-bottom .listen {
+  flex:0 1 240px; display:flex; align-items:center; justify-content:center; gap:8px;
+  border:1.5px solid var(--accent); color:var(--accent); background:none;
+  font:inherit; font-weight:600; font-size:.9rem;
+  padding:11px 22px; border-radius:99px;
+}
+#rd-bottom .more { background:none; border:none; color:var(--text-mid); font-size:1.2rem; padding:8px 10px; }
+
+.chrome-hidden #rd-top    { transform:translateY(-110%); opacity:0; pointer-events:none; }
+.chrome-hidden #rd-bottom { transform:translateY(120%);  opacity:0; pointer-events:none; }
+
+/* ── Текст ── */
+#rd-body {
+  max-width:640px; margin:0 auto;
+  padding:86px 26px 140px;
+  font-family:'Lora','Noto Serif SC',Georgia,serif;
+  font-size:1.12rem; line-height:1.85;
+}
+#rd-body p { margin-bottom:1.35em; transition:opacity .2s; }
+
+/* активный абзац: тонкая линия слева, никакой карточки */
+#rd-body p.active {
+  border-left:2.5px solid var(--accent);
+  padding-left:14px; margin-left:-16.5px;
+}
+#rd-body p:not(.active) { opacity:.86; }
+
+/* слова: в спокойном режиме чистый текст, метки — только у своих слов */
+.w { border-radius:4px; }
+.w-saved   { border-bottom:1.5px dotted var(--mark-saved); }
+.w-problem { border-bottom:2px solid var(--mark-problem); }
+/* режим разбора (👁): мягкие плашки по статусам */
+.marks-on .w-new      { background:var(--hl-new); }
+.marks-on .w-learn    { background:var(--hl-learn); box-shadow:0 0 0 2px var(--hl-learn); }
+.marks-on .w-problem  { background:var(--hl-problem); box-shadow:0 0 0 2px var(--hl-problem); border-bottom:none; }
+.marks-on .w-familiar { background:var(--hl-familiar); }
+.marks-on .w-saved    { border-bottom:none; background:var(--hl-learn); }
+
+/* перевод под активным абзацем */
+.tr-link {
+  display:inline-block; margin:-.6em 0 1.4em;
+  font-family:'IBM Plex Sans',sans-serif; font-size:.78rem; font-style:normal;
+  color:var(--text-dim); border:none; background:none; padding:2px 0;
+  border-bottom:1px dashed var(--text-dim); cursor:pointer;
+}
+.tr-text {
+  display:none; margin:-.6em 0 1.5em; padding:10px 14px;
+  font-family:'IBM Plex Sans',sans-serif; font-size:.88rem; line-height:1.6;
+  color:var(--text-mid); background:var(--surface2); border-radius:10px;
+}
+.tr-open .tr-text { display:block; }
+.tr-open .tr-link { display:none; }
+
+/* китайский */
+#rd-body.zh { font-size:1.28rem; line-height:2.5; }
+#rd-body.zh rt { font-size:.58rem; color:var(--text-dim); font-family:'IBM Plex Sans',sans-serif; }
+.pinyin-off rt { display:none; }
+.pinyin-off #rd-body.zh { line-height:2.0; }
+
+/* зоны перелистывания */
+.edge { position:absolute; top:80px; bottom:90px; width:14%; z-index:3; }
+.edge.l { left:0; } .edge.r { right:0; }
+
+/* ── Шторка слова ── */
+#sheet-veil {
+  position:fixed; inset:0; z-index:60; background:rgba(0,0,0,.35);
+  opacity:0; pointer-events:none; transition:opacity .25s;
+}
+#sheet {
+  position:fixed; left:0; right:0; bottom:0; z-index:61;
+  background:var(--surface); border-radius:22px 22px 0 0;
+  box-shadow:var(--shadow); padding:10px 20px calc(20px + env(safe-area-inset-bottom));
+  transform:translateY(105%); transition:transform .3s cubic-bezier(.3,.9,.3,1);
+  max-height:78vh; overflow-y:auto;
+}
+body.sheet-open #sheet { transform:none; }
+body.sheet-open #sheet-veil { opacity:1; pointer-events:auto; }
+#sheet .grab { width:38px; height:4px; border-radius:2px; background:var(--border); margin:4px auto 14px; }
+#sheet .word { font-family:'Lora','Noto Serif SC',serif; font-size:2.1rem; font-weight:600; line-height:1.15; }
+#sheet .pinyin { color:var(--accent); font-size:1.02rem; margin-top:2px; letter-spacing:.04em; }
+#sheet .ru { font-size:1.05rem; margin:10px 0 2px; }
+#sheet .meta { font-size:.75rem; color:var(--text-dim); margin-bottom:4px; }
+#sheet .chars { font-size:.78rem; color:var(--text-mid); background:var(--surface2); border-radius:8px; padding:8px 10px; margin-top:10px; }
+#sheet .row { display:flex; gap:8px; margin-top:16px; flex-wrap:wrap; }
+#sheet .chip {
+  border:1px solid var(--border); background:none; color:var(--text-mid);
+  font:inherit; font-size:.82rem; padding:9px 14px; border-radius:99px;
+}
+#sheet .chip.main { background:var(--accent); border-color:var(--accent); color:var(--bg); font-weight:600; flex:1; text-align:center; }
+#sheet details { margin-top:14px; }
+#sheet summary { font-size:.78rem; color:var(--text-dim); cursor:pointer; }
+#sheet details div { padding:10px 0 0; font-size:.8rem; color:var(--text-mid); }
+
+/* ═════════ БИБЛИОТЕКА ═════════ */
+#lib-scroll { height:100%; overflow-y:auto; padding:22px 18px 40px; }
+.lib-h { font-family:'Lora',serif; font-size:1.5rem; font-weight:600; margin-bottom:16px; display:flex; align-items:center; justify-content:space-between; }
+.lib-h button { border:1.5px solid var(--accent); color:var(--accent); background:none; font:inherit; font-weight:600; font-size:.82rem; padding:8px 16px; border-radius:99px; }
+
+.cont-card {
+  display:flex; gap:14px; align-items:center;
+  background:var(--surface); border:1px solid var(--border); border-radius:18px;
+  padding:14px; margin-bottom:22px; box-shadow:var(--shadow);
+}
+.cover {
+  width:56px; height:78px; border-radius:8px; flex:none;
+  display:flex; align-items:center; justify-content:center;
+  font-family:'Lora',serif; font-size:1.5rem; font-weight:600; color:#fff;
+}
+.cover.fr { background:linear-gradient(160deg,#4C6285,#2E3F58); }
+.cover.en { background:linear-gradient(160deg,#7A4C85,#4A2E58); }
+.cover.zh { background:linear-gradient(160deg,#A84C3F,#6E2A22); }
+.cont-card .m { flex:1; min-width:0; }
+.cont-card .m b { display:block; font-family:'Lora',serif; font-size:.98rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cont-card .m span { font-size:.74rem; color:var(--text-dim); }
+.cont-card .bar { height:3px; background:var(--surface2); border-radius:2px; margin-top:8px; }
+.cont-card .bar i { display:block; height:100%; border-radius:2px; background:var(--accent); }
+.cont-card .go { border:none; background:var(--accent); color:var(--bg); font:inherit; font-weight:600; font-size:.82rem; padding:10px 16px; border-radius:99px; }
+
+.lib-sec { font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; color:var(--text-dim); margin:0 0 10px 2px; }
+.book-row {
+  display:flex; gap:12px; align-items:center;
+  padding:10px 4px; border-bottom:1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+.book-row .cover { width:40px; height:56px; font-size:1.05rem; border-radius:6px; }
+.book-row .m { flex:1; min-width:0; }
+.book-row .m b { display:block; font-family:'Lora',serif; font-size:.92rem; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.book-row .m span { font-size:.72rem; color:var(--text-dim); }
+.book-row .pct { font-size:.78rem; color:var(--text-mid); }
+
+/* ═════════ ГЛАВНАЯ ═════════ */
+#home-scroll { height:100%; overflow-y:auto; padding:26px 20px 40px; }
+.home-hi { font-family:'Lora',serif; font-size:1.65rem; font-weight:600; }
+.home-date { font-size:.78rem; color:var(--text-dim); margin:2px 0 20px; }
+.lang-row { display:flex; gap:6px; margin-bottom:22px; }
+.lang-row button {
+  border:1px solid var(--border); background:var(--surface); font:inherit; font-size:.85rem;
+  padding:8px 14px; border-radius:99px; color:var(--text-mid);
+}
+.lang-row button.on { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); font-weight:600; }
+.home-words { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 26px; }
+.home-words .wchip {
+  background:var(--surface); border:1px solid var(--border); border-radius:12px;
+  padding:10px 14px; font-family:'Lora',serif; font-size:.95rem;
+}
+.home-words .wchip small { display:block; font-family:'IBM Plex Sans',sans-serif; font-size:.66rem; color:var(--text-dim); margin-top:2px; }
+.home-add {
+  display:flex; align-items:center; gap:12px; width:100%;
+  background:none; border:1.5px dashed var(--border); color:var(--text-mid);
+  font:inherit; font-size:.9rem; padding:16px; border-radius:16px; margin-top:6px;
+}
+.stat-line { display:flex; gap:18px; margin:22px 0 6px; font-size:.78rem; color:var(--text-dim); }
+.stat-line b { color:var(--text); font-size:1.05rem; display:block; font-family:'Lora',serif; }
+</style>
+</head>
+<body>
+
+<!-- ═════════ ЧИТАЛКА (EN) ═════════ -->
+<section class="screen on" id="scr-reader">
+  <div id="rd-progress"></div>
+  <div id="rd-top">
+    <button class="back">←</button>
+    <div class="ttl"><b id="rd-title">The Guns of August</b><span id="rd-sub">🇬🇧 глава 1 · 22%</span></div>
+    <button class="ic" id="btn-marks" title="раскраска слов">👁</button>
+    <button class="ic" id="btn-pinyin" style="display:none" title="пиньинь">拼</button>
+    <button class="ic">Aa</button>
+    <button class="ic">🎧</button>
+  </div>
+
+  <div class="edge l"></div><div class="edge r"></div>
+
+  <div id="rd-scroll">
+    <div id="rd-body">
+      <p>He <span class="w w-familiar">didn't</span> even have the <span class="w w-saved w-learn" data-word="decency" data-ru="порядочность" data-note="B2 · существительное">decency</span> to mention that I was that friend. I get no <span class="w w-new">credit</span> from him. I get no thanks.</p>
+
+      <p class="active tr-open0">Well, you should thank me. Alright, alright, I'll think about it. A <span class="w w-new">chance</span> to talk with you. Walsh's real history of <span class="w w-saved w-learn" data-word="slavery" data-ru="рабство" data-note="B1 · существительное">slavery</span>. That could work. All right. Get this show on the <span class="w w-problem" data-word="road" data-ru="начать, приступить к делу" data-note="идиома: get the show on the road — «давай уже начинать»" >road</span>.<br>
+      <button class="tr-link">показать перевод</button>
+      <span class="tr-text">Ну, ты должен меня поблагодарить. Ладно, ладно, я подумаю. Возможность поговорить с тобой. Настоящая история рабства Уолша. Это может сработать. Хорошо. Давай уже начинать это чёртово шоу.</span></p>
+
+      <p>I guess Milo had a game. A drinking game. I never asked what the <span class="w w-new">rules</span> were, because the rules never <span class="w w-familiar">mattered</span> — only the drinking did.</p>
+
+      <p>Thereafter England was <span class="w w-saved w-learn" data-word="determined" data-ru="полна решимости" data-note="B1 · past participle → determine">determined</span> to make that patch of open, easily <span class="w w-new">traversible</span> territory a neutral zone and, under the post-Napoleon <span class="w w-new">settlement</span> of the Congress of Vienna, agreed with the other powers to attach it to the Kingdom of the Netherlands.</p>
+
+      <p>Resenting union with a Protestant power, burning with the fever of the nineteenth-century nationalism, the Belgians <span class="w w-familiar">revolted</span> in 1830, setting off an international <span class="w w-new">scramble</span>.</p>
+
+      <p>Belgium's coast was England's <span class="w w-saved w-learn" data-word="frontier" data-ru="граница, рубеж" data-note="B2 · существительное">frontier</span>; on the plains of Belgium, Wellington had defeated the greatest <span class="w w-new">threat</span> to England since the Armada.</p>
+
+      <p>He didn't even have the decency to mention that I was that friend. I get no credit from him. I get no thanks. Well, you should thank me.</p>
+    </div>
+  </div>
+
+  <div id="rd-bottom">
+    <button class="listen">🔊 Слушать</button>
+    <button class="more">⋯</button>
+  </div>
+</section>
+
+<!-- ═════════ БИБЛИОТЕКА ═════════ -->
+<section class="screen" id="scr-lib">
+  <div id="lib-scroll">
+    <div class="lib-h">Библиотека <button>＋ Добавить</button></div>
+
+    <div class="cont-card">
+      <div class="cover en">G</div>
+      <div class="m">
+        <b>The Guns of August</b>
+        <span>🇬🇧 глава 1 · продолжить с 22%</span>
+        <div class="bar"><i style="width:22%"></i></div>
+      </div>
+      <button class="go">Читать</button>
+    </div>
+
+    <div class="lib-sec">Все тексты</div>
+    <div class="book-row"><div class="cover zh">中</div><div class="m"><b>China Radio International 90.5</b><span>🇨🇳 23/26 абз. · есть аудио 🎧</span></div><div class="pct">85%</div></div>
+    <div class="book-row"><div class="cover en">M</div><div class="m"><b>Matt Walsh's Fascist History…</b><span>🇬🇧 4/136 абз. · есть аудио 🎧</span></div><div class="pct">2%</div></div>
+    <div class="book-row"><div class="cover fr">B</div><div class="m"><b>Bel-Ami</b><span>🇫🇷 Maupassant · глава 3</span></div><div class="pct">41%</div></div>
+    <div class="book-row"><div class="cover fr">P</div><div class="m"><b>Le Petit Prince</b><span>🇫🇷 Saint-Exupéry · глава 7</span></div><div class="pct">64%</div></div>
+  </div>
+</section>
+
+<!-- ═════════ ГЛАВНАЯ ═════════ -->
+<section class="screen" id="scr-home">
+  <div id="home-scroll">
+    <div class="home-hi">Reader AI</div>
+    <div class="home-date">пт, 3 июля · boikot5225</div>
+
+    <div class="lang-row">
+      <button>🇫🇷 Français</button>
+      <button class="on">🇬🇧 English</button>
+      <button>🇨🇳 中文</button>
+    </div>
+
+    <div class="cont-card">
+      <div class="cover en">G</div>
+      <div class="m">
+        <b>The Guns of August</b>
+        <span>продолжить · глава 1, 22%</span>
+        <div class="bar"><i style="width:22%"></i></div>
+      </div>
+      <button class="go">Читать</button>
+    </div>
+
+    <div class="lib-sec">Недавние слова</div>
+    <div class="home-words">
+      <div class="wchip">decency<small>порядочность</small></div>
+      <div class="wchip">road<small>идиома · get the show on the road</small></div>
+      <div class="wchip">frontier<small>граница</small></div>
+    </div>
+
+    <button class="home-add">📖 Добавить текст, EPUB или аудио</button>
+
+    <div class="stat-line">
+      <div><b>26</b>мин сегодня</div>
+      <div><b>14</b>слов открыто</div>
+      <div><b>4</b>текста</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════ ШТОРКА СЛОВА ═════════ -->
+<div id="sheet-veil"></div>
+<div id="sheet">
+  <div class="grab"></div>
+  <div class="word" id="sh-word">road</div>
+  <div class="pinyin" id="sh-pinyin" style="display:none"></div>
+  <div class="ru" id="sh-ru">начать, приступить к делу</div>
+  <div class="meta" id="sh-meta">идиома: get the show on the road</div>
+  <div class="chars" id="sh-chars" style="display:none"></div>
+  <div class="row">
+    <button class="chip main">＋ В словарь</button>
+    <button class="chip">🔊</button>
+    <button class="chip">✓ знаю</button>
+    <button class="chip">⚠</button>
+  </div>
+  <div class="row">
+    <button class="chip">↻ DeepSeek</button>
+    <button class="chip">＋ фраза</button>
+  </div>
+  <details><summary>ручная правка</summary><div>словарная форма · перевод · уровень · контекст — как сейчас, но спрятано, пока не нужно.</div></details>
+</div>
+
+<!-- ═════════ ПАНЕЛЬ МАКЕТА ═════════ -->
+<div id="demo-bar">
+  <div class="grp" id="g-screen">
+    <button data-s="scr-reader" class="on">Читалка</button>
+    <button data-s="zh">中文</button>
+    <button data-s="scr-lib">Книги</button>
+    <button data-s="scr-home">Домой</button>
+  </div>
+  <div class="grp" id="g-theme">
+    <button data-t="paper" class="on">Бумага</button>
+    <button data-t="sepia">Сепия</button>
+    <button data-t="ink">Чернила</button>
+  </div>
+</div>
+
+<script>
+/* ── переключение тем ── */
+document.querySelectorAll('#g-theme button').forEach(b => b.onclick = () => {
+  document.documentElement.dataset.theme = b.dataset.t;
+  document.querySelectorAll('#g-theme button').forEach(x => x.classList.toggle('on', x === b));
+});
+
+/* ── переключение экранов (+ спец-режим 中文) ── */
+const EN_HTML = document.getElementById('rd-body').innerHTML;
+const ZH_HTML = `
+  <p><ruby>第一<rt>dì yī</rt></ruby><ruby>作者<rt>zuòzhě</rt></ruby>和<ruby>通讯<rt>tōngxùn</rt></ruby><ruby>作者<rt>zuòzhě</rt></ruby><span class="w w-saved w-learn" data-word="身份" data-ru="статус, личность" data-note="HSK4 · 身(shēn) тело + 份(fèn) доля" data-pinyin="shēnfèn" data-chars="身(shēn) тело, сам + 份(fèn) доля, часть"><ruby>身份<rt>shēnfèn</rt></ruby></span>，<ruby>联合<rt>liánhé</rt></ruby><ruby>全球<rt>quánqiú</rt></ruby>43个<ruby>单位<rt>dānwèi</rt></ruby>的85位<ruby>共同<rt>gòngtóng</rt></ruby><ruby>作者<rt>zuòzhě</rt></ruby>。</p>
+  <p class="active">通过<ruby>古代<rt>gǔdài</rt></ruby>和<ruby>现代<rt>xiàndài</rt></ruby><ruby>人群<rt>rénqún</rt></ruby>的DNA<ruby>比对<rt>bǐduì</rt></ruby><ruby>分析<rt>fēnxī</rt></ruby>，<span class="w w-problem" data-word="实证" data-ru="эмпирически подтвердить" data-note="HSK6 · глагол" data-pinyin="shízhèng" data-chars="实(shí) реальный, факт + 证(zhèng) доказывать">​<ruby>实证<rt>shízhèng</rt></ruby></span>了<ruby>黄河<rt>Huáng Hé</rt></ruby><ruby>流域<rt>liúyù</rt></ruby><ruby>中原<rt>Zhōngyuán</rt></ruby><ruby>地区<rt>dìqū</rt></ruby>。<br>
+  <button class="tr-link">показать перевод</button>
+  <span class="tr-text">Сравнительный анализ ДНК древних и современных популяций эмпирически подтвердил роль региона Чжунъюань в бассейне Хуанхэ.</span></p>
+  <p><ruby>东亚<rt>Dōngyà</rt></ruby><ruby>人群<rt>rénqún</rt></ruby>8000<ruby>年来<rt>nián lái</rt></ruby>的<span class="w w-saved w-learn" data-word="迁徙" data-ru="миграция" data-note="HSK6" data-pinyin="qiānxǐ" data-chars="迁(qiān) переезжать + 徙(xǐ) перемещаться"><ruby>迁徙<rt>qiānxǐ</rt></ruby></span>和<ruby>混合<rt>hùnhé</rt></ruby><ruby>历史<rt>lìshǐ</rt></ruby>，这是<ruby>当时<rt>dāngshí</rt></ruby><ruby>国内<rt>guónèi</rt></ruby><ruby>开展<rt>kāizhǎn</rt></ruby>的<ruby>最大<rt>zuìdà</rt></ruby><ruby>规模<rt>guīmó</rt></ruby>的<ruby>考古<rt>kǎogǔ</rt></ruby><ruby>基因组<rt>jīyīnzǔ</rt></ruby><ruby>学<rt>xué</rt></ruby><ruby>研究<rt>yánjiū</rt></ruby>。</p>
+  <p>跟<ruby>卢宁<rt>Lú Níng</rt></ruby>这次一样，<ruby>整个<rt>zhěnggè</rt></ruby><span class="w w-new" data-word="审判" data-ru="суд, судебный процесс" data-note="HSK5" data-pinyin="shěnpàn" data-chars="审(shěn) рассматривать + 判(pàn) судить"><ruby>审判<rt>shěnpàn</rt></ruby></span><ruby>过程<rt>guòchéng</rt></ruby>也是<ruby>高度<rt>gāodù</rt></ruby><ruby>保密<rt>bǎomì</rt></ruby>。</p>`;
+
+const rdBody = document.getElementById('rd-body');
+function setScreen(id) {
+  const zh = id === 'zh';
+  const target = zh ? 'scr-reader' : id;
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('on', s.id === target));
+  if (target === 'scr-reader') {
+    rdBody.classList.toggle('zh', zh);
+    rdBody.innerHTML = zh ? ZH_HTML : EN_HTML;
+    document.getElementById('rd-title').textContent = zh ? 'China Radio International' : 'The Guns of August';
+    document.getElementById('rd-sub').textContent = zh ? '🇨🇳 23/26 · 85%' : '🇬🇧 глава 1 · 22%';
+    document.getElementById('rd-progress').style.width = zh ? '85%' : '22%';
+    document.getElementById('btn-pinyin').style.display = zh ? '' : 'none';
+    bindReader();
+  }
+  document.querySelectorAll('#g-screen button').forEach(x => x.classList.toggle('on', x.dataset.s === id));
+}
+document.querySelectorAll('#g-screen button').forEach(b => b.onclick = () => setScreen(b.dataset.s));
+
+/* ── 👁 раскраска ── */
+const scrReader = document.getElementById('scr-reader');
+document.getElementById('btn-marks').onclick = (e) => {
+  scrReader.classList.toggle('marks-on');
+  e.currentTarget.classList.toggle('on');
+};
+document.getElementById('btn-pinyin').onclick = (e) => {
+  scrReader.classList.toggle('pinyin-off');
+  e.currentTarget.classList.toggle('on');
+};
+
+/* ── автоскрытие панелей + тап по центру ── */
+const rdScroll = document.getElementById('rd-scroll');
+let lastY = 0;
+rdScroll.addEventListener('scroll', () => {
+  const y = rdScroll.scrollTop;
+  if (y - lastY > 6 && y > 60) scrReader.classList.add('chrome-hidden');
+  else if (lastY - y > 6) scrReader.classList.remove('chrome-hidden');
+  lastY = y;
+});
+rdScroll.addEventListener('click', (e) => {
+  if (e.target.closest('.w, .tr-link, button, ruby')) return;
+  scrReader.classList.toggle('chrome-hidden');
+});
+
+/* ── перелистывание тапом по краям ── */
+document.querySelector('.edge.l').onclick = () => rdScroll.scrollBy({ top: -rdScroll.clientHeight * .75 });
+document.querySelector('.edge.r').onclick = () => rdScroll.scrollBy({ top:  rdScroll.clientHeight * .75 });
+
+/* ── перевод + шторка слова ── */
+function bindReader() {
+  rdBody.querySelectorAll('.tr-link').forEach(l => l.onclick = (e) => {
+    e.stopPropagation();
+    l.closest('p').classList.add('tr-open');
+  });
+  rdBody.querySelectorAll('.w[data-word]').forEach(w => w.onclick = (e) => {
+    e.stopPropagation();
+    openSheet(w.dataset);
+  });
+}
+function openSheet(d) {
+  document.getElementById('sh-word').textContent = d.word;
+  document.getElementById('sh-ru').textContent = d.ru || '—';
+  document.getElementById('sh-meta').textContent = d.note || '';
+  const py = document.getElementById('sh-pinyin');
+  py.style.display = d.pinyin ? '' : 'none'; py.textContent = d.pinyin || '';
+  const ch = document.getElementById('sh-chars');
+  ch.style.display = d.chars ? '' : 'none'; ch.textContent = d.chars || '';
+  document.body.classList.add('sheet-open');
+}
+document.getElementById('sheet-veil').onclick = () => document.body.classList.remove('sheet-open');
+bindReader();
+</script>
+</body>
+</html>
