@@ -2237,7 +2237,10 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
   font-family:var(--rd-font-zh, "Noto Serif SC"),"Noto Sans CJK SC","Microsoft YaHei","PingFang SC","Heiti SC",system-ui,sans-serif !important;
 }
 #reader-reading-view[data-reader-lang="ja"] .reader-paragraph{
-  font-family:var(--rd-font-ja, "Noto Serif JP"),"Noto Sans CJK JP","Hiragino Mincho ProN","Yu Mincho","Yu Gothic",system-ui,sans-serif !important;
+  /* Ends in a generic family rather than a Chinese one: with lang="ja" on the
+     container the system fallback resolves it to Japanese glyph shapes, which
+     naming an SC font here would override. */
+  font-family:var(--rd-font-ja, "Noto Serif JP"),"Noto Serif CJK JP","Noto Sans CJK JP","Hiragino Mincho ProN","Yu Mincho","Yu Gothic",serif !important;
 }
 #reader-reading-view[data-reader-script="cjk"] .reader-paragraph-text{
   word-break:break-word !important;

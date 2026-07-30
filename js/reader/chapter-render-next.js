@@ -98,6 +98,12 @@ export function createReaderChapterRenderer({
     const readingView = document.getElementById('reader-reading-view');
     if (readingView) {
       readingView.dataset.readerLang = activeReaderLang;
+      // Declaring the language matters most on Android, where the Noto CJK
+      // fonts the CSS asks for by name are usually not installed and the system
+      // falls back on its own. Without a lang the fallback prefers Simplified
+      // Chinese shapes, so Japanese renders with the wrong forms of 今 直 骨 —
+      // the exact problem the per-language font stacks were meant to avoid.
+      readingView.lang = activeReaderLang;
       // Layout, line-height and the ruby scaffold are the same for every
       // space-less script, only the font differs — so the CSS keys off the
       // script and reserves data-reader-lang for the font choice.
@@ -148,6 +154,7 @@ export function createReaderChapterRenderer({
 
     if (chapterText) {
       chapterText.dataset.lang = activeReaderLang;
+      chapterText.lang = activeReaderLang;
       const translations = book.readerTranslations || {};
 
       if (book.format === 'song' && chapter?.songSection) {

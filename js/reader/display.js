@@ -62,12 +62,17 @@ export function createReaderDisplay({
   // Japanese needs its own stack rather than reusing the SC one: the same code
   // points are drawn differently per region (今 直 骨 among many others), so a
   // Simplified Chinese font renders Japanese text in visibly wrong shapes.
+  // Android ships neither of the JP Noto families by name, so these lists end
+  // in a bare serif/sans-serif on purpose: the reading view declares lang="ja",
+  // which is what makes the system fallback pick Japanese glyph shapes instead
+  // of Simplified Chinese ones. Naming the fonts still helps on desktop, where
+  // they are often installed.
   const jaFonts = {
-    'Playfair Display': '"Noto Serif JP","Yu Mincho","Hiragino Mincho ProN",serif',
-    'Lora': '"Noto Serif JP","Yu Mincho","Hiragino Mincho ProN",serif',
-    'Source Serif 4': '"Noto Serif JP","Yu Mincho","Hiragino Mincho ProN",serif',
-    'Georgia': '"Noto Serif JP","Yu Mincho","Hiragino Mincho ProN",serif',
-    'IBM Plex Sans': '"Noto Sans JP","Hiragino Sans","Yu Gothic",sans-serif',
+    'Playfair Display': '"Noto Serif JP","Yu Mincho","Hiragino Mincho ProN","Noto Serif CJK JP",serif',
+    'Lora': '"Noto Serif JP","Yu Mincho","Hiragino Mincho ProN","Noto Serif CJK JP",serif',
+    'Source Serif 4': '"Noto Serif JP","Yu Mincho","Hiragino Mincho ProN","Noto Serif CJK JP",serif',
+    'Georgia': '"Noto Serif JP","Yu Mincho","Hiragino Mincho ProN","Noto Serif CJK JP",serif',
+    'IBM Plex Sans': '"Noto Sans JP","Hiragino Sans","Yu Gothic","Noto Sans CJK JP",sans-serif',
   };
 
   function load() {
