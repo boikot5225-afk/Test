@@ -83,6 +83,63 @@ jobs:
           NODE
           node --test tests/deepseek-model.test.mjs
 
+      - name: Build a readerAI-only deployment copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("functions/index.js")
+          source = path.read_text()
+
+          # firebase-tools resolves every secret the codebase declares before it
+          # deploys anything, and the deploying service account cannot read
+          # OPENROUTER_API_KEY. Deploying readerAI therefore fails on a secret
+          # it does not even use, so the TTS/STT half is cut out of the copy
+          # that gets uploaded. The repository keeps the whole file; only this
+          # build directory is trimmed.
+          marker = "// Cloud TTS proxy:"
+          marker_at = source.find(marker)
+          if marker_at < 0:
+              raise SystemExit("Cloud TTS marker not found")
+          section_at = source.rfind("// \u2500", 0, marker_at)
+          if section_at < 0:
+              raise SystemExit("readerAI section boundary not found")
+          source = source[:section_at].rstrip() + "\n"
+
+          for declaration in (
+              "const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');\n",
+              "const SELFHOST_TTS_STT_URL = defineSecret('SELFHOST_TTS_STT_URL');\n",
+              "const SELFHOST_TOKEN = defineSecret('SELFHOST_TOKEN');\n",
+          ):
+              source = source.replace(declaration, "")
+
+          # What must survive the cut, and what must not.
+          for item in (
+              "exports.readerAI = onCall(",
+              "thinking: { type: 'disabled' }",
+              "response_format: { type: 'json_object' }",
+              "defineSecret('DEEPSEEK_API_KEY')",
+              "if (lang === 'ja')",
+          ):
+              if item not in source:
+                  raise SystemExit(f"Required readerAI content missing after trim: {item}")
+          for item in (
+              "defineSecret('OPENROUTER_API_KEY')",
+              "defineSecret('SELFHOST_TTS_STT_URL')",
+              "defineSecret('SELFHOST_TOKEN')",
+              "exports.ttsAudio",
+              "exports.transcribeAudio",
+          ):
+              if item in source:
+                  raise SystemExit(f"Should have been trimmed away: {item}")
+
+          path.write_text(source)
+          print("readerAI-only deployment copy prepared")
+          PY
+          node --check functions/index.js
+
       - name: Select deployment credential
         shell: bash
         run: |
