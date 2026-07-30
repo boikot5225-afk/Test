@@ -131,7 +131,9 @@ export function htmlToParagraphs(html, { lang = null, canonicalLang, chunkLongPa
   const nodes = [...doc.body?.querySelectorAll(blockSelector) || []];
   const paragraphs = [];
   const seen = new Set();
-  const isChinese = canonicalLang(lang) === 'zh';
+  // Chinese and Japanese are written without spaces, so a 420-char paragraph is
+  // a wall of text — both get the shorter CJK chunk.
+  const isCjk = ['zh', 'ja'].includes(canonicalLang(lang));
 
   const pushParagraph = (raw) => {
     const clean = cleanEpubText(raw);
@@ -141,7 +143,7 @@ export function htmlToParagraphs(html, { lang = null, canonicalLang, chunkLongPa
     seen.add(key);
     const parts = clean.split(/\n\s*\n+/).map(cleanEpubText).filter(Boolean);
     for (const part of (parts.length ? parts : [clean])) {
-      chunkLongParagraph(part.replace(/\n+/g, ' '), isChinese ? 150 : 420).forEach(item => {
+      chunkLongParagraph(part.replace(/\n+/g, ' '), isCjk ? 150 : 420).forEach(item => {
         if (item && !looksLikeEpubBoilerplate(item)) paragraphs.push(item);
       });
     }
@@ -165,7 +167,7 @@ export function htmlToParagraphs(html, { lang = null, canonicalLang, chunkLongPa
   if (bodyChars > 0 && (paragraphs.length === 0 || paragraphChars < bodyChars * 0.82)) {
     const fallback = [];
     bestText.split(/\n\s*\n+|\n+/).map(cleanEpubText).filter(item => item && !looksLikeEpubBoilerplate(item)).forEach(part => {
-      chunkLongParagraph(part, isChinese ? 150 : 420).forEach(item => fallback.push(item));
+      chunkLongParagraph(part, isCjk ? 150 : 420).forEach(item => fallback.push(item));
     });
     if (fallback.join('').replace(/\s+/g, '').length > paragraphChars) return fallback.filter(item => item.length > 1);
   }
@@ -179,7 +181,7 @@ export function htmlToMixedItems(html, { lang = null, canonicalLang, chunkLongPa
   doc.querySelectorAll('script,style,nav,header,footer,svg,iframe,object,form,noscript').forEach(n => n.remove());
   doc.querySelectorAll('br').forEach(n => n.replaceWith(doc.createTextNode('\n')));
 
-  const isChinese = canonicalLang(lang) === 'zh';
+  const isCjk = ['zh', 'ja'].includes(canonicalLang(lang));
   const items = [];
   const seenText = new Set();
   const seenImgs = new Set();
@@ -192,7 +194,7 @@ export function htmlToMixedItems(html, { lang = null, canonicalLang, chunkLongPa
     seenText.add(key);
     const parts = clean.split(/\n\s*\n+/).map(cleanEpubText).filter(Boolean);
     for (const part of (parts.length ? parts : [clean])) {
-      chunkLongParagraph(part.replace(/\n+/g, ' '), isChinese ? 150 : 420).forEach(chunk => {
+      chunkLongParagraph(part.replace(/\n+/g, ' '), isCjk ? 150 : 420).forEach(chunk => {
         if (chunk && !looksLikeEpubBoilerplate(chunk)) items.push(chunk);
       });
     }

@@ -1,6 +1,7 @@
 function canonicalLang(value) {
   const raw = String(value || 'fr').trim().toLowerCase();
   if (raw === 'zh' || raw === 'cn' || raw.startsWith('zh-')) return 'zh';
+  if (raw === 'ja' || raw === 'jp' || raw.startsWith('ja-')) return 'ja';
   if (raw === 'en' || raw.startsWith('en-')) return 'en';
   if (raw === 'es' || raw.startsWith('es-')) return 'es';
   if (raw === 'de' || raw.startsWith('de-')) return 'de';

@@ -106,7 +106,7 @@ async function handleSemanticEpub(event, originalImport) {
     setInputValue('reader-import-title', result.title);
     setInputValue('reader-import-author', result.author);
     const languageSelect = document.getElementById('reader-import-lang');
-    const validMetadataLang = ['fr', 'en', 'zh', 'es'].includes(result.lang);
+    const validMetadataLang = ['fr', 'en', 'zh', 'es', 'ja'].includes(result.lang);
     if (languageSelect && validMetadataLang && languageSelect.dataset.userChanged !== '1') {
       languageSelect.value = result.lang;
     }

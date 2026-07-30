@@ -288,7 +288,7 @@ export function createReaderWordState(opts) {
     if (isCommonWord(normalized, language) || (language === 'fr' && findVerbByForm(normalized))) return { cls: 'rw-known', title: 'изучено' };
     if (seen >= fadeAfter) return { cls: 'rw-faded', title: `встречалось ${seen} раз — подсветка скрыта` };
     if (seen >= seenAfter) return { cls: 'rw-seen', title: `часто встречалось: ${seen} абз.` };
-    return { cls: 'rw-new', title: language === 'zh' ? 'новый китайский сегмент' : 'новое слово' };
+    return { cls: 'rw-new', title: language === 'zh' ? 'новый китайский сегмент' : language === 'ja' ? 'новый японский сегмент' : 'новое слово' };
   };
   const statusRu = state => {
     if (!state) return 'новое'; const seen = Number(state.seen || 0);

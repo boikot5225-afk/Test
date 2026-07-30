@@ -1,4 +1,6 @@
-const ZH_PINYIN_KEY = 'an2_reader_zh_pinyin_mode_v1';
+// One setting for both ruby languages; the storage key keeps its original
+// name so existing installs do not lose the user's choice.
+const RUBY_MODE_KEY = 'an2_reader_zh_pinyin_mode_v1';
 
 const READER_THEMES = new Set([
   'paper', 'ivory', 'sepia', 'vellum', 'sage', 'mist', 'eink', 'ink', 'amoled',
@@ -13,8 +15,8 @@ export function normalizeReaderTheme(theme) {
   return READER_THEMES.has(normalized) ? normalized : 'paper';
 }
 
-function zhPinyinOn() {
-  try { return (localStorage.getItem(ZH_PINYIN_KEY) || 'unknown') !== 'off'; }
+function rubyScaffoldOn() {
+  try { return (localStorage.getItem(RUBY_MODE_KEY) || 'unknown') !== 'off'; }
   catch { return true; }
 }
 
@@ -57,6 +59,17 @@ export function createReaderDisplay({
     'IBM Plex Sans': '"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif',
   };
 
+  // Japanese needs its own stack rather than reusing the SC one: the same code
+  // points are drawn differently per region (今 直 骨 among many others), so a
+  // Simplified Chinese font renders Japanese text in visibly wrong shapes.
+  const jaFonts = {
+    'Playfair Display': '"Noto Serif JP","Yu Mincho","Hiragino Mincho ProN",serif',
+    'Lora': '"Noto Serif JP","Yu Mincho","Hiragino Mincho ProN",serif',
+    'Source Serif 4': '"Noto Serif JP","Yu Mincho","Hiragino Mincho ProN",serif',
+    'Georgia': '"Noto Serif JP","Yu Mincho","Hiragino Mincho ProN",serif',
+    'IBM Plex Sans': '"Noto Sans JP","Hiragino Sans","Yu Gothic",sans-serif',
+  };
+
   function load() {
     let settings;
     try { settings = { ...defaults, ...JSON.parse(localStorage.getItem(key) || '{}') }; }
@@ -74,12 +87,14 @@ export function createReaderDisplay({
     if (!root) return;
     root.style.setProperty('--rd-font', fonts[settings.font] || fonts['Playfair Display']);
     root.style.setProperty('--rd-font-zh', zhFonts[settings.font] || zhFonts['Lora']);
+    root.style.setProperty('--rd-font-ja', jaFonts[settings.font] || jaFonts['Lora']);
     root.style.setProperty('--rd-size', Number(settings.size) + 'px');
     const lh = Number(settings.lh) / 100;
     root.style.setProperty('--rd-lh', lh.toFixed(2));
-    // Chinese needs extra line-height when pinyin is visible above characters
-    const zhLh = zhPinyinOn() ? Math.max(lh, 1.85).toFixed(2) : lh.toFixed(2);
-    root.style.setProperty('--rd-zh-lh', zhLh);
+    // CJK needs extra line-height when the ruby scaffold (pinyin / furigana)
+    // is visible above the characters.
+    const cjkLh = rubyScaffoldOn() ? Math.max(lh, 1.85).toFixed(2) : lh.toFixed(2);
+    root.style.setProperty('--rd-cjk-lh', cjkLh);
     root.dataset.rdTheme = normalizeReaderTheme(settings.theme);
   }
 

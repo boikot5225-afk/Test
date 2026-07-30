@@ -1,3 +1,6 @@
+// The reading scaffold above a token: pinyin over hanzi, furigana over kanji.
+// Both languages share one on/off/learning setting — what changes is only how
+// the button names itself, because "拼" over Japanese text means nothing.
 export function createReaderPinyinControls({
   storageKey,
   getCurrentLang,
@@ -5,48 +8,69 @@ export function createReaderPinyinControls({
   rerender,
   toast,
   buttonId = 'reader-pinyin-btn',
+  rubyLangs = ['zh', 'ja'],
 }) {
+  const supported = new Set(rubyLangs);
+
+  function isJapanese(lang) {
+    return canonicalLang(lang) === 'ja';
+  }
+
+  function glyph(lang) {
+    return isJapanese(lang) ? '振' : '拼';
+  }
+
+  function scriptName(lang) {
+    return isJapanese(lang) ? 'Фуригана' : 'Пиньинь';
+  }
+
   function mode() {
     try { return localStorage.getItem(storageKey) || 'unknown'; }
     catch { return 'unknown'; }
   }
 
-  function label(value = mode()) {
-    return value === 'off' ? '拼×' : value === 'learning' ? '拼*' : '拼';
+  function label(value = mode(), lang = getCurrentLang()) {
+    const g = glyph(lang);
+    return value === 'off' ? `${g}×` : value === 'learning' ? `${g}*` : g;
   }
 
-  function title(value = mode()) {
+  function title(value = mode(), lang = getCurrentLang()) {
+    const name = scriptName(lang);
+    const over = isJapanese(lang) ? 'японских слов с кандзи' : 'китайских слов';
     return value === 'off'
-      ? 'Пиньинь выключен'
+      ? `${name} выключена`
       : value === 'learning'
-        ? 'Пиньинь только для слов в изучении/проблемных'
-        : 'Пиньинь для всех не изученных китайских слов, где он есть';
+        ? `${name} только для слов в изучении/проблемных`
+        : `${name} для всех не изученных ${over}, где она есть`;
   }
 
   function update(lang = getCurrentLang()) {
     const button = document.getElementById(buttonId);
     if (!button) return;
-    const isChinese = canonicalLang(lang) === 'zh';
+    const hasRuby = supported.has(canonicalLang(lang));
     const value = mode();
-    const hint = title(value);
-    button.style.display = isChinese ? 'flex' : 'none';
-    button.textContent = label(value);
+    const hint = title(value, lang);
+    button.style.display = hasRuby ? 'flex' : 'none';
+    button.textContent = label(value, lang);
     button.title = hint;
     button.setAttribute('aria-label', hint);
-    button.classList.toggle('on', isChinese && value !== 'off');
+    button.classList.toggle('on', hasRuby && value !== 'off');
   }
 
   function cycle() {
+    const lang = getCurrentLang();
     const current = mode();
     const next = current === 'unknown' ? 'learning' : current === 'learning' ? 'off' : 'unknown';
     try { localStorage.setItem(storageKey, next); } catch {}
-    update(getCurrentLang());
+    update(lang);
     rerender();
+    const g = glyph(lang);
+    const name = scriptName(lang);
     toast(next === 'off'
-      ? '拼 Пиньинь выключен'
+      ? `${g} ${name} выключена`
       : next === 'learning'
-        ? '拼 Пиньинь только для слов в работе'
-        : '拼 Пиньинь для всех новых слов');
+        ? `${g} ${name} только для слов в работе`
+        : `${g} ${name} для всех новых слов`);
     return next;
   }
 

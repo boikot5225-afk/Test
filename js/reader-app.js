@@ -1073,14 +1073,15 @@ function readerRefreshParagraphWordClasses(index = null) {
     span.classList.add(visual.cls);
     span.title = visual.title || '';
 
-    // A status change can also change the Chinese pinyin scaffold. Rebuild just this
-    // token so yellow / passively faded words lose pinyin immediately instead of keeping
-    // a stale ruby element until the whole chapter is rendered again.
-    if (readerCanonicalLang(lang) === 'zh') {
-      const pinyin = readerInlinePinyinForWord(word, lang);
-      span.classList.toggle('rw-pinyin-on', !!pinyin);
-      span.innerHTML = pinyin
-        ? `<ruby class="reader-zh-ruby"><span class="reader-zh-hanzi">${readerEscape(word)}</span><rt>${readerEscape(pinyin)}</rt></ruby>`
+    // A status change can also change the ruby scaffold (pinyin for Chinese,
+    // furigana for Japanese). Rebuild just this token so yellow / passively faded
+    // words lose it immediately instead of keeping a stale ruby element until the
+    // whole chapter is rendered again.
+    if (readerIsCjkLang(lang)) {
+      const reading = readerInlineReadingForWord(word, lang);
+      span.classList.toggle('rw-pinyin-on', !!reading);
+      span.innerHTML = reading
+        ? `<ruby class="reader-ruby"><span class="reader-ruby-base">${readerEscape(word)}</span><rt>${readerEscape(reading)}</rt></ruby>`
         : readerEscape(word);
     }
   });
@@ -1140,7 +1141,9 @@ function readerIsCommonWord(word, lang = null) {
   const l = readerCanonicalLang(lang || readerCurrentLang());
   const w = readerNormalizeWord(word, l);
   if (!w) return true;
-  if (l === 'zh') return false;
+  // The "one character = common word" shortcut is Latin-only: 人 and 本 are
+  // ordinary Japanese/Chinese words, not stopwords.
+  if (readerIsCjkLang(l)) return false;
   return w.length <= 1 || READER_COMMON_WORDS.has(w) || READER_COMMON_WORDS.has(w.replace(/^l'/,''));
 }
 
@@ -1164,9 +1167,17 @@ function readerExtractPinyin(data = {}) {
   return String(data.pinyin || data.py || data.pinyin_marked || data.pinyinTone || '').trim();
 }
 
+// The ruby scaffold above a token: pinyin for Chinese, the kana reading for
+// Japanese. Both come from the same lexical entry, under different keys.
+function readerExtractReading(data = {}, lang = null) {
+  const l = readerCanonicalLang(lang || readerCurrentLang());
+  if (l === 'ja') return String(data.reading || data.kana || data.furigana || data.yomi || '').trim();
+  return readerExtractPinyin(data);
+}
+
 function readerShouldShowInlinePinyin(word, lang = null) {
   const l = readerCanonicalLang(lang || readerCurrentLang());
-  if (l !== 'zh') return false;
+  if (!readerIsCjkLang(l)) return false;
   const norm = readerNormalizeWord(word, l);
   if (!norm) return false;
   const st = loadReaderWordState()[readerWordStateKey(norm, l)];
@@ -1205,14 +1216,22 @@ function readerShouldShowInlinePinyin(word, lang = null) {
   return true;
 }
 
-function readerInlinePinyinForWord(word, lang = null) {
+function readerInlineReadingForWord(word, lang = null) {
   const l = readerCanonicalLang(lang || readerCurrentLang());
-  if (l !== 'zh' || !readerShouldShowInlinePinyin(word, l)) return '';
+  if (!readerIsCjkLang(l) || !readerShouldShowInlinePinyin(word, l)) return '';
   const cached = readerGetCachedLexical(word, l);
-  const fromCache = cached ? readerExtractPinyin(cached) : '';
+  const fromCache = cached ? readerExtractReading(cached, l) : '';
+  if (l === 'ja') {
+    // Furigana belongs over kanji: a kana-only token already spells its own
+    // reading. There is no bundled Japanese dictionary yet, so the reading is
+    // whatever the word lookup cached for this word — furigana appears once a
+    // word has been opened, and stays cached from then on.
+    if (!/[一-鿿々〆]/.test(String(word || ''))) return '';
+    return fromCache && fromCache !== String(word) ? fromCache : '';
+  }
   if (fromCache) return fromCache;
   const local = readerLookupChineseWord(word);
-  return local ? readerExtractPinyin(local) : '';
+  return local ? readerExtractReading(local, l) : '';
 }
 
 function showReaderViewedWords() {
@@ -1271,11 +1290,22 @@ const READER_LANG_META = Object.freeze({
   zh: { code: 'zh', label: '中文', short: 'ZH', emoji: '🇨🇳', speech: 'zh-CN' },
   en: { code: 'en', label: 'English', short: 'EN', emoji: '🇬🇧', speech: 'en-US' },
   es: { code: 'es', label: 'Español', short: 'ES', emoji: '🇪🇸', speech: 'es-ES' },
+  ja: { code: 'ja', label: '日本語', short: 'JA', emoji: '🇯🇵', speech: 'ja-JP' },
 });
+
+// Languages written without spaces between words: they need dictionary/ICU
+// segmentation instead of a word regexp, shorter paragraph chunks, and the
+// ruby scaffold above each token (pinyin for zh, furigana for ja).
+const READER_CJK_LANGS = new Set(['zh', 'ja']);
+
+function readerIsCjkLang(lang) {
+  return READER_CJK_LANGS.has(readerCanonicalLang(lang));
+}
 
 function readerCanonicalLang(lang) {
   const raw = String(lang || '').trim().toLowerCase();
   if (raw === 'zh' || raw.startsWith('zh-') || raw === 'cn' || raw === 'chinese') return 'zh';
+  if (raw === 'ja' || raw.startsWith('ja-') || raw === 'jp' || raw === 'japanese') return 'ja';
   if (raw === 'en' || raw.startsWith('en-') || raw === 'english') return 'en';
   if (raw === 'es' || raw.startsWith('es-') || raw === 'spanish') return 'es';
   return 'fr';
@@ -1300,10 +1330,13 @@ function readerLangBadge(lang) {
 
 function readerNormalizeWord(word, lang = null) {
   const l = readerCanonicalLang(lang || readerCurrentLang());
-  if (l === 'zh') {
+  if (readerIsCjkLang(l)) {
+    // Japanese adds 「」『』〔〕・〜 to the Chinese punctuation set. The katakana
+    // prolonged mark ー (U+30FC) deliberately stays out of it — it is a letter
+    // inside コーヒー, not punctuation, and stripping it would break the word.
     return String(word || '')
       .normalize('NFC')
-      .replace(/^[\s，。！？；：、,.!?;:"“”‘’'《》〈〉（）()【】\[\]{}…—\-]+|[\s，。！？；：、,.!?;:"“”‘’'《》〈〉（）()【】\[\]{}…—\-]+$/g, '')
+      .replace(/^[\s，。！？；：、,.!?;:"“”‘’'《》〈〉（）()【】「」『』〔〕・〜～\[\]{}…—\-]+|[\s，。！？；：、,.!?;:"“”‘’'《》〈〉（）()【】「」『』〔〕・〜～\[\]{}…—\-]+$/g, '')
       .trim();
   }
   // Latin-1 accented range covers French, English and Spanish (á í ó ú ñ Ñ ¿ ¡
@@ -1343,10 +1376,77 @@ function readerTokenizeChineseParagraph(text) {
 }
 
 
+// ICU cuts Japanese right after a kanji run, so a verb arrives in pieces:
+// 読んだ comes back as 読 / ん / だ and 飲みます as 飲 / み / ます. Glue the
+// okurigana back on, but never swallow a case particle — 学校 で is a noun plus
+// a particle, while 読ん で is one verb form. Which of the two it is comes down
+// to whether the token so far is bare kanji or already carries okurigana, and
+// that distinction holds well enough to read with.
+const READER_JA_STOP_AFTER_KANJI = new Set([
+  'は', 'が', 'を', 'に', 'へ', 'と', 'も', 'の', 'で', 'や', 'か', 'ね', 'よ', 'な',
+  'から', 'まで', 'より', 'など', 'だ', 'です', 'でした', 'じゃ', 'ます',
+]);
+const READER_JA_STOP_AFTER_OKURIGANA = new Set(['は', 'が', 'を', 'に', 'へ', 'も', 'の', 'か', 'と']);
+// An inflection tail is short — 食べられなかった is about as long as it gets.
+// Without these caps a long hiragana run in literary prose gets swallowed whole
+// (薄暗い + じめじめ + した would become one "word").
+const READER_JA_MAX_TAIL = 8;
+const READER_JA_MAX_TAIL_SEGMENT = 2;
+
+function readerMergeJapaneseOkurigana(segments) {
+  const out = [];
+  const tailLength = [];
+  for (const seg of segments) {
+    const prev = out.length ? out[out.length - 1] : '';
+    // Hiragana only: okurigana is never katakana, and コーヒー after a kanji
+    // noun is its own word, not a tail.
+    const hiraganaOnly = /^[぀-ゟ]+$/.test(seg);
+    if (!hiraganaOnly || !/[一-鿿々〆]/.test(prev)) { out.push(seg); tailLength.push(0); continue; }
+    // "Okurigana has started" means the token already ends in hiragana. While it
+    // still ends in kanji the stricter list applies, so 車 だ stays two tokens
+    // but 読ん だ becomes one.
+    const stops = /[一-鿿々〆]$/.test(prev)
+      ? READER_JA_STOP_AFTER_KANJI
+      : READER_JA_STOP_AFTER_OKURIGANA;
+    const grown = tailLength[tailLength.length - 1] + seg.length;
+    if (stops.has(seg) || seg.length > READER_JA_MAX_TAIL_SEGMENT || grown > READER_JA_MAX_TAIL) {
+      out.push(seg);
+      tailLength.push(0);
+      continue;
+    }
+    out[out.length - 1] = prev + seg;
+    tailLength[tailLength.length - 1] = grown;
+  }
+  return out;
+}
+
+// Japanese has no bundled dictionary the way Chinese has CC-CEDICT in
+// data/zh_dict_core.json, and it does not need one to start reading: ICU ships
+// a dictionary-based Japanese word segmenter inside Intl.Segmenter, which the
+// Android WebView and every target browser already have. That keeps a second
+// multi-megabyte dictionary out of the APK.
+function readerTokenizeJapaneseParagraph(text) {
+  const s = String(text || '');
+  if (!s) return [];
+  try {
+    if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+      const seg = new Intl.Segmenter('ja', { granularity: 'word' });
+      return readerMergeJapaneseOkurigana(
+        Array.from(seg.segment(s), x => x.segment).filter(x => x !== '')
+      );
+    }
+  } catch {}
+  // No segmenter: split on script boundaries instead. Kanji keeps its trailing
+  // okurigana (読んだ stays one token), kana runs and latin runs stay whole —
+  // coarser than ICU, but never splits mid-word.
+  return s.match(/[一-鿿々〆]+[぀-ゟ]*|[゠-ヿ]+|[぀-ゟ]+|[A-Za-z0-9]+|\s+|[^\s]/g) || [];
+}
+
 function readerTokenizeParagraph(p, lang = null) {
   if (p && typeof p === 'object') return [];
   const l = readerCanonicalLang(lang || readerCurrentLang());
   if (l === 'zh') return readerTokenizeChineseParagraph(p);
+  if (l === 'ja') return readerTokenizeJapaneseParagraph(p);
   // Keeps words clickable while preserving punctuation/spaces.
   // Supports French forms like n'essaierais-tu, qu'avec, s'arrêta.
   const word = `[A-Za-zÀ-ÖØ-öø-ÿŒœÆæ]+(?:[’'][A-Za-zÀ-ÖØ-öø-ÿŒœÆæ]+)*(?:-[A-Za-zÀ-ÖØ-öø-ÿŒœÆæ]+(?:[’'][A-Za-zÀ-ÖØ-öø-ÿŒœÆæ]+)*)*`;
@@ -1413,7 +1513,7 @@ function readerCleanEntitySoupParagraphs(book) {
     tagRe.lastIndex = 0;
     return text.replace(tagRe, ' ').replace(/\s+/g, ' ').trim();
   };
-  const isZh = readerCanonicalLang(book.lang || book.sourceLang || 'fr') === 'zh';
+  const isCjk = readerIsCjkLang(book.lang || book.sourceLang || 'fr');
   let changed = false;
   for (const ch of (book.chapters || [])) {
     // Chapter titles are what the library card displays — they were built from
@@ -1435,7 +1535,7 @@ function readerCleanEntitySoupParagraphs(book) {
       for (const p of paragraphs) {
         if (typeof p !== 'string' || !hasSoup(p)) { next.push(p); continue; }
         const text = cleanText(p);
-        if (text) next.push(...readerChunkLongParagraph(text, isZh ? 150 : 420));
+        if (text) next.push(...readerChunkLongParagraph(text, isCjk ? 150 : 420));
       }
       ch.paragraphs = next;
     }
@@ -1446,10 +1546,12 @@ function readerCleanEntitySoupParagraphs(book) {
 window.readerCleanEntitySoupParagraphs = readerCleanEntitySoupParagraphs;
 
 function readerNormalizeBookChunks(book) {
-  const isZh = readerCanonicalLang(book?.lang || book?.sourceLang || 'fr') === 'zh';
-  const doneFlag = isZh ? '_v70ZhChunks' : '_v43SentenceChunks';
+  const lang = readerCanonicalLang(book?.lang || book?.sourceLang || 'fr');
+  // Per-language flag: Chinese books keep the flag they were already chunked
+  // under, so adding Japanese does not rewrite every existing zh book.
+  const doneFlag = lang === 'ja' ? '_v77JaChunks' : lang === 'zh' ? '_v70ZhChunks' : '_v43SentenceChunks';
   if (!book || book[doneFlag]) return false;
-  const maxLen = isZh ? 150 : 380;
+  const maxLen = readerIsCjkLang(lang) ? 150 : 380;
   let changed = false;
   for (const ch of (book.chapters || [])) {
     const next = [];
@@ -1495,7 +1597,7 @@ function readerSentenceContext(paragraphText, word, lang = null) {
   const norm = readerNormalizeWord(word, l);
   const sentences = readerSplitIntoSentences(paragraphText);
   if (!sentences.length) return String(paragraphText || '').trim();
-  const found = l === 'zh'
+  const found = readerIsCjkLang(l)
     ? sentences.find(sent => String(sent || '').includes(norm))
     : sentences.find(sent => readerNormalizeWord(sent, l).split(/[^a-zà-öø-ÿœæ'-]+/i).includes(norm)
       || readerNormalizeWord(sent, l).includes(norm));
@@ -1513,13 +1615,17 @@ function readerRenderParagraphText(p, paragraphIndex) {
     const clean = readerNormalizeWord(tok, lang);
     const clickable = lang === 'zh'
       ? !!clean && /[\u3400-\u9FFF]/.test(clean)
-      : !!clean && /[a-zà-öø-ÿœæ]/i.test(clean);
+      // Kana is clickable too: particles and kana-written words are lookup
+      // targets in Japanese, not punctuation.
+      : lang === 'ja'
+        ? !!clean && /[぀-ヿ々〆㐀-鿿]/.test(clean)
+        : !!clean && /[a-zà-öø-ÿœæ]/i.test(clean);
     if (!clickable) return readerEscape(tok);
     const visual = readerWordVisual(clean, lang);
-    const pinyin = readerInlinePinyinForWord(clean, lang);
-    const pinyinCls = pinyin ? ' rw-pinyin-on' : '';
-    const body = pinyin
-      ? `<ruby class="reader-zh-ruby"><span class="reader-zh-hanzi">${readerEscape(tok)}</span><rt>${readerEscape(pinyin)}</rt></ruby>`
+    const reading = readerInlineReadingForWord(clean, lang);
+    const pinyinCls = reading ? ' rw-pinyin-on' : '';
+    const body = reading
+      ? `<ruby class="reader-ruby"><span class="reader-ruby-base">${readerEscape(tok)}</span><rt>${readerEscape(reading)}</rt></ruby>`
       : readerEscape(tok);
     return `<span class="reader-word ${visual.cls}${pinyinCls}" data-word="${readerEscape(clean)}" data-reader-index="${paragraphIndex}" data-lang="${readerEscape(lang)}" title="${readerEscape(visual.title)}">${body}</span>`;
   }).join('');
@@ -1814,7 +1920,7 @@ function showReaderImportModal(mode) {
           <div><label style="font-size:.74rem;color:var(--text-muted);display:block;margin-bottom:5px">Название</label><input id="reader-import-title" placeholder="Bel-Ami, chapitre 1" style="width:100%;box-sizing:border-box;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text)"></div>
           <div><label style="font-size:.74rem;color:var(--text-muted);display:block;margin-bottom:5px">Автор / пометка</label><input id="reader-import-author" placeholder="Maupassant · A2" style="width:100%;box-sizing:border-box;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text)"></div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px" onchange="this.dataset.userChanged='1'"><option value="" selected disabled>Язык — выбери</option><option value="fr">🇫🇷 Français</option><option value="en">🇬🇧 English</option><option value="zh">🇨🇳 中文</option><option value="es">🇪🇸 Español</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option><option value="news">📰 Новость</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub,.fb2,application/epub+zip,application/x-fictionbook+xml,text/plain" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="reader-import-lang" class="select-control" style="min-width:120px" onchange="this.dataset.userChanged='1'"><option value="" selected disabled>Язык — выбери</option><option value="fr">🇫🇷 Français</option><option value="en">🇬🇧 English</option><option value="zh">🇨🇳 中文</option><option value="es">🇪🇸 Español</option><option value="ja">🇯🇵 日本語</option></select><select id="reader-import-level" class="select-control" style="min-width:90px"><option>A1</option><option selected>A2</option><option>B1</option><option>B2</option><option>original</option></select><select id="reader-import-format" class="select-control" style="min-width:100px"><option value="text" selected>📖 Текст</option><option value="song">🎵 Песня</option><option value="news">📰 Новость</option></select><input type="file" id="reader-import-file" accept=".txt,.md,.text,.epub,.fb2,application/epub+zip,application/x-fictionbook+xml,text/plain" onchange="readerImportFromFile(event)" style="font-size:.78rem;color:var(--text-muted)"></div>
         <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding:12px;background:var(--surface2);border:1px solid var(--accent);border-radius:10px">
           <span style="font-size:.82rem;font-weight:700;color:var(--text)">🎙 Аудио/видео → текст</span>
           <span style="font-size:.74rem;color:var(--text-muted)">Сначала выбери язык записи в списке выше — иначе распознавание может перепутать язык (например принять китайский за французский).</span>
@@ -2314,7 +2420,7 @@ async function readerImportEpubFromFile(file) {
   // guard) — but EPUBs usually declare their language themselves (dc:language),
   // so fill it in from the file when the user hasn't picked one yet.
   const langSel = document.getElementById('reader-import-lang');
-  if (langSel && !langSel.value && ['fr', 'en', 'zh', 'es'].includes(meta.lang)) langSel.value = meta.lang;
+  if (langSel && !langSel.value && ['fr', 'en', 'zh', 'es', 'ja'].includes(meta.lang)) langSel.value = meta.lang;
 
   const { spine, allHtml } = readerExtractEpubManifestAndSpine(opf, base);
   const seenPaths = new Set();
@@ -2512,7 +2618,9 @@ async function readerImportFb2FromFile(file) {
         ? 'es'
         : /^(?:zh|zho|chi|cn|zh-cn|zh-tw)$/.test(declaredLanguage)
           ? 'zh'
-          : readerCanonicalLang(globalThis.AN2_LANG || 'fr');
+          : /^(?:ja|jpn|jp|ja-jp)$/.test(declaredLanguage)
+            ? 'ja'
+            : readerCanonicalLang(globalThis.AN2_LANG || 'fr');
   const authors = [...(titleInfo?.getElementsByTagNameNS?.('*', 'author') || [])].map(author =>
     [
       readerXmlText(author, 'first-name'),
@@ -3137,6 +3245,7 @@ const readerWordPanel = createReaderWordPanel({
   canonicalLang: readerCanonicalLang,
   currentLang: () => readerCurrentLang(),
   extractPinyin: readerExtractPinyin,
+  extractReading: readerExtractReading,
   getSelectedWord: () => readerSelectedWord,
 });
 
@@ -3797,8 +3906,10 @@ function renderReaderAnalysisBlock(data = {}) {
       <div class="ra2-map-label">из чего состоит</div>
       ${parts.map((p, idx) => {
         const col  = colors[idx % colors.length];
-        const text = readerEscape(p.en || p.fr || p.zh || p.text || '');
-        const pinyin = p.pinyin ? `<div class="ra2-pinyin">${readerEscape(p.pinyin)}</div>` : '';
+        const text = readerEscape(p.en || p.fr || p.zh || p.ja || p.text || '');
+        // Chinese sends "pinyin", Japanese sends "reading" — same line either way.
+        const rubyLine = p.pinyin || p.reading;
+        const pinyin = rubyLine ? `<div class="ra2-pinyin">${readerEscape(rubyLine)}</div>` : '';
         return `
         <div class="ra2-part" style="border-left-color:${col}">
           <div class="ra2-fr" style="color:${col}">${text}${pinyin}</div>
@@ -4060,6 +4171,8 @@ async function readerTranslateWordAI(forceOrOptions = true) {
         context,
         instruction: sourceLang === 'zh'
           ? 'Return JSON only: {pos, lemma, surface, pinyin, ru, level, form_note, note, chars}. For Chinese, give pinyin with tone marks and a short Russian meaning. "chars" is a compact per-character breakdown for 2+ character words (empty for single characters). No gender.'
+          : sourceLang === 'ja'
+            ? 'Return JSON only: {pos:"noun|verb|i_adjective|na_adjective|adverb|particle|counter|proper_noun|other", lemma, reading, ru, level:"N5|N4|N3|N2|N1", form_note, note}. lemma is the dictionary form (辞書形), written the way it appears in text. reading is the WHOLE word in hiragana (katakana words keep katakana). form_note names the inflected surface form in Russian (て-форма, прошедшее, отрицание, вежливая форма, потенциальная…). No gender.'
           : sourceLang === 'en'
             ? 'Return JSON only: {pos:"noun|verb|adjective|adverb|preposition|pronoun|other", lemma, ru, level:"A1|A2|B1|B2", form_note, note}. Give a short Russian meaning in ru. For verbs, lemma is the base/infinitive form. No gender needed.'
             : sourceLang === 'es'
@@ -4080,15 +4193,19 @@ async function readerTranslateWordAI(forceOrOptions = true) {
       lemma: d.lemma || d.infinitive || d.inf || d.fr || word,
       ru: d.ru || d.translations || d.meaning || d.suggestion || '',
       gender: pos === 'noun' ? (d.gender || '') : '',
-      level: d.level || (readerCurrentLang() === 'zh' ? 'HSK?' : 'A2'),
+      level: d.level || (readerCurrentLang() === 'zh' ? 'HSK?' : readerCurrentLang() === 'ja' ? 'N?' : 'A2'),
       pinyin: d.pinyin || d.py || d.pinyin_marked || localZhHint.pinyin || '',
+      // Japanese kana reading — the furigana scaffold reads it back out of the
+      // lexical cache on the next chapter render.
+      reading: d.reading || d.kana || d.furigana || d.yomi || '',
       en: d.en || d.english || localZhHint.en || localZhHint.english || '',
       traditional: d.traditional || localZhHint.traditional || '',
       form_note: d.form_note || d.pinyin || d.tense || d.note || localZhHint.note || ''
     };
     readerPutCachedLexical(word, payload, readerCurrentLang());
     readerRenderWordAnalysis(payload, 'deepseek');
-    if (readerCurrentLang() === 'zh') setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
+    // Re-render so the freshly learned pinyin/furigana appears over the token.
+    if (readerIsCjkLang(readerCurrentLang())) setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
     if (st) {
       st.style.display = 'block';
       st.style.color = 'var(--good)';

@@ -81,6 +81,7 @@ VOICE_PREFIX_TO_LANG = {
 }
 
 _zh_g2p = None
+_ja_g2p = None
 
 
 def get_zh_g2p():
@@ -89,6 +90,14 @@ def get_zh_g2p():
         from misaki import zh
         _zh_g2p = zh.ZHG2P()
     return _zh_g2p
+
+
+def get_ja_g2p():
+    global _ja_g2p
+    if _ja_g2p is None:
+        from misaki import ja
+        _ja_g2p = ja.JAG2P()
+    return _ja_g2p
 
 
 def lang_for_voice(voice):
@@ -103,8 +112,15 @@ def synthesize(kokoro, text, voice, speed, depth=0):
     # fall back to splitting the input ourselves and recombining the audio.
     import numpy as np
     try:
-        if voice[:1].lower() == "z":
+        prefix = voice[:1].lower()
+        if prefix == "z":
             phonemes, _ = get_zh_g2p()(text)
+            return kokoro.create(phonemes, voice=voice, speed=speed, is_phonemes=True)
+        # Japanese is the same story as Chinese: the "j" voices were trained on
+        # misaki's Japanese g2p, not on espeak IPA, so espeak-ng output would
+        # come back mispronounced even though espeak nominally supports "ja".
+        if prefix == "j":
+            phonemes, _ = get_ja_g2p()(text)
             return kokoro.create(phonemes, voice=voice, speed=speed, is_phonemes=True)
         lang = lang_for_voice(voice)
         return kokoro.create(text, voice=voice, speed=speed, lang=lang)

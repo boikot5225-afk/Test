@@ -47,14 +47,19 @@ function extractJson(text) {
 }
 
 
+// The reader sends every language it can import. Recognising only zh here used
+// to route English and Spanish into the French prompts below.
 function sourceLang(body) {
   const raw = String(body?.sourceLang || body?.lang || 'fr').trim().toLowerCase();
   if (raw === 'zh' || raw.startsWith('zh-') || raw === 'cn' || raw === 'chinese') return 'zh';
+  if (raw === 'ja' || raw.startsWith('ja-') || raw === 'jp' || raw === 'japanese') return 'ja';
+  if (raw === 'en' || raw.startsWith('en-') || raw === 'english') return 'en';
+  if (raw === 'es' || raw.startsWith('es-') || raw === 'spanish') return 'es';
   return 'fr';
 }
 
 function sourceLangName(code) {
-  return code === 'zh' ? 'Chinese' : 'French';
+  return { zh: 'Chinese', ja: 'Japanese', en: 'English', es: 'Spanish' }[code] || 'French';
 }
 
 function buildPrompt(task, body) {
@@ -68,7 +73,13 @@ function buildPrompt(task, body) {
 TOKEN: ${body.word || body.surface || ''}
 CONTEXT: ${body.context || ''}`;
     }
-    return `You are a French-Russian lexical assistant for a language reader. Analyze the selected French token in context. Return ONLY valid JSON with keys: pos (noun|verb|adjective|adverb|preposition|pronoun|other), lemma, infinitive, surface, ru, gender (m|f|), level (A1|A2|B1|B2), tense, person, number, form_note, note. Rules: if the token is a conjugated French verb form, lemma and infinitive must be the infinitive; form_note must briefly explain what the surface form is (for example: "présent, ils/elles", "participe passé", "imparfait, je/il"). If the token is a noun, give gender. If it is not a noun or verb, still give a short Russian meaning and lemma.
+    if (lang === 'ja') {
+      return `You are a Japanese-Russian lexical assistant for a language reader. Analyze the selected Japanese token in context. Return ONLY valid JSON with keys: pos (noun|verb|i_adjective|na_adjective|adverb|particle|counter|proper_noun|other), lemma, surface, reading, ru, level (N5|N4|N3|N2|N1|unknown), form_note, note. Rules: lemma is the dictionary form (辞書形) written the way it appears in text — 読んだ → 読む, 高くて → 高い; reading is the WHOLE word in hiragana (a katakana word keeps katakana); form_note names the inflected surface form in Russian ("て-форма", "прошедшее", "отрицание", "вежливая форма", "потенциальная форма"); ru must be short and natural Russian; if the token is a name or place, mark proper_noun; do not invent grammar essays.
+
+TOKEN: ${body.word || body.surface || ''}
+CONTEXT: ${body.context || ''}`;
+    }
+    return `You are a ${langName}-Russian lexical assistant for a language reader. Analyze the selected ${langName} token in context. Return ONLY valid JSON with keys: pos (noun|verb|adjective|adverb|preposition|pronoun|other), lemma, infinitive, surface, ru, gender (m|f|), level (A1|A2|B1|B2), tense, person, number, form_note, note. Rules: if the token is a conjugated ${langName} verb form, lemma and infinitive must be the infinitive; form_note must briefly explain what the surface form is (for example: "présent, ils/elles", "participe passé", "imparfait, je/il"). If the token is a noun and the language marks gender, give gender. If it is not a noun or verb, still give a short Russian meaning and lemma.
 
 TOKEN: ${body.word || body.surface || ''}
 CONTEXT: ${body.context || ''}`;
@@ -117,7 +128,42 @@ Rules:
 SENTENCE:
 ${body.text || ''}`;
     }
-    return `You are a French grammar teacher for Russian-speaking learners (B1–C1 level).
+    if (lang === 'ja') {
+      return `You are a Japanese grammar teacher for Russian-speaking learners (N4–N2 level).
+Analyze the sentence below. Split it into 2–5 meaningful structural parts (not every word).
+For each part explain WHAT it is and WHY it is here / why this grammar form is used.
+Then pick 2–3 most interesting grammar points and explain WHY (the rule behind it), with a short parallel example.
+Finally write one "суть" sentence: the key structural insight of the whole sentence.
+
+Return ONLY valid JSON, no markdown:
+{
+  "parts": [
+    {
+      "ja": "meaningful chunk",
+      "reading": "chunk in hiragana",
+      "what": "что это (на русском, 3–6 слов)",
+      "why": "краткий русский перевод этой части"
+    }
+  ],
+  "whys": [
+    {
+      "q": "Почему [конкретная форма]?",
+      "a": "Объяснение правила на русском (1–2 предложения). Краткий пример: ..."
+    }
+  ],
+  "summary": "Одно предложение о главной грамматической идее всего предложения."
+}
+
+Rules:
+- parts: 2–5 items, keep a particle with the phrase it marks (は / が / を / に / で), keep an auxiliary with its verb stem
+- whys: 2–3 items, only for genuinely non-obvious grammar (て-формы, passive/causative, けいご, conditionals, nominalisation, topic vs subject, etc.)
+- all text in "what", "a", "summary" must be in Russian
+- keep everything concise
+
+SENTENCE:
+${body.text || ''}`;
+    }
+    return `You are a ${langName} grammar teacher for Russian-speaking learners (B1–C1 level).
 Analyze the sentence below. Split it into 2–5 meaningful structural parts (not every word).
 For each part explain WHAT it is and WHY it is here / why this grammar form is used.
 Then pick 2–3 most interesting grammar points and explain WHY (the rule behind it), with a short parallel example.
@@ -152,7 +198,6 @@ ${body.text || ''}`;
   }
 
   if (task === 'song_strophe') {
-    const langName = lang === 'zh' ? 'Chinese' : 'French';
     return `You are a ${langName} language teacher helping a Russian-speaking learner understand song lyrics.
 The learner wants to understand the MEANING and FEEL of this strophe — not a word-for-word translation.
 
@@ -321,14 +366,23 @@ exports.readerAI = onCall(
 // ────────────────────────────────────────────────────────────────
 const TTS_MAX_CHARS = 1800;
 const TTS_MODEL = 'hexgrad/kokoro-82m';
+// Default voice per language. Anything not listed here falls back to French,
+// which is why every language the reader can speak needs an entry.
 const TTS_VOICES = Object.freeze({
   fr: 'ff_siwis',
   zh: 'zf_xiaobei',
+  ja: 'jf_alpha',
+  en: 'af_heart',
+  es: 'ef_dora',
 });
 
 function ttsLang(raw) {
   const v = String(raw || 'fr').trim().toLowerCase();
-  return (v === 'zh' || v.startsWith('zh') || v === 'cn' || v === 'chinese') ? 'zh' : 'fr';
+  if (v === 'zh' || v.startsWith('zh') || v === 'cn' || v === 'chinese') return 'zh';
+  if (v === 'ja' || v.startsWith('ja-') || v === 'jp' || v === 'japanese') return 'ja';
+  if (v === 'en' || v.startsWith('en-') || v === 'english') return 'en';
+  if (v === 'es' || v.startsWith('es-') || v === 'spanish') return 'es';
+  return 'fr';
 }
 
 function safeTtsSpeed(raw) {

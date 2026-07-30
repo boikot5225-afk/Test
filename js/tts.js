@@ -23,6 +23,7 @@ let ttsFetchController = null;
 function normalizeLang(lang = 'fr') {
   const raw = String(lang || 'fr').trim().toLowerCase();
   if (raw === 'zh' || raw.startsWith('zh') || raw === 'cn' || raw === 'chinese') return 'zh';
+  if (raw === 'ja' || raw.startsWith('ja-') || raw === 'jp' || raw === 'japanese') return 'ja';
   if (raw === 'en' || raw.startsWith('en-') || raw === 'english') return 'en';
   if (raw === 'es' || raw.startsWith('es-') || raw === 'spanish') return 'es';
   return 'fr';
@@ -268,7 +269,7 @@ async function playAudioBuffer(buffer, mimeType = 'audio/mpeg', token = ++ttsTok
 
 function pickBrowserVoice(lang = 'fr') {
   const n = normalizeLang(lang);
-  const prefix = n === 'zh' ? 'zh' : n === 'en' ? 'en' : n === 'es' ? 'es' : 'fr';
+  const prefix = n === 'zh' ? 'zh' : n === 'ja' ? 'ja' : n === 'en' ? 'en' : n === 'es' ? 'es' : 'fr';
   const voices = window.speechSynthesis?.getVoices?.() || [];
   return voices.find((v) => v.lang.toLowerCase().startsWith(prefix) && v.localService)
     || voices.find((v) => v.lang.toLowerCase().startsWith(prefix))
@@ -282,7 +283,7 @@ function speakViaWebSpeech(text, { lang = 'fr', rate = 1 } = {}) {
   if (!prepared) return Promise.resolve(false);
   window.speechSynthesis.cancel();
   const utt = new SpeechSynthesisUtterance(prepared);
-  utt.lang = normalizedLang === 'zh' ? 'zh-CN' : normalizedLang === 'en' ? 'en-US' : normalizedLang === 'es' ? 'es-ES' : 'fr-FR';
+  utt.lang = normalizedLang === 'zh' ? 'zh-CN' : normalizedLang === 'ja' ? 'ja-JP' : normalizedLang === 'en' ? 'en-US' : normalizedLang === 'es' ? 'es-ES' : 'fr-FR';
   utt.rate = Math.max(0.65, Math.min(1.25, Number(rate) || 1));
   const voice = pickBrowserVoice(normalizedLang);
   if (voice) utt.voice = voice;
@@ -364,6 +365,13 @@ export const KOKORO_VOICES = Object.freeze({
     { id: 'ef_dora', label: 'Dora (ж)' },
     { id: 'em_alex', label: 'Alex (м)' },
     { id: 'em_santa', label: 'Santa (м)' },
+  ],
+  ja: [
+    { id: 'jf_alpha', label: 'Alpha (ж)' },
+    { id: 'jf_gongitsune', label: 'Gongitsune (ж)' },
+    { id: 'jf_nezumi', label: 'Nezumi (ж)' },
+    { id: 'jf_tebukuro', label: 'Tebukuro (ж)' },
+    { id: 'jm_kumo', label: 'Kumo (м)' },
   ],
 });
 

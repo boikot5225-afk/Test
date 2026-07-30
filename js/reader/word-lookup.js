@@ -24,6 +24,11 @@ export function createReaderWordLookup({
       return await fetchChineseDictEntry(normalized);
     }
 
+    // Japanese has no bundled dictionary yet. Stop here instead of falling
+    // through the French quick/verb/noun tables — they can never match kana or
+    // kanji, and the caller already treats null as "ask DeepSeek".
+    if (lang === 'ja') return null;
+
     const quick = quickLookup(normalized);
     if (quick) return quick;
 

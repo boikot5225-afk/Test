@@ -86,7 +86,13 @@ export function createReaderChapterRenderer({
     if (canonicalLang(activeReaderLang) === 'zh' && needsZhCoreLoad()) ensureZhCoreLoaded({ rerender: true });
 
     const readingView = document.getElementById('reader-reading-view');
-    if (readingView) readingView.dataset.readerLang = activeReaderLang;
+    if (readingView) {
+      readingView.dataset.readerLang = activeReaderLang;
+      // Layout, line-height and the ruby scaffold are the same for every
+      // space-less script, only the font differs — so the CSS keys off the
+      // script and reserves data-reader-lang for the font choice.
+      readingView.dataset.readerScript = ['zh', 'ja'].includes(canonicalLang(activeReaderLang)) ? 'cjk' : 'latin';
+    }
 
     const chapters = book.chapters || [];
     const chapterIndex = Math.max(0, Math.min(book.currentChapter || 0, chapters.length - 1));

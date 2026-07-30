@@ -7,8 +7,11 @@ export function createReaderWordPanel({
   canonicalLang,
   currentLang,
   extractPinyin,
+  extractReading = null,
   getSelectedWord,
 }) {
+  const readingOf = (data, lang) => (extractReading ? extractReading(data, lang) : extractPinyin(data));
+
   function ensure() {
     let panel = document.getElementById('reader-word-panel');
     if (panel) return panel;
@@ -75,6 +78,9 @@ export function createReaderWordPanel({
       particle: 'частица',
       measure_word: 'счётное слово',
       classifier: 'счётное слово',
+      counter: 'счётный суффикс',
+      i_adjective: 'い-прилагательное',
+      na_adjective: 'な-прилагательное',
       proper_noun: 'имя собственное',
       name: 'имя собственное',
       other: 'другое',
@@ -128,6 +134,8 @@ export function createReaderWordPanel({
     const number = data.number ? ` · ${data.number}` : '';
     const lang = canonicalLang(data.lang || currentLang());
     const isChinese = lang === 'zh';
+    const isJapanese = lang === 'ja';
+    const jaReading = isJapanese ? readingOf(data, lang) : '';
     const isVerb = filled.pos === 'verb';
     const isNoun = filled.pos === 'noun';
     const pinyin = isChinese ? (extractPinyin(data) || String(data.form_note || '').trim()) : '';
@@ -149,8 +157,27 @@ export function createReaderWordPanel({
     // French-specific, so only route French verbs to "Добавить глагол" — English
     // (and any other non-French) verbs just save as a regular vocabulary word.
     const isFrVerb = isVerb && lang === 'fr';
-    if (saveButton) saveButton.textContent = isChinese ? '＋ В китайский словарь' : (isFrVerb ? '＋ Добавить глагол' : '＋ В словарь');
+    if (saveButton) saveButton.textContent = isChinese ? '＋ В китайский словарь' : isJapanese ? '＋ В японский словарь' : (isFrVerb ? '＋ Добавить глагол' : '＋ В словарь');
     if (!box) return;
+
+    if (isJapanese) {
+      // Same shape as the Chinese card: the reading takes the place pinyin
+      // holds there, and the dictionary form is shown whenever the surface is
+      // inflected away from it.
+      const lemmaLine = lemma && lemma !== form ? `<div class="reader-analysis-meta">словарная форма: ${escape(lemma)}</div>` : '';
+      const note = String(data.note || '').trim();
+      box.innerHTML = `
+        <div class="reader-analysis-card ja">
+          <div class="reader-analysis-kicker">${escape(posRu(filled.pos))} · японский</div>
+          <div class="reader-analysis-main ja-main"><b>${escape(form)}</b></div>
+          ${jaReading ? `<div class="reader-analysis-pinyin">${escape(jaReading)}</div>` : `<div class="reader-analysis-pinyin muted">чтение не пришло — нажми ↻ DeepSeek</div>`}
+          <div class="reader-analysis-ru">${escape(ru)}</div>
+          ${lemmaLine}
+          <div class="reader-analysis-meta">${escape(filled.level)}${formInfo ? ' · ' + escape(formInfo) : ''}</div>
+          ${note && note !== formInfo ? `<div class="reader-analysis-meta">${escape(note)}</div>` : ''}
+        </div>`;
+      return;
+    }
 
     if (isChinese) {
       const lemmaLine = lemma && lemma !== form ? `<div class="reader-analysis-meta">словарная форма: ${escape(lemma)}</div>` : '';

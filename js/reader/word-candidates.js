@@ -13,6 +13,7 @@ const CANDIDATE_STUDY_STATUSES = new Set(['learning', 'problem', 'hard', 'famili
 function canonicalLang(lang) {
   const raw = String(lang || '').trim().toLowerCase();
   if (raw === 'zh' || raw.startsWith('zh-') || raw === 'cn') return 'zh';
+  if (raw === 'ja' || raw.startsWith('ja-') || raw === 'jp') return 'ja';
   if (raw === 'en' || raw.startsWith('en-')) return 'en';
   if (raw === 'es' || raw.startsWith('es-')) return 'es';
   return 'fr';
@@ -20,10 +21,10 @@ function canonicalLang(lang) {
 
 function normalizeWord(word, lang = 'fr') {
   const language = canonicalLang(lang);
-  if (language === 'zh') {
+  if (language === 'zh' || language === 'ja') {
     return String(word || '')
       .normalize('NFC')
-      .replace(/^[\s，。！？；：、,.!?;:"“”‘’'《》〈〉（）()【】\[\]{}…—\-]+|[\s，。！？；：、,.!?;:"“”‘’'《》〈〉（）()【】\[\]{}…—\-]+$/g, '')
+      .replace(/^[\s，。！？；：、,.!?;:"“”‘’'《》〈〉（）()【】「」『』〔〕・〜～\[\]{}…—\-]+|[\s，。！？；：、,.!?;:"“”‘’'《》〈〉（）()【】「」『』〔〕・〜～\[\]{}…—\-]+$/g, '')
       .trim();
   }
   return String(word || '')

@@ -2220,29 +2220,37 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
 }
 
 
-/* v68.4 — Chinese reader readability + pinyin in word card */
+/* v68.4 — CJK reader readability + reading scaffold in word card.
+   Layout is shared by every space-less script (data-reader-script="cjk");
+   only the font is per-language, because Simplified Chinese and Japanese draw
+   the same code points in visibly different shapes. */
+#reader-reading-view[data-reader-script="cjk"] .reader-paragraph{
+  font-size:var(--rd-size) !important;
+  line-height:var(--rd-cjk-lh, 2.05) !important;
+  letter-spacing:.035em !important;
+}
 #reader-reading-view[data-reader-lang="zh"] .reader-paragraph{
   /* No Аа font has CJK glyphs, so the picker used to have zero visible effect
      on Chinese text — --rd-font-zh (set in display.js) maps each pick onto a
      real serif/sans CJK counterpart instead, so choosing a font actually
      changes something here too. */
   font-family:var(--rd-font-zh, "Noto Serif SC"),"Noto Sans CJK SC","Microsoft YaHei","PingFang SC","Heiti SC",system-ui,sans-serif !important;
-  font-size:var(--rd-size) !important;
-  line-height:var(--rd-zh-lh, 2.05) !important;
-  letter-spacing:.035em !important;
 }
-#reader-reading-view[data-reader-lang="zh"] .reader-paragraph-text{
+#reader-reading-view[data-reader-lang="ja"] .reader-paragraph{
+  font-family:var(--rd-font-ja, "Noto Serif JP"),"Noto Sans CJK JP","Hiragino Mincho ProN","Yu Mincho","Yu Gothic",system-ui,sans-serif !important;
+}
+#reader-reading-view[data-reader-script="cjk"] .reader-paragraph-text{
   word-break:break-word !important;
   overflow-wrap:anywhere !important;
 }
-#reader-reading-view[data-reader-lang="zh"] .reader-word{
+#reader-reading-view[data-reader-script="cjk"] .reader-word{
   display:inline-block !important;
   padding:0 3px !important;
   margin:0 1px 2px !important;
   border-radius:6px !important;
   line-height:1.55 !important;
 }
-#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-new{
+#reader-reading-view[data-reader-script="cjk"] .reader-word.rw-new{
   text-decoration-thickness:1px;
   text-underline-offset:4px;
 }
@@ -2260,6 +2268,19 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
   line-height:1.16 !important;
   letter-spacing:.04em;
 }
+.reader-word-panel[data-lang="ja"] #reader-word-title{
+  font-family:"Noto Serif JP","Noto Sans CJK JP","Hiragino Mincho ProN","Yu Mincho","Yu Gothic",system-ui,sans-serif !important;
+  font-size:2.15rem !important;
+  font-style:normal !important;
+  line-height:1.08 !important;
+  letter-spacing:.04em;
+}
+.reader-analysis-card.ja .ja-main{
+  font-family:"Noto Serif JP","Noto Sans CJK JP","Hiragino Mincho ProN","Yu Mincho","Yu Gothic",system-ui,sans-serif !important;
+  font-size:1.85rem !important;
+  line-height:1.16 !important;
+  letter-spacing:.04em;
+}
 .reader-analysis-pinyin{
   margin:5px 0 7px;
   font-family:"IBM Plex Mono",ui-monospace,monospace;
@@ -2273,11 +2294,12 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
   font-family:"IBM Plex Sans",system-ui,sans-serif;
 }
 @media (max-width:700px){
-  #reader-reading-view[data-reader-lang="zh"] .reader-paragraph{
+  #reader-reading-view[data-reader-script="cjk"] .reader-paragraph{
     font-size:var(--rd-size) !important;
-    line-height:var(--rd-zh-lh, 2.08) !important;
+    line-height:var(--rd-cjk-lh, 2.08) !important;
   }
   .reader-word-panel[data-lang="zh"] #reader-word-title,
+  .reader-word-panel[data-lang="ja"] #reader-word-title,
   .reader-word-panel.zh-word-panel #reader-word-title{
     font-size:2.35rem !important;
   }
@@ -2285,17 +2307,17 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
 
 
 /* v68.7 — Chinese inline pinyin: shown for learning/problem/familiar, not merely looked */
-#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-on{
+#reader-reading-view[data-reader-script="cjk"] .reader-word.rw-pinyin-on{
   padding-top:2px !important;
   margin-top:2px !important;
   vertical-align:baseline !important;
 }
-#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-on ruby.reader-zh-ruby{
+#reader-reading-view[data-reader-script="cjk"] .reader-word.rw-pinyin-on ruby.reader-ruby{
   ruby-position:over;
   display:inline-ruby;
   line-height:1.18;
 }
-#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-on rt{
+#reader-reading-view[data-reader-script="cjk"] .reader-word.rw-pinyin-on rt{
   font-family:"IBM Plex Mono",ui-monospace,monospace;
   font-size:.48em;
   line-height:1;
@@ -2304,14 +2326,14 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
   font-weight:500;
   user-select:none;
 }
-#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-known rt{
+#reader-reading-view[data-reader-script="cjk"] .reader-word.rw-known rt{
   display:none !important;
 }
-#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-known{
+#reader-reading-view[data-reader-script="cjk"] .reader-word.rw-known{
   opacity:.86;
 }
 @media (max-width:700px){
-  #reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-on rt{
+  #reader-reading-view[data-reader-script="cjk"] .reader-word.rw-pinyin-on rt{
     font-size:.46em;
   }
 }

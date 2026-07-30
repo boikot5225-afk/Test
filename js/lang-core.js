@@ -1,6 +1,7 @@
 const LANG = {
   fr: { label: 'French', title: 'An II - French', dict: 'reader' },
   zh: { label: 'Chinese', title: 'An II - Chinese', dict: 'zh' },
+  ja: { label: 'Japanese', title: 'An II - Japanese', dict: 'reader' },
   en: { label: 'English', title: 'An II - English', dict: 'reader', disabled: true }
 };
 const FR_ONLY = new Set(['trainer', 'phrases', 'groups', 'study', 'grammar', 'numbers']);

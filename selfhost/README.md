@@ -36,7 +36,9 @@ docker compose up -d --build
 ```
 
 First build downloads the Kokoro model weights (~350MB) and installs
-faster-whisper — can take several minutes on a 1 vCPU box. Then check:
+faster-whisper — can take several minutes on a 1 vCPU box. Chinese and
+Japanese voices additionally pull their own g2p (`misaki[zh,ja]`, which brings
+in fugashi + unidic-lite for Japanese); espeak-ng covers the rest. Then check:
 
 ```bash
 curl http://127.0.0.1:8080/health

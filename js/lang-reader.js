@@ -10,7 +10,9 @@ function filterBooks() {
   library.querySelectorAll('.lib-book-card').forEach(function(card) {
     const icon = card.querySelector('.lib-book-icon');
     const text = icon ? icon.textContent : '';
-    const lang = text.indexOf('\ud83c\udde8\ud83c\uddf3') >= 0 ? 'zh' : text.indexOf('\ud83c\uddec\ud83c\udde7') >= 0 ? 'en' : 'fr';
+    const lang = text.indexOf('\ud83c\udde8\ud83c\uddf3') >= 0 ? 'zh'
+      : text.indexOf('\ud83c\uddef\ud83c\uddf5') >= 0 ? 'ja'
+      : text.indexOf('\ud83c\uddec\ud83c\udde7') >= 0 ? 'en' : 'fr';
     const visible = lang === selected;
     if (card.classList.contains('an2-lang-hidden') !== !visible) card.classList.toggle('an2-lang-hidden', !visible);
     if (visible) count++;
