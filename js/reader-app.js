@@ -1260,10 +1260,10 @@ function readerInlineReadingForWord(word, lang = null) {
     // Furigana belongs over kanji: a kana-only token already spells its own
     // reading.
     if (!/[一-鿿々〆]/.test(String(word || ''))) return '';
-    // JMdict knows the reading of the inflected form itself, so furigana is
-    // there on first render. A cached lookup still wins, since it may carry a
-    // reading DeepSeek corrected in context.
-    const reading = fromCache || readerJaDict.readingOf(word);
+    // Order of authority: what the book itself printed above the word, then a
+    // lookup the reader has already corrected, then the dictionary.
+    const authored = readerCurrentBook?.()?.rubyHints?.[word];
+    const reading = authored || fromCache || readerJaDict.readingOf(word);
     return reading && reading !== String(word) ? reading : '';
   }
   if (fromCache) return fromCache;
@@ -2630,11 +2630,73 @@ function readerXmlHasAncestor(node, localName) {
   return false;
 }
 
+// Plain text arrives in whatever encoding it was saved in, and assuming UTF-8
+// turns a Shift-JIS novel into a page of replacement characters — which is
+// exactly what Japanese .txt files usually are, Aozora Bunko included. Only an
+// XML declaration can be trusted outright; everything else is decided by trying
+// the candidates and seeing which one comes back without damage.
+const READER_TEXT_ENCODINGS = ['utf-8', 'shift_jis', 'euc-jp', 'iso-2022-jp', 'gb18030', 'big5', 'windows-1251'];
+
+function readerDecodeStrict(bytes, encoding) {
+  try {
+    return new TextDecoder(encoding, { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function readerDetectTextEncoding(bytes) {
+  // A UTF-8 or UTF-16 BOM settles it before any guessing.
+  if (bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) return 'utf-8';
+  if (bytes[0] === 0xFF && bytes[1] === 0xFE) return 'utf-16le';
+  if (bytes[0] === 0xFE && bytes[1] === 0xFF) return 'utf-16be';
+
+  // Deciding on a prefix keeps a 20 MB book from being decoded seven times;
+  // a wrong encoding shows up as an invalid sequence long before this much.
+  const sample = bytes.subarray(0, Math.min(bytes.length, 65536));
+  for (const encoding of READER_TEXT_ENCODINGS) {
+    if (readerDecodeStrict(sample, encoding) !== null) return encoding;
+  }
+  return 'utf-8';
+}
+
+// Japanese plain text carries its furigana inline, in the convention Aozora
+// Bunko established: 漢字《かんじ》, with ｜ marking the start when the base is
+// not a plain kanji run (大学｜寄宿舎《ホール》). Left alone it reads as a page
+// full of brackets. Stripped, it also hands over readings no dictionary can
+// know — 観視通話器《ヴィジフォーン》 is the translator's invention — so the
+// pairs are kept as per-book hints that outrank the dictionary.
+// The reading must be kana and short. 《》 doubles as a parenthesis in some
+// texts — 通って《すこしかがまなければならなかった》 is an aside, not a reading —
+// and those two limits are what tell them apart. 16 leaves room for
+// ギャラクティック・アルマナック while still excluding that clause. The base is a kanji run, or any
+// single non-kana character (ρ《ロー》), or anything at all when ｜ marks it.
+const READER_AOZORA_RUBY = /｜([^《》｜\n]{1,24})《([぀-ヿ]{1,16})》|([一-鿿々〆ヶ]{1,12}|[^\s぀-ヿ、。，．・「」『』（）()｜《》\n])《([぀-ヿ]{1,16})》/g;
+// ［＃…］ are the editor's notes about layout, not part of the text.
+const READER_AOZORA_NOTE = /［＃[^］\n]*］/g;
+
+function readerStripAozoraRuby(text, hints = null) {
+  return String(text || '')
+    .replace(READER_AOZORA_RUBY, (_match, marked, markedRuby, kanji, kanjiRuby) => {
+      const base = marked || kanji || '';
+      const reading = markedRuby || kanjiRuby || '';
+      if (hints && base && reading && !hints[base]) hints[base] = reading;
+      return base;
+    })
+    .replace(READER_AOZORA_NOTE, '');
+}
+
+function readerTextHasAozoraRuby(text) {
+  READER_AOZORA_RUBY.lastIndex = 0;
+  return READER_AOZORA_RUBY.test(String(text || ''));
+}
+
 async function readerReadTextFile(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const header = new TextDecoder('ascii').decode(bytes.slice(0, 240));
-  const declared = header.match(/<\?xml[^>]*encoding=["']([^"']+)["']/i)?.[1]?.trim() || 'utf-8';
-  try { return new TextDecoder(declared).decode(bytes); }
+  const declared = header.match(/<\?xml[^>]*encoding=["']([^"']+)["']/i)?.[1]?.trim();
+  const encoding = declared || readerDetectTextEncoding(bytes);
+  try { return new TextDecoder(encoding).decode(bytes); }
   catch { return new TextDecoder('utf-8').decode(bytes); }
 }
 
@@ -2771,7 +2833,11 @@ function saveReaderImport() {
   const lang = readerCanonicalLang(langRaw);
   const level = document.getElementById('reader-import-level')?.value || 'A2';
   const format = document.getElementById('reader-import-format')?.value || 'text';
-  const raw = document.getElementById('reader-import-text')?.value || '';
+  const rawInput = document.getElementById('reader-import-text')?.value || '';
+  // Runs for any language: the markup is only ever present in Japanese text, so
+  // a text without it comes through untouched.
+  const rubyHints = {};
+  const raw = readerStripAozoraRuby(rawInput, rubyHints);
   const chapters = Array.isArray(readerPendingImportChapters) && readerPendingImportChapters.length
     ? readerPendingImportChapters
     : format === 'song'
@@ -2788,6 +2854,7 @@ function saveReaderImport() {
   let firstParaIdx = 0;
   while (firstParaIdx < firstParas.length && firstParas[firstParaIdx] && typeof firstParas[firstParaIdx] === 'object') firstParaIdx++;
   const bookObj = { id: bookId, title, author: authorRaw, level, lang, sourceLang: lang, format, source: readerPendingImportSource || 'manual_text', createdAt: now, updatedAt: now, currentChapter: 0, currentParagraph: firstParaIdx, chapters };
+  if (Object.keys(rubyHints).length) bookObj.rubyHints = rubyHints;
   if (format === 'news') { bookObj.newsSource = authorRaw || 'вставка'; bookObj.newsDate = newsDate; }
   if (readerPendingImportHasAudio) bookObj.hasOriginalAudio = true;
   readerPendingImportHasAudio = false;

@@ -11,7 +11,11 @@ export function splitTextToChapters(rawText, fallbackTitle = 'Текст', chunk
   if (!clean) return [];
 
   const lines = clean.split('\n');
-  const headingRe = /^\s*((chapitre|chapter|глава)\s+[\wivxlcdm\d-]+|[ivxlcdm]{1,8}\.|[0-9]{1,3}\.)\s*[:.\-—]?\s*(.*)$/i;
+  // Japanese and Chinese books head their chapters differently — 第三章, or a
+  // bare kanji numeral fenced by ideographic spaces (　一　...). Without these a
+  // whole novel arrives as one chapter, which is both unnavigable and slow: the
+  // reader builds every paragraph of the open chapter at once.
+  const headingRe = /^\s*((chapitre|chapter|глава)\s+[\wivxlcdm\d-]+|[ivxlcdm]{1,8}\.|[0-9]{1,3}\.|第[〇零一二三四五六七八九十百千万0-9０-９]{1,6}[章話回節部篇編]|[　\s]*[〇一二三四五六七八九十]{1,4}[　\s]+\S)\s*[:.\-—]?\s*(.*)$/i;
   const chunks = [];
   let current = { title: fallbackTitle, lines: [] };
   for (const line of lines) {
@@ -36,7 +40,30 @@ export function splitTextToChapters(rawText, fallbackTitle = 'Текст', chunk
       paragraphs = chunkLongParagraph(chapter.lines.join(' ').replace(/\s+/g, ' '), 380);
     }
     return { id: 'ch_' + index, title: chapter.title || `Глава ${index + 1}`, paragraphs };
-  }).filter(chapter => chapter.paragraphs.length);
+  }).filter(chapter => chapter.paragraphs.length)
+    .flatMap(splitOversizedChapter)
+    .map((chapter, index) => ({ ...chapter, id: 'ch_' + index }));
+}
+
+// A book whose headings this file cannot recognise still must not become one
+// chapter of thousands of paragraphs: the reader renders a whole chapter into
+// the DOM at once, so that is a page the phone cannot lay out. Cut anything
+// oversized into readable parts, keeping the original title.
+const MAX_CHAPTER_PARAGRAPHS = 300;
+
+function splitOversizedChapter(chapter) {
+  const paragraphs = chapter.paragraphs || [];
+  if (paragraphs.length <= MAX_CHAPTER_PARAGRAPHS) return [chapter];
+  const parts = [];
+  for (let start = 0; start < paragraphs.length; start += MAX_CHAPTER_PARAGRAPHS) {
+    const number = parts.length + 1;
+    parts.push({
+      ...chapter,
+      title: `${chapter.title} · часть ${number}`,
+      paragraphs: paragraphs.slice(start, start + MAX_CHAPTER_PARAGRAPHS),
+    });
+  }
+  return parts;
 }
 
 export function splitSongToChapters(rawText, fallbackTitle = 'Песня') {
