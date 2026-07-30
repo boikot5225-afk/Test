@@ -2,6 +2,19 @@ plugins {
     id 'com.android.application'
 }
 
+// Android refuses to install a package over one signed by a different key, and
+// the debug keystore Gradle generates when none exists is created fresh on
+// every machine — so each CI run produced an APK that could not replace the
+// previous one. A keystore handed in through the environment keeps the
+// signature identical across builds and machines; without it the build still
+// works and falls back to the local debug key, which is fine for one machine
+// but not across runners.
+def sharedKeystorePath = System.getenv('ANDROID_KEYSTORE_PATH')
+def sharedKeystorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+def sharedKeyAlias = System.getenv('ANDROID_KEY_ALIAS') ?: 'reader-ai'
+def sharedKeyPassword = System.getenv('ANDROID_KEY_PASSWORD') ?: sharedKeystorePassword
+def hasSharedKeystore = sharedKeystorePath && sharedKeystorePassword && file(sharedKeystorePath).exists()
+
 android {
     namespace 'space.saintjust.reader.stage1'
     compileSdk 35
@@ -10,23 +23,36 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 11
-        versionName '77.34-ja'
+        versionCode 12
+        versionName '77.35-ja'
     }
 
     buildFeatures {
         buildConfig true
     }
 
+    signingConfigs {
+        if (hasSharedKeystore) {
+            shared {
+                storeFile file(sharedKeystorePath)
+                storePassword sharedKeystorePassword
+                keyAlias sharedKeyAlias
+                keyPassword sharedKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix '.debug'
             versionNameSuffix '-debug'
+            if (hasSharedKeystore) signingConfig signingConfigs.shared
         }
         release {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (hasSharedKeystore) signingConfig signingConfigs.shared
         }
     }
 

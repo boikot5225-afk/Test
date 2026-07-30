@@ -28,6 +28,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      # Empty unless the repository defines it. Without a shared keystore each
+      # runner signs with its own generated debug key, and Android then refuses
+      # to install the new APK over the previous one.
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -39,6 +47,18 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Restore the signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret — this APK is signed with a throwaway key and will not install over previous builds."
+            exit 0
+          fi
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "${GITHUB_ENV}"
+          echo "signing key restored"
 
       - name: Build debug APK
         working-directory: android
@@ -65,6 +85,13 @@ jobs:
           # Dev tooling must stay out — scripts/ is excluded by syncWebAssets.
           if unzip -l "$APK" | grep -qF 'assets/www/scripts/'; then
             echo 'dev scripts leaked into the APK'; exit 1
+          fi
+          # The signing certificate is what decides whether this APK can replace
+          # the installed one, so print its fingerprint: it must stay the same
+          # from build to build.
+          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -name apksigner | sort -V | tail -1)"
+          if [[ -n "${APKSIGNER}" ]]; then
+            "${APKSIGNER}" verify --print-certs "$APK" | grep -i 'SHA-256 digest' || true
           fi
           echo "all checks passed"
 
