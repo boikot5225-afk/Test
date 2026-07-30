@@ -1468,9 +1468,12 @@ function readerTokenizeJapaneseParagraph(text) {
   try {
     if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
       const seg = new Intl.Segmenter('ja', { granularity: 'word' });
-      return readerMergeJapaneseOkurigana(
-        Array.from(seg.segment(s), x => x.segment).filter(x => x !== '')
-      );
+      const tokens = Array.from(seg.segment(s), x => x.segment).filter(x => x !== '');
+      // Once JMdict is loaded it decides which ICU pieces belong together.
+      // Until then the hand-written okurigana rules keep the text readable.
+      return readerJaDict.isLoaded()
+        ? readerJaDict.segment(tokens)
+        : readerMergeJapaneseOkurigana(tokens);
     }
   } catch {}
   // No segmenter: split on script boundaries instead. Kanji keeps its trailing

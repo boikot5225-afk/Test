@@ -99,6 +99,7 @@ const DEINFLECT_RULES = [
 
 const MAX_DEINFLECT_DEPTH = 4;
 const KANA = /[぀-ヿ]/;
+const ALL_KANA = /^[぀-ヿ]+$/;
 
 function isKana(ch) {
   return KANA.test(ch);
@@ -163,16 +164,59 @@ export function splitJapaneseRuby(surface, reading) {
   return ruby ? { base, ruby, tail } : null;
 }
 
+// ICU proposes boundaries well but cuts every verb loose from its okurigana.
+// Rather than guess where a tail belongs, ask the dictionary: walk the ICU
+// tokens and glue a run of them together whenever the result is a word. That
+// turns 読 / ん / だ into 読んだ on the evidence of 読む existing, while 学校 /
+// で stays apart because 学校で is not a word — the distinction the hand-written
+// rules could only approximate.
+const MERGE_MAX_TOKENS = 6;
+const MERGE_MAX_CHARS = 12;
+const JAPANESE_RUN = /^[぀-ヿ々〆一-鿿]+$/;
+// JMdict also holds whole phrases — 花が咲く and これは are entries — so an
+// unguarded merge happily swallows 花 が 咲いている into one clickable "word".
+// A case particle standing alone is a boundary no single word crosses, which
+// stops the phrase entries without touching 読 ん で いる, where で is part of
+// the verb form rather than a particle in its own right.
+const CASE_PARTICLES = new Set(['が', 'を', 'は', 'に', 'へ', 'と', 'も', 'の']);
+
+export function mergeByDictionary(tokens, isWord) {
+  if (typeof isWord !== 'function') return tokens;
+  const out = [];
+  let i = 0;
+  while (i < tokens.length) {
+    let take = 1;
+    // Never merge across punctuation, spaces or latin either: those are real
+    // boundaries no dictionary entry should be allowed to cross.
+    if (JAPANESE_RUN.test(tokens[i] || '')) {
+      let joined = tokens[i];
+      for (let n = 2; n <= MERGE_MAX_TOKENS && i + n <= tokens.length; n++) {
+        const next = tokens[i + n - 1];
+        if (!JAPANESE_RUN.test(next || '') || CASE_PARTICLES.has(next)) break;
+        joined += next;
+        if (joined.length > MERGE_MAX_CHARS) break;
+        if (isWord(joined)) take = n;
+      }
+    }
+    out.push(tokens.slice(i, i + take).join(''));
+    i += take;
+  }
+  return out;
+}
+
 export function createJapaneseDictionary({ url, log = console }) {
-  let map = null;
+  // The file stores each written form as an index into a shared entry table,
+  // so 綺麗 and きれい cost one entry between them rather than two.
+  let entries = null;
+  let index = null;
   let loading = null;
 
-  function isLoaded() { return !!map; }
-  function needsLoad() { return !map && !loading; }
-  function count() { return map ? Object.keys(map).length : 0; }
+  function isLoaded() { return !!index; }
+  function needsLoad() { return !index && !loading; }
+  function count() { return index ? Object.keys(index).length : 0; }
 
   function ensureLoaded(options = {}) {
-    if (map) return Promise.resolve(map);
+    if (index) return Promise.resolve(index);
     if (loading) return loading;
     loading = fetch(url, { cache: 'force-cache' })
       .then(res => {
@@ -180,21 +224,25 @@ export function createJapaneseDictionary({ url, log = console }) {
         return res.json();
       })
       .then(payload => {
-        map = Object.freeze(payload?.map || {});
+        entries = payload?.entries || [];
+        index = Object.freeze(payload?.map || {});
         options.onLoaded?.(count(), payload?.version || 'unknown');
-        return map;
+        return index;
       })
       .catch(error => {
         log.warn?.('[ja core json] load failed:', error?.message || error);
-        map = Object.freeze({});
-        return map;
+        entries = [];
+        index = Object.freeze({});
+        return index;
       });
     return loading;
   }
 
   function raw(word) {
-    if (!map || !word) return null;
-    const row = map[word];
+    if (!index || !word) return null;
+    const id = index[word];
+    if (typeof id !== 'number') return null;
+    const row = entries?.[id];
     return Array.isArray(row) ? row : null;
   }
 
@@ -202,8 +250,9 @@ export function createJapaneseDictionary({ url, log = console }) {
     const row = raw(word);
     if (!row) return null;
     const [reading, pos, en] = row;
-    // A kana headword stores no reading because the key already is one.
-    const lemmaReading = reading || word;
+    // The stored reading belongs to the kanji spelling. A key that is already
+    // kana is its own reading.
+    const lemmaReading = ALL_KANA.test(word) ? word : (reading || word);
     return {
       lang: 'ja',
       word,
@@ -252,18 +301,40 @@ export function createJapaneseDictionary({ url, log = console }) {
     return null;
   }
 
+  // Segmentation asks about the same candidate strings over and over inside one
+  // chapter, and a miss is the expensive case — it walks the whole rule table
+  // to depth four before giving up.
+  const lookupCache = new Map();
+  const LOOKUP_CACHE_MAX = 4000;
+
   function lookup(surface) {
     const word = String(surface || '').trim();
-    if (!word || !map) return null;
+    if (!word || !index) return null;
+    if (lookupCache.has(word)) return lookupCache.get(word);
     const direct = entryFor(word, word, '');
-    if (direct) return direct;
-    const found = deinflect(word);
-    return found ? entryFor(found.lemma, word, found.note) : null;
+    const found = direct || (() => {
+      const hit = deinflect(word);
+      return hit ? entryFor(hit.lemma, word, hit.note) : null;
+    })();
+    if (lookupCache.size >= LOOKUP_CACHE_MAX) lookupCache.clear();
+    lookupCache.set(word, found);
+    return found;
+  }
+
+  function isWord(surface) {
+    return !!lookup(surface);
+  }
+
+  // ICU tokens in, dictionary-checked words out. Returns the input untouched
+  // while the dictionary is still loading, so reading never waits on it.
+  function segment(tokens) {
+    if (!index) return tokens;
+    return mergeByDictionary(tokens, isWord);
   }
 
   function readingOf(surface) {
     return lookup(surface)?.reading || '';
   }
 
-  return { ensureLoaded, isLoaded, needsLoad, count, lookup, readingOf };
+  return { ensureLoaded, isLoaded, needsLoad, count, lookup, readingOf, isWord, segment };
 }

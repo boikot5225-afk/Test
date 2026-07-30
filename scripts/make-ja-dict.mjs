@@ -11,14 +11,15 @@
 //   xz -dk /tmp/jam/jamdict_data-1.5/jamdict_data/jamdict.db.xz
 //   node scripts/make-ja-dict.mjs /tmp/jam/jamdict_data-1.5/jamdict_data/jamdict.db
 //
-// What goes in, and why not everything: the file is keyed by the forms that
-// actually need a local answer. Every kanji form is included, because those are
-// the ones needing furigana and the ones a reader cannot sound out. Kana-only
-// forms are included only for verbs and adjectives, because the deinflector has
-// to resolve ない / いる / する chains that are written in kana. Kana-only nouns
-// are left out — they already spell their own reading, and their meaning comes
-// from DeepSeek like any other uncached word. That keeps the file in the same
-// weight class as the Chinese one instead of doubling it.
+// Every written form of every entry becomes a key — kanji and kana alike.
+// Kana matters for two reasons the first cut of this file underestimated:
+// 綺麗 is just as often written きれい, and the segmenter needs kana words in
+// order to find their boundaries at all.
+//
+// Storing [reading, pos, gloss] under each key would duplicate the gloss across
+// every form of the same word and push the file past 22 MB. Instead the entries
+// are emitted once into an array and the map holds indices into it, which is
+// what keeps full coverage close to the weight of the kanji-only version.
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 
@@ -61,7 +62,7 @@ const POS_CODES = [
   [/^noun/i, 'n'],
 ];
 const INFLECTABLE = new Set(['v5k', 'v5k-s', 'v5g', 'v5s', 'v5t', 'v5n', 'v5b', 'v5m', 'v5r', 'v5u', 'v1', 'vk', 'vs', 'adj-i']);
-const GLOSS_MAX = 60;
+const GLOSS_MAX = 50;
 
 function posCode(text) {
   for (const [pattern, code] of POS_CODES) if (pattern.test(text)) return code;
@@ -113,20 +114,34 @@ for (const r of rows('select idseq, text from Kana')) {
 const senseCount = new Map();
 for (const r of rows('select idseq, count(*) as n from Sense group by idseq')) senseCount.set(r.idseq, r.n);
 
+const entries = [];
+const entryIndex = new Map();
 const map = {};
 const headwordScore = new Map();
 
-function claim(form, value, score) {
+// One row per (reading, pos, gloss) triple; identical triples across entries
+// collapse into the same index.
+function entryId(reading, code, meaning) {
+  const key = `${reading}\u0000${code}\u0000${meaning}`;
+  let id = entryIndex.get(key);
+  if (id === undefined) {
+    id = entries.length;
+    entries.push([reading, code, meaning]);
+    entryIndex.set(key, id);
+  }
+  return id;
+}
+
+function claim(form, id, score) {
   if (score === null) {
-    if (form in map) return false;
-    map[form] = value;
-    return true;
+    if (form in map) return;
+    map[form] = id;
+    return;
   }
   const held = headwordScore.get(form);
-  if (held !== undefined && held >= score) return false;
-  map[form] = value;
+  if (held !== undefined && held >= score) return;
+  map[form] = id;
   headwordScore.set(form, score);
-  return held === undefined;
 }
 
 for (const pass of ['headword', 'variant']) {
@@ -139,26 +154,30 @@ for (const pass of ['headword', 'variant']) {
     const kanji = kanjiForms.get(r.idseq) || [];
     const score = pass === 'headword' ? (senseCount.get(r.idseq) || 1) : null;
     const kanjiPass = pass === 'headword' ? kanji.slice(0, 1) : kanji.slice(1);
-    // Kana headwords only earn their bytes when the deinflector needs them.
-    const kanaPass = !INFLECTABLE.has(code) ? []
-      : pass === 'headword' ? readings.slice(0, 1) : readings.slice(1);
+    const kanaPass = pass === 'headword' ? readings.slice(0, 1) : readings.slice(1);
 
-    for (const form of kanjiPass) claim(form, [reading, code, meaning], score);
-    for (const form of kanaPass) claim(form, ['', code, meaning], score);
+    // Both spellings point at the same row. A kana key needs no stored
+    // reading — it spells its own — and the runtime knows that from the key,
+    // so emitting a second row just to blank the reading would double the
+    // array and defeat the deduplication.
+    const id = entryId(reading, code, meaning);
+    for (const form of kanjiPass) claim(form, id, score);
+    for (const form of kanaPass) claim(form, id, score);
   }
 }
 
 const payload = {
   version: '77.33-jmdict-via-jamdict-data-1.5',
-  format: 'an2-ja-core-v1-compact-map',
+  format: 'an2-ja-core-v2-indexed',
   source: 'JMdict (EDRDG), packaged by jamdict-data 1.5 on PyPI',
   license: 'Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)',
   license_url: 'https://www.edrdg.org/edrdg/licence.html',
-  note: 'Compact local dictionary for readings, dictionary forms and lookups. Values are [kana_reading, pos_code, english_gloss]; an empty reading means the key is already kana. Russian explanations are produced and cached separately by DeepSeek.',
+  note: 'Compact local dictionary for readings, dictionary forms, segmentation and lookups. "map" sends each written form to an index in "entries"; an entry is [kana_reading, pos_code, english_gloss]; when the key itself is all kana it is its own reading, and entries[i][0] holds the reading of the kanji spelling. Russian explanations are produced and cached separately by DeepSeek.',
   entry_count: Object.keys(map).length,
+  entries,
   map,
 };
 
 fs.mkdirSync('data', { recursive: true });
 fs.writeFileSync('data/ja_dict_core.json', JSON.stringify(payload));
-console.log(`ja_dict_core.json: ${payload.entry_count} keys`);
+console.log(`ja_dict_core.json: ${payload.entry_count} keys over ${entries.length} entries`);
