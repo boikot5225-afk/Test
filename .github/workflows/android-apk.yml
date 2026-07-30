@@ -29,13 +29,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      # Empty unless the repository defines it. Without a shared keystore each
-      # runner signs with its own generated debug key, and Android then refuses
-      # to install the new APK over the previous one.
+      # The keystore file is the only secret worth storing — its password and
+      # alias are useless without it and have defaults in the build file. Absent
+      # this, each runner signs with its own generated debug key and Android
+      # refuses to install the new APK over the previous one.
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      # Optional: only needed if the keystore is ever replaced by one that does
+      # not use the defaults in android/app/build.gradle.
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 

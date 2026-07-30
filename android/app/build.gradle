@@ -9,11 +9,14 @@ plugins {
 // signature identical across builds and machines; without it the build still
 // works and falls back to the local debug key, which is fine for one machine
 // but not across runners.
+// Only the keystore file is a secret. Its password and alias protect that file
+// and are worthless without it, so they carry defaults here — which reduces the
+// setup to storing one value instead of four.
 def sharedKeystorePath = System.getenv('ANDROID_KEYSTORE_PATH')
-def sharedKeystorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+def sharedKeystorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD') ?: 'readerai2026'
 def sharedKeyAlias = System.getenv('ANDROID_KEY_ALIAS') ?: 'reader-ai'
 def sharedKeyPassword = System.getenv('ANDROID_KEY_PASSWORD') ?: sharedKeystorePassword
-def hasSharedKeystore = sharedKeystorePath && sharedKeystorePassword && file(sharedKeystorePath).exists()
+def hasSharedKeystore = sharedKeystorePath && file(sharedKeystorePath).exists()
 
 android {
     namespace 'space.saintjust.reader.stage1'
