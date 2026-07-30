@@ -9,6 +9,7 @@ export function createReaderChapterRenderer({
   isZhCoreLoaded,
   ensureJaCoreLoaded,
   needsJaCoreLoad,
+  isJaCoreLoaded,
   trackParagraphSeen,
   getBookProgress,
   langBadge,
@@ -37,6 +38,11 @@ export function createReaderChapterRenderer({
     // (individual chars → multi-char words) — must do a full rebuild.
     const prevZhCore  = chapterText.dataset.renderedZhCore;
     const curZhCore   = String(!!(isZhCoreLoaded?.()));
+    // Same for the Japanese dictionary: it is what supplies furigana, so a
+    // chapter rendered before it arrived has none and cannot be patched up by
+    // the fast path.
+    const prevJaCore  = chapterText.dataset.renderedJaCore;
+    const curJaCore   = String(!!(isJaCoreLoaded?.()));
 
     // Fast path is only valid when DOM matches current chapter/state exactly.
     // Translation visibility deliberately does NOT invalidate it: help blocks
@@ -47,6 +53,7 @@ export function createReaderChapterRenderer({
       prevChIdx !== chapterIndex ||
       prevParCount !== paragraphs.length ||
       prevZhCore !== curZhCore ||
+      prevJaCore !== curJaCore ||
       book.format === 'song'
     ) return false;
 
@@ -149,6 +156,7 @@ export function createReaderChapterRenderer({
         chapterText.dataset.renderedParCount = String(paragraphs.length);
         chapterText.dataset.renderedHidden = String(getTranslationsHidden());
         chapterText.dataset.renderedZhCore = String(!!(isZhCoreLoaded?.()));
+        chapterText.dataset.renderedJaCore = String(!!(isJaCoreLoaded?.()));
         chapterText.dataset.activeParagraph = String(paragraphIndex);
         bindReaderInteractions();
         bindSongStropheEvents(book, chapter);
@@ -180,6 +188,7 @@ export function createReaderChapterRenderer({
         chapterText.dataset.renderedParCount = String(paragraphs.length);
         chapterText.dataset.renderedHidden = String(getTranslationsHidden());
         chapterText.dataset.renderedZhCore = String(!!(isZhCoreLoaded?.()));
+        chapterText.dataset.renderedJaCore = String(!!(isJaCoreLoaded?.()));
         chapterText.dataset.activeParagraph = String(paragraphIndex);
 
         bindReaderInteractions();

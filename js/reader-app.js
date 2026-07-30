@@ -27,7 +27,7 @@ import { createReaderLibraryStore } from './reader/library-store.js?v=5';
 import { createReaderDisplay } from './reader/display.js?v=5';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=2-per-paragraph-timer-guard';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
-import { createJapaneseDictionary } from './reader/ja-dict.js?v=1';
+import { createJapaneseDictionary, splitJapaneseRuby } from './reader/ja-dict.js?v=1';
 import { createReaderChapterRenderer } from './reader/chapter-render.js?v=10';
 import { createReaderPagesMode } from './reader/pages-mode.js?v=3';
 import { splitTextToChapters as readerImportSplitTextToChapters,
@@ -1106,9 +1106,7 @@ function readerRefreshParagraphWordClasses(index = null) {
     if (readerIsCjkLang(lang)) {
       const reading = readerInlineReadingForWord(word, lang);
       span.classList.toggle('rw-pinyin-on', !!reading);
-      span.innerHTML = reading
-        ? `<ruby class="reader-ruby"><span class="reader-ruby-base">${readerEscape(word)}</span><rt>${readerEscape(reading)}</rt></ruby>`
-        : readerEscape(word);
+      span.innerHTML = reading ? readerRubyHtml(word, reading, lang) : readerEscape(word);
     }
   });
 }
@@ -1191,6 +1189,17 @@ function readerWordStatusRu(st) { return readerWordState.statusRu(st); }
 
 function readerExtractPinyin(data = {}) {
   return String(data.pinyin || data.py || data.pinyin_marked || data.pinyinTone || '').trim();
+}
+
+// Chinese annotates the whole token — every hanzi carries pinyin, so spreading
+// it across the word is correct. Japanese does not: the kana tail already reads
+// itself, so only the kanji head gets ruby.
+function readerRubyHtml(token, reading, lang) {
+  const base = `<ruby class="reader-ruby"><span class="reader-ruby-base">${readerEscape(token)}</span><rt>${readerEscape(reading)}</rt></ruby>`;
+  if (readerCanonicalLang(lang) !== 'ja') return base;
+  const split = splitJapaneseRuby(token, reading);
+  if (!split) return base;
+  return `<ruby class="reader-ruby"><span class="reader-ruby-base">${readerEscape(split.base)}</span><rt>${readerEscape(split.ruby)}</rt></ruby>${readerEscape(split.tail)}`;
 }
 
 // The ruby scaffold above a token: pinyin for Chinese, the kana reading for
@@ -1652,9 +1661,7 @@ function readerRenderParagraphText(p, paragraphIndex) {
     const visual = readerWordVisual(clean, lang);
     const reading = readerInlineReadingForWord(clean, lang);
     const pinyinCls = reading ? ' rw-pinyin-on' : '';
-    const body = reading
-      ? `<ruby class="reader-ruby"><span class="reader-ruby-base">${readerEscape(tok)}</span><rt>${readerEscape(reading)}</rt></ruby>`
-      : readerEscape(tok);
+    const body = reading ? readerRubyHtml(tok, reading, lang) : readerEscape(tok);
     return `<span class="reader-word ${visual.cls}${pinyinCls}" data-word="${readerEscape(clean)}" data-reader-index="${paragraphIndex}" data-lang="${readerEscape(lang)}" title="${readerEscape(visual.title)}">${body}</span>`;
   }).join('');
 }
@@ -2982,6 +2989,7 @@ const readerChapterRenderer = createReaderChapterRenderer({
   isZhCoreLoaded: () => !!readerZhCoreJson,
   ensureJaCoreLoaded: readerEnsureJaCoreJsonLoaded,
   needsJaCoreLoad: () => readerJaDict.needsLoad(),
+  isJaCoreLoaded: () => readerJaDict.isLoaded(),
   trackParagraphSeen: readerTrackParagraphIndexSeen,
   getBookProgress: readerBookProgress,
   langBadge: readerLangBadge,
@@ -3571,11 +3579,17 @@ async function readerOpenWordPanel(word, paragraphIndex = 0) {
       const hasIpa = String(found?.ipa || '').trim().length > 0;
       // JMdict answers in English just like CC-CEDICT does, so a Japanese hit
       // needs the same follow-up to turn into a Russian explanation.
-      if ((activeLang === 'zh' || activeLang === 'ja') && !hasRu) {
-        await readerTranslateWordAI({ force: false, skipLocal: true });
-      } else if (activeLang === 'en' && !hasIpa) {
-        await readerTranslateWordAI({ force: true, skipLocal: true });
-      }
+      // The local card is already on screen. This call only enriches it, so a
+      // failure must not reach the outer catch and replace a working offline
+      // answer with an error — readerTranslateWordAI has already put the
+      // reason on the status line.
+      try {
+        if ((activeLang === 'zh' || activeLang === 'ja') && !hasRu) {
+          await readerTranslateWordAI({ force: false, skipLocal: true });
+        } else if (activeLang === 'en' && !hasIpa) {
+          await readerTranslateWordAI({ force: true, skipLocal: true });
+        }
+      } catch {}
       if (activeLang === 'zh') setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
       return;
     }
@@ -4261,8 +4275,20 @@ async function readerTranslateWordAI(forceOrOptions = true) {
     return payload;
   } catch(e) {
     const msg = e?.message || String(e);
-    readerRenderWordError('DeepSeek не сработал: ' + msg);
-    if (st) { st.style.display = 'block'; st.style.color = 'var(--bad)'; st.textContent = '❌ DeepSeek не сработал: ' + msg; }
+    // A local dictionary hit is already on screen when this runs as a
+    // follow-up (Chinese and Japanese ask DeepSeek only for the Russian
+    // meaning). Replacing the card with an error would throw away a perfectly
+    // good offline answer, so the failure goes to the status line instead.
+    const localFallback = skipLocal ? (readerLookupChineseWord(word) || readerLookupJapaneseWord(word)) : null;
+    if (localFallback) readerRenderWordAnalysis(localFallback, 'local');
+    else readerRenderWordError('DeepSeek не сработал: ' + msg);
+    if (st) {
+      st.style.display = 'block';
+      st.style.color = 'var(--bad)';
+      st.textContent = localFallback
+        ? '❌ DeepSeek не сработал, показан локальный словарь: ' + msg
+        : '❌ DeepSeek не сработал: ' + msg;
+    }
     throw e;
   }
 }

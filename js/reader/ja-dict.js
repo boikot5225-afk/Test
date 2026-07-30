@@ -142,6 +142,27 @@ export function surfaceReading(surface, lemma, lemmaReading) {
   return stemReading + surface.slice(stem.length);
 }
 
+// Ruby over a whole word makes the browser spread the kana across every
+// character, so 調べました ends up with し ら べ ま し た floating over it and
+// even the kana carry a reading. Furigana belongs over the kanji alone: split
+// the token into its kanji head and kana tail, and give the tail back as plain
+// text. Returns null when the two cannot be aligned, so the caller can fall
+// back to annotating the whole token.
+export function splitJapaneseRuby(surface, reading) {
+  const word = String(surface || '');
+  const kana = String(reading || '');
+  if (!word || !kana) return null;
+  let cut = word.length;
+  while (cut > 0 && isKana(word[cut - 1])) cut--;
+  const base = word.slice(0, cut);
+  const tail = word.slice(cut);
+  if (!base) return null;
+  if (!tail) return { base, ruby: kana, tail: '' };
+  if (!kana.endsWith(tail)) return null;
+  const ruby = kana.slice(0, kana.length - tail.length);
+  return ruby ? { base, ruby, tail } : null;
+}
+
 export function createJapaneseDictionary({ url, log = console }) {
   let map = null;
   let loading = null;
