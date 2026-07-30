@@ -157,7 +157,7 @@ export async function renderHome() {
     return Math.max(0, Math.min(100, Math.round(done / total * 100)));
   };
 
-  const langFlag = (l) => ({ fr: '🇫🇷', zh: '🇨🇳', en: '🇬🇧', de: '🇩🇪', es: '🇪🇸' }[String(l || 'fr').slice(0,2)] || '🌐');
+  const langFlag = (l) => ({ fr: '🇫🇷', zh: '🇨🇳', ja: '🇯🇵', en: '🇬🇧', de: '🇩🇪', es: '🇪🇸' }[String(l || 'fr').slice(0,2)] || '🌐');
   const sorted = [...langBooks].sort((a, b) =>
     new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
   const primary = sorted[0] || null;

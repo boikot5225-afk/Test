@@ -1799,7 +1799,7 @@ async function renderReaderScreen() {
   const library = document.getElementById('reader-library-list');
   if (!library) return;
 
-  const langFlag = (lang) => ({ fr:'🇫🇷', zh:'🇨🇳', en:'🇬🇧', de:'🇩🇪', es:'🇪🇸' }[String(lang||'fr').slice(0,2)] || '🌐');
+  const langFlag = (lang) => ({ fr:'🇫🇷', zh:'🇨🇳', ja:'🇯🇵', en:'🇬🇧', de:'🇩🇪', es:'🇪🇸' }[String(lang||'fr').slice(0,2)] || '🌐');
   const formatIcon = (book) => book.format === 'song' ? '🎵' : '📖';
   const libCover = (book) => {
     const lang = readerCanonicalLang(readerBookLang(book));
@@ -2691,6 +2691,21 @@ function readerTextHasAozoraRuby(text) {
   return READER_AOZORA_RUBY.test(String(text || ''));
 }
 
+// Aozora Bunko files open with the title on the first line and the author on
+// the second. Their filenames, by contrast, are catalogue strings like
+// "E・E・スミス／小西宏訳-(レンズマン・シリーズ1) 銀河パトロール隊 (青空文庫対応txt)(校正09-01-15)",
+// which is what the reader used to show as both book and chapter title.
+function readerAozoraHeader(text) {
+  const lines = String(text || '').replace(/\r/g, '').split('\n');
+  const title = (lines[0] || '').trim();
+  const author = (lines[1] || '').trim();
+  // Guard against files that merely happen to carry ruby: a heading line is
+  // short and is followed by a blank line or an author credit, never by prose.
+  if (!title || title.length > 60) return null;
+  if (author.length > 60) return null;
+  return { title, author };
+}
+
 async function readerReadTextFile(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const header = new TextDecoder('ascii').decode(bytes.slice(0, 240));
@@ -2807,8 +2822,13 @@ async function readerImportFromFile(event) {
     const titleEl = document.getElementById('reader-import-title');
     const langEl = document.getElementById('reader-import-lang');
     if (textEl) textEl.value = text;
-    if (titleEl && !titleEl.value.trim()) titleEl.value = file.name.replace(/\.[^.]+$/, '');
-    if (langEl && !langEl.value) langEl.value = globalThis.AN2_LANG || 'fr';
+    // A file written in the Aozora convention names itself better than its
+    // filename does; anything else keeps the old filename fallback.
+    const aozora = readerTextHasAozoraRuby(text) ? readerAozoraHeader(text) : null;
+    if (titleEl && !titleEl.value.trim()) titleEl.value = aozora?.title || file.name.replace(/\.[^.]+$/, '');
+    const authorEl = document.getElementById('reader-import-author');
+    if (authorEl && !authorEl.value.trim() && aozora?.author) authorEl.value = aozora.author;
+    if (langEl && !langEl.value) langEl.value = aozora ? 'ja' : (globalThis.AN2_LANG || 'fr');
     if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = 'TXT загружен. Проверь название и сохрани.'; }
   } catch (error) {
     if (st) { st.style.display = 'block'; st.style.color = 'var(--bad)'; st.textContent = '❌ Не смог прочитать файл: ' + (error?.message || error); }

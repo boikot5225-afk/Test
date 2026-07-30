@@ -3413,8 +3413,14 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
 .lib-cover-zh{ background:linear-gradient(160deg,#A84C3F,#6E2A22); }
 .lib-cover-de,.lib-cover-es{ background:linear-gradient(160deg,#4C8570,#2E5842); }
 
+/* The card is a flex item of #reader-continue-card, so it inherits
+   min-width:auto and sizes itself to its content. A title with no break
+   opportunities — a Japanese filename, say — then makes the card wider than the
+   phone and drags the whole library sideways, leaving the reader looking at
+   blank space. min-width:0 lets it shrink so the ellipsis below can do its job. */
+#reader-continue-card{ min-width:0; }
 .lib-cont-card{
-  display:flex; gap:14px; align-items:center;
+  display:flex; gap:14px; align-items:center; min-width:0; flex:1; max-width:100%;
   background:var(--surface); border:1px solid var(--border); border-radius:16px;
   padding:12px; box-shadow:0 6px 20px rgba(0,0,0,.06);
 }
@@ -3424,7 +3430,10 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
   font-family:'Lora',serif; font-size:1rem; font-weight:600; color:var(--text);
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
-.lib-cont-meta{ font-size:.74rem; color:var(--text-dim); margin:2px 0 8px; }
+.lib-cont-meta{
+  font-size:.74rem; color:var(--text-dim); margin:2px 0 8px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
 .lib-cont-go{
   flex:none; border:none; background:var(--accent); color:var(--bg,#fff);
   font-family:inherit; font-weight:600; font-size:.82rem;
