@@ -267,6 +267,17 @@ async function playAudioBuffer(buffer, mimeType = 'audio/mpeg', token = ++ttsTok
   }
 }
 
+// Falling back to the browser is only an improvement when it actually has a
+// voice for this language. Reading Japanese with whatever default voice the
+// device offers is worse than staying silent and saying why.
+function hasBrowserVoice(lang = 'fr') {
+  try {
+    return !!pickBrowserVoice(lang);
+  } catch (_) {
+    return false;
+  }
+}
+
 function pickBrowserVoice(lang = 'fr') {
   const n = normalizeLang(lang);
   const prefix = n === 'zh' ? 'zh' : n === 'ja' ? 'ja' : n === 'en' ? 'en' : n === 'es' ? 'es' : 'fr';
@@ -375,6 +386,16 @@ export const KOKORO_VOICES = Object.freeze({
   ],
 });
 
+// The Cloud Function keeps its own language→voice table and falls back to the
+// French voice for anything it does not recognise. That table is deployed
+// separately from this file, so a language added here reads in French until
+// someone redeploys the backend. The server does honour an explicitly named
+// voice, so naming it makes this file the one that decides.
+export function defaultKokoroVoice(lang) {
+  const list = KOKORO_VOICES[normalizeLang(lang)];
+  return list?.[0]?.id || '';
+}
+
 function ttsVoiceKey(lang) { return `an2_tts_voice_${normalizeLang(lang)}`; }
 export function getTtsVoice(lang) {
   try { return localStorage.getItem(ttsVoiceKey(lang)) || ''; } catch (_) { return ''; }
@@ -394,7 +415,7 @@ export async function speak(text, opts = {}) {
   if (engine === 'webspeech') return speakViaWebSpeech(prepared, { lang, rate });
 
   const voiceEngine = getTtsVoiceEngine();
-  const voice = getTtsVoice(lang);
+  const voice = getTtsVoice(lang) || defaultKokoroVoice(lang);
   const key = cacheHash(`${lang}|${voiceEngine}|${voice}|${prepared}`);
   stopSpeak();
   const token = ++ttsToken;
@@ -417,6 +438,20 @@ export async function speak(text, opts = {}) {
   } catch (error) {
     console.warn('[tts] Firebase/OpenRouter TTS failed:', error);
     const msg = String(error?.message || error || 'неизвестная ошибка');
+    // The cloud voice is the good one, but a device that has its own voice for
+    // this language can still read the paragraph out — which is the difference
+    // between a reader that speaks and one that only apologises. Android ships
+    // a Japanese engine, so this is the path that makes ja audible while the
+    // Cloud Function is still on its old language table.
+    if (token === ttsToken && hasBrowserVoice(lang)) {
+      if (window.showToast) window.showToast('🔈 Облачная озвучка недоступна — читаю голосом устройства', 4000);
+      try {
+        emitTtsState('playing');
+        return await speakViaWebSpeech(prepared, { lang, rate });
+      } catch (fallbackError) {
+        console.warn('[tts] device voice failed too:', fallbackError);
+      }
+    }
     if (window.showToast) window.showToast(`⚠️ Firebase-озвучка: ${msg.slice(0, 220)}`, 6500);
     return false;
   } finally {
@@ -441,7 +476,7 @@ export async function prefetchSpeech(text, opts = {}) {
     const engine = String(localStorage.getItem('ttsEngine') || 'firebase').toLowerCase();
     if (engine === 'webspeech') return; // nothing to prefetch, synthesis is local
     const voiceEngine = getTtsVoiceEngine();
-    const voice = getTtsVoice(lang);
+    const voice = getTtsVoice(lang) || defaultKokoroVoice(lang);
     const key = cacheHash(`${lang}|${voiceEngine}|${voice}|${prepared}`);
     if (TTS_MEM_CACHE.has(key) || ttsPrefetchInFlight.has(key)) return;
     if (await readPersistentAudio(key)) return;
