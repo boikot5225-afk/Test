@@ -93,10 +93,25 @@ def get_zh_g2p():
 
 
 def get_ja_g2p():
+    """misaki's Japanese g2p, or None when it is not installed.
+
+    Unlike the Chinese one, misaki[ja] pulls pyopenjtalk, mojimoji and unidic —
+    C++ extensions needing cmake and a compiler, plus a ~1 GB dictionary. That
+    does not fit a slim image, so it stays optional: install it and Japanese
+    gets the phonemes Kokoro's jf_/jm_ voices were trained on, skip it and
+    espeak-ng handles Japanese at lower quality. Either way the image builds.
+    """
     global _ja_g2p
+    if _ja_g2p is False:
+        return None
     if _ja_g2p is None:
-        from misaki import ja
-        _ja_g2p = ja.JAG2P()
+        try:
+            from misaki import ja
+            _ja_g2p = ja.JAG2P()
+        except Exception as exc:
+            print(f"[tts] misaki[ja] unavailable ({exc}); Japanese falls back to espeak-ng")
+            _ja_g2p = False
+            return None
     return _ja_g2p
 
 
@@ -117,11 +132,15 @@ def synthesize(kokoro, text, voice, speed, depth=0):
             phonemes, _ = get_zh_g2p()(text)
             return kokoro.create(phonemes, voice=voice, speed=speed, is_phonemes=True)
         # Japanese is the same story as Chinese: the "j" voices were trained on
-        # misaki's Japanese g2p, not on espeak IPA, so espeak-ng output would
-        # come back mispronounced even though espeak nominally supports "ja".
+        # misaki's Japanese g2p, not on espeak IPA, so espeak-ng output comes
+        # back mispronounced even though espeak nominally supports "ja". That
+        # g2p is optional here, so use it when present and let the espeak path
+        # below take over when it is not.
         if prefix == "j":
-            phonemes, _ = get_ja_g2p()(text)
-            return kokoro.create(phonemes, voice=voice, speed=speed, is_phonemes=True)
+            ja_g2p = get_ja_g2p()
+            if ja_g2p is not None:
+                phonemes, _ = ja_g2p(text)
+                return kokoro.create(phonemes, voice=voice, speed=speed, is_phonemes=True)
         lang = lang_for_voice(voice)
         return kokoro.create(text, voice=voice, speed=speed, lang=lang)
     except IndexError:

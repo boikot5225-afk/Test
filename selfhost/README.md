@@ -36,9 +36,23 @@ docker compose up -d --build
 ```
 
 First build downloads the Kokoro model weights (~350MB) and installs
-faster-whisper — can take several minutes on a 1 vCPU box. Chinese and
-Japanese voices additionally pull their own g2p (`misaki[zh,ja]`, which brings
-in fugashi + unidic-lite for Japanese); espeak-ng covers the rest. Then check:
+faster-whisper — can take several minutes on a 1 vCPU box. Chinese pulls its
+own g2p (`misaki[zh]`); espeak-ng covers the rest.
+
+Japanese works out of the box through espeak-ng, but not well: Kokoro's `jf_`
+and `jm_` voices were trained on misaki's Japanese g2p, so espeak phonemes come
+out mispronounced. Better Japanese is opt-in because it is not cheap — the
+`ja` extra needs a C++ toolchain to build pyopenjtalk and mojimoji, and unidic
+downloads roughly a gigabyte of dictionary:
+
+```dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir 'misaki[ja]==0.9.*' && python -m unidic download
+```
+
+app.py picks that path up on its own when the import succeeds and logs a line
+about falling back when it does not. Then check:
 
 ```bash
 curl http://127.0.0.1:8080/health
