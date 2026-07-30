@@ -1,0 +1,131 @@
+name: Deploy functions
+
+# Deploys functions/ as it stands on this branch. The older
+# deploy-reader-ai-control.yml exists for a different purpose: it pins a known
+# commit and ships readerAI alone as a stable control, which by design never
+# carries anything newer. This one is how ordinary changes to the functions
+# reach production.
+#
+# It fires on pushes that touch functions/, so a change to a prompt or a voice
+# table goes live on its own. Nothing else triggers it.
+
+on:
+  push:
+    branches:
+      - claude/check-branches-latest-changes-wydht2
+    paths:
+      - 'functions/**'
+      - '.github/workflows/deploy-functions.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-functions-french-da79a
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS }}
+      GCP_SA_KEY_JSON: ${{ secrets.GCP_SA_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install and verify functions
+        run: |
+          npm --prefix functions ci --ignore-scripts
+          node --check functions/index.js
+          node - <<'NODE'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const source = fs.readFileSync('functions/index.js', 'utf8');
+          const { resolveDeepSeekModel } = require('./functions/deepseek-model');
+
+          // The behaviour production depends on. thinking/response_format used
+          // to be patched in by the control workflow at deploy time; they live
+          // in the source now, so assert they are still there.
+          assert.equal(resolveDeepSeekModel(), 'deepseek-v4-flash');
+          assert.equal(resolveDeepSeekModel('deepseek-chat'), 'deepseek-v4-flash');
+          assert.match(source, /thinking:\s*\{\s*type:\s*'disabled'\s*\}/);
+          assert.match(source, /response_format:\s*\{\s*type:\s*'json_object'\s*\}/);
+
+          // All three functions must survive: deploying a source that lost one
+          // of them would quietly take a feature off the air.
+          for (const name of ['readerAI', 'ttsAudio', 'transcribeAudio']) {
+            assert.equal(
+              (source.match(new RegExp(`exports\\.${name}\\s*=\\s*on(Call|Request)`, 'g')) || []).length,
+              1,
+              `${name} must be exported exactly once`,
+            );
+          }
+          // Self-hosted TTS/STT routing is what keeps the VPS path alive.
+          for (const secret of ['SELFHOST_TTS_STT_URL', 'SELFHOST_TOKEN', 'OPENROUTER_API_KEY', 'DEEPSEEK_API_KEY']) {
+            assert.ok(source.includes(`defineSecret('${secret}')`), `${secret} declaration missing`);
+          }
+          // Japanese, the reason this workflow exists.
+          assert.ok(source.includes("raw === 'ja'"), 'sourceLang does not know Japanese');
+          assert.ok(source.includes("v === 'ja'"), 'ttsLang does not know Japanese');
+          assert.ok(source.includes("ja: 'jf_alpha'"), 'no Japanese Kokoro voice');
+          console.log('function source verified');
+          NODE
+          node --test tests/deepseek-model.test.mjs
+
+      - name: Select deployment credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${FIREBASE_TOKEN}" ]]; then
+            echo "FIREBASE_AUTH_MODE=token" >> "${GITHUB_ENV}"
+            exit 0
+          fi
+
+          credentials="${FIREBASE_SERVICE_ACCOUNT_JSON}"
+          [[ -n "${credentials}" ]] || credentials="${GOOGLE_CREDENTIALS_JSON}"
+          [[ -n "${credentials}" ]] || credentials="${GCP_SA_KEY_JSON}"
+
+          if [[ -z "${credentials}" ]]; then
+            echo "::error::No Firebase deployment credential is configured in repository secrets."
+            exit 1
+          fi
+
+          credentials_file="${RUNNER_TEMP}/firebase-service-account.json"
+          printf '%s' "${credentials}" > "${credentials_file}"
+          chmod 600 "${credentials_file}"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=${credentials_file}" >> "${GITHUB_ENV}"
+          echo "FIREBASE_AUTH_MODE=adc" >> "${GITHUB_ENV}"
+
+      - name: Install Firebase CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cli_root="${RUNNER_TEMP}/firebase-cli"
+          npm --prefix "${cli_root}" install --no-save --ignore-scripts firebase-tools@15.24.0
+          node "${cli_root}/node_modules/firebase-tools/lib/bin/firebase.js" --version
+
+      - name: Deploy readerAI and ttsAudio
+        shell: bash
+        run: |
+          set -euo pipefail
+          firebase_cli="${RUNNER_TEMP}/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
+          # transcribeAudio is deliberately not in this list: nothing in this
+          # change touches it, and leaving it alone keeps the blast radius to
+          # the two functions that gained Japanese.
+          args=(deploy --only functions:readerAI,functions:ttsAudio --project french-da79a --non-interactive)
+          if [[ "${FIREBASE_AUTH_MODE}" == "token" ]]; then
+            node "${firebase_cli}" "${args[@]}" --token "${FIREBASE_TOKEN}"
+          else
+            node "${firebase_cli}" "${args[@]}"
+          fi

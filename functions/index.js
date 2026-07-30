@@ -1,14 +1,36 @@
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
+const { resolveDeepSeekModel } = require('./deepseek-model');
 
 const DEEPSEEK_API_KEY = defineSecret('DEEPSEEK_API_KEY');
 const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');
+// Optional self-hosted Kokoro TTS + faster-whisper STT (see selfhost/ in the
+// repo). When both are set, ttsAudio/transcribeAudio try this first and only
+// fall back to OpenRouter if it's unreachable — free per-request once the
+// VPS is already paid for something else, OpenRouter stays as a safety net.
+const SELFHOST_TTS_STT_URL = defineSecret('SELFHOST_TTS_STT_URL');
+const SELFHOST_TOKEN = defineSecret('SELFHOST_TOKEN');
 
 const DATABASE_URL = process.env.FIREBASE_DATABASE_URL || 'https://french-da79a-default-rtdb.asia-southeast1.firebasedatabase.app';
 if (!admin.apps.length) {
   admin.initializeApp({ databaseURL: DATABASE_URL });
 }
+
+// Live-probed (2026-07-08) against OpenRouter's audio/speech endpoint — every
+// candidate Kokoro voice id below (fr/en-US/en-UK/zh/es) came back 200 OK, so
+// the full Kokoro voicepack is genuinely available through this project's
+// key. That's what backs js/tts.js's KOKORO_VOICES picker.
+//
+// Separately, a TTS *model* (not voice) probe against the same endpoint
+// (2026-07-08, see git history for the temp diagnostic code) established
+// what's actually callable with this key, despite what OpenRouter's docs say:
+//   openai/gpt-4o-mini-tts (+ dated variant, + bare, + tts-1) → 400 "does not exist"
+//   mistralai/voxtral-mini-tts-2603 → provider 404
+//   google/gemini-3.1-flash-tts-preview → EXISTS (but requires response_format:"pcm")
+//   hexgrad/kokoro-82m → works (in production use)
+// So the only real better-quality upgrade path via OpenRouter is Gemini
+// Flash TTS with PCM output — GPT-4o Mini TTS is simply not available here.
 
 // v68.20: no hard daily AI limits.
 // We only record usage counters in Realtime Database for visibility/debugging.
@@ -47,8 +69,6 @@ function extractJson(text) {
 }
 
 
-// The reader sends every language it can import. Recognising only zh here used
-// to route English and Spanish into the French prompts below.
 function sourceLang(body) {
   const raw = String(body?.sourceLang || body?.lang || 'fr').trim().toLowerCase();
   if (raw === 'zh' || raw.startsWith('zh-') || raw === 'cn' || raw === 'chinese') return 'zh';
@@ -59,7 +79,7 @@ function sourceLang(body) {
 }
 
 function sourceLangName(code) {
-  return { zh: 'Chinese', ja: 'Japanese', en: 'English', es: 'Spanish' }[code] || 'French';
+  return code === 'zh' ? 'Chinese' : code === 'ja' ? 'Japanese' : code === 'en' ? 'English' : code === 'es' ? 'Spanish' : 'French';
 }
 
 function buildPrompt(task, body) {
@@ -68,31 +88,47 @@ function buildPrompt(task, body) {
 
   if (task === 'reader_word') {
     if (lang === 'zh') {
-      return `You are a Chinese-Russian lexical assistant for a language reader. Analyze the selected Chinese token in context. Return ONLY valid JSON with keys: pos (noun|verb|adjective|adverb|preposition|pronoun|particle|measure_word|proper_noun|other), lemma, surface, pinyin, ru, level (HSK1|HSK2|HSK3|HSK4|HSK5|HSK6|unknown), form_note, note. Rules: pinyin must use tone marks; ru must be short and natural Russian; if the token is a name or place, mark proper_noun; do not invent grammar essays.
+      return `You are a Chinese-Russian lexical assistant for a language reader. Analyze the selected Chinese token in context. Return ONLY valid JSON with keys: pos (noun|verb|adjective|adverb|preposition|pronoun|particle|measure_word|proper_noun|other), lemma, surface, pinyin, ru, level (HSK1|HSK2|HSK3|HSK4|HSK5|HSK6|unknown), form_note, note, chars. Rules: pinyin must use tone marks; ru must be short and natural Russian; if the token is a name or place, mark proper_noun; do not invent grammar essays. "chars" is a compact per-character breakdown so a learner can see how the word is built — REQUIRED when the token has 2+ characters (leave "" for a single character): one Chinese character, its own pinyin, and 1-2 Russian words for its own meaning, joined like "甚(shén)очень + 至(zhì)доходить" — no full sentences, no repeating the whole-word translation, keep the entire field under ~80 characters even for 4+ character words.
 
 TOKEN: ${body.word || body.surface || ''}
 CONTEXT: ${body.context || ''}`;
     }
     if (lang === 'ja') {
       // The app resolves the dictionary form and the reading locally against
-      // JMdict before asking. Passing that through stops the model from
-      // second-guessing settled facts and keeps the answer on the meaning.
+      // JMdict before asking, so passing that through keeps the model off
+      // settled ground and on the meaning.
       const hint = body.hint && body.hint.lemma
         ? `\nThe reader's local JMdict entry gives lemma "${body.hint.lemma}", reading "${body.hint.reading || ''}", English "${body.hint.en || ''}". Keep those unless the context clearly contradicts them, and spend the answer on a natural Russian meaning.`
         : '';
-      return `You are a Japanese-Russian lexical assistant for a language reader. Analyze the selected Japanese token in context. Return ONLY valid JSON with keys: pos (noun|verb|i_adjective|na_adjective|adverb|particle|counter|proper_noun|other), lemma, surface, reading, ru, level (N5|N4|N3|N2|N1|unknown), form_note, note. Rules: lemma is the dictionary form (辞書形) written the way it appears in text — 読んだ → 読む, 高くて → 高い; reading is the WHOLE word in hiragana (a katakana word keeps katakana); form_note names the inflected surface form in Russian ("て-форма", "прошедшее", "отрицание", "вежливая форма", "потенциальная форма"); ru must be short and natural Russian; if the token is a name or place, mark proper_noun; do not invent grammar essays.${hint}
+      return `You are a Japanese-Russian lexical assistant for a language reader. Analyze the selected Japanese token IN ITS CONTEXT. Return ONLY valid JSON with keys: pos (noun|verb|i_adjective|na_adjective|adverb|particle|counter|proper_noun|other), lemma, surface, reading, ru, level (N5|N4|N3|N2|N1|unknown), form_note, note. Rules: lemma is the dictionary form (辞書形) written the way it appears in text — 読んだ → 読む, 高くて → 高い; reading is the WHOLE word in hiragana (a katakana word keeps katakana); form_note names the inflected surface form in Russian ("て-форма", "прошедшее", "отрицание", "вежливая форма", "потенциальная форма"); ru must reflect the meaning AS USED IN THIS CONTEXT — if the token belongs to a set phrase or a compound verb, ru gives the contextual meaning and note names the expression with its Russian meaning; if the token is a name or place, mark proper_noun. Do not invent grammar essays.${hint}
 
 TOKEN: ${body.word || body.surface || ''}
 CONTEXT: ${body.context || ''}`;
     }
-    return `You are a ${langName}-Russian lexical assistant for a language reader. Analyze the selected ${langName} token in context. Return ONLY valid JSON with keys: pos (noun|verb|adjective|adverb|preposition|pronoun|other), lemma, infinitive, surface, ru, gender (m|f|), level (A1|A2|B1|B2), tense, person, number, form_note, note. Rules: if the token is a conjugated ${langName} verb form, lemma and infinitive must be the infinitive; form_note must briefly explain what the surface form is (for example: "présent, ils/elles", "participe passé", "imparfait, je/il"). If the token is a noun and the language marks gender, give gender. If it is not a noun or verb, still give a short Russian meaning and lemma.
+    if (lang === 'en') {
+      return `You are an English-Russian lexical assistant for a language reader. Analyze the selected English token IN ITS CONTEXT. Return ONLY valid JSON with keys: pos (noun|verb|adjective|adverb|preposition|pronoun|other), lemma, ru, level (A1|A2|B1|B2), form_note, note, ipa. Rules: lemma is the base/infinitive form; ru must be the meaning of the token AS USED IN THIS SPECIFIC CONTEXT, not the most common dictionary sense — if the token is part of an idiom or phrasal verb (e.g. "road" in "get the show on the road", "up" in "give up"), ru gives the contextual meaning and note names the idiom/phrasal verb with its Russian meaning (e.g. "get the show on the road — начать, приступить к делу"); form_note briefly explains the form if it is inflected (e.g. "past tense", "plural", "3rd person singular"). "ipa" is the standard IPA phonetic transcription of the SURFACE token (the word as it actually appears, not the lemma) in General American pronunciation, wrapped in slashes, e.g. "/prəˈnaʊnst/" — always fill this in. No gender needed.
+
+TOKEN: ${body.word || body.surface || ''}
+CONTEXT: ${body.context || ''}`;
+    }
+    if (lang === 'es') {
+      return `You are a Spanish-Russian lexical assistant for a language reader. Analyze the selected Spanish token IN ITS CONTEXT. Return ONLY valid JSON with keys: pos (noun|verb|adjective|adverb|preposition|pronoun|other), lemma, infinitive, surface, ru, gender (m|f|), level (A1|A2|B1|B2), tense, person, number, form_note, note. Rules: if the token is a conjugated Spanish verb form, lemma and infinitive must be the infinitive; form_note must briefly explain what the surface form is (for example: "presente, ellos/ellas", "pretérito indefinido, yo", "subjuntivo presente, tú", "gerundio", "participio"). Reflexive verbs (e.g. "se levanta") must give the infinitive with "-se" (e.g. "levantarse"). If the token is a noun, give gender (el → m, la → f). ru must reflect the meaning AS USED IN THIS CONTEXT — if the token is part of an idiom or fixed expression, ru gives the contextual meaning and note names the expression with its Russian meaning. If it is not a noun or verb, still give a short Russian meaning and lemma.
+
+TOKEN: ${body.word || body.surface || ''}
+CONTEXT: ${body.context || ''}`;
+    }
+    return `You are a French-Russian lexical assistant for a language reader. Analyze the selected French token IN ITS CONTEXT. Return ONLY valid JSON with keys: pos (noun|verb|adjective|adverb|preposition|pronoun|other), lemma, infinitive, surface, ru, gender (m|f|), level (A1|A2|B1|B2), tense, person, number, form_note, note. Rules: if the token is a conjugated French verb form, lemma and infinitive must be the infinitive; form_note must briefly explain what the surface form is (for example: "présent, ils/elles", "participe passé", "imparfait, je/il"). If the token is a noun, give gender. ru must reflect the meaning AS USED IN THIS CONTEXT — if the token is part of an idiom or fixed expression, ru gives the contextual meaning and note names the expression with its Russian meaning. If it is not a noun or verb, still give a short Russian meaning and lemma.
 
 TOKEN: ${body.word || body.surface || ''}
 CONTEXT: ${body.context || ''}`;
   }
 
   if (task === 'translate_paragraph') {
-    return `Translate this ${langName} paragraph into natural Russian for comprehension. Do not explain grammar unless needed. Return ONLY valid JSON: {"ru":"..."}.
+    return `Translate this ${langName} paragraph into natural Russian for comprehension. Do not explain grammar unless needed.
+
+Slang, insults, ethnic nicknames, and idioms must be translated by their ACTUAL MEANING as used in context, never word-for-word by root/etymology. For example "frijolero" is a slang/derogatory nickname for Mexicans, not a word about beans — translate it as the real-world equivalent (e.g. "мексиканец" or a fitting Russian slang/derogatory equivalent), not literally. If unsure of the real meaning of a slang term, prefer a natural contextual guess over a literal mistranslation.
+
+Return ONLY valid JSON: {"ru":"..."}.
 
 TEXT:
 ${body.text || ''}`;
@@ -162,14 +198,82 @@ Return ONLY valid JSON, no markdown:
 
 Rules:
 - parts: 2–5 items, keep a particle with the phrase it marks (は / が / を / に / で), keep an auxiliary with its verb stem
-- whys: 2–3 items, only for genuinely non-obvious grammar (て-формы, passive/causative, けいご, conditionals, nominalisation, topic vs subject, etc.)
+- whys: 2–3 items, only for genuinely non-obvious grammar (て-формы, passive/causative, keigo, conditionals, nominalisation, topic vs subject, etc.)
 - all text in "what", "a", "summary" must be in Russian
 - keep everything concise
 
 SENTENCE:
 ${body.text || ''}`;
     }
-    return `You are a ${langName} grammar teacher for Russian-speaking learners (B1–C1 level).
+    if (lang === 'en') {
+      return `You are an English grammar teacher for Russian-speaking learners (B1–C1 level).
+Analyze the sentence below. Split it into 2–5 meaningful structural parts (not every word).
+For each part explain WHAT it is and WHY it is here / why this grammar form is used.
+Then pick 2–3 most interesting grammar points and explain WHY (the rule behind it), with a short parallel example.
+Finally write one "суть" sentence: the key structural insight of the whole sentence.
+
+Return ONLY valid JSON, no markdown:
+{
+  "parts": [
+    {
+      "en": "meaningful chunk",
+      "what": "что это (на русском, 3–6 слов)",
+      "why": "краткий русский перевод этой части"
+    }
+  ],
+  "whys": [
+    {
+      "q": "Почему [конкретная форма]?",
+      "a": "Объяснение правила на русском (1–2 предложения). Краткий пример: ..."
+    }
+  ],
+  "summary": "Одно предложение о главной грамматической идее всего предложения."
+}
+
+Rules:
+- parts: 2–5 items, merge auxiliaries/articles/prepositions with their main word
+- whys: 2–3 items, only for genuinely non-obvious grammar (perfect vs continuous, conditionals, passive voice, inversion, etc.)
+- all text in "what", "a", "summary" must be in Russian
+- keep everything concise
+
+SENTENCE:
+${body.text || ''}`;
+    }
+    if (lang === 'es') {
+      return `You are a Spanish grammar teacher for Russian-speaking learners (B1–C1 level).
+Analyze the sentence below. Split it into 2–5 meaningful structural parts (not every word).
+For each part explain WHAT it is and WHY it is here / why this grammar form is used.
+Then pick 2–3 most interesting grammar points and explain WHY (the rule behind it), with a short parallel example.
+Finally write one "суть" sentence: the key structural insight of the whole sentence.
+
+Return ONLY valid JSON, no markdown:
+{
+  "parts": [
+    {
+      "es": "meaningful chunk",
+      "what": "что это (на русском, 3–6 слов)",
+      "why": "краткий русский перевод этой части"
+    }
+  ],
+  "whys": [
+    {
+      "q": "Почему [конкретная форма]?",
+      "a": "Объяснение правила на русском (1–2 предложения). Краткий пример: ..."
+    }
+  ],
+  "summary": "Одно предложение о главной грамматической идее всего предложения."
+}
+
+Rules:
+- parts: 2–5 items, merge articles/prepositions with their noun/verb
+- whys: 2–3 items, only for genuinely non-obvious grammar (ser vs estar, subjuntivo triggers, clitic/pronoun placement, por vs para, etc.)
+- all text in "what", "a", "summary" must be in Russian
+- keep everything concise
+
+SENTENCE:
+${body.text || ''}`;
+    }
+    return `You are a French grammar teacher for Russian-speaking learners (B1–C1 level).
 Analyze the sentence below. Split it into 2–5 meaningful structural parts (not every word).
 For each part explain WHAT it is and WHY it is here / why this grammar form is used.
 Then pick 2–3 most interesting grammar points and explain WHY (the rule behind it), with a short parallel example.
@@ -224,6 +328,27 @@ STROPHE:
 ${body.text || ''}`;
   }
 
+  if (task === 'clean_transcript') {
+    const zhNote = lang === 'zh'
+      ? ` The raw transcript has NO punctuation at all (Whisper does not add any for Chinese) — you must add standard Chinese punctuation (。，！？、) based on meaning and natural pauses, not just copy it as one block. Whisper also randomly mixes Traditional and Simplified characters within the same transcript (it has no fixed script mode) — normalize ALL output to Simplified Chinese (简体字), converting any Traditional characters you see.`
+      : '';
+    // English ASR-specific quirks Whisper reliably gets wrong that the generic
+    // "fix ASR mistakes" instruction alone wasn't reliably catching: spoken
+    // filler/disfluency clutter (especially thick in podcasts/talk audio) and
+    // classic homophone confusions.
+    const enNote = lang === 'en'
+      ? ` This is spoken English (often casual — podcasts, interviews, talk audio), so also: remove pure filler/disfluency words and false starts (um, uh, "you know", "like" used as a verbal tic, stuttered word repeats such as "I- I- I think") that add no meaning — but keep genuine repetition used for emphasis (e.g. "no, no, no" as a real reaction). Fix classic English ASR homophone mix-ups (their/there/they're, its/it's, your/you're, to/too/two, effect/affect) based on context. Capitalize proper nouns and sentence starts correctly.`
+      : '';
+    return `You are cleaning up a raw speech-to-text transcript of spoken ${langName} for a language-learning reader app. Fix ASR mistakes (misheard homophones, wrong characters/words, missing punctuation), and split the text into natural paragraphs of roughly 2-5 sentences each — do this even if the raw text has no punctuation or paragraph cues at all; use topic shifts and natural pauses in meaning to decide where a paragraph ends. Never return the whole input as a single unbroken block.${zhNote}${enNote} Do NOT translate, summarize, or change the meaning — only clean up recognition errors and add punctuation/paragraph breaks.
+Return ONLY valid JSON:
+{
+  "text": "cleaned transcript here, with paragraphs separated by a blank line (\\n\\n)"
+}
+
+RAW TRANSCRIPT:
+${body.text || ''}`;
+  }
+
   if (task === 'generate_verb') {
     return `Generate a complete French verb card for a Russian-speaking learner.
 Return ONLY valid JSON:
@@ -257,6 +382,26 @@ TOKEN: ${body.word || body.infinitive || body.surface || ''}
 CONTEXT: ${body.context || ''}`;
   }
 
+  if (task === 'reverse_lookup') {
+    return `The learner is trying to think in ${langName} but can't recall or doesn't know the exact word for a concept they can only describe in Russian. Given their Russian description below, suggest the ${langName} word(s) or short phrase(s) that best express it.
+
+Return ONLY valid JSON, no markdown:
+{
+  "suggestions": [
+    {"word": "...", "note": "1 short sentence in Russian: when/why to use this one, or how it differs from the other options"}
+  ]
+}
+
+Rules:
+- suggestions: 2-4 items, ordered by how well they fit
+- if there's a clearly single correct word, still give 1-2 close alternatives/synonyms and explain the nuance
+- "word" is just the ${langName} word or short phrase itself — no translation, no article unless essential to the meaning
+- note must be in Russian, concise and practical, not a dictionary definition
+
+RUSSIAN DESCRIPTION:
+${body.query || body.text || ''}`;
+  }
+
   throw new HttpsError('invalid-argument', 'Unknown task');
 }
 
@@ -264,6 +409,7 @@ function maxTokensForTask(task) {
   if (task === 'generate_verb') return 1400;
   if (task === 'analyze_sentence') return 900;
   if (task === 'song_strophe') return 500;
+  if (task === 'clean_transcript') return 4000;
   if (task === 'fetch_url') return 0; // not an AI task
   return 450;
 }
@@ -334,7 +480,14 @@ exports.readerAI = onCall(
           Authorization: `Bearer ${key}`,
         },
         body: JSON.stringify({
-          model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+          // DeepSeek retired the legacy deepseek-chat/deepseek-reasoner aliases
+          // on 2026-07-24. Normalize even a stale environment override so an
+          // old DEEPSEEK_MODEL value cannot randomly break warm instances.
+          model: resolveDeepSeekModel(),
+          // Kept here rather than patched in at deploy time, so the file says
+          // what production actually runs.
+          thinking: { type: 'disabled' },
+          response_format: { type: 'json_object' },
           temperature: 0.1,
           max_tokens: maxTokensForTask(task),
           messages: [
@@ -371,16 +524,29 @@ exports.readerAI = onCall(
 // No artificial daily limit is used here.
 // ────────────────────────────────────────────────────────────────
 const TTS_MAX_CHARS = 1800;
-const TTS_MODEL = 'hexgrad/kokoro-82m';
-// Default voice per language. Anything not listed here falls back to French,
-// which is why every language the reader can speak needs an entry.
-const TTS_VOICES = Object.freeze({
-  fr: 'ff_siwis',
-  zh: 'zf_xiaobei',
-  ja: 'jf_alpha',
-  en: 'af_heart',
-  es: 'ef_dora',
+// Two selectable voice engines (client picks via body.engine, defaults to
+// 'kokoro'): Kokoro is free-ish and already in use; GPT-4o Mini TTS is a
+// noticeably more natural voice for roughly 4x the per-character cost —
+// still a fraction of a cent per paragraph, cheap enough to offer as an
+// upgrade rather than a wholesale replacement. GPT-4o's TTS is multilingual
+// per-voice (it infers pronunciation from the input text), so one voice
+// covers all reader languages instead of Kokoro's per-language voice IDs.
+const TTS_ENGINES = Object.freeze({
+  kokoro: {
+    model: 'hexgrad/kokoro-82m',
+    voices: { fr: 'ff_siwis', zh: 'zf_xiaobei', ja: 'jf_alpha', en: 'af_heart', es: 'ef_dora' },
+  },
+  gpt4o: {
+    // Dated/versioned slug — OpenRouter's audio/speech endpoint 502s on the
+    // unversioned "openai/gpt-4o-mini-tts" (confirmed in Cloud Function logs).
+    model: 'openai/gpt-4o-mini-tts-2025-12-15',
+    voices: { fr: 'alloy', zh: 'alloy', ja: 'alloy', en: 'alloy', es: 'alloy' },
+  },
 });
+
+function ttsEngineName(raw) {
+  return String(raw || 'kokoro').trim().toLowerCase() === 'gpt4o' ? 'gpt4o' : 'kokoro';
+}
 
 function ttsLang(raw) {
   const v = String(raw || 'fr').trim().toLowerCase();
@@ -401,7 +567,7 @@ function setTtsHeaders(res, extras = {}) {
   res.set({
     'Content-Type': 'audio/mpeg',
     'Cache-Control': 'no-store',
-    'Access-Control-Expose-Headers': 'Content-Type, X-TTS-Voice, X-TTS-Lang, X-Generation-Id',
+    'Access-Control-Expose-Headers': 'Content-Type, X-TTS-Voice, X-TTS-Lang, X-TTS-Engine, X-Generation-Id',
     ...extras,
   });
 }
@@ -418,7 +584,7 @@ exports.ttsAudio = onRequest(
     region: 'asia-southeast1',
     timeoutSeconds: 90,
     memory: '512MiB',
-    secrets: [OPENROUTER_API_KEY],
+    secrets: [OPENROUTER_API_KEY, SELFHOST_TTS_STT_URL, SELFHOST_TOKEN],
     cors: true,
   },
   async (req, res) => {
@@ -440,61 +606,231 @@ exports.ttsAudio = onRequest(
     }
 
     const lang = ttsLang(req.body?.lang);
+    const engine = ttsEngineName(req.body?.engine);
+    const engineConf = TTS_ENGINES[engine];
     const requestedVoice = typeof req.body?.voice === 'string' ? req.body.voice.trim() : '';
     // Voices are server-controlled by language. This prevents a French voice
     // accidentally receiving Chinese text and keeps the UI deterministic.
-    const voice = requestedVoice || TTS_VOICES[lang];
+    const voice = requestedVoice || engineConf.voices[lang] || engineConf.voices.en;
     const speed = safeTtsSpeed(req.body?.speed ?? req.body?.rate);
-    const key = OPENROUTER_API_KEY.value();
-    if (!key) {
-      return res.status(500).json({ error: 'missing_openrouter_key', message: 'В Firebase Secret Manager не задан OPENROUTER_API_KEY.' });
+
+    let audio = null;
+    let mimeType = 'audio/mpeg';
+    let usedSelfhost = false;
+    let generationId = '';
+
+    // Try the self-hosted VPS first (Kokoro only — that's what runs there),
+    // only when both secrets are actually configured. Falls through to
+    // OpenRouter below on any failure, so a self-host outage never breaks
+    // listening entirely.
+    const selfhostUrl = SELFHOST_TTS_STT_URL.value();
+    const selfhostToken = SELFHOST_TOKEN.value();
+    if (engine === 'kokoro' && selfhostUrl && selfhostToken) {
+      try {
+        const r = await fetch(`${selfhostUrl.replace(/\/$/, '')}/v1/audio/speech`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${selfhostToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: engineConf.model, input: text, voice, response_format: 'wav', speed }),
+          signal: AbortSignal.timeout(45000),
+        });
+        if (r.ok) {
+          audio = Buffer.from(await r.arrayBuffer());
+          mimeType = r.headers.get('content-type') || 'audio/wav';
+          usedSelfhost = true;
+        } else {
+          console.warn(`[ttsAudio] self-host ${r.status}, falling back to OpenRouter`);
+        }
+      } catch (error) {
+        console.warn('[ttsAudio] self-host unreachable, falling back to OpenRouter:', error?.message || error);
+      }
     }
 
-    let upstream;
-    try {
-      upstream = await fetch('https://openrouter.ai/api/v1/audio/speech', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${key}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: TTS_MODEL,
-          input: text,
-          voice,
-          response_format: 'mp3',
-          speed,
-        }),
-      });
-    } catch (error) {
-      return res.status(503).json({ error: 'openrouter_unavailable', message: `OpenRouter network error: ${error?.message || String(error)}` });
+    if (!audio) {
+      const key = OPENROUTER_API_KEY.value();
+      if (!key) {
+        return res.status(500).json({ error: 'missing_openrouter_key', message: 'В Firebase Secret Manager не задан OPENROUTER_API_KEY.' });
+      }
+
+      let upstream;
+      try {
+        upstream = await fetch('https://openrouter.ai/api/v1/audio/speech', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${key}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: engineConf.model,
+            input: text,
+            voice,
+            response_format: 'mp3',
+            speed,
+          }),
+        });
+      } catch (error) {
+        return res.status(503).json({ error: 'openrouter_unavailable', message: `OpenRouter network error: ${error?.message || String(error)}` });
+      }
+
+      if (!upstream.ok) {
+        const detail = await upstream.text().catch(() => '');
+        console.error(`[ttsAudio] OpenRouter ${upstream.status} for engine=${engine} model=${engineConf.model} voice=${voice}: ${detail.slice(0, 500)}`);
+        return res.status(502).json({
+          error: 'openrouter_tts_failed',
+          message: `OpenRouter TTS HTTP ${upstream.status}`,
+          detail: detail.slice(0, 1000),
+        });
+      }
+
+      audio = Buffer.from(await upstream.arrayBuffer());
+      mimeType = upstream.headers.get('content-type') || 'audio/mpeg';
+      generationId = upstream.headers.get('x-generation-id') || '';
     }
 
-    if (!upstream.ok) {
-      const detail = await upstream.text().catch(() => '');
-      return res.status(502).json({
-        error: 'openrouter_tts_failed',
-        message: `OpenRouter TTS HTTP ${upstream.status}`,
-        detail: detail.slice(0, 1000),
-      });
-    }
-
-    const audio = Buffer.from(await upstream.arrayBuffer());
     if (audio.length < 200) {
-      return res.status(502).json({ error: 'empty_audio', message: 'OpenRouter вернул слишком короткое аудио.' });
+      return res.status(502).json({ error: 'empty_audio', message: 'Пустое аудио от бэкенда озвучки.' });
     }
 
-    // A lightweight usage counter, never a blocking quota.
+    // A lightweight usage counter, never a blocking quota — split by engine,
+    // and self-host calls are tracked separately since they cost nothing.
     try {
-      await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/tts_audio_chars`).transaction((current) => Number(current || 0) + text.length);
+      const counterEngine = usedSelfhost ? `${engine}_selfhost` : engine;
+      await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/tts_audio_chars_${counterEngine}`).transaction((current) => Number(current || 0) + text.length);
     } catch (_) {}
 
     setTtsHeaders(res, {
+      'Content-Type': mimeType,
       'X-TTS-Voice': voice,
       'X-TTS-Lang': lang,
-      'X-Generation-Id': upstream.headers.get('x-generation-id') || '',
+      'X-TTS-Engine': usedSelfhost ? `${engine}-selfhost` : engine,
+      'X-Generation-Id': generationId,
     });
     return res.status(200).send(audio);
   }
 );
 
+// ────────────────────────────────────────────────────────────────
+// Audio transcription proxy: Firebase Auth → Firebase Function → OpenRouter (Whisper).
+// Client sends base64 audio; OPENROUTER_API_KEY never reaches the browser.
+// Note: OpenRouter's unified endpoint never returns segment timestamps
+// regardless of model/provider (confirmed empirically) — the client degrades
+// gracefully to plain text without paragraph-to-audio sync when segments
+// come back empty.
+// ────────────────────────────────────────────────────────────────
+const STT_MODEL = 'openai/whisper-large-v3';
+// Raw audio must stay well under OpenRouter/Whisper's 25MB cap; base64 adds ~33% overhead.
+const STT_MAX_BASE64_CHARS = 30_000_000; // ~22MB raw audio
+
+exports.transcribeAudio = onRequest(
+  {
+    region: 'asia-southeast1',
+    timeoutSeconds: 180,
+    memory: '512MiB',
+    secrets: [OPENROUTER_API_KEY, SELFHOST_TTS_STT_URL, SELFHOST_TOKEN],
+    cors: true,
+  },
+  async (req, res) => {
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'method_not_allowed', message: 'Use POST.' });
+    }
+
+    let user;
+    try {
+      user = await verifyTtsRequest(req);
+    } catch (error) {
+      return res.status(401).json({ error: 'unauthenticated', message: error?.message || 'Нужно войти в приложение.' });
+    }
+
+    const audioBase64 = typeof req.body?.audioBase64 === 'string' ? req.body.audioBase64 : '';
+    const format = typeof req.body?.format === 'string' && req.body.format.trim() ? req.body.format.trim() : 'mp3';
+    const lang = typeof req.body?.lang === 'string' ? req.body.lang.trim().toLowerCase() : '';
+    if (!audioBase64) return res.status(400).json({ error: 'missing_audio', message: 'Передай audioBase64.' });
+    if (audioBase64.length > STT_MAX_BASE64_CHARS) {
+      return res.status(400).json({ error: 'audio_too_large', message: 'Файл слишком большой (лимит ~20 МБ). Сожми битрейт или обрежь файл.' });
+    }
+
+    let data = null;
+    let usedSelfhost = false;
+
+    const selfhostUrl = SELFHOST_TTS_STT_URL.value();
+    const selfhostToken = SELFHOST_TOKEN.value();
+    if (selfhostUrl && selfhostToken) {
+      try {
+        const r = await fetch(`${selfhostUrl.replace(/\/$/, '')}/v1/audio/transcriptions`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${selfhostToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            input_audio: { data: audioBase64, format },
+            ...(lang ? { language: lang } : {}),
+            response_format: 'verbose_json',
+            timestamp_granularities: ['segment'],
+          }),
+          signal: AbortSignal.timeout(150000),
+        });
+        if (r.ok) {
+          data = await r.json().catch(() => ({}));
+          usedSelfhost = true;
+        } else {
+          console.warn(`[transcribeAudio] self-host ${r.status}, falling back to OpenRouter`);
+        }
+      } catch (error) {
+        console.warn('[transcribeAudio] self-host unreachable, falling back to OpenRouter:', error?.message || error);
+      }
+    }
+
+    if (!data) {
+      const key = OPENROUTER_API_KEY.value();
+      if (!key) {
+        return res.status(500).json({ error: 'missing_openrouter_key', message: 'В Firebase Secret Manager не задан OPENROUTER_API_KEY.' });
+      }
+
+      let upstream;
+      try {
+        upstream = await fetch('https://openrouter.ai/api/v1/audio/transcriptions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${key}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: STT_MODEL,
+            input_audio: { data: audioBase64, format },
+            ...(lang ? { language: lang } : {}),
+            response_format: 'verbose_json',
+            timestamp_granularities: ['segment'],
+          }),
+        });
+      } catch (error) {
+        return res.status(503).json({ error: 'openrouter_unavailable', message: `OpenRouter network error: ${error?.message || String(error)}` });
+      }
+
+      if (!upstream.ok) {
+        const detail = await upstream.text().catch(() => '');
+        return res.status(502).json({
+          error: 'openrouter_stt_failed',
+          message: `OpenRouter STT HTTP ${upstream.status}`,
+          detail: detail.slice(0, 1000),
+        });
+      }
+
+      data = await upstream.json().catch(() => ({}));
+    }
+
+    const text = data?.text || data?.transcript || data?.transcription || '';
+    if (!text) return res.status(502).json({ error: 'empty_transcript', message: 'Пустой транскрипт от бэкенда распознавания.' });
+
+    // Not every provider/model actually honors timestamp_granularities — degrade
+    // gracefully to plain text (no sync) rather than fail the whole request.
+    const segments = Array.isArray(data?.segments)
+      ? data.segments
+        .map(s => ({ start: Number(s.start) || 0, end: Number(s.end) || 0, text: String(s.text || '').trim() }))
+        .filter(s => s.text)
+      : [];
+
+    try {
+      const counterEngine = usedSelfhost ? 'transcribe_audio_chars_selfhost' : 'transcribe_audio_chars';
+      await admin.database().ref(`ai_usage/${user.uid}/${todayKey()}/${counterEngine}`).transaction((current) => Number(current || 0) + text.length);
+    } catch (_) {}
+
+    return res.status(200).json({ text, segments, engine: usedSelfhost ? 'selfhost' : 'openrouter' });
+  }
+);

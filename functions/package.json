@@ -8,7 +8,8 @@
   "scripts": {
     "lint:check": "node --check index.js",
     "deploy:reader-ai": "firebase deploy --only functions:readerAI",
-    "deploy:tts": "firebase deploy --only functions:ttsAudio"
+    "deploy:tts": "firebase deploy --only functions:ttsAudio",
+    "deploy:transcribe": "firebase deploy --only functions:transcribeAudio"
   },
   "dependencies": {
     "firebase-admin": "^12.7.0",
