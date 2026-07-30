@@ -27,6 +27,7 @@ import { createReaderLibraryStore } from './reader/library-store.js?v=5';
 import { createReaderDisplay } from './reader/display.js?v=5';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=2-per-paragraph-timer-guard';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
+import { createJapaneseDictionary } from './reader/ja-dict.js?v=1';
 import { createReaderChapterRenderer } from './reader/chapter-render.js?v=10';
 import { createReaderPagesMode } from './reader/pages-mode.js?v=3';
 import { splitTextToChapters as readerImportSplitTextToChapters,
@@ -503,6 +504,31 @@ const READER_ZH_DICT_CACHE_MAX = 2500;
 // It is loaded from /data/zh_dict_core.json and used for segmentation + pinyin.
 // DeepSeek still provides Russian contextual explanations when needed.
 const READER_ZH_CORE_JSON_URL = 'data/zh_dict_core.json?v=68.15-epub-user-deepseek';
+// JMdict, compacted by scripts/make-ja-dict.mjs. It supplies furigana and
+// dictionary forms without a network round-trip; Russian meanings still come
+// from DeepSeek, exactly as they do for Chinese.
+const READER_JA_CORE_JSON_URL = 'data/ja_dict_core.json?v=77.33-jmdict';
+const READER_JA_CORE_JSON_META_KEY = 'an2_ja_core_json_meta_v1';
+const readerJaDict = createJapaneseDictionary({ url: READER_JA_CORE_JSON_URL });
+
+function readerEnsureJaCoreJsonLoaded(options = {}) {
+  return readerJaDict.ensureLoaded({
+    onLoaded: (count, version) => {
+      try {
+        localStorage.setItem(READER_JA_CORE_JSON_META_KEY, JSON.stringify({
+          loadedAt: new Date().toISOString(), count, version,
+        }));
+      } catch {}
+      if (options.rerender && readerCurrentLang() === 'ja') {
+        setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
+      }
+    },
+  });
+}
+
+function readerLookupJapaneseWord(word) {
+  return readerJaDict.lookup(word);
+}
 const READER_ZH_CORE_JSON_META_KEY = 'an2_zh_core_json_meta_v2';
 const readerZhSegmentInFlight = new Map();
 let readerZhSegmentCache = null;
@@ -1223,11 +1249,13 @@ function readerInlineReadingForWord(word, lang = null) {
   const fromCache = cached ? readerExtractReading(cached, l) : '';
   if (l === 'ja') {
     // Furigana belongs over kanji: a kana-only token already spells its own
-    // reading. There is no bundled Japanese dictionary yet, so the reading is
-    // whatever the word lookup cached for this word — furigana appears once a
-    // word has been opened, and stays cached from then on.
+    // reading.
     if (!/[一-鿿々〆]/.test(String(word || ''))) return '';
-    return fromCache && fromCache !== String(word) ? fromCache : '';
+    // JMdict knows the reading of the inflected form itself, so furigana is
+    // there on first render. A cached lookup still wins, since it may carry a
+    // reading DeepSeek corrected in context.
+    const reading = fromCache || readerJaDict.readingOf(word);
+    return reading && reading !== String(word) ? reading : '';
   }
   if (fromCache) return fromCache;
   const local = readerLookupChineseWord(word);
@@ -2952,6 +2980,8 @@ const readerChapterRenderer = createReaderChapterRenderer({
   ensureZhCoreLoaded: readerEnsureZhCoreJsonLoaded,
   needsZhCoreLoad: () => !readerZhCoreJson && !readerZhCoreJsonPromise,
   isZhCoreLoaded: () => !!readerZhCoreJson,
+  ensureJaCoreLoaded: readerEnsureJaCoreJsonLoaded,
+  needsJaCoreLoad: () => readerJaDict.needsLoad(),
   trackParagraphSeen: readerTrackParagraphIndexSeen,
   getBookProgress: readerBookProgress,
   langBadge: readerLangBadge,
@@ -3233,6 +3263,7 @@ const readerWordLookup = createReaderWordLookup({
   currentLang: () => readerCurrentLang(),
   normalizeWord: readerNormalizeWord,
   lookupChineseWord: readerLookupChineseWord,
+  lookupJapaneseWord: readerLookupJapaneseWord,
   fetchChineseDictEntry: readerFetchChineseDictEntry,
   quickLookup: readerQuickLookup,
   getCachedLexical: readerGetCachedLexical,
@@ -3538,7 +3569,9 @@ async function readerOpenWordPanel(word, paragraphIndex = 0) {
       // it would just re-render the same incomplete cache — force:true skips
       // that shortcut and genuinely re-queries DeepSeek instead.
       const hasIpa = String(found?.ipa || '').trim().length > 0;
-      if (activeLang === 'zh' && !hasRu) {
+      // JMdict answers in English just like CC-CEDICT does, so a Japanese hit
+      // needs the same follow-up to turn into a Russian explanation.
+      if ((activeLang === 'zh' || activeLang === 'ja') && !hasRu) {
         await readerTranslateWordAI({ force: false, skipLocal: true });
       } else if (activeLang === 'en' && !hasIpa) {
         await readerTranslateWordAI({ force: true, skipLocal: true });
@@ -4158,6 +4191,10 @@ async function readerTranslateWordAI(forceOrOptions = true) {
     const context = contextEl?.value || readerSentenceContext(readerCurrentParagraphText(readerSelectedParagraphIndex), word, readerCurrentLang());
     const sourceLang = readerCurrentLang();
     const localZhHint = sourceLang === 'zh' ? (readerLookupChineseWord(word) || readerGetCachedLexical(word, 'zh') || {}) : {};
+    // JMdict already resolved the dictionary form and the reading. Keep them so
+    // a model answer that drifts on either one does not overwrite what the
+    // dictionary is certain about.
+    const localJaHint = sourceLang === 'ja' ? (readerLookupJapaneseWord(word) || {}) : {};
     const inFlightKey = readerLexicalCacheKey(word, readerCurrentLang()) + '|' + normalizeImportKey(context.slice(0, 80));
     let data;
     if (!force && readerLexicalInFlight.has(inFlightKey)) {
@@ -4169,6 +4206,12 @@ async function readerTranslateWordAI(forceOrOptions = true) {
         word,
         surface: word,
         context,
+        // What JMdict already settled. buildPrompt folds this into the prompt so
+        // the model spends its answer on the Russian meaning instead of
+        // re-deriving a dictionary form the app is already sure of.
+        hint: localJaHint.lemma
+          ? { lemma: localJaHint.lemma, reading: localJaHint.reading, en: localJaHint.en }
+          : undefined,
         instruction: sourceLang === 'zh'
           ? 'Return JSON only: {pos, lemma, surface, pinyin, ru, level, form_note, note, chars}. For Chinese, give pinyin with tone marks and a short Russian meaning. "chars" is a compact per-character breakdown for 2+ character words (empty for single characters). No gender.'
           : sourceLang === 'ja'
@@ -4190,17 +4233,17 @@ async function readerTranslateWordAI(forceOrOptions = true) {
       ...d,
       lang: readerCurrentLang(),
       pos,
-      lemma: d.lemma || d.infinitive || d.inf || d.fr || word,
+      lemma: localJaHint.lemma || d.lemma || d.infinitive || d.inf || d.fr || word,
       ru: d.ru || d.translations || d.meaning || d.suggestion || '',
       gender: pos === 'noun' ? (d.gender || '') : '',
       level: d.level || (readerCurrentLang() === 'zh' ? 'HSK?' : readerCurrentLang() === 'ja' ? 'N?' : 'A2'),
       pinyin: d.pinyin || d.py || d.pinyin_marked || localZhHint.pinyin || '',
       // Japanese kana reading — the furigana scaffold reads it back out of the
       // lexical cache on the next chapter render.
-      reading: d.reading || d.kana || d.furigana || d.yomi || '',
-      en: d.en || d.english || localZhHint.en || localZhHint.english || '',
+      reading: localJaHint.reading || d.reading || d.kana || d.furigana || d.yomi || '',
+      en: d.en || d.english || localZhHint.en || localZhHint.english || localJaHint.en || '',
       traditional: d.traditional || localZhHint.traditional || '',
-      form_note: d.form_note || d.pinyin || d.tense || d.note || localZhHint.note || ''
+      form_note: d.form_note || d.pinyin || d.tense || d.note || localZhHint.note || localJaHint.form_note || ''
     };
     readerPutCachedLexical(word, payload, readerCurrentLang());
     readerRenderWordAnalysis(payload, 'deepseek');

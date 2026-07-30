@@ -74,7 +74,13 @@ TOKEN: ${body.word || body.surface || ''}
 CONTEXT: ${body.context || ''}`;
     }
     if (lang === 'ja') {
-      return `You are a Japanese-Russian lexical assistant for a language reader. Analyze the selected Japanese token in context. Return ONLY valid JSON with keys: pos (noun|verb|i_adjective|na_adjective|adverb|particle|counter|proper_noun|other), lemma, surface, reading, ru, level (N5|N4|N3|N2|N1|unknown), form_note, note. Rules: lemma is the dictionary form (辞書形) written the way it appears in text — 読んだ → 読む, 高くて → 高い; reading is the WHOLE word in hiragana (a katakana word keeps katakana); form_note names the inflected surface form in Russian ("て-форма", "прошедшее", "отрицание", "вежливая форма", "потенциальная форма"); ru must be short and natural Russian; if the token is a name or place, mark proper_noun; do not invent grammar essays.
+      // The app resolves the dictionary form and the reading locally against
+      // JMdict before asking. Passing that through stops the model from
+      // second-guessing settled facts and keeps the answer on the meaning.
+      const hint = body.hint && body.hint.lemma
+        ? `\nThe reader's local JMdict entry gives lemma "${body.hint.lemma}", reading "${body.hint.reading || ''}", English "${body.hint.en || ''}". Keep those unless the context clearly contradicts them, and spend the answer on a natural Russian meaning.`
+        : '';
+      return `You are a Japanese-Russian lexical assistant for a language reader. Analyze the selected Japanese token in context. Return ONLY valid JSON with keys: pos (noun|verb|i_adjective|na_adjective|adverb|particle|counter|proper_noun|other), lemma, surface, reading, ru, level (N5|N4|N3|N2|N1|unknown), form_note, note. Rules: lemma is the dictionary form (辞書形) written the way it appears in text — 読んだ → 読む, 高くて → 高い; reading is the WHOLE word in hiragana (a katakana word keeps katakana); form_note names the inflected surface form in Russian ("て-форма", "прошедшее", "отрицание", "вежливая форма", "потенциальная форма"); ru must be short and natural Russian; if the token is a name or place, mark proper_noun; do not invent grammar essays.${hint}
 
 TOKEN: ${body.word || body.surface || ''}
 CONTEXT: ${body.context || ''}`;

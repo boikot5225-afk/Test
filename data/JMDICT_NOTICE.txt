@@ -1,0 +1,11 @@
+data/ja_dict_core.json is derived from JMdict.
+
+JMdict is the property of the Electronic Dictionary Research and Development
+Group (EDRDG) and is used in conformance with the Group's licence:
+https://www.edrdg.org/edrdg/licence.html
+
+The file is distributed under the Creative Commons Attribution-ShareAlike 4.0
+International licence (CC BY-SA 4.0), as required by that licence statement.
+
+Obtained via the jamdict-data package on PyPI, which redistributes JMdict and
+KANJIDIC2 as a single SQLite database. Rebuild with scripts/make-ja-dict.mjs.

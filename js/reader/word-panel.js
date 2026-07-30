@@ -81,6 +81,10 @@ export function createReaderWordPanel({
       counter: 'счётный суффикс',
       i_adjective: 'い-прилагательное',
       na_adjective: 'な-прилагательное',
+      conjunction: 'союз',
+      interjection: 'междометие',
+      prefix: 'префикс',
+      suffix: 'суффикс',
       proper_noun: 'имя собственное',
       name: 'имя собственное',
       other: 'другое',
@@ -166,12 +170,16 @@ export function createReaderWordPanel({
       // inflected away from it.
       const lemmaLine = lemma && lemma !== form ? `<div class="reader-analysis-meta">словарная форма: ${escape(lemma)}</div>` : '';
       const note = String(data.note || '').trim();
+      // A JMdict hit arrives with an English gloss and no Russian. Show it
+      // rather than a dash — it answers the question until DeepSeek is asked.
+      const english = String(data.en || data.english || '').trim();
+      const meaning = ru !== '—' ? escape(ru) : english ? `<span class="reader-analysis-en">${escape(english)}</span>` : '—';
       box.innerHTML = `
         <div class="reader-analysis-card ja">
           <div class="reader-analysis-kicker">${escape(posRu(filled.pos))} · японский</div>
           <div class="reader-analysis-main ja-main"><b>${escape(form)}</b></div>
           ${jaReading ? `<div class="reader-analysis-pinyin">${escape(jaReading)}</div>` : `<div class="reader-analysis-pinyin muted">чтение не пришло — нажми ↻ DeepSeek</div>`}
-          <div class="reader-analysis-ru">${escape(ru)}</div>
+          <div class="reader-analysis-ru">${meaning}</div>
           ${lemmaLine}
           <div class="reader-analysis-meta">${escape(filled.level)}${formInfo ? ' · ' + escape(formInfo) : ''}</div>
           ${note && note !== formInfo ? `<div class="reader-analysis-meta">${escape(note)}</div>` : ''}

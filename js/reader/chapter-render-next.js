@@ -7,6 +7,8 @@ export function createReaderChapterRenderer({
   ensureZhCoreLoaded,
   needsZhCoreLoad,
   isZhCoreLoaded,
+  ensureJaCoreLoaded,
+  needsJaCoreLoad,
   trackParagraphSeen,
   getBookProgress,
   langBadge,
@@ -84,6 +86,7 @@ export function createReaderChapterRenderer({
 
     const activeReaderLang = getBookLang(book);
     if (canonicalLang(activeReaderLang) === 'zh' && needsZhCoreLoad()) ensureZhCoreLoaded({ rerender: true });
+    if (canonicalLang(activeReaderLang) === 'ja' && needsJaCoreLoad?.()) ensureJaCoreLoaded?.({ rerender: true });
 
     const readingView = document.getElementById('reader-reading-view');
     if (readingView) {

@@ -2293,6 +2293,12 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
   font-size:.86rem;
   font-family:"IBM Plex Sans",system-ui,sans-serif;
 }
+/* JMdict answers in English; mark it as a stand-in for the Russian meaning
+   rather than letting it read like a finished translation. */
+.reader-analysis-en{
+  color:var(--text-muted);
+  font-style:italic;
+}
 @media (max-width:700px){
   #reader-reading-view[data-reader-script="cjk"] .reader-paragraph{
     font-size:var(--rd-size) !important;

@@ -1,12 +1,14 @@
 // Reader local lookup.
 // This module keeps the existing lookup order intact:
-// Chinese local/remote dictionary → French quick/cache/verb/noun lookup.
+// Chinese local/remote dictionary → Japanese local dictionary →
+// French quick/cache/verb/noun lookup.
 // DeepSeek is deliberately not called here.
 
 export function createReaderWordLookup({
   currentLang,
   normalizeWord,
   lookupChineseWord,
+  lookupJapaneseWord = null,
   fetchChineseDictEntry,
   quickLookup,
   getCachedLexical,
@@ -24,10 +26,11 @@ export function createReaderWordLookup({
       return await fetchChineseDictEntry(normalized);
     }
 
-    // Japanese has no bundled dictionary yet. Stop here instead of falling
-    // through the French quick/verb/noun tables — they can never match kana or
-    // kanji, and the caller already treats null as "ask DeepSeek".
-    if (lang === 'ja') return null;
+    // JMdict answers the form as it appears in the text, deinflecting it to a
+    // dictionary form on the way. A miss stops here rather than falling through
+    // the French quick/verb/noun tables, which can never match kana or kanji —
+    // the caller already treats null as "ask DeepSeek".
+    if (lang === 'ja') return lookupJapaneseWord?.(normalized) || null;
 
     const quick = quickLookup(normalized);
     if (quick) return quick;
