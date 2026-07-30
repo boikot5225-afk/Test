@@ -115,15 +115,20 @@ jobs:
           npm --prefix "${cli_root}" install --no-save --ignore-scripts firebase-tools@15.24.0
           node "${cli_root}/node_modules/firebase-tools/lib/bin/firebase.js" --version
 
-      - name: Deploy readerAI and ttsAudio
+      - name: Deploy readerAI
         shell: bash
         run: |
           set -euo pipefail
           firebase_cli="${RUNNER_TEMP}/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
-          # transcribeAudio is deliberately not in this list: nothing in this
-          # change touches it, and leaving it alone keeps the blast radius to
-          # the two functions that gained Japanese.
-          args=(deploy --only functions:readerAI,functions:ttsAudio --project french-da79a --non-interactive)
+          # readerAI only. Deploying ttsAudio as well fails before it starts:
+          # the deploying service account cannot read OPENROUTER_API_KEY from
+          # Secret Manager ("Permission 'secretmanager.secrets.get' denied"),
+          # which is also why the older control workflow strips those secret
+          # declarations. Nothing is lost by leaving ttsAudio deployed as it
+          # is — the Japanese voice reaches it from the client, which names
+          # jf_alpha explicitly rather than relying on the server's table.
+          # transcribeAudio is untouched for the same reason of blast radius.
+          args=(deploy --only functions:readerAI --project french-da79a --non-interactive)
           if [[ "${FIREBASE_AUTH_MODE}" == "token" ]]; then
             node "${firebase_cli}" "${args[@]}" --token "${FIREBASE_TOKEN}"
           else
