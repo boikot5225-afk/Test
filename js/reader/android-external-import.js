@@ -96,8 +96,10 @@ export async function readerImportAndroidFile(payload = {}) {
 window.readerImportAndroidFile = readerImportAndroidFile;
 
 // Reader UI adapters load only after the full Reader AI module graph.
-// A failure here cannot break import, storage, dictionaries or authentication.
+// The final restore layer gives native Reader AI layout/display controls the
+// last word in the cascade while preserving LingQ features.
 import('../lingq-reader-shell-v2.js?v=0.3.0')
   .then(() => import('../lingq-reader-features-v4.js?v=0.4.0'))
   .then(() => import('../lingq-reader-completion-v5.js?v=0.5.0'))
+  .then(() => import('../lingq-reader-restore-v6.js?v=0.6.0'))
   .catch(error => console.warn('[lingq reader shell] skipped:', error));
