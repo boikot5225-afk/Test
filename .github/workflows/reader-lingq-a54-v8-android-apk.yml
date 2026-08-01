@@ -74,7 +74,9 @@ jobs:
           test -f /tmp/reader-a54-v8-apk/assets/www/index.html
           test ! -f /tmp/reader-a54-v8-apk/assets/index.html
           test -f /tmp/reader-a54-v8-apk/assets/www/js/reader-mobile-galaxy-a54-reading-v8.js
-          strings /tmp/reader-a54-v8-apk/classes.dex | grep -F 'assets/www/index.html?nativeInsets=1'
+          APKA="$(command -v apkanalyzer || find "$ANDROID_HOME" -path '*/bin/apkanalyzer' -type f | head -n 1)"
+          test -n "$APKA"
+          "$APKA" manifest application-id "$APK" | grep -Fx 'space.saintjust.reader.lingqa54.debug'
 
       - name: Prepare artifact
         shell: bash
