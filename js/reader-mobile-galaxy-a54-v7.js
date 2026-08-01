@@ -1,9 +1,9 @@
-/* Reader AI mobile layout fixes v0.7 — Galaxy A54 / narrow Android phones */
+/* Reader AI mobile layout fixes v0.10 — Galaxy A54 / narrow Android phones */
 (() => {
   'use strict';
   const $=(s,r=document)=>r?.querySelector?.(s)||null;
   const $$=(s,r=document)=>[...(r?.querySelectorAll?.(s)||[])];
-  let timer=0,interval=0,observer=null;
+  let frame=0,observer=null,observedRoot=null;
   const phone=()=>innerWidth<=700;
   const shown=n=>!!n&&getComputedStyle(n).display!=='none'&&getComputedStyle(n).visibility!=='hidden';
 
@@ -75,10 +75,11 @@ body.reader-a54-reading #reader-reading-view .rd-display-panel,body.reader-a54-r
       const duplicate=active==='books'&&!q&&contId&&bookId($('.lib-book-main',card))===contId&&shown(cont);
       card.classList.toggle('a54-continue-duplicate',!!duplicate);
       const match=!q||String(card.textContent||'').toLocaleLowerCase().includes(q);
-      card.hidden=!match;if(match&&!duplicate)found++;
+      if(card.hidden===match)card.hidden=!match;
+      if(match&&!duplicate)found++;
     });
-    if(cont)cont.style.display=q||active!=='books'?'none':(cont.dataset.a54Display||'flex');
-    if(count){const n=q?found:cards.length;count.textContent=`${n} ${active==='news'?(n===1?'новость':'новостей'):(n===1?'книга':n>=2&&n<=4?'книги':'книг')}`}
+    if(cont){const next=q||active!=='books'?'none':(cont.dataset.a54Display||'flex');if(cont.style.display!==next)cont.style.display=next}
+    if(count){const n=q?found:cards.length;const text=`${n} ${active==='news'?(n===1?'новость':'новостей'):(n===1?'книга':n>=2&&n<=4?'книги':'книг')}`;if(count.textContent!==text)count.textContent=text}
   }
 
   function syncLibrary(){
@@ -89,13 +90,32 @@ body.reader-a54-reading #reader-reading-view .rd-display-panel,body.reader-a54-r
   }
 
   function sync(){
-    addStyles();const screen=$('#screen-reader'),library=$('#reader-library-view'),reading=$('#reader-reading-view');
-    const open=phone()&&shown(screen);document.body.classList.toggle('reader-a54-screen',open);
-    document.body.classList.toggle('reader-a54-library',open&&shown(library));
-    document.body.classList.toggle('reader-a54-reading',open&&shown(reading));
-    if(document.body.classList.contains('reader-a54-library'))syncLibrary();
+    frame=0;addStyles();const screen=$('#screen-reader'),library=$('#reader-library-view'),reading=$('#reader-reading-view');
+    const open=phone()&&shown(screen);
+    const libraryOpen=open&&shown(library),readingOpen=open&&shown(reading);
+    document.body.classList.toggle('reader-a54-screen',open);
+    document.body.classList.toggle('reader-a54-library',libraryOpen);
+    document.body.classList.toggle('reader-a54-reading',readingOpen);
+    if(libraryOpen)syncLibrary();
+    observeScreen(screen);
   }
-  function schedule(){clearTimeout(timer);timer=setTimeout(sync,30)}
-  function boot(){addStyles();sync();observer=new MutationObserver(schedule);observer.observe(document.body,{childList:true,subtree:true});interval=setInterval(sync,280);addEventListener('resize',schedule,{passive:true});addEventListener('orientationchange',schedule,{passive:true});document.addEventListener('click',schedule,true);addEventListener('pagehide',()=>{observer?.disconnect();clearInterval(interval)},{once:true});console.info('[reader mobile] Galaxy A54 layout v0.7 loaded')}
+
+  function schedule(){if(frame)return;frame=requestAnimationFrame(sync)}
+
+  function observeScreen(screen){
+    const root=screen||document.body;if(root===observedRoot)return;
+    observer?.disconnect();observer=new MutationObserver(schedule);observer.observe(root,{childList:true,subtree:true});observedRoot=root;
+  }
+
+  function boot(){
+    addStyles();sync();
+    addEventListener('resize',schedule,{passive:true});
+    addEventListener('orientationchange',schedule,{passive:true});
+    document.addEventListener('click',schedule,true);
+    document.addEventListener('input',schedule,true);
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden)schedule()});
+    addEventListener('pagehide',()=>{observer?.disconnect();if(frame)cancelAnimationFrame(frame)},{once:true});
+    console.info('[reader mobile] Galaxy A54 layout v0.10 loaded');
+  }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
 })();
