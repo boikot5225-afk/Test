@@ -19,6 +19,53 @@ export function createReaderWordState(opts) {
   const CLICK_CONTEXTS_CAP = 32;
   const TOTAL_CAP = 6000;
 
+  // reader-app's legacy pinyin policy normalizes status before deciding whether
+  // a passively seen CJK word may keep ruby, but it only treats exact lowercase
+  // "known" as actually learned. This uppercase sentinel therefore keeps the
+  // default ruby mode stable without lying to colours/SRS or erasing seen counts.
+  // In the explicit "learning only" ruby mode it is still hidden, as intended.
+  const PASSIVE_RUBY_SENTINEL = 'KNOWN';
+  const isCjkLanguage = (lang) => ['zh', 'ja'].includes(canonicalLang(lang));
+  const isPassiveRubySentinel = (state) => !!state
+    && state.status === PASSIVE_RUBY_SENTINEL
+    && state.autoRubyVisible === true
+    && !state.known;
+  const hasExplicitLearningStatus = (state) => {
+    if (isPassiveRubySentinel(state)) return false;
+    return ['learning', 'problem', 'hard', 'familiar', 'looked', 'known']
+      .includes(String(state?.status || '').trim().toLowerCase());
+  };
+  const stabilizePassiveRuby = (state) => {
+    if (!state || !isCjkLanguage(state.lang)) return false;
+
+    const shouldPin = !state.known
+      && !state.saved
+      && Number(state.clicked || 0) <= 0
+      && Number(state.seen || 0) >= seenAfter
+      && !hasExplicitLearningStatus(state);
+
+    if (shouldPin) {
+      const changed = state.status !== PASSIVE_RUBY_SENTINEL || state.autoRubyVisible !== true;
+      state.status = PASSIVE_RUBY_SENTINEL;
+      state.autoRubyVisible = true;
+      return changed;
+    }
+
+    if (isPassiveRubySentinel(state) && (state.known || state.saved || Number(state.clicked || 0) > 0)) {
+      delete state.autoRubyVisible;
+      state.status = state.known ? 'known' : state.saved ? 'learning' : 'looked';
+      return true;
+    }
+    return false;
+  };
+  const stabilizeAllPassiveRuby = (data) => {
+    let changed = false;
+    for (const state of Object.values(data || {})) {
+      changed = stabilizePassiveRuby(state) || changed;
+    }
+    return changed;
+  };
+
   const isPrunable = (state) => !state?.saved && !state?.known
     && !['problem', 'hard', 'familiar'].includes(state?.status);
 
@@ -83,10 +130,15 @@ export function createReaderWordState(opts) {
   };
   const load = () => {
     const cached = cacheRead();
-    if (cached) return publishLiveSnapshot(cached);
+    if (cached) {
+      stabilizeAllPassiveRuby(cached);
+      return publishLiveSnapshot(cached);
+    }
     let data = {};
     try { data = JSON.parse(localStorage.getItem(storageKey()) || '{}') || {}; } catch (_) {}
-    if (pruneAll(data)) {
+    let changed = pruneAll(data);
+    changed = stabilizeAllPassiveRuby(data) || changed;
+    if (changed) {
       try { localStorage.setItem(storageKey(), JSON.stringify(data)); } catch (_) {}
     }
     cacheWrite(data);
@@ -95,6 +147,7 @@ export function createReaderWordState(opts) {
   const save = () => {
     const data = load();
     for (const item of Object.values(data)) pruneClickContexts(item);
+    stabilizeAllPassiveRuby(data);
     pruneOverflow(data);
     let localOk = true;
     try {
@@ -131,6 +184,7 @@ export function createReaderWordState(opts) {
         changed = true;
       }
     }
+    changed = stabilizeAllPassiveRuby(current) || changed;
     if (!changed) return false;
     cacheWrite(current);
     try { localStorage.setItem(storageKey(), JSON.stringify(current)); } catch (_) {}
@@ -159,10 +213,16 @@ export function createReaderWordState(opts) {
         state.known = true;
         state.autoKnown = 'common';
         state.status = 'known';
+        delete state.autoRubyVisible;
+      } else {
+        changed = stabilizePassiveRuby(state) || changed;
       }
     });
     if (changed) save();
-    return changed;
+    // CJK word-state changes used to rebuild every ruby token 420 ms after it
+    // entered the viewport. Keep tracking/syncing, but repaint colours/ruby only
+    // on an actual navigation or explicit word action, not in the reader's face.
+    return changed && !isCjkLanguage(language);
   };
 
   const activeClickContext = (word, explicitContext = null) => {
@@ -245,6 +305,7 @@ export function createReaderWordState(opts) {
   const markClicked = (word, lang = null, explicitContext = null) => {
     if (!word || isCommonWord(word, lang)) return false;
     const state = touch(word, lang);
+    delete state.autoRubyVisible;
     state.clickContexts ||= {};
     const context = activeClickContext(word, explicitContext);
     let counted = false;
@@ -271,11 +332,11 @@ export function createReaderWordState(opts) {
     return counted;
   };
   const markSaved = (word, lemma = null, lang = null, ru = '') => {
-    const state = touch(lemma || word, lang); state.saved = true; state.known = false; state.status = state.seen >= familiarAfter ? 'familiar' : 'learning'; if (ru) state.ru = ru;
-    if (word && lemma && key(word, lang) !== key(lemma, lang)) { const form = touch(word, lang); form.saved = true; form.linkedLemma = normalizeWord(lemma, lang); form.lemma = normalizeWord(lemma, lang); form.status = 'learning'; if (ru) form.ru = ru; }
+    const state = touch(lemma || word, lang); delete state.autoRubyVisible; state.saved = true; state.known = false; state.status = state.seen >= familiarAfter ? 'familiar' : 'learning'; if (ru) state.ru = ru;
+    if (word && lemma && key(word, lang) !== key(lemma, lang)) { const form = touch(word, lang); delete form.autoRubyVisible; form.saved = true; form.linkedLemma = normalizeWord(lemma, lang); form.lemma = normalizeWord(lemma, lang); form.status = 'learning'; if (ru) form.ru = ru; }
     save();
   };
-  const markKnown = (word, lang = null) => { const state = touch(word, lang); state.known = true; state.status = 'known'; state.autoKnown = false; save(); };
+  const markKnown = (word, lang = null) => { const state = touch(word, lang); delete state.autoRubyVisible; state.known = true; state.status = 'known'; state.autoKnown = false; save(); };
   const visual = (word, lang = null) => {
     const language = canonicalLang(lang || currentLang()), normalized = normalizeWord(word, language);
     if (!normalized) return { cls: 'rw-known', title: 'служебное/частое слово' };
