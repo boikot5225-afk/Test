@@ -142,3 +142,8 @@ window.AN2_FIREBASE_FUNCTIONS_REGION = window.AN2_FIREBASE_FUNCTIONS_REGION || '
   };
   window.an2FirebaseSdkReady = Promise.resolve(true);
 })();
+
+// LingQ-like reading shell. It only replaces the reader presentation layer;
+// Reader AI remains responsible for books, dictionaries, AI, TTS and progress.
+import('./lingq-reader-shell.js?v=0.1.0')
+  .catch((error) => console.warn('[lingq reader shell] module skipped:', error));
