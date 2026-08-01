@@ -20,6 +20,19 @@ on:
       - 'js/**'
       - 'data/**'
       - 'icons/**'
+  pull_request:
+    branches:
+      - claude/check-branches-latest-changes-wydht2
+    paths:
+      - '.github/workflows/android-apk.yml'
+      - 'android/**'
+      - 'index.html'
+      - 'manifest.json'
+      - 'sw.js'
+      - 'css/**'
+      - 'js/**'
+      - 'data/**'
+      - 'icons/**'
   workflow_dispatch:
 
 permissions:
@@ -31,7 +44,7 @@ jobs:
     timeout-minutes: 40
     env:
       # The keystore file is the only secret worth storing — its password and
-      # alias are useless without it and have defaults in the build file. Absent
+      # alias are useless without it and has defaults in the build file. Absent
       # this, each runner signs with its own generated debug key and Android
       # refuses to install the new APK over the previous one.
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
