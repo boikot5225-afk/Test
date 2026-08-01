@@ -96,12 +96,13 @@ export async function readerImportAndroidFile(payload = {}) {
 window.readerImportAndroidFile = readerImportAndroidFile;
 
 // Reader UI adapters load only after the full Reader AI module graph.
-// Native Reader AI remains the renderer; the final layers add LingQ learning
-// features and narrow-phone layout fixes without replacing its controls.
+// Native Reader AI remains the renderer; final layers add LingQ learning and
+// Galaxy A54 layout diagnostics without replacing fonts, themes or pages mode.
 import('../lingq-reader-shell-v2.js?v=0.3.0')
   .then(() => import('../lingq-reader-features-v4.js?v=0.4.0'))
   .then(() => import('../lingq-reader-completion-v5.js?v=0.5.0'))
   .then(() => import('../lingq-reader-restore-v6.js?v=0.6.0'))
   .then(() => import('../reader-mobile-galaxy-a54-v7.js?v=0.7.0'))
   .then(() => import('../reader-mobile-galaxy-a54-search-v71.js?v=0.7.1'))
+  .then(() => import('../reader-mobile-galaxy-a54-reading-v8.js?v=0.8.0'))
   .catch(error => console.warn('[lingq reader shell] skipped:', error));
