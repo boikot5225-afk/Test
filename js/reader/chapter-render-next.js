@@ -28,6 +28,60 @@ export function createReaderChapterRenderer({
   syncPagesMode,
   autoTranslateActive,
 }) {
+  let zhCoreWarmPromise = null;
+  let jaCoreWarmPromise = null;
+  let zhCoreWarmFailed = false;
+  let jaCoreWarmFailed = false;
+
+  // Do not paint a Chinese/Japanese chapter once without readings and then
+  // rebuild the whole page when the dictionary arrives. That two-stage paint
+  // was the visible "pinyin appears/disappears" jump on Android. Wait for the
+  // bundled local dictionary and produce one final layout instead.
+  function holdFirstCjkPaintUntilCore(lang, book) {
+    const code = canonicalLang(lang);
+    const isZh = code === 'zh';
+    const isJa = code === 'ja';
+    if (!isZh && !isJa) return false;
+
+    const loaded = isZh ? !!isZhCoreLoaded?.() : !!isJaCoreLoaded?.();
+    const failed = isZh ? zhCoreWarmFailed : jaCoreWarmFailed;
+    if (loaded || failed) return false;
+
+    const ensure = isZh ? ensureZhCoreLoaded : ensureJaCoreLoaded;
+    if (typeof ensure !== 'function') return false;
+
+    const root = document.getElementById('reader-chapter-text');
+    if (root && root.dataset.readerCoreWarmup !== code) {
+      root.dataset.readerCoreWarmup = code;
+      root.innerHTML = `
+        <div class="reader-core-warmup" role="status" aria-live="polite"
+          style="min-height:42vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:28px;color:var(--text-muted);font-family:'IBM Plex Sans',sans-serif;font-size:.82rem;line-height:1.5">
+          <div><span style="display:block;font-size:1.25rem;margin-bottom:8px">${isZh ? '拼' : '振'}</span>${isZh ? 'Подготавливаю слова и пиньинь…' : 'Подготавливаю слова и фуригану…'}</div>
+        </div>`;
+    }
+
+    const startWarmup = () => Promise.resolve().then(() => ensure({ rerender: false }))
+      .catch((error) => {
+        if (isZh) zhCoreWarmFailed = true;
+        else jaCoreWarmFailed = true;
+        console.warn(`[reader] ${code} core warm-up failed; using fallback render`, error?.message || error);
+      })
+      .finally(() => {
+        if (isZh) zhCoreWarmPromise = null;
+        else jaCoreWarmPromise = null;
+        const current = getCurrentBook?.();
+        if (!current) return;
+        requestAnimationFrame(() => render());
+      });
+
+    if (isZh) {
+      if (!zhCoreWarmPromise) zhCoreWarmPromise = startWarmup();
+    } else if (!jaCoreWarmPromise) {
+      jaCoreWarmPromise = startWarmup();
+    }
+    return true;
+  }
+
   // ── Fast navigation helpers ──────────────────────────────────────
   // Returns true if we successfully updated only active-paragraph state
   // without rebuilding all DOM. Falls back to false → full render.
@@ -92,8 +146,6 @@ export function createReaderChapterRenderer({
     if (!book) return;
 
     const activeReaderLang = getBookLang(book);
-    if (canonicalLang(activeReaderLang) === 'zh' && needsZhCoreLoad()) ensureZhCoreLoaded({ rerender: true });
-    if (canonicalLang(activeReaderLang) === 'ja' && needsJaCoreLoad?.()) ensureJaCoreLoaded?.({ rerender: true });
 
     const readingView = document.getElementById('reader-reading-view');
     if (readingView) {
@@ -109,6 +161,14 @@ export function createReaderChapterRenderer({
       // script and reserves data-reader-lang for the font choice.
       readingView.dataset.readerScript = ['zh', 'ja'].includes(canonicalLang(activeReaderLang)) ? 'cjk' : 'latin';
     }
+
+    if (holdFirstCjkPaintUntilCore(activeReaderLang, book)) return;
+
+    // A failed prewarm is allowed to use the old non-blocking fallback. This is
+    // deliberately after the one-paint guard so a healthy local dictionary
+    // never causes a second chapter layout.
+    if (canonicalLang(activeReaderLang) === 'zh' && needsZhCoreLoad?.()) ensureZhCoreLoaded?.({ rerender: false });
+    if (canonicalLang(activeReaderLang) === 'ja' && needsJaCoreLoad?.()) ensureJaCoreLoaded?.({ rerender: false });
 
     const chapters = book.chapters || [];
     const chapterIndex = Math.max(0, Math.min(book.currentChapter || 0, chapters.length - 1));
@@ -153,6 +213,7 @@ export function createReaderChapterRenderer({
     updatePinyinButton(activeReaderLang);
 
     if (chapterText) {
+      delete chapterText.dataset.readerCoreWarmup;
       chapterText.dataset.lang = activeReaderLang;
       chapterText.lang = activeReaderLang;
       const translations = book.readerTranslations || {};
