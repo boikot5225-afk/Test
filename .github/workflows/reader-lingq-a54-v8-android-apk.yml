@@ -49,7 +49,15 @@ jobs:
           gradle-version: '8.9'
 
       - name: Prepare verified A54 wrapper
-        run: bash scripts/prepare-reader-a54-v8-wrapper.sh
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/prepare-reader-a54-v8-wrapper.sh
+          cat > .reader-a54-v8-android/gradle.properties <<'EOF'
+          android.useAndroidX=true
+          android.enableJetifier=true
+          EOF
+          grep -F 'android.useAndroidX=true' .reader-a54-v8-android/gradle.properties
 
       - name: Build verified APK
         working-directory: .reader-a54-v8-android
