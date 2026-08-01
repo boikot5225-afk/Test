@@ -1,0 +1,89 @@
+name: Reader AI LingQ A54 v0.8 APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/lingq-reader-v77
+    paths:
+      - '.github/workflows/reader-lingq-a54-v8-android-apk.yml'
+      - 'scripts/prepare-reader-a54-v8-wrapper.sh'
+      - 'index.html'
+      - 'css/**'
+      - 'js/**'
+      - 'icons/**'
+      - 'data/**'
+      - 'manifest.json'
+      - 'sw.js'
+  pull_request:
+    branches:
+      - claude/epic-hawking-540kte
+
+permissions:
+  contents: read
+
+jobs:
+  build-a54-v8:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Reader AI
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform 35
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Prepare verified A54 wrapper
+        run: bash scripts/prepare-reader-a54-v8-wrapper.sh
+
+      - name: Build verified APK
+        working-directory: .reader-a54-v8-android
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Verify packaged app
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK='.reader-a54-v8-android/app/build/outputs/apk/debug/app-debug.apk'
+          rm -rf /tmp/reader-a54-v8-apk
+          mkdir -p /tmp/reader-a54-v8-apk
+          unzip -q "$APK" -d /tmp/reader-a54-v8-apk
+          test -f /tmp/reader-a54-v8-apk/assets/www/index.html
+          test ! -f /tmp/reader-a54-v8-apk/assets/index.html
+          test -f /tmp/reader-a54-v8-apk/assets/www/js/reader-mobile-galaxy-a54-reading-v8.js
+          strings /tmp/reader-a54-v8-apk/classes.dex | grep -F 'assets/www/index.html?nativeInsets=1'
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp .reader-a54-v8-android/app/build/outputs/apk/debug/app-debug.apk \
+            dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk
+          sha256sum dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk | \
+            tee dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk.sha256
+
+      - name: Upload verified APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-LingQ-v0.8.0-Galaxy-A54-APK
+          path: |
+            dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk
+            dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
