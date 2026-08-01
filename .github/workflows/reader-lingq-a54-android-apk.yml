@@ -18,16 +18,6 @@ on:
   pull_request:
     branches:
       - claude/epic-hawking-540kte
-    paths:
-      - '.github/workflows/reader-lingq-a54-android-apk.yml'
-      - '.github/workflows/reader-stage1-android-apk.yml'
-      - 'index.html'
-      - 'css/**'
-      - 'js/**'
-      - 'icons/**'
-      - 'data/**'
-      - 'manifest.json'
-      - 'sw.js'
 
 permissions:
   contents: read
@@ -85,29 +75,86 @@ jobs:
           ASSETS_ROOT='.stage1-android/app/src/main/assets'
           WWW="$ASSETS_ROOT/www"
 
-          sed -i 's#https://appassets.androidplatform.net/assets/index.html#https://appassets.androidplatform.net/assets/www/index.html#' "$JAVA_FILE"
+          sed -i 's#https://appassets.androidplatform.net/assets/index.html#https://appassets.androidplatform.net/assets/www/index.html?nativeInsets=1#' "$JAVA_FILE"
           sed -i "s/applicationId 'space.saintjust.reader.stage1'/applicationId 'space.saintjust.reader.lingqa54'/" "$BUILD_FILE"
-          sed -i 's/versionCode 2/versionCode 12/' "$BUILD_FILE"
-          sed -i "s/versionName 'stage1-test'/versionName 'lingq-a54-v0.7.2'/" "$BUILD_FILE"
+          sed -i 's/versionCode 2/versionCode 13/' "$BUILD_FILE"
+          sed -i "s/versionName 'stage1-test'/versionName 'lingq-a54-v0.8.0'/" "$BUILD_FILE"
+          sed -i "/implementation 'androidx.annotation:annotation:1.9.1'/a\            implementation 'androidx.core:core:1.15.0'" "$BUILD_FILE"
           sed -i 's/Reader AI Stage 1/Reader AI LingQ A54/' "$MANIFEST_FILE"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          java_file = Path('.stage1-android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java')
+          source = java_file.read_text()
+
+          source = source.replace(
+              'import android.widget.Toast;\n',
+              'import android.widget.FrameLayout;\nimport android.widget.Toast;\n'
+          )
+          source = source.replace(
+              'import androidx.annotation.Nullable;\nimport androidx.webkit.WebViewAssetLoader;\n',
+              'import androidx.annotation.Nullable;\n'
+              'import androidx.core.graphics.Insets;\n'
+              'import androidx.core.view.ViewCompat;\n'
+              'import androidx.core.view.WindowInsetsCompat;\n'
+              'import androidx.webkit.WebViewAssetLoader;\n'
+          )
+
+          old = '''              webView = new WebView(this);
+              webView.setBackgroundColor(Color.rgb(17, 17, 17));
+              setContentView(webView, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+              ));'''
+          new = '''              FrameLayout root = new FrameLayout(this);
+              root.setBackgroundColor(Color.rgb(17, 17, 17));
+
+              webView = new WebView(this);
+              webView.setBackgroundColor(Color.rgb(17, 17, 17));
+              root.addView(webView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+              ));
+
+              ViewCompat.setOnApplyWindowInsetsListener(root, (view, insets) -> {
+                Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+                return WindowInsetsCompat.CONSUMED;
+              });
+              setContentView(root, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+              ));
+              ViewCompat.requestApplyInsets(root);'''
+          if old not in source:
+              raise SystemExit('MainActivity root block was not found')
+          source = source.replace(old, new)
+          java_file.write_text(source)
+          PY
 
           test -f "$WWW/index.html"
           test ! -f "$ASSETS_ROOT/index.html"
-          grep -F 'private static final String APP_URL = "https://appassets.androidplatform.net/assets/www/index.html";' "$JAVA_FILE"
+          grep -F 'private static final String APP_URL = "https://appassets.androidplatform.net/assets/www/index.html?nativeInsets=1";' "$JAVA_FILE"
           ! grep -Fq 'private static final String APP_URL = "https://appassets.androidplatform.net/assets/index.html";' "$JAVA_FILE"
+          grep -F 'ViewCompat.setOnApplyWindowInsetsListener' "$JAVA_FILE"
+          grep -F 'WindowInsetsCompat.Type.systemBars()' "$JAVA_FILE"
           grep -F "applicationId 'space.saintjust.reader.lingqa54'" "$BUILD_FILE"
-          grep -F 'versionCode 12' "$BUILD_FILE"
-          grep -F "versionName 'lingq-a54-v0.7.2'" "$BUILD_FILE"
+          grep -F 'versionCode 13' "$BUILD_FILE"
+          grep -F "versionName 'lingq-a54-v0.8.0'" "$BUILD_FILE"
+          grep -F "implementation 'androidx.core:core:1.15.0'" "$BUILD_FILE"
 
           test -f "$WWW/js/lingq-reader-restore-v6.js"
           test -f "$WWW/js/reader-mobile-galaxy-a54-v7.js"
           test -f "$WWW/js/reader-mobile-galaxy-a54-search-v71.js"
+          test -f "$WWW/js/reader-mobile-galaxy-a54-reading-v8.js"
           test -f "$WWW/js/reader/pages-mode.js"
           test -f "$WWW/js/reader/display.js"
 
           node --check "$WWW/js/lingq-reader-restore-v6.js"
           node --check "$WWW/js/reader-mobile-galaxy-a54-v7.js"
           node --check "$WWW/js/reader-mobile-galaxy-a54-search-v71.js"
+          node --check "$WWW/js/reader-mobile-galaxy-a54-reading-v8.js"
 
       - name: Build verified APK
         working-directory: .stage1-android
@@ -125,6 +172,7 @@ jobs:
           test ! -f /tmp/reader-a54-apk/assets/index.html
           test -f /tmp/reader-a54-apk/assets/www/js/reader-mobile-galaxy-a54-v7.js
           test -f /tmp/reader-a54-apk/assets/www/js/reader-mobile-galaxy-a54-search-v71.js
+          test -f /tmp/reader-a54-apk/assets/www/js/reader-mobile-galaxy-a54-reading-v8.js
 
       - name: Prepare artifact
         shell: bash
@@ -132,16 +180,16 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           cp .stage1-android/app/build/outputs/apk/debug/app-debug.apk \
-            dist/Reader-AI-LingQ-v0.7.2-Galaxy-A54-Fixed.apk
-          sha256sum dist/Reader-AI-LingQ-v0.7.2-Galaxy-A54-Fixed.apk | \
-            tee dist/Reader-AI-LingQ-v0.7.2-Galaxy-A54-Fixed.apk.sha256
+            dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk
+          sha256sum dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk | \
+            tee dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk.sha256
 
       - name: Upload verified Galaxy A54 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-LingQ-v0.7.2-Galaxy-A54-Fixed-APK
+          name: Reader-AI-LingQ-v0.8.0-Galaxy-A54-APK
           path: |
-            dist/Reader-AI-LingQ-v0.7.2-Galaxy-A54-Fixed.apk
-            dist/Reader-AI-LingQ-v0.7.2-Galaxy-A54-Fixed.apk.sha256
+            dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk
+            dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk.sha256
           if-no-files-found: error
           retention-days: 14
