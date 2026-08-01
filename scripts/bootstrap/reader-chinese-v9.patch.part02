@@ -1,0 +1,236 @@
+TokenizeChineseParagraph(text) {
+   const s = String(text || '');
+   if (!s) return [];
+-  if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: true });
++  if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: false });
+   const key = readerTextHash(s);
++
++  // Freeze the chosen segmentation for this app session. Background dictionary
++  // and remote segmenter results may improve the cache for the next opening,
++  // but they never reshape text that is currently under the user's finger.
++  const stable = readerZhStableSegments.get(key);
++  if (Array.isArray(stable) && stable.length) return [...stable];
++
+   const cached = loadReaderZhSegmentCache()[key];
+   const local = readerSegmentChineseLocal(s);
++  let picked = null;
+   if (Array.isArray(cached?.words) && cached.words.length) {
+-    return readerChooseBestChineseSegmentation(s, cached.words, local);
++    picked = readerChooseBestChineseSegmentation(s, cached.words, local);
+   }
+ 
+-  // Remote dictionary segmenter runs in background; reading never blocks.
++  // Remote dictionary segmenter runs in background and only warms the cache.
+   readerScheduleChineseSegmentation(s);
+ 
+-  if (local.length) return local;
++  if (!picked?.length && local.length) picked = local;
+ 
+-  try {
+-    if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+-      const seg = new Intl.Segmenter('zh', { granularity: 'word' });
+-      return Array.from(seg.segment(s), x => x.segment).filter(x => x !== '');
+-    }
+-  } catch {}
+-  return Array.from(s);
++  if (!picked?.length) {
++    try {
++      if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
++        const seg = new Intl.Segmenter('zh', { granularity: 'word' });
++        picked = Array.from(seg.segment(s), x => x.segment).filter(x => x !== '');
++      }
++    } catch {}
++  }
++  if (!picked?.length) picked = Array.from(s);
++  readerZhStableSegments.set(key, [...picked]);
++  return [...picked];
+ }
+ 
+ 
+@@ -1509,7 +1548,11 @@
+   }
+   const book = readerCurrentBook?.();
+   const lang = readerBookLang(book);
++  const paragraphText = String(p || '');
++  let cursor = 0;
+   return readerTokenizeParagraph(p, lang).map(tok => {
++    const tokenStart = cursor;
++    cursor += String(tok || '').length;
+     if (/^\s+$/.test(tok)) return tok;
+     const clean = readerNormalizeWord(tok, lang);
+     const clickable = lang === 'zh'
+@@ -1517,12 +1560,16 @@
+       : !!clean && /[a-zà-öø-ÿœæ]/i.test(clean);
+     if (!clickable) return readerEscape(tok);
+     const visual = readerWordVisual(clean, lang);
+-    const pinyin = readerInlinePinyinForWord(clean, lang);
+-    const pinyinCls = pinyin ? ' rw-pinyin-on' : '';
+-    const body = pinyin
+-      ? `<ruby class="reader-zh-ruby"><span class="reader-zh-hanzi">${readerEscape(tok)}</span><rt>${readerEscape(pinyin)}</rt></ruby>`
++    const pinyin = readerInlinePinyinForWord(clean, lang, {
++      text: paragraphText,
++      start: tokenStart,
++    });
++    const hasSlot = readerChinesePinyinSlotActive(lang);
++    const pinyinCls = `${hasSlot ? ' rw-pinyin-slot' : ''}${pinyin ? ' rw-pinyin-on' : ''}`;
++    const body = lang === 'zh'
++      ? readerRenderChineseTokenBody(tok, pinyin, lang)
+       : readerEscape(tok);
+-    return `<span class="reader-word ${visual.cls}${pinyinCls}" data-word="${readerEscape(clean)}" data-reader-index="${paragraphIndex}" data-lang="${readerEscape(lang)}" title="${readerEscape(visual.title)}">${body}</span>`;
++    return `<span class="reader-word ${visual.cls}${pinyinCls}" data-word="${readerEscape(clean)}" data-surface="${readerEscape(tok)}" data-reader-index="${paragraphIndex}" data-reader-offset="${tokenStart}" data-lang="${readerEscape(lang)}" title="${readerEscape(visual.title)}">${body}</span>`;
+   }).join('');
+ }
+ 
+@@ -2704,6 +2751,13 @@
+   }
+   if (!book) { showToast('⚠️ Текст не найден'); return; }
+   readerCurrentBookId = id;
++  // Chinese must have its local dictionary ready before the first visible
++  // chapter paint. Previously the 9.4 MB CC-CEDICT map arrived afterwards,
++  // replaced character tokens with words and made every line visibly jump.
++  if (readerBookLang(book) === 'zh' && !readerZhCoreJson) {
++    try { await readerEnsureZhCoreJsonLoaded({ rerender: false }); }
++    catch (error) { console.warn('[zh preload] local dictionary unavailable', error); }
++  }
+   const cleanChanged = readerCleanCorruptedImageParagraphs(book);
+   const soupChanged = readerCleanEntitySoupParagraphs(book);
+   if (readerNormalizeBookChunks(book) || cleanChanged || soupChanged) {
+@@ -2869,6 +2923,45 @@
+   return readerChapterRenderer.render();
+ }
+ 
++// Preserve the exact paragraph position when an asynchronous result adds a
++// translation/analysis block. Restoring only scrollTop is not enough: content
++// inserted above the viewport changes the document geometry. Anchoring a real
++// paragraph keeps the same Chinese line under the reader's eyes.
++function readerRenderChapterAnchored() {
++  const beforeScroll = document.querySelector('#reader-reading-view .rd-scroll');
++  const beforeRoot = document.getElementById('reader-chapter-text');
++  const beforeScrollRect = beforeScroll?.getBoundingClientRect?.();
++  const paragraphs = beforeRoot
++    ? Array.from(beforeRoot.querySelectorAll('.reader-paragraph[data-p]'))
++    : [];
++  const anchor = beforeScrollRect
++    ? (paragraphs.find(el => el.getBoundingClientRect().bottom > beforeScrollRect.top + 1) || paragraphs.at(-1))
++    : null;
++  const anchorIndex = anchor?.dataset?.p ?? null;
++  const anchorOffset = anchor && beforeScrollRect
++    ? anchor.getBoundingClientRect().top - beforeScrollRect.top
++    : 0;
++  const fallbackTop = beforeScroll?.scrollTop || 0;
++
++  const result = renderReaderChapter();
++  const restore = () => {
++    const scroll = document.querySelector('#reader-reading-view .rd-scroll');
++    if (!scroll) return;
++    if (anchorIndex !== null) {
++      const nextAnchor = Array.from(document.querySelectorAll('#reader-chapter-text .reader-paragraph[data-p]')).find(el => el.dataset.p === String(anchorIndex));
++      const scrollRect = scroll.getBoundingClientRect?.();
++      if (nextAnchor && scrollRect) {
++        scroll.scrollTop += nextAnchor.getBoundingClientRect().top - scrollRect.top - anchorOffset;
++        return;
++      }
++    }
++    scroll.scrollTop = fallbackTop;
++  };
++  restore();
++  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(restore);
++  return result;
++}
++
+ 
+ function bindReaderSwipe() {
+   const root = document.getElementById('reader-chapter-text');
+@@ -2920,7 +3013,12 @@
+       if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+       const word = w.dataset.word || w.textContent || '';
+       const index = Number(w.dataset.readerIndex);
+-      readerOpenWordPanel(word, Number.isFinite(index) ? index : (readerCurrentBook()?.currentParagraph || 0));
++      const offset = Number(w.dataset.readerOffset);
++      readerOpenWordPanel(
++        word,
++        Number.isFinite(index) ? index : (readerCurrentBook()?.currentParagraph || 0),
++        Number.isFinite(offset) ? offset : null,
++      );
+       return false;
+     }, { capture: true });
+   });
+@@ -3274,7 +3372,7 @@
+   const book = readerCurrentBook(); if (!book) return;
+   const ch = book.chapters?.[book.currentChapter || 0]; if (!ch) return;
+   book.comprehension = book.comprehension || {}; book.comprehension[ch.id] = score; book.updatedAt = new Date().toISOString();
+-  saveReaderBooks(); renderReaderChapter(); showToast(`Понятность: ${score}/5`);
++  saveReaderBooks(); readerRenderChapterAnchored(); showToast(`Понятность: ${score}/5`);
+ }
+ 
+ function readerSendParagraphToPhrase(i) {
+@@ -3372,22 +3470,15 @@
+ 
+ async function readerLookupWord(word) { return readerWordLookup.lookup(word); }
+ 
+-async function readerOpenWordPanel(word, paragraphIndex = 0) {
++async function readerOpenWordPanel(word, paragraphIndex = 0, tokenOffset = null) {
+   readerSelectedWord = readerNormalizeWord(word, readerCurrentLang());
+   readerSelectedParagraphIndex = paragraphIndex;
++  readerSelectedWordOffset = Number.isFinite(Number(tokenOffset)) ? Number(tokenOffset) : null;
+   const activeLang = readerCurrentLang();
+   readerMarkWordClicked(readerSelectedWord, activeLang);
+-  // Paint only the paragraph containing the clicked word immediately (cheap),
+-  // then rebuild the full chapter on the next animation frame so every other
+-  // occurrence of the word also gets the updated color without blocking the UI.
+-  readerRefreshParagraphWordClasses(paragraphIndex);
+-  requestAnimationFrame(() => {
+-    try { renderReaderChapter(); }
+-    catch (e) {
+-      console.warn('[reader word repaint] chapter render failed; keeping direct refresh', e);
+-      try { readerRefreshParagraphWordClasses(paragraphIndex); } catch {}
+-    }
+-  });
++  // Update existing word nodes in place. A full chapter rebuild after every tap
++  // was the main source of the Chinese text "dancing" under the user's finger.
++  readerRefreshParagraphWordClasses();
+   const panel = ensureReaderWordPanel();
+   panel.dataset.lang = activeLang;
+   panel.classList.toggle('zh-word-panel', activeLang === 'zh');
+@@ -3418,8 +3509,18 @@
+   readerRenderWordLoading('⏳ Проверяю словарь и формы...');
+ 
+   try {
+-    const found = await readerLookupWord(readerSelectedWord);
++    let found = await readerLookupWord(readerSelectedWord);
+     if (found) {
++      if (activeLang === 'zh') {
++        found = {
++          ...found,
++          pinyin: resolveChinesePinyin(readerSelectedWord, {
++            text: paragraph,
++            start: readerSelectedWordOffset,
++            dictionaryPinyin: readerExtractPinyin(found),
++          }),
++        };
++      }
+       readerRenderWordAnalysis(found, 'local');
+       // CC-CEDICT/lang_dictionary может дать только pinyin/английскую gloss-запись.
+       // Если русского смысла нет — сразу добираем человеческое русское объяснение через DeepSeek.
+@@ -3435,7 +3536,7 @@
+       } else if (activeLang === 'en' && !hasIpa) {
+         await readerTranslateWordAI({ force: true, skipLocal: true });
+       }
+-      if (activeLang === 'zh') setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
++      if (activeLang === 'zh') readerRefreshParagraphWordClasses();
+       return;
+     }
+     await readerTranslateWordAI(false);
+@@ -3580,7 +3681,6 @@
+   readerMarkWordKnown(readerSelectedWord);
+   readerRefreshParagraphWordClasses(readerSelectedParagraphIndex);
+   readerCloseWordPanel();
+-  renderReaderChapter();
+   showToast('✓ Слово скрыто как изученное');
+ }
+ 
+@@ -3595,7 +3695,6 @@
+   saveReaderWordState();
+   readerRefreshParagraphWordClasses(readerSelectedParagraphIndex);
+   readerCloseWordPanel();
+-  
