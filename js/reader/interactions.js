@@ -69,7 +69,12 @@ export function createReaderInteractions({
         if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
         const word = wordElement.dataset.word || wordElement.textContent || '';
         const index = Number(wordElement.dataset.readerIndex);
-        openWordPanel(word, Number.isFinite(index) ? index : (getCurrentBook()?.currentParagraph || 0));
+        const offset = Number(wordElement.dataset.readerOffset);
+        openWordPanel(
+          word,
+          Number.isFinite(index) ? index : (getCurrentBook()?.currentParagraph || 0),
+          Number.isFinite(offset) ? offset : null,
+        );
         return false;
       }, { capture: true });
     });

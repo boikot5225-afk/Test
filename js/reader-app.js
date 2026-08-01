@@ -27,6 +27,7 @@ import { createReaderLibraryStore } from './reader/library-store.js?v=5';
 import { createReaderDisplay } from './reader/display.js?v=5';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=2-per-paragraph-timer-guard';
 import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
+import { resolveChinesePinyin } from './reader/chinese-context.js?v=9';
 import { createReaderChapterRenderer } from './reader/chapter-render.js?v=8';
 import { createReaderPagesMode } from './reader/pages-mode.js?v=3';
 import { translationValueText } from './reader/semantic-content.js?v=6';
@@ -59,6 +60,7 @@ let readerBooks = [];
 let readerCurrentBookId = null;
 let readerSelectedWord = null;
 let readerSelectedParagraphIndex = 0;
+let readerSelectedWordOffset = null;
 let readerSpeechActive = false;
 let readerAutoPlayActive = false;
 let readerAutoPlayAbort = false;
@@ -506,6 +508,7 @@ const READER_ZH_DICT_CACHE_MAX = 2500;
 const READER_ZH_CORE_JSON_URL = 'data/zh_dict_core.json?v=68.15-epub-user-deepseek';
 const READER_ZH_CORE_JSON_META_KEY = 'an2_zh_core_json_meta_v2';
 const readerZhSegmentInFlight = new Map();
+const readerZhStableSegments = new Map();
 let readerZhSegmentCache = null;
 let readerZhDictCache = null;
 export let readerZhCoreJson = null;
@@ -582,9 +585,8 @@ function readerEnsureZhCoreJsonLoaded(options = {}) {
           version: payload?.version || 'unknown'
         }));
       } catch {}
-      if (options.rerender && readerCurrentLang() === 'zh') {
-        setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
-      }
+      // Never reshape a visible Chinese chapter after the dictionary finishes
+      // loading. Chinese books preload this map before their first paint.
       return readerZhCoreJson;
     })
     .catch(e => {
@@ -834,17 +836,21 @@ async function readerFetchChineseDictEntry(word) {
 function readerLookupChineseWord(word) {
   const w = readerNormalizeWord(word, 'zh');
   if (!w) return null;
-  const cached = readerGetCachedLexical(w, 'zh');
-  if (cached) return { ...cached, _source: 'cache', _note: 'из кэша DeepSeek' };
+  // The exact local dictionary is authoritative for Chinese pronunciation.
+  // A DeepSeek/cache entry is context-specific and must not override the base
+  // reading everywhere else in the book.
   const hit = readerLookupChineseLocalEntry(w);
-  if (!hit) return null;
-  const src = READER_ZH_READING_LEXICON[w] ? 'zh_reading' : READER_ZH_CORE_LEXICON[w] ? 'zh_core' : hit._source || 'zh_core_json';
-  return { ...hit, word: w, surface: word, lemma: w, pinyin: hit.pinyin || '', _source: src, _note: hit._note || 'локальный китайский словарь' };
+  if (hit) {
+    const src = READER_ZH_READING_LEXICON[w] ? 'zh_reading' : READER_ZH_CORE_LEXICON[w] ? 'zh_core' : hit._source || 'zh_core_json';
+    return { ...hit, word: w, surface: word, lemma: w, pinyin: hit.pinyin || '', _source: src, _note: hit._note || 'локальный китайский словарь' };
+  }
+  const cached = readerGetCachedLexical(w, 'zh');
+  return cached ? { ...cached, _source: 'cache', _note: 'из кэша DeepSeek' } : null;
 }
 function readerBuildChineseWordSet() {
   // Dynamic/user words only. The full CC-CEDICT map can be 120k+ entries,
   // so we do NOT copy it into a Set on every paragraph render.
-  if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: true });
+  if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: false });
   const dict = new Set([...Object.keys(READER_ZH_CORE_LEXICON), ...Object.keys(READER_ZH_READING_LEXICON)]);
   const lex = loadReaderLexicalCache();
   Object.keys(lex || {}).forEach(k => {
@@ -925,7 +931,8 @@ function readerScheduleChineseSegmentation(text) {
         const c = loadReaderZhSegmentCache();
         c[key] = { words: picked, t: Date.now(), source: picked === words ? 'segment-text' : 'local-dict-preferred' };
         saveReaderZhSegmentCache();
-        try { if (readerCurrentLang() === 'zh') renderReaderChapter(); } catch {}
+        // Do not rebuild the visible chapter here. The current session keeps
+        // its first segmentation; this result is used on the next opening.
       }
     })
     .catch(e => {
@@ -1067,22 +1074,28 @@ function readerRefreshParagraphWordClasses(index = null) {
     ? root.querySelectorAll(`.reader-paragraph[data-p="${idx}"] .reader-word`)
     : root.querySelectorAll('.reader-word');
   base.forEach(span => {
-    const word = span.dataset.word || span.textContent || '';
+    const word = span.dataset.word || '';
+    const surface = span.dataset.surface || word || span.textContent || '';
     const lang = span.dataset.lang || readerCurrentLang();
     const visual = readerWordVisual(word, lang);
     span.classList.remove(...READER_WORD_COLOR_CLASSES);
     span.classList.add(visual.cls);
     span.title = visual.title || '';
 
-    // A status change can also change the Chinese pinyin scaffold. Rebuild just this
-    // token so yellow / passively faded words lose pinyin immediately instead of keeping
-    // a stale ruby element until the whole chapter is rendered again.
+    // Update only this token. Replacing the entire chapter after every tap made
+    // Chinese lines jump even when scrollTop itself was restored.
     if (readerCanonicalLang(lang) === 'zh') {
-      const pinyin = readerInlinePinyinForWord(word, lang);
+      const paragraphIndex = Number(span.dataset.readerIndex);
+      const paragraphText = Number.isFinite(paragraphIndex) ? readerCurrentParagraphText(paragraphIndex) : '';
+      const offset = Number(span.dataset.readerOffset);
+      const pinyin = readerInlinePinyinForWord(word, lang, {
+        text: paragraphText,
+        start: Number.isFinite(offset) ? offset : paragraphText.indexOf(surface),
+      });
+      const hasSlot = readerChinesePinyinSlotActive(lang);
+      span.classList.toggle('rw-pinyin-slot', hasSlot);
       span.classList.toggle('rw-pinyin-on', !!pinyin);
-      span.innerHTML = pinyin
-        ? `<ruby class="reader-zh-ruby"><span class="reader-zh-hanzi">${readerEscape(word)}</span><rt>${readerEscape(pinyin)}</rt></ruby>`
-        : readerEscape(word);
+      span.innerHTML = readerRenderChineseTokenBody(surface, pinyin, lang);
     }
   });
 }
@@ -1206,14 +1219,28 @@ function readerShouldShowInlinePinyin(word, lang = null) {
   return true;
 }
 
-function readerInlinePinyinForWord(word, lang = null) {
+function readerChinesePinyinSlotActive(lang = null) {
+  return readerCanonicalLang(lang || readerCurrentLang()) === 'zh' && readerZhPinyinMode() !== 'off';
+}
+
+function readerInlinePinyinForWord(word, lang = null, context = {}) {
   const l = readerCanonicalLang(lang || readerCurrentLang());
   if (l !== 'zh' || !readerShouldShowInlinePinyin(word, l)) return '';
+  const local = readerLookupChineseLocalEntry(word);
   const cached = readerGetCachedLexical(word, l);
-  const fromCache = cached ? readerExtractPinyin(cached) : '';
-  if (fromCache) return fromCache;
-  const local = readerLookupChineseWord(word);
-  return local ? readerExtractPinyin(local) : '';
+  const dictionaryPinyin = readerExtractPinyin(local || {}) || readerExtractPinyin(cached || {});
+  return resolveChinesePinyin(word, {
+    text: context.text || '',
+    start: context.start,
+    dictionaryPinyin,
+  });
+}
+
+function readerRenderChineseTokenBody(surface, pinyin, lang = 'zh') {
+  if (!readerChinesePinyinSlotActive(lang)) return readerEscape(surface);
+  const rt = pinyin ? readerEscape(pinyin) : '&#160;';
+  const emptyClass = pinyin ? '' : ' reader-zh-ruby-empty';
+  return `<ruby class="reader-zh-ruby${emptyClass}"><span class="reader-zh-hanzi">${readerEscape(surface)}</span><rt>${rt}</rt></ruby>`;
 }
 
 function showReaderViewedWords() {
@@ -1321,26 +1348,38 @@ function readerNormalizeWord(word, lang = null) {
 function readerTokenizeChineseParagraph(text) {
   const s = String(text || '');
   if (!s) return [];
-  if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: true });
+  if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: false });
   const key = readerTextHash(s);
+
+  // Freeze the chosen segmentation for this app session. Background dictionary
+  // and remote segmenter results may improve the cache for the next opening,
+  // but they never reshape text that is currently under the user's finger.
+  const stable = readerZhStableSegments.get(key);
+  if (Array.isArray(stable) && stable.length) return [...stable];
+
   const cached = loadReaderZhSegmentCache()[key];
   const local = readerSegmentChineseLocal(s);
+  let picked = null;
   if (Array.isArray(cached?.words) && cached.words.length) {
-    return readerChooseBestChineseSegmentation(s, cached.words, local);
+    picked = readerChooseBestChineseSegmentation(s, cached.words, local);
   }
 
-  // Remote dictionary segmenter runs in background; reading never blocks.
+  // Remote dictionary segmenter runs in background and only warms the cache.
   readerScheduleChineseSegmentation(s);
 
-  if (local.length) return local;
+  if (!picked?.length && local.length) picked = local;
 
-  try {
-    if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
-      const seg = new Intl.Segmenter('zh', { granularity: 'word' });
-      return Array.from(seg.segment(s), x => x.segment).filter(x => x !== '');
-    }
-  } catch {}
-  return Array.from(s);
+  if (!picked?.length) {
+    try {
+      if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+        const seg = new Intl.Segmenter('zh', { granularity: 'word' });
+        picked = Array.from(seg.segment(s), x => x.segment).filter(x => x !== '');
+      }
+    } catch {}
+  }
+  if (!picked?.length) picked = Array.from(s);
+  readerZhStableSegments.set(key, [...picked]);
+  return [...picked];
 }
 
 
@@ -1509,7 +1548,11 @@ function readerRenderParagraphText(p, paragraphIndex) {
   }
   const book = readerCurrentBook?.();
   const lang = readerBookLang(book);
+  const paragraphText = String(p || '');
+  let cursor = 0;
   return readerTokenizeParagraph(p, lang).map(tok => {
+    const tokenStart = cursor;
+    cursor += String(tok || '').length;
     if (/^\s+$/.test(tok)) return tok;
     const clean = readerNormalizeWord(tok, lang);
     const clickable = lang === 'zh'
@@ -1517,12 +1560,16 @@ function readerRenderParagraphText(p, paragraphIndex) {
       : !!clean && /[a-zà-öø-ÿœæ]/i.test(clean);
     if (!clickable) return readerEscape(tok);
     const visual = readerWordVisual(clean, lang);
-    const pinyin = readerInlinePinyinForWord(clean, lang);
-    const pinyinCls = pinyin ? ' rw-pinyin-on' : '';
-    const body = pinyin
-      ? `<ruby class="reader-zh-ruby"><span class="reader-zh-hanzi">${readerEscape(tok)}</span><rt>${readerEscape(pinyin)}</rt></ruby>`
+    const pinyin = readerInlinePinyinForWord(clean, lang, {
+      text: paragraphText,
+      start: tokenStart,
+    });
+    const hasSlot = readerChinesePinyinSlotActive(lang);
+    const pinyinCls = `${hasSlot ? ' rw-pinyin-slot' : ''}${pinyin ? ' rw-pinyin-on' : ''}`;
+    const body = lang === 'zh'
+      ? readerRenderChineseTokenBody(tok, pinyin, lang)
       : readerEscape(tok);
-    return `<span class="reader-word ${visual.cls}${pinyinCls}" data-word="${readerEscape(clean)}" data-reader-index="${paragraphIndex}" data-lang="${readerEscape(lang)}" title="${readerEscape(visual.title)}">${body}</span>`;
+    return `<span class="reader-word ${visual.cls}${pinyinCls}" data-word="${readerEscape(clean)}" data-surface="${readerEscape(tok)}" data-reader-index="${paragraphIndex}" data-reader-offset="${tokenStart}" data-lang="${readerEscape(lang)}" title="${readerEscape(visual.title)}">${body}</span>`;
   }).join('');
 }
 
@@ -2704,6 +2751,13 @@ async function readerOpenBook(id) {
   }
   if (!book) { showToast('⚠️ Текст не найден'); return; }
   readerCurrentBookId = id;
+  // Chinese must have its local dictionary ready before the first visible
+  // chapter paint. Previously the 9.4 MB CC-CEDICT map arrived afterwards,
+  // replaced character tokens with words and made every line visibly jump.
+  if (readerBookLang(book) === 'zh' && !readerZhCoreJson) {
+    try { await readerEnsureZhCoreJsonLoaded({ rerender: false }); }
+    catch (error) { console.warn('[zh preload] local dictionary unavailable', error); }
+  }
   const cleanChanged = readerCleanCorruptedImageParagraphs(book);
   const soupChanged = readerCleanEntitySoupParagraphs(book);
   if (readerNormalizeBookChunks(book) || cleanChanged || soupChanged) {
@@ -2869,6 +2923,45 @@ function renderReaderChapter() {
   return readerChapterRenderer.render();
 }
 
+// Preserve the exact paragraph position when an asynchronous result adds a
+// translation/analysis block. Restoring only scrollTop is not enough: content
+// inserted above the viewport changes the document geometry. Anchoring a real
+// paragraph keeps the same Chinese line under the reader's eyes.
+function readerRenderChapterAnchored() {
+  const beforeScroll = document.querySelector('#reader-reading-view .rd-scroll');
+  const beforeRoot = document.getElementById('reader-chapter-text');
+  const beforeScrollRect = beforeScroll?.getBoundingClientRect?.();
+  const paragraphs = beforeRoot
+    ? Array.from(beforeRoot.querySelectorAll('.reader-paragraph[data-p]'))
+    : [];
+  const anchor = beforeScrollRect
+    ? (paragraphs.find(el => el.getBoundingClientRect().bottom > beforeScrollRect.top + 1) || paragraphs.at(-1))
+    : null;
+  const anchorIndex = anchor?.dataset?.p ?? null;
+  const anchorOffset = anchor && beforeScrollRect
+    ? anchor.getBoundingClientRect().top - beforeScrollRect.top
+    : 0;
+  const fallbackTop = beforeScroll?.scrollTop || 0;
+
+  const result = renderReaderChapter();
+  const restore = () => {
+    const scroll = document.querySelector('#reader-reading-view .rd-scroll');
+    if (!scroll) return;
+    if (anchorIndex !== null) {
+      const nextAnchor = Array.from(document.querySelectorAll('#reader-chapter-text .reader-paragraph[data-p]')).find(el => el.dataset.p === String(anchorIndex));
+      const scrollRect = scroll.getBoundingClientRect?.();
+      if (nextAnchor && scrollRect) {
+        scroll.scrollTop += nextAnchor.getBoundingClientRect().top - scrollRect.top - anchorOffset;
+        return;
+      }
+    }
+    scroll.scrollTop = fallbackTop;
+  };
+  restore();
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(restore);
+  return result;
+}
+
 
 function bindReaderSwipe() {
   const root = document.getElementById('reader-chapter-text');
@@ -2920,7 +3013,12 @@ function bindReaderParagraphEvents() {
       if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
       const word = w.dataset.word || w.textContent || '';
       const index = Number(w.dataset.readerIndex);
-      readerOpenWordPanel(word, Number.isFinite(index) ? index : (readerCurrentBook()?.currentParagraph || 0));
+      const offset = Number(w.dataset.readerOffset);
+      readerOpenWordPanel(
+        word,
+        Number.isFinite(index) ? index : (readerCurrentBook()?.currentParagraph || 0),
+        Number.isFinite(offset) ? offset : null,
+      );
       return false;
     }, { capture: true });
   });
@@ -3274,7 +3372,7 @@ function readerSetComprehension(score) {
   const book = readerCurrentBook(); if (!book) return;
   const ch = book.chapters?.[book.currentChapter || 0]; if (!ch) return;
   book.comprehension = book.comprehension || {}; book.comprehension[ch.id] = score; book.updatedAt = new Date().toISOString();
-  saveReaderBooks(); renderReaderChapter(); showToast(`Понятность: ${score}/5`);
+  saveReaderBooks(); readerRenderChapterAnchored(); showToast(`Понятность: ${score}/5`);
 }
 
 function readerSendParagraphToPhrase(i) {
@@ -3372,22 +3470,15 @@ function readerRenderWordError(message) { return readerWordPanel.renderError(mes
 
 async function readerLookupWord(word) { return readerWordLookup.lookup(word); }
 
-async function readerOpenWordPanel(word, paragraphIndex = 0) {
+async function readerOpenWordPanel(word, paragraphIndex = 0, tokenOffset = null) {
   readerSelectedWord = readerNormalizeWord(word, readerCurrentLang());
   readerSelectedParagraphIndex = paragraphIndex;
+  readerSelectedWordOffset = Number.isFinite(Number(tokenOffset)) ? Number(tokenOffset) : null;
   const activeLang = readerCurrentLang();
   readerMarkWordClicked(readerSelectedWord, activeLang);
-  // Paint only the paragraph containing the clicked word immediately (cheap),
-  // then rebuild the full chapter on the next animation frame so every other
-  // occurrence of the word also gets the updated color without blocking the UI.
-  readerRefreshParagraphWordClasses(paragraphIndex);
-  requestAnimationFrame(() => {
-    try { renderReaderChapter(); }
-    catch (e) {
-      console.warn('[reader word repaint] chapter render failed; keeping direct refresh', e);
-      try { readerRefreshParagraphWordClasses(paragraphIndex); } catch {}
-    }
-  });
+  // Update existing word nodes in place. A full chapter rebuild after every tap
+  // was the main source of the Chinese text "dancing" under the user's finger.
+  readerRefreshParagraphWordClasses();
   const panel = ensureReaderWordPanel();
   panel.dataset.lang = activeLang;
   panel.classList.toggle('zh-word-panel', activeLang === 'zh');
@@ -3418,8 +3509,18 @@ async function readerOpenWordPanel(word, paragraphIndex = 0) {
   readerRenderWordLoading('⏳ Проверяю словарь и формы...');
 
   try {
-    const found = await readerLookupWord(readerSelectedWord);
+    let found = await readerLookupWord(readerSelectedWord);
     if (found) {
+      if (activeLang === 'zh') {
+        found = {
+          ...found,
+          pinyin: resolveChinesePinyin(readerSelectedWord, {
+            text: paragraph,
+            start: readerSelectedWordOffset,
+            dictionaryPinyin: readerExtractPinyin(found),
+          }),
+        };
+      }
       readerRenderWordAnalysis(found, 'local');
       // CC-CEDICT/lang_dictionary может дать только pinyin/английскую gloss-запись.
       // Если русского смысла нет — сразу добираем человеческое русское объяснение через DeepSeek.
@@ -3435,7 +3536,7 @@ async function readerOpenWordPanel(word, paragraphIndex = 0) {
       } else if (activeLang === 'en' && !hasIpa) {
         await readerTranslateWordAI({ force: true, skipLocal: true });
       }
-      if (activeLang === 'zh') setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
+      if (activeLang === 'zh') readerRefreshParagraphWordClasses();
       return;
     }
     await readerTranslateWordAI(false);
@@ -3580,7 +3681,6 @@ function readerMarkSelectedWordKnown() {
   readerMarkWordKnown(readerSelectedWord);
   readerRefreshParagraphWordClasses(readerSelectedParagraphIndex);
   readerCloseWordPanel();
-  renderReaderChapter();
   showToast('✓ Слово скрыто как изученное');
 }
 
@@ -3595,7 +3695,6 @@ function readerMarkSelectedWordProblem() {
   saveReaderWordState();
   readerRefreshParagraphWordClasses(readerSelectedParagraphIndex);
   readerCloseWordPanel();
-  renderReaderChapter();
   showToast('⚠ Отмечено как проблемное');
 }
 
@@ -3628,7 +3727,6 @@ async function readerSaveWord() {
       readerMarkWordSaved(rawWord, lemma, 'zh', ru);
       readerRefreshParagraphWordClasses(readerSelectedParagraphIndex);
       if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = '✅ Добавлено в китайские изучаемые слова'; }
-      renderReaderChapter();
       showToast('＋ Китайское слово отмечено как изучаемое');
       return;
     }
@@ -3658,7 +3756,6 @@ async function readerSaveWord() {
     // for it.
     readerMarkWordSaved(rawWord, lemma, null, ru);
     readerRefreshParagraphWordClasses(readerSelectedParagraphIndex);
-    renderReaderChapter();
     if (st) { st.style.color = 'var(--good)'; st.textContent = '✅ Сохранено и выделено в тексте'; }
     showToast('✅ Слово добавлено и выделено');
 
@@ -3946,7 +4043,7 @@ async function readerAnalyzeParagraphAI(i = null) {
     book.currentParagraph = index;
     book.updatedAt = new Date().toISOString();
     saveReaderBooks();
-    renderReaderChapter();
+    readerRenderChapterAnchored();
     showToast('✅ Разбор добавлен под предложением');
   } catch(e) {
     const msg = e?.message || String(e);
@@ -3976,7 +4073,7 @@ async function readerTranslateParagraphAI(i = null, opts = {}) {
     book.currentParagraph = index;
     book.updatedAt = new Date().toISOString();
     saveReaderBooks();
-    renderReaderChapter();
+    readerRenderChapterAnchored();
     if (!silent) showToast('✅ Перевод добавлен под абзацем');
   } catch(e) {
     // A background auto-translate failing quietly is fine — the 🌐 button
@@ -4087,9 +4184,17 @@ async function readerTranslateWordAI(forceOrOptions = true) {
       traditional: d.traditional || localZhHint.traditional || '',
       form_note: d.form_note || d.pinyin || d.tense || d.note || localZhHint.note || ''
     };
+    if (readerCurrentLang() === 'zh') {
+      const paragraphForPinyin = readerCurrentParagraphText(readerSelectedParagraphIndex);
+      payload.pinyin = resolveChinesePinyin(word, {
+        text: paragraphForPinyin,
+        start: readerSelectedWordOffset,
+        dictionaryPinyin: payload.pinyin,
+      });
+    }
     readerPutCachedLexical(word, payload, readerCurrentLang());
     readerRenderWordAnalysis(payload, 'deepseek');
-    if (readerCurrentLang() === 'zh') setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
+    if (readerCurrentLang() === 'zh') readerRefreshParagraphWordClasses();
     if (st) {
       st.style.display = 'block';
       st.style.color = 'var(--good)';

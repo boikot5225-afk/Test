@@ -83,7 +83,7 @@ export function createReaderChapterRenderer({
     if (!book) return;
 
     const activeReaderLang = getBookLang(book);
-    if (canonicalLang(activeReaderLang) === 'zh' && needsZhCoreLoad()) ensureZhCoreLoaded({ rerender: true });
+    if (canonicalLang(activeReaderLang) === 'zh' && needsZhCoreLoad()) ensureZhCoreLoaded({ rerender: false });
 
     const readingView = document.getElementById('reader-reading-view');
     if (readingView) readingView.dataset.readerLang = activeReaderLang;

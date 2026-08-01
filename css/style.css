@@ -2285,17 +2285,17 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
 
 
 /* v68.7 — Chinese inline pinyin: shown for learning/problem/familiar, not merely looked */
-#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-on{
+#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-slot{
   padding-top:2px !important;
   margin-top:2px !important;
   vertical-align:baseline !important;
 }
-#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-on ruby.reader-zh-ruby{
+#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-slot ruby.reader-zh-ruby{
   ruby-position:over;
   display:inline-ruby;
   line-height:1.18;
 }
-#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-on rt{
+#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-slot rt{
   font-family:"IBM Plex Mono",ui-monospace,monospace;
   font-size:.48em;
   line-height:1;
@@ -2304,14 +2304,17 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
   font-weight:500;
   user-select:none;
 }
-#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-known rt{
-  display:none !important;
+#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-slot:not(.rw-pinyin-on) rt,
+#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-known rt,
+#reader-reading-view[data-reader-lang="zh"] .reader-zh-ruby-empty rt{
+  color:transparent !important;
+  text-shadow:none !important;
 }
 #reader-reading-view[data-reader-lang="zh"] .reader-word.rw-known{
   opacity:.86;
 }
 @media (max-width:700px){
-  #reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-on rt{
+  #reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-slot rt{
     font-size:.46em;
   }
 }
