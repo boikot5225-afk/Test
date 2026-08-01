@@ -17,9 +17,6 @@ on:
       - 'data/**'
       - 'manifest.json'
       - 'sw.js'
-  pull_request:
-    branches:
-      - claude/epic-hawking-540kte
 
 permissions:
   contents: write
@@ -30,14 +27,13 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - name: Checkout Reader AI
+      - name: Checkout Reader AI feature branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'push' && github.ref_name || github.sha }}
+          ref: feature/lingq-reader-v77
           fetch-depth: 0
 
       - name: Apply staged Chinese reader repair
-        if: github.event_name == 'push'
         shell: bash
         run: |
           set -euo pipefail
@@ -54,6 +50,9 @@ jobs:
             git add css js sw.js scripts
             git commit -m 'fix(reader): stabilize Chinese text and contextual pinyin [skip ci]'
             git push origin HEAD:feature/lingq-reader-v77
+          else
+            test -f js/reader/chinese-context.js
+            test -f scripts/test-reader-chinese.mjs
           fi
 
       - name: Test Chinese stability and contextual pinyin
