@@ -1172,7 +1172,7 @@ function readerEnsureZhCoreJsonLoaded(options = {}) {
         }));
       } catch {}
       if (options.rerender && readerCurrentLang() === 'zh') {
-        setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
+        setTimeout(() => { try { renderReaderChapterInPlace(); } catch {} }, 0);
       }
       return readerZhCoreJson;
     })
@@ -1514,7 +1514,7 @@ function readerScheduleChineseSegmentation(text) {
         const c = loadReaderZhSegmentCache();
         c[key] = { words: picked, t: Date.now(), source: picked === words ? 'segment-text' : 'local-dict-preferred' };
         saveReaderZhSegmentCache();
-        try { if (readerCurrentLang() === 'zh') renderReaderChapter(); } catch {}
+        try { if (readerCurrentLang() === 'zh') renderReaderChapterInPlace(); } catch {}
       }
     })
     .catch(e => {
@@ -2392,6 +2392,10 @@ function readerOpenBook(id) {
   const book = readerBooks.find(b => b.id === id);
   if (!book) { showToast('⚠️ Текст не найден'); return; }
   readerCurrentBookId = id;
+  const bookLang = readerCanonicalLang(readerBookLang(book));
+  if (bookLang && bookLang !== (globalThis.AN2_LANG || localStorage.getItem('an2_lang') || 'fr')) {
+    try { globalThis.AN2_LANG = bookLang; localStorage.setItem('an2_lang', bookLang); } catch {}
+  }
   if (readerNormalizeBookChunks(book)) {
     book.currentParagraph = Math.min(book.currentParagraph || 0, book.chapters?.[book.currentChapter || 0]?.paragraphs?.length || 0);
     book.updatedAt = new Date().toISOString();
@@ -2444,6 +2448,21 @@ const readerChapterRenderer = createReaderChapterRenderer({
 
 function renderReaderChapter() {
   return readerChapterRenderer.render();
+}
+
+// Background re-render that preserves the scroll position of .rd-scroll.
+// Use this for async callbacks (segmentation, dict load, AI response) that
+// should NOT jump the user to a different position.
+let _renderInPlaceTimer = null;
+function renderReaderChapterInPlace() {
+  if (_renderInPlaceTimer) return; // coalesce rapid calls
+  _renderInPlaceTimer = setTimeout(() => {
+    _renderInPlaceTimer = null;
+    const scroller = document.querySelector('#reader-reading-view .rd-scroll');
+    const saved = scroller ? scroller.scrollTop : 0;
+    try { readerChapterRenderer.render(); } catch {}
+    if (scroller) scroller.scrollTop = saved;
+  }, 0);
 }
 
 
@@ -2832,7 +2851,7 @@ async function readerOpenWordPanel(word, paragraphIndex = 0) {
       if (activeLang === 'zh' && !hasRu) {
         await readerTranslateWordAI({ force: false, skipLocal: true });
       }
-      if (activeLang === 'zh') setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
+      if (activeLang === 'zh') setTimeout(() => { try { renderReaderChapterInPlace(); } catch {} }, 0);
       return;
     }
     await readerTranslateWordAI(false);
@@ -3027,15 +3046,57 @@ async function readerSaveWord() {
       return;
     }
 
+    // Sync app language before saving so dictBasePath() uses correct lang
+    if (activeLang && activeLang !== (globalThis.AN2_LANG || localStorage.getItem('an2_lang') || 'fr')) {
+      try { globalThis.AN2_LANG = activeLang; localStorage.setItem('an2_lang', activeLang); } catch {}
+    }
+
     if (pos === 'verb') {
       const known = VERBS.find(v => readerNormalizeWord(v.inf) === readerNormalizeWord(lemma));
       if (known) {
-        if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = `✅ Это форма глагола ${known.inf}. В словарь слов не сохраняю.`; }
-        showToast(`Глагол: ${known.inf}`);
+        try { updateSRSVerb(known.id, false); } catch {}
+        readerMarkWordSaved(rawWord, known.inf, activeLang, ru || known.meaning || '');
+        renderReaderChapter();
+        showToast(`✅ ${known.inf} — добавлен в план изучения`);
         return;
       }
-      if (st) { st.style.display = 'block'; st.style.color = 'var(--warn)'; st.textContent = 'Это глагол. Открою форму добавления глагола, чтобы не засорять слова.'; }
-      readerPrefillAddVerbFromPanel();
+      // Unknown verb — generate via AI and save to personal dict directly (no admin modal needed)
+      if (st) { st.style.display = 'block'; st.style.color = 'var(--accent)'; st.textContent = '⏳ Генерирую глагол...'; }
+      try {
+        const sourceWord = readerSelectedWord || lemma;
+        const data = await readerAI({ task: 'generate_verb', word: sourceWord, infinitive: lemma, context });
+        const v = data.data || data;
+        const inf = (v.inf || v.infinitive || lemma || '').toLowerCase();
+        const conj = v.conj || v.forms || {};
+        const verb = {
+          id: normalizeImportKey(inf),
+          inf,
+          meaning: v.meaning || v.ru || ru,
+          group: readerNormalizeVerbGroupValue(v.group || v.group_name || v.verb_group, inf),
+          aux: readerNormalizeAuxValue(v.aux || v.auxiliary || v.helper),
+          pp: v.pp || v.past_participle || '',
+          conj,
+          examples: v.examples || {},
+          lang: activeLang,
+          theme: 'reader',
+          source: 'reader',
+          custom: true,
+          updated_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+        };
+        const { error } = await sb.from('verbs').upsert(verb);
+        if (error) throw error;
+        const oldIdx = VERBS.findIndex(x => x.id === verb.id);
+        if (oldIdx >= 0) VERBS[oldIdx] = verb; else VERBS.push(verb);
+        try { updateSRSVerb(verb.id, false); } catch {}
+        readerMarkWordSaved(rawWord, inf, activeLang, verb.meaning);
+        renderReaderChapter();
+        if (st) { st.style.color = 'var(--good)'; st.textContent = `✅ Глагол «${inf}» добавлен в план`; }
+        showToast(`✅ ${inf} — новый глагол в плане`);
+      } catch(e) {
+        if (st) { st.style.color = 'var(--bad)'; st.textContent = '❌ ' + (e?.message || e); }
+        else showToast('⚠️ ' + (e?.message || e));
+      }
       return;
     }
 
@@ -3060,7 +3121,7 @@ async function readerSaveWord() {
     const oldIdx = NOUNS.findIndex(n => String(n.id) === id);
     const slim = { id, fr: lemma, ru, gender: record.gender, pos: record.pos, no_article: record.no_article, theme: 'reader' };
     if (oldIdx >= 0) NOUNS[oldIdx] = slim; else NOUNS.push(slim);
-    readerMarkWordSaved(rawWord, lemma, null, ru);
+    readerMarkWordSaved(rawWord, lemma, activeLang, ru);
     try { Object.keys(localStorage).forEach(k => { if (k.startsWith('an2_cache_nouns')) localStorage.removeItem(k); }); } catch {}
     renderReaderChapter();
     if (st) { st.style.color = 'var(--good)'; st.textContent = '✅ Сохранено и выделено в тексте'; }
@@ -3436,7 +3497,7 @@ async function readerTranslateWordAI(forceOrOptions = true) {
     };
     readerPutCachedLexical(word, payload, readerCurrentLang());
     readerRenderWordAnalysis(payload, 'deepseek');
-    if (readerCurrentLang() === 'zh') setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
+    if (readerCurrentLang() === 'zh') setTimeout(() => { try { renderReaderChapterInPlace(); } catch {} }, 0);
     if (st) {
       st.style.display = 'block';
       st.style.color = 'var(--good)';
@@ -5517,7 +5578,8 @@ function renderReaderWords(activeBookFilter) {
 
   const escape = readerEscape;
   const wordState = loadReaderWordState();
-  const words = Object.values(wordState).filter(w => w && w.word);
+  const appLang = (() => { try { return String(globalThis.AN2_LANG || localStorage.getItem('an2_lang') || 'fr').trim() || 'fr'; } catch { return 'fr'; } })();
+  const words = Object.values(wordState).filter(w => w && w.word && (!w.lang || w.lang === appLang));
 
   // Загружаем книги для имён
   let books = [];
