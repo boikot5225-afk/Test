@@ -97,5 +97,5 @@ window.readerImportAndroidFile = readerImportAndroidFile;
 
 // Reader UI adapter is loaded only after the full Reader AI module graph.
 // A failure here cannot break import, storage, dictionaries or authentication.
-import('../lingq-reader-shell.js?v=0.2.0')
+import('../lingq-reader-shell-v2.js?v=0.3.0')
   .catch(error => console.warn('[lingq reader shell] skipped:', error));
