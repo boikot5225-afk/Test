@@ -103,4 +103,5 @@ import('../lingq-reader-shell-v2.js?v=0.3.0')
   .then(() => import('../lingq-reader-completion-v5.js?v=0.5.0'))
   .then(() => import('../lingq-reader-restore-v6.js?v=0.6.0'))
   .then(() => import('../reader-mobile-galaxy-a54-v7.js?v=0.7.0'))
+  .then(() => import('../reader-mobile-galaxy-a54-search-v71.js?v=0.7.1'))
   .catch(error => console.warn('[lingq reader shell] skipped:', error));
