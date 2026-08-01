@@ -1172,7 +1172,7 @@ function readerEnsureZhCoreJsonLoaded(options = {}) {
         }));
       } catch {}
       if (options.rerender && readerCurrentLang() === 'zh') {
-        setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
+        setTimeout(() => { try { renderReaderChapterInPlace(); } catch {} }, 0);
       }
       return readerZhCoreJson;
     })
@@ -1514,7 +1514,7 @@ function readerScheduleChineseSegmentation(text) {
         const c = loadReaderZhSegmentCache();
         c[key] = { words: picked, t: Date.now(), source: picked === words ? 'segment-text' : 'local-dict-preferred' };
         saveReaderZhSegmentCache();
-        try { if (readerCurrentLang() === 'zh') renderReaderChapter(); } catch {}
+        try { if (readerCurrentLang() === 'zh') renderReaderChapterInPlace(); } catch {}
       }
     })
     .catch(e => {
@@ -2450,6 +2450,21 @@ function renderReaderChapter() {
   return readerChapterRenderer.render();
 }
 
+// Background re-render that preserves the scroll position of .rd-scroll.
+// Use this for async callbacks (segmentation, dict load, AI response) that
+// should NOT jump the user to a different position.
+let _renderInPlaceTimer = null;
+function renderReaderChapterInPlace() {
+  if (_renderInPlaceTimer) return; // coalesce rapid calls
+  _renderInPlaceTimer = setTimeout(() => {
+    _renderInPlaceTimer = null;
+    const scroller = document.querySelector('#reader-reading-view .rd-scroll');
+    const saved = scroller ? scroller.scrollTop : 0;
+    try { readerChapterRenderer.render(); } catch {}
+    if (scroller) scroller.scrollTop = saved;
+  }, 0);
+}
+
 
 function bindReaderSwipe() {
   const root = document.getElementById('reader-chapter-text');
@@ -2836,7 +2851,7 @@ async function readerOpenWordPanel(word, paragraphIndex = 0) {
       if (activeLang === 'zh' && !hasRu) {
         await readerTranslateWordAI({ force: false, skipLocal: true });
       }
-      if (activeLang === 'zh') setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
+      if (activeLang === 'zh') setTimeout(() => { try { renderReaderChapterInPlace(); } catch {} }, 0);
       return;
     }
     await readerTranslateWordAI(false);
@@ -3482,7 +3497,7 @@ async function readerTranslateWordAI(forceOrOptions = true) {
     };
     readerPutCachedLexical(word, payload, readerCurrentLang());
     readerRenderWordAnalysis(payload, 'deepseek');
-    if (readerCurrentLang() === 'zh') setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
+    if (readerCurrentLang() === 'zh') setTimeout(() => { try { renderReaderChapterInPlace(); } catch {} }, 0);
     if (st) {
       st.style.display = 'block';
       st.style.color = 'var(--good)';
