@@ -17,6 +17,9 @@ on:
       - 'data/**'
       - 'manifest.json'
       - 'sw.js'
+  pull_request:
+    branches:
+      - claude/epic-hawking-540kte
 
 permissions:
   contents: write
@@ -33,27 +36,15 @@ jobs:
           ref: feature/lingq-reader-v77
           fetch-depth: 0
 
-      - name: Apply staged Chinese reader repair
+      - name: Verify staged Chinese reader repair is applied
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          PARTS=(scripts/bootstrap/reader-chinese-v9.patch.part*)
-          if ((${#PARTS[@]})); then
-            cat "${PARTS[@]}" > /tmp/reader-chinese-v9.patch
-            echo '02ffb68e855feef32c44b5efe4647b1fa001f9c88e373ec6ef25dc1b68051404  /tmp/reader-chinese-v9.patch' | sha256sum -c -
-            git apply --check -p1 /tmp/reader-chinese-v9.patch
-            git apply -p1 /tmp/reader-chinese-v9.patch
-            rm -rf scripts/bootstrap
-            git config user.name 'Reader AI CI'
-            git config user.email 'actions@users.noreply.github.com'
-            git add css js sw.js scripts
-            git commit -m 'fix(reader): stabilize Chinese text and contextual pinyin [skip ci]'
-            git push origin HEAD:feature/lingq-reader-v77
-          else
-            test -f js/reader/chinese-context.js
-            test -f scripts/test-reader-chinese.mjs
-          fi
+          test -f js/reader/chinese-context.js
+          test -f scripts/test-reader-chinese.mjs
+          test -f scripts/test-reader-chinese-integration.mjs
+          test -f scripts/prepare-reader-a54-v9-wrapper.sh
+          ! test -d scripts/bootstrap
 
       - name: Test Chinese stability and contextual pinyin
         run: |
