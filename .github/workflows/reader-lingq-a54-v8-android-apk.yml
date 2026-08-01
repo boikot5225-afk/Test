@@ -1,4 +1,4 @@
-name: Reader AI LingQ A54 v0.8 APK
+name: Reader AI LingQ A54 v0.9 Chinese Stable APK
 
 on:
   workflow_dispatch:
@@ -7,7 +7,9 @@ on:
       - feature/lingq-reader-v77
     paths:
       - '.github/workflows/reader-lingq-a54-v8-android-apk.yml'
-      - 'scripts/prepare-reader-a54-v8-wrapper.sh'
+      - 'scripts/bootstrap/reader-chinese-v9.patch.part*'
+      - 'scripts/prepare-reader-a54-v9-wrapper.sh'
+      - 'scripts/test-reader-chinese*.mjs'
       - 'index.html'
       - 'css/**'
       - 'js/**'
@@ -20,16 +22,52 @@ on:
       - claude/epic-hawking-540kte
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build-a54-v8:
+  build-a54-v9:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
     steps:
       - name: Checkout Reader AI
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || github.sha }}
+          fetch-depth: 0
+
+      - name: Apply staged Chinese reader repair
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          PARTS=(scripts/bootstrap/reader-chinese-v9.patch.part*)
+          if ((${#PARTS[@]})); then
+            cat "${PARTS[@]}" > /tmp/reader-chinese-v9.patch
+            echo '02ffb68e855feef32c44b5efe4647b1fa001f9c88e373ec6ef25dc1b68051404  /tmp/reader-chinese-v9.patch' | sha256sum -c -
+            git apply --check -p1 /tmp/reader-chinese-v9.patch
+            git apply -p1 /tmp/reader-chinese-v9.patch
+            rm -rf scripts/bootstrap
+            git config user.name 'Reader AI CI'
+            git config user.email 'actions@users.noreply.github.com'
+            git add css js sw.js scripts
+            git commit -m 'fix(reader): stabilize Chinese text and contextual pinyin [skip ci]'
+            git push origin HEAD:feature/lingq-reader-v77
+          fi
+
+      - name: Test Chinese stability and contextual pinyin
+        run: |
+          node scripts/test-reader-chinese.mjs
+          node scripts/test-reader-chinese-integration.mjs
+          node --check js/reader-app.js
+          node --check js/reader/chinese-context.js
+          node --check js/reader/interactions.js
+          node --check js/reader/interactions-runtime.js
+          node --check js/reader/chapter-render-next.js
+          node --check js/app.js
+          node --check sw.js
+          bash -n scripts/prepare-reader-a54-v9-wrapper.sh
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -48,52 +86,57 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Prepare verified A54 wrapper
+      - name: Prepare verified A54 v0.9 wrapper
         shell: bash
         run: |
           set -euo pipefail
-          bash scripts/prepare-reader-a54-v8-wrapper.sh
-          cat > .reader-a54-v8-android/gradle.properties <<'EOF'
+          bash scripts/prepare-reader-a54-v9-wrapper.sh
+          cat > .reader-a54-v9-android/gradle.properties <<'PROPS'
           android.useAndroidX=true
           android.enableJetifier=true
-          EOF
-          grep -F 'android.useAndroidX=true' .reader-a54-v8-android/gradle.properties
+          PROPS
+          grep -F 'android.useAndroidX=true' .reader-a54-v9-android/gradle.properties
 
       - name: Build verified APK
-        working-directory: .reader-a54-v8-android
+        working-directory: .reader-a54-v9-android
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Verify packaged app
         shell: bash
         run: |
           set -euo pipefail
-          APK='.reader-a54-v8-android/app/build/outputs/apk/debug/app-debug.apk'
-          rm -rf /tmp/reader-a54-v8-apk
-          mkdir -p /tmp/reader-a54-v8-apk
-          unzip -q "$APK" -d /tmp/reader-a54-v8-apk
-          test -f /tmp/reader-a54-v8-apk/assets/www/index.html
-          test ! -f /tmp/reader-a54-v8-apk/assets/index.html
-          test -f /tmp/reader-a54-v8-apk/assets/www/js/reader-mobile-galaxy-a54-reading-v8.js
+          APK='.reader-a54-v9-android/app/build/outputs/apk/debug/app-debug.apk'
+          rm -rf /tmp/reader-a54-v9-apk
+          mkdir -p /tmp/reader-a54-v9-apk
+          unzip -q "$APK" -d /tmp/reader-a54-v9-apk
+          test -f /tmp/reader-a54-v9-apk/assets/www/index.html
+          test ! -f /tmp/reader-a54-v9-apk/assets/index.html
+          test -f /tmp/reader-a54-v9-apk/assets/www/js/reader-mobile-galaxy-a54-reading-v8.js
+          test -f /tmp/reader-a54-v9-apk/assets/www/js/reader/chinese-context.js
+          test -f /tmp/reader-a54-v9-apk/assets/www/scripts/test-reader-chinese.mjs
+          grep -F 'reader-app.js?v=77.33-zh-context' /tmp/reader-a54-v9-apk/assets/www/js/app.js
+          grep -F 'v77.33-zh-context-stable' /tmp/reader-a54-v9-apk/assets/www/sw.js
           APKA="$(command -v apkanalyzer || find "$ANDROID_HOME" -path '*/bin/apkanalyzer' -type f | head -n 1)"
           test -n "$APKA"
           "$APKA" manifest application-id "$APK" | grep -Fx 'space.saintjust.reader.lingqa54.debug'
+          "$APKA" manifest version-code "$APK" | grep -Fx '14'
 
       - name: Prepare artifact
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp .reader-a54-v8-android/app/build/outputs/apk/debug/app-debug.apk \
-            dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk
-          sha256sum dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk | \
-            tee dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk.sha256
+          cp .reader-a54-v9-android/app/build/outputs/apk/debug/app-debug.apk \
+            dist/Reader-AI-LingQ-v0.9.0-Chinese-Stable-Galaxy-A54.apk
+          sha256sum dist/Reader-AI-LingQ-v0.9.0-Chinese-Stable-Galaxy-A54.apk | \
+            tee dist/Reader-AI-LingQ-v0.9.0-Chinese-Stable-Galaxy-A54.apk.sha256
 
       - name: Upload verified APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-LingQ-v0.8.0-Galaxy-A54-APK
+          name: Reader-AI-LingQ-v0.9.0-Chinese-Stable-Galaxy-A54-APK
           path: |
-            dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk
-            dist/Reader-AI-LingQ-v0.8.0-Galaxy-A54.apk.sha256
+            dist/Reader-AI-LingQ-v0.9.0-Chinese-Stable-Galaxy-A54.apk
+            dist/Reader-AI-LingQ-v0.9.0-Chinese-Stable-Galaxy-A54.apk.sha256
           if-no-files-found: error
           retention-days: 14
