@@ -1,9 +1,12 @@
-/* Reader AI + LingQ layout restore v0.6 */
+/* Reader AI + LingQ layout restore v0.10 — event driven */
 (() => {
   'use strict';
   const $ = (s, r = document) => r?.querySelector?.(s) || null;
   const $$ = (s, r = document) => [...(r?.querySelectorAll?.(s) || [])];
   const MODE_KEY = 'reader_ai_lingq_sentence_mode_v1';
+  let frame = 0;
+  let observer = null;
+
   const sentenceMode = () => {
     try { return localStorage.getItem(MODE_KEY) === '1'; }
     catch { return false; }
@@ -83,19 +86,50 @@
     else if ((button.getAttribute('onclick') || '').includes("'translate'")) action = 'translate';
     else if ((button.getAttribute('onclick') || '').includes("'analyze'")) action = 'analysis';
     if (!action) return;
-    event.preventDefault();event.stopPropagation();event.stopImmediatePropagation?.();
+    event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation?.();
     if (action === 'analysis') return $('.lqf4-sentence-stage [data-lqf4-action="analyze"]')?.click();
     $(`.lqv2-bottom [data-lqv2="${action}"]`)?.click();
   }
 
   function sync() {
-    styles();menu();
+    frame = 0;
+    styles();
+    menu();
     const badge = $('.lqv6-menu-state');
-    if (badge) { const on = sentenceMode(); badge.textContent = on ? 'вкл' : 'выкл'; badge.classList.toggle('on', on); }
+    if (badge) {
+      const on = sentenceMode();
+      if (badge.textContent !== (on ? 'вкл' : 'выкл')) badge.textContent = on ? 'вкл' : 'выкл';
+      badge.classList.toggle('on', on);
+    }
   }
 
-  document.addEventListener('click', routeNativeButtons, true);
-  sync();
-  const timer = setInterval(sync, 300);
-  addEventListener('pagehide', () => clearInterval(timer), { once:true });
+  function schedule() {
+    if (frame) return;
+    frame = requestAnimationFrame(sync);
+  }
+
+  function boot() {
+    styles();
+    schedule();
+    document.addEventListener('click', (event) => {
+      routeNativeButtons(event);
+      schedule();
+    }, true);
+    addEventListener('storage', (event) => { if (event.key === MODE_KEY) schedule(); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) schedule(); });
+
+    // Only structural changes matter. The old 300 ms timer queried the whole
+    // reader forever, even while the page was perfectly still.
+    observer = new MutationObserver(schedule);
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    addEventListener('pagehide', () => {
+      if (frame) cancelAnimationFrame(frame);
+      observer?.disconnect();
+    }, { once: true });
+    console.info('[lingq reader] restore/layout v0.10 loaded');
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
+  else boot();
 })();

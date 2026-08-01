@@ -68,12 +68,20 @@ expectReading('孩子看着窗外，后来睡着了。', '睡着', 'shuì zháo'
 const app = await fs.readFile(new URL('js/reader-app.js', root), 'utf8');
 const css = await fs.readFile(new URL('css/style.css', root), 'utf8');
 const renderer = await fs.readFile(new URL('js/reader/chapter-render-next.js', root), 'utf8');
+const restore = await fs.readFile(new URL('js/lingq-reader-restore-v6.js', root), 'utf8');
+const mobile = await fs.readFile(new URL('js/reader-mobile-galaxy-a54-v7.js', root), 'utf8');
+const mobileReading = await fs.readFile(new URL('js/reader-mobile-galaxy-a54-reading-v8.js', root), 'utf8');
+const mobileSearch = await fs.readFile(new URL('js/reader-mobile-galaxy-a54-search-v71.js', root), 'utf8');
 
 assert.match(app, /await readerEnsureZhCoreJsonLoaded\(\{ rerender: false \}\)/);
 assert.match(app, /const readerZhStableSegments = new Map\(\)/);
-assert.match(app, /readerRefreshParagraphWordClasses\(\);\n  const panel = ensureReaderWordPanel/);
-assert.doesNotMatch(app, /try \{ if \(readerCurrentLang\(\) === 'zh'\) renderReaderChapter\(\); \} catch \{\}/);
-assert.match(app, /data-reader-offset=/);
+assert.match(app, /READER_A54_V10_PATCH/);
+assert.match(app, /readerZhDynamicWordSet/);
+assert.match(app, /readerZhInlinePinyinCache/);
+assert.match(app, /data-reader-pinyin=/);
+assert.doesNotMatch(app, /if \(seenOnlyYellow\) return false/);
+assert.doesNotMatch(app, /readerTrackParagraphIndexSeen\(idx, \{ refresh: true \}\)/);
+assert.match(app, /previousPinyin !== pinyin \|\| previousSlot !== hasSlot/);
 assert.match(app, /resolveChinesePinyin/);
 assert.match(app, /function readerRenderChapterAnchored\(\)/);
 assert.match(app, /readerRenderChapterAnchored\(\);\n    if \(!silent\) showToast/);
@@ -82,4 +90,15 @@ assert.match(css, /\.reader-word\.rw-pinyin-slot/);
 assert.match(css, /color:transparent !important/);
 assert.match(renderer, /ensureZhCoreLoaded\(\{ rerender: false \}\)/);
 
-console.log('Chinese reader integration: segmentation, context and stability checks passed');
+for (const [name, moduleSource] of [
+  ['restore', restore],
+  ['mobile', mobile],
+  ['mobileReading', mobileReading],
+  ['mobileSearch', mobileSearch],
+]) {
+  assert.doesNotMatch(moduleSource, /setInterval\(/, `${name} must not poll forever`);
+}
+assert.doesNotMatch(mobileReading, /attributeFilter:\s*\['class',\s*'style',\s*'hidden'\]/);
+assert.match(mobileReading, /getPropertyValue\(name\) !== next/);
+
+console.log('Chinese reader integration: stable pinyin, cached segmentation and event-driven A54 layout passed');
