@@ -15,6 +15,19 @@ on:
       - 'data/**'
       - 'manifest.json'
       - 'sw.js'
+  pull_request:
+    branches:
+      - claude/epic-hawking-540kte
+    paths:
+      - '.github/workflows/reader-lingq-a54-android-apk.yml'
+      - '.github/workflows/reader-stage1-android-apk.yml'
+      - 'index.html'
+      - 'css/**'
+      - 'js/**'
+      - 'icons/**'
+      - 'data/**'
+      - 'manifest.json'
+      - 'sw.js'
 
 permissions:
   contents: read
