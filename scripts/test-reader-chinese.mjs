@@ -43,7 +43,7 @@ const cases = [
 
   // v0.10: common polyphones from fiction/news that previously fell through
   // to one dictionary reading regardless of the actual sentence.
-  ['我不知不觉睡着了。','觉','jué',0], ['我不知不觉睡着了。','觉','jiào',1],
+  ['我不知不觉想睡觉了。','觉','jué',0], ['我不知不觉想睡觉了。','觉','jiào',1],
   ['这件衣服很便宜。','便','pián'], ['这样做比较方便。','便','biàn'],
   ['当时他把这件事当作玩笑。','当','dāng',0], ['当时他把这件事当作玩笑。','当','dàng',1],
   ['她的头发很长。','发','fà'], ['事情突然发生了。','发','fā'],
