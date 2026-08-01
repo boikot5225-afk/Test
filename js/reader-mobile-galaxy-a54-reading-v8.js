@@ -1,4 +1,4 @@
-/* Reader AI reading-screen diagnostics and layout v0.8 — Galaxy A54 / Android 15 */
+/* Reader AI reading-screen diagnostics and layout v0.10 — Galaxy A54 / Android 15 */
 (() => {
   'use strict';
 
@@ -7,12 +7,10 @@
   const visible = node => !!node && getComputedStyle(node).display !== 'none' && getComputedStyle(node).visibility !== 'hidden';
   const nativeInsets = new URLSearchParams(location.search).get('nativeInsets') === '1';
 
-  let timer = 0;
-  let interval = 0;
+  let frame = 0;
   let resizeObserver = null;
   let mutationObserver = null;
-  let observedTop = null;
-  let observedBottom = null;
+  const observed = new Set();
 
   function installStyles() {
     if ($('#reader-a54-reading-v8-style')) return;
@@ -138,22 +136,19 @@
     return Math.max(0, Math.ceil(node.getBoundingClientRect().height));
   }
 
-  function observeBars(top, bottom) {
-    if (!('ResizeObserver' in window)) return;
-    if (!resizeObserver) resizeObserver = new ResizeObserver(schedule);
-    if (top && top !== observedTop) {
-      if (observedTop) resizeObserver.unobserve(observedTop);
-      resizeObserver.observe(top);
-      observedTop = top;
-    }
-    if (bottom && bottom !== observedBottom) {
-      if (observedBottom) resizeObserver.unobserve(observedBottom);
-      resizeObserver.observe(bottom);
-      observedBottom = bottom;
-    }
+  function observeNode(node) {
+    if (!node || observed.has(node) || !resizeObserver) return;
+    observed.add(node);
+    resizeObserver.observe(node);
+  }
+
+  function setPx(view, name, value) {
+    const next = `${Math.max(0, value)}px`;
+    if (view.style.getPropertyValue(name) !== next) view.style.setProperty(name, next);
   }
 
   function measure() {
+    frame = 0;
     installStyles();
     document.documentElement.classList.toggle('a54-native-insets', nativeInsets);
 
@@ -165,46 +160,50 @@
     const tts = $('#reader-tts-player', view) || $('#reader-tts-player');
     const originalAudio = $('#reader-orig-audio-wrap', view) || $('#reader-orig-audio-wrap');
 
-    observeBars(top, bottom);
+    observeNode(top);
+    observeNode(bottom);
+    observeNode(tts);
+    observeNode(originalAudio);
 
     const topHeight = px(top);
     const bottomHeight = px(bottom);
-    const ttsHeight = px(tts);
-    const audioHeight = px(originalAudio);
-
-    if (topHeight) view.style.setProperty('--rd-top-h', `${topHeight}px`);
-    if (bottomHeight) view.style.setProperty('--rd-bot-h', `${bottomHeight}px`);
-    view.style.setProperty('--rd-tts-h', `${ttsHeight}px`);
-    view.style.setProperty('--rd-audio-h', `${audioHeight}px`);
-    view.dataset.a54ReadingLayout = 'v8';
+    setPx(view, '--rd-top-h', topHeight || 82);
+    setPx(view, '--rd-bot-h', bottomHeight || 66);
+    setPx(view, '--rd-tts-h', px(tts));
+    setPx(view, '--rd-audio-h', px(originalAudio));
+    view.dataset.a54ReadingLayout = 'v10';
   }
 
   function schedule() {
-    clearTimeout(timer);
-    timer = setTimeout(measure, 36);
+    if (frame) return;
+    frame = requestAnimationFrame(measure);
   }
 
   function boot() {
     installStyles();
-    measure();
+    resizeObserver = new ResizeObserver(schedule);
+    schedule();
+
+    // Only structural additions are observed. v0.8 watched every class/style
+    // mutation in the entire document and then wrote more styles itself,
+    // producing a permanent layout-feedback loop on the A54.
+    const view = $('#reader-reading-view');
     mutationObserver = new MutationObserver(schedule);
-    mutationObserver.observe(document.body, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-      attributeFilter: ['class', 'style', 'hidden'],
-    });
-    interval = setInterval(measure, 400);
+    mutationObserver.observe(view || document.body, { childList: true, subtree: true });
+
     addEventListener('resize', schedule, { passive: true });
     addEventListener('orientationchange', schedule, { passive: true });
     document.addEventListener('click', schedule, true);
+    document.addEventListener('transitionend', schedule, true);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) schedule(); });
+
     addEventListener('pagehide', () => {
-      clearInterval(interval);
-      clearTimeout(timer);
+      if (frame) cancelAnimationFrame(frame);
       resizeObserver?.disconnect();
       mutationObserver?.disconnect();
+      observed.clear();
     }, { once: true });
-    console.info('[reader mobile] Galaxy A54 reading layout v0.8 loaded');
+    console.info('[reader mobile] Galaxy A54 reading layout v0.10 loaded');
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
