@@ -5,6 +5,7 @@ on:
     branches:
       - test/reader-epub-format-stage1
       - fix/reader-v77.32-startup
+      - feature/lingq-reader-v77
     paths:
       - '.github/workflows/reader-stage1-android-apk-fixed.yml'
       - '.github/workflows/reader-stage1-android-apk.yml'
@@ -91,6 +92,8 @@ jobs:
           test -f '.stage1-android/app/src/main/assets/www/js/reader/word-source-filters.js'
           ! grep -q 'semantic-stage1-proof' '.stage1-android/app/src/main/assets/www/js/reader/chapter-render.js'
           node --check '.stage1-android/app/src/main/assets/www/js/reader-app.js'
+          node --check '.stage1-android/app/src/main/assets/www/js/lingq-reader-shell-v2.js'
+          node --check '.stage1-android/app/src/main/assets/www/js/lingq-reader-features-v4.js'
           ! grep -q '^Warning: truncated output' '.stage1-android/app/src/main/assets/www/js/reader-app.js'
           test "$(wc -l < '.stage1-android/app/src/main/assets/www/js/reader-app.js')" -gt 5000
 
