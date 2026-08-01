@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EPUB Stage 1 test</title>
+<style>
+  body{font-family:system-ui;margin:20px;background:#faf6f0;color:#241e17}
+  #fixture{max-width:420px;border:1px solid #ddd;padding:12px}
+  .epub-img{display:block;width:auto;max-width:100%;height:auto;max-height:min(78dvh,900px);object-fit:contain;margin:1em auto}
+  .ok{color:#176b3a}.bad{color:#a62a21}
+  blockquote{border-left:3px solid #999;padding-left:10px}
+  #epub-report{white-space:pre-wrap;background:#fff;border:1px solid #ddd;padding:12px;margin-top:12px;max-height:50vh;overflow:auto}
+</style>
+</head>
+<body>
+<h1>EPUB semantic parser — stage 1</h1>
+<div id="results"></div>
+<div id="fixture"></div>
+<hr>
+<h2>Проверка настоящего EPUB</h2>
+<input id="epub-file" type="file" accept=".epub,application/epub+zip">
+<div id="epub-report">Выбери EPUB: файл обрабатывается только в браузере.</div>
+<script type="module">
+import { readFileAsArrayBuffer, readZipEntries } from '../js/reader/epub.js';
+import {
+  htmlToSemanticItems,
+  semanticItemsDiagnostics,
+  semanticItemText,
+  extractEpubPackageInfo,
+} from '../js/reader/epub-stage1-real.js';
+
+const sample = `
+<html><body>
+  <h1>Глава <em>первая</em></h1>
+  <p>До картинки <span style="font-style: italic">курсив стилем</span><img src="../Images/map.png" alt="Карта"> после <span style="font-weight: 700">жирный стилем</span>.</p>
+  <blockquote style="font-style:italic">Ночная цитата.</blockquote>
+  <ol><li>Первый пункт</li><li>Второй пункт</li></ol>
+  <div class="figura-toda-pag"><div><img src="../Images/city.jpg" alt="Город"></div><p class="pie-cent-figura">Город ночью</p></div>
+  <script>window.evil=true<\/script>
+</body></html>`;
+
+const items = htmlToSemanticItems(sample, { basePath: 'OEBPS/Text' });
+const diagnostics = semanticItemsDiagnostics(items);
+const results = [];
+const assert = (name, condition, detail='') => results.push({name, ok:!!condition, detail});
+
+assert('Порядок элементов сохранён',
+  JSON.stringify(items.map(x=>x.type)) === JSON.stringify(['heading','paragraph','image','paragraph','quote','list-item','list-item','image']),
+  items.map(x=>x.type).join(' → '));
+assert('Картинка осталась между частями абзаца', items[2]?.type === 'image' && semanticItemText(items[1]).startsWith('До картинки') && semanticItemText(items[3]).startsWith('после'));
+assert('Путь картинки разрешён относительно главы', items[2]?.path === 'OEBPS/Images/map.png', items[2]?.path || '');
+assert('Курсив из inline style сохранён', items[1]?.runs?.some(r=>r.marks.includes('italic') && r.text.includes('курсив стилем')));
+assert('Жирный текст из numeric font-weight сохранён', items[3]?.runs?.some(r=>r.marks.includes('bold') && r.text.includes('жирный стилем')));
+assert('Наследуемый курсив блока сохранён', items[4]?.runs?.every(r=>r.marks.includes('italic')));
+assert('Подпись figure-like контейнера привязана к изображению', items.at(-1)?.caption === 'Город ночью', items.at(-1)?.caption || '');
+assert('Подпись не продублирована отдельным абзацем', !items.some(x=>semanticItemText(x)==='Город ночью'));
+assert('Скрипты не попали в текст', !items.some(x=>semanticItemText(x).includes('window.evil')));
+assert('Диагностика считает изображения', diagnostics.images === 2, JSON.stringify(diagnostics));
+
+const imageOnly = htmlToSemanticItems('<html><body><div class="figura-toda-pag"><svg><image xlink:href="plate.png"></image></svg></div></body></html>', {basePath:'OPS'});
+const imageOnlyDiag = semanticItemsDiagnostics(imageOnly);
+assert('Глава только с SVG-изображением считается содержательной', imageOnlyDiag.hasRenderableContent && imageOnlyDiag.images === 1, JSON.stringify(imageOnlyDiag));
+
+const opf = `<?xml version="1.0"?><package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:title>Test book</dc:title><dc:creator>A</dc:creator><dc:language>es</dc:language><meta name="cover" content="cover-image"/></metadata><manifest><item id="cover-image" href="Images/cover.jpg" media-type="image/jpeg"/><item id="c1" href="Text/1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>`;
+const pkg = extractEpubPackageInfo(opf, {opfPath:'OEBPS/content.opf'});
+assert('Обложка извлекается из OPF', pkg.coverPath === 'OEBPS/Images/cover.jpg', pkg.coverPath);
+assert('Spine извлекается из OPF', pkg.spinePaths[0] === 'OEBPS/Text/1.xhtml', pkg.spinePaths.join(','));
+
+const fixture = document.getElementById('fixture');
+const px = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500"><rect width="1200" height="500" fill="#8a4b2d"/><text x="40" y="270" font-size="80" fill="white">EPUB image</text></svg>');
+function esc(s=''){return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}
+function runsHtml(runs=[]){return runs.map(r=>{let t=esc(r.text);if(r.marks.includes('code'))t='<code>'+t+'</code>';if(r.marks.includes('underline'))t='<u>'+t+'</u>';if(r.marks.includes('italic'))t='<em>'+t+'</em>';if(r.marks.includes('bold'))t='<strong>'+t+'</strong>';return t}).join('')}
+fixture.innerHTML = items.map(item=>{
+  if(item.type==='image') return `<figure><img class="epub-img" src="${px}" alt=""><figcaption>${esc(item.caption||item.alt||'')}</figcaption></figure>`;
+  if(item.type==='heading') return `<h${item.level}>${runsHtml(item.runs)}</h${item.level}>`;
+  if(item.type==='quote') return `<blockquote>${runsHtml(item.runs)}</blockquote>`;
+  if(item.type==='list-item') return `<div>• ${runsHtml(item.runs)}</div>`;
+  return `<p>${runsHtml(item.runs)}</p>`;
+}).join('');
+await Promise.all([...fixture.querySelectorAll('img')].map(img=>img.decode().catch(()=>{})));
+const overflow = [...fixture.querySelectorAll('img')].some(img=>img.getBoundingClientRect().width > fixture.getBoundingClientRect().width + .5);
+assert('Большие изображения не выходят за колонку', !overflow);
+
+const out = document.getElementById('results');
+out.innerHTML = results.map(r=>`<div class="${r.ok?'ok':'bad'}">${r.ok?'✓':'✗'} ${r.name}${r.detail?' — '+esc(r.detail):''}</div>`).join('');
+window.testResults = results;
+window.testDone = true;
+
+function dirname(path=''){return String(path).split('/').slice(0,-1).join('/')}
+function findOpfPath(entries){
+  return [...entries.keys()].find(x=>/\.opf$/i.test(x)) || '';
+}
+
+document.getElementById('epub-file').addEventListener('change', async event => {
+  const file = event.target.files?.[0];
+  const report = document.getElementById('epub-report');
+  if (!file) return;
+  report.textContent = 'Распаковываю и проверяю…';
+  try {
+    const entries = await readZipEntries(await readFileAsArrayBuffer(file));
+    const opfPath = findOpfPath(entries);
+    if (!opfPath) throw new Error('OPF не найден');
+    const pkg = extractEpubPackageInfo(await entries.get(opfPath).text(), {opfPath});
+    const paths = [...new Set([...pkg.spinePaths, ...pkg.htmlPaths])]
+      .filter(path => entries.has(path) && !/(?:nav|toc)\.(?:x?html?|xml)$/i.test(path));
+    const totals = {documents:0, items:0, images:0, textChars:0, italicRuns:0, boldRuns:0, captions:0, imageOnlyChapters:[], missingImages:[], errors:[]};
+    for (const path of paths) {
+      try {
+        const chapterItems = htmlToSemanticItems(await entries.get(path).text(), {basePath:dirname(path)});
+        const d = semanticItemsDiagnostics(chapterItems);
+        totals.documents += 1; totals.items += d.total; totals.images += d.images; totals.textChars += d.textChars;
+        totals.italicRuns += d.marks.italic || 0; totals.boldRuns += d.marks.bold || 0;
+        totals.captions += chapterItems.filter(item=>item.type==='image' && item.caption).length;
+        if (d.images && d.textChars === 0) totals.imageOnlyChapters.push(path);
+        chapterItems.filter(item=>item.type==='image' && !entries.has(item.path)).forEach(item=>totals.missingImages.push({chapter:path,image:item.path}));
+      } catch (error) { totals.errors.push({chapter:path,error:error.message}); }
+    }
+    report.textContent = JSON.stringify({
+      file:file.name,
+      package:{title:pkg.title,author:pkg.author,language:pkg.language,coverPath:pkg.coverPath,coverExists:!!pkg.coverPath && entries.has(pkg.coverPath),spineItems:pkg.spinePaths.length},
+      totals,
+      ok: totals.errors.length===0 && totals.missingImages.length===0 && totals.images>0,
+    }, null, 2);
+  } catch (error) {
+    report.textContent = 'Ошибка: ' + (error?.message || error);
+  }
+});
+</script>
+</body>
+</html>

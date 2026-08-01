@@ -1,6 +1,12 @@
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
+const { resolveDeepSeekModel } = require('./deepseek-model');
+const {
+  buildDeepSeekJsonRequest,
+  deepSeekMessageContent,
+  deepSeekFinishReason,
+} = require('./deepseek-json');
 
 const DEEPSEEK_API_KEY = defineSecret('DEEPSEEK_API_KEY');
 const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');
@@ -365,6 +371,21 @@ function maxTokensForTask(task) {
   return 450;
 }
 
+function requireReaderTaskInput(task, body) {
+  const textTasks = new Set([
+    'translate_paragraph',
+    'analyze_sentence',
+    'song_strophe',
+    'clean_transcript',
+  ]);
+  if (textTasks.has(task) && !String(body?.text || '').trim()) {
+    throw new HttpsError('invalid-argument', `Для задачи ${task} не передан текст.`);
+  }
+  if (task === 'reader_word' && !String(body?.word || body?.surface || '').trim()) {
+    throw new HttpsError('invalid-argument', 'Для разбора не передано слово.');
+  }
+}
+
 exports.readerAI = onCall(
   {
     region: 'asia-southeast1',
@@ -414,6 +435,7 @@ exports.readerAI = onCall(
       return { text };
     }
 
+    requireReaderTaskInput(task, body);
     const userPrompt = buildPrompt(task, body);
     await enforceDailyLimit(request.auth.uid, task);
 
@@ -422,40 +444,57 @@ exports.readerAI = onCall(
       throw new HttpsError('failed-precondition', 'Missing DEEPSEEK_API_KEY in Firebase Secret Manager. Run: firebase functions:secrets:set DEEPSEEK_API_KEY');
     }
 
-    let response;
-    try {
-      response = await fetch('https://api.deepseek.com/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${key}`,
-        },
-        body: JSON.stringify({
-          model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
-          temperature: 0.1,
-          max_tokens: maxTokensForTask(task),
-          messages: [
-            { role: 'system', content: 'Return only valid JSON. No markdown. No extra text.' },
-            { role: 'user', content: userPrompt },
-          ],
-        }),
-      });
-    } catch (error) {
-      throw new HttpsError('unavailable', `DeepSeek network error: ${error?.message || String(error)}`);
-    }
+    const requestBody = buildDeepSeekJsonRequest({
+      // DeepSeek retired the legacy deepseek-chat/deepseek-reasoner aliases
+      // on 2026-07-24. Normalize even a stale environment override so an
+      // old DEEPSEEK_MODEL value cannot randomly break warm instances.
+      model: resolveDeepSeekModel(),
+      maxTokens: maxTokensForTask(task),
+      userPrompt,
+    });
 
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const msg = data?.error?.message || data?.error || `DeepSeek HTTP ${response.status}`;
-      throw new HttpsError('internal', String(msg), data);
-    }
-
-    const content = data?.choices?.[0]?.message?.content || '';
     let parsed;
-    try {
-      parsed = extractJson(content);
-    } catch (error) {
-      throw new HttpsError('internal', `DeepSeek вернул не JSON: ${error?.message || String(error)}`, { content: String(content).slice(0, 1000) });
+    let lastContent = '';
+    let lastFinishReason = '';
+    for (let attempt = 0; attempt < 2 && !parsed; attempt += 1) {
+      let response;
+      try {
+        response = await fetch('https://api.deepseek.com/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${key}`,
+          },
+          body: JSON.stringify(requestBody),
+        });
+      } catch (error) {
+        if (attempt === 0) continue;
+        throw new HttpsError('unavailable', `DeepSeek network error: ${error?.message || String(error)}`);
+      }
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const msg = data?.error?.message || data?.error || `DeepSeek HTTP ${response.status}`;
+        throw new HttpsError('internal', String(msg), data);
+      }
+
+      lastContent = deepSeekMessageContent(data);
+      lastFinishReason = deepSeekFinishReason(data);
+      if (!lastContent) continue;
+      try {
+        parsed = extractJson(lastContent);
+      } catch (_) {
+        // JSON mode should make this exceptionally rare. Retry once so one
+        // malformed provider response does not break the reader interaction.
+      }
+    }
+
+    if (!parsed) {
+      throw new HttpsError(
+        'internal',
+        `DeepSeek не вернул готовый JSON${lastFinishReason ? ` (finish_reason: ${lastFinishReason})` : ''}.`,
+        { content: lastContent.slice(0, 1000), finishReason: lastFinishReason }
+      );
     }
 
     return { data: parsed };
@@ -777,4 +816,3 @@ exports.transcribeAudio = onRequest(
     return res.status(200).json({ text, segments, engine: usedSelfhost ? 'selfhost' : 'openrouter' });
   }
 );
-

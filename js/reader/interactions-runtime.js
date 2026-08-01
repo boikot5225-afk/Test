@@ -23,7 +23,7 @@ const readerInteractions = createReaderInteractions({
   hasNativeSelection,
   scheduleSelectionUpdate: () => {},
   getCurrentBook: () => ({ currentParagraph: activeParagraphIndex() }),
-  openWordPanel: (word, index) => window.readerOpenWordPanel?.(word, index),
+  openWordPanel: (word, index, offset) => window.readerOpenWordPanel?.(word, index, offset),
   runAction: (event, action, index) => window.readerAction?.(event, action, index),
   selectParagraph: (index) => window.readerSelectParagraph?.(index),
   nextParagraph: () => window.readerNextParagraph?.(),

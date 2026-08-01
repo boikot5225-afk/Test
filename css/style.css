@@ -2285,17 +2285,17 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
 
 
 /* v68.7 — Chinese inline pinyin: shown for learning/problem/familiar, not merely looked */
-#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-on{
+#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-slot{
   padding-top:2px !important;
   margin-top:2px !important;
   vertical-align:baseline !important;
 }
-#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-on ruby.reader-zh-ruby{
+#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-slot ruby.reader-zh-ruby{
   ruby-position:over;
   display:inline-ruby;
   line-height:1.18;
 }
-#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-on rt{
+#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-slot rt{
   font-family:"IBM Plex Mono",ui-monospace,monospace;
   font-size:.48em;
   line-height:1;
@@ -2304,14 +2304,17 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
   font-weight:500;
   user-select:none;
 }
-#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-known rt{
-  display:none !important;
+#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-slot:not(.rw-pinyin-on) rt,
+#reader-reading-view[data-reader-lang="zh"] .reader-word.rw-known rt,
+#reader-reading-view[data-reader-lang="zh"] .reader-zh-ruby-empty rt{
+  color:transparent !important;
+  text-shadow:none !important;
 }
 #reader-reading-view[data-reader-lang="zh"] .reader-word.rw-known{
   opacity:.86;
 }
 @media (max-width:700px){
-  #reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-on rt{
+  #reader-reading-view[data-reader-lang="zh"] .reader-word.rw-pinyin-slot rt{
     font-size:.46em;
   }
 }
@@ -2326,6 +2329,8 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
   --rd-font: 'Playfair Display', serif;
   --rd-size: 17px;
   --rd-lh:   1.82;
+  --rd-bg-image: none;
+  --rd-bg-size: auto;
 }
 #reader-reading-view .reader-paragraph {
   font-family: var(--rd-font) !important;
@@ -2333,31 +2338,103 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
   line-height: var(--rd-lh)   !important;
 }
 
-/* --- Themes (calm reader): Бумага / Сепия / Чернила ---
-   Legacy saved names (parchment/night/'') are normalized to these three in
-   display.js, so only the new palettes live here. One accent per theme. */
+/* --- Calm reader themes. Textures are tiny CSS gradients rather than bitmap
+   assets: they stay sharp, add almost no APK weight, and do not flash while a
+   page is turning. */
 #reader-reading-view[data-rd-theme="paper"] {
   --bg: #FAF6F0; --text: #241E17; --surface: #FFFFFF;
   --surface2: #F1EBE2; --surface3: #E9E1D4;
   --border: #E5DDD1; --text-muted: #6E6356;
   --text-dim: #9C9184; --accent: #8A4B2D;
+  --rd-bg-image: linear-gradient(180deg, rgba(255,255,255,.18), rgba(144,103,65,.018));
+  --rd-bg-size: auto;
+}
+#reader-reading-view[data-rd-theme="ivory"] {
+  --bg: #FFFDF7; --text: #28231C; --surface: #FFFFFF;
+  --surface2: #F5F1E8; --surface3: #ECE6DA;
+  --border: #E8E1D5; --text-muted: #6C645A;
+  --text-dim: #9B9287; --accent: #76533A;
+  --rd-bg-image:
+    radial-gradient(circle at 18% 22%, rgba(104,83,55,.035) 0 1px, transparent 1.25px),
+    radial-gradient(circle at 72% 64%, rgba(104,83,55,.025) 0 1px, transparent 1.2px);
+  --rd-bg-size: 23px 23px, 31px 31px;
 }
 #reader-reading-view[data-rd-theme="sepia"] {
   --bg: #EFE6D8; --text: #332A1F; --surface: #F7F0E4;
   --surface2: #E6DBC8; --surface3: #DDD0B9;
   --border: #D8CBB4; --text-muted: #71634F;
   --text-dim: #98896F; --accent: #7A5232;
+  --rd-bg-image: linear-gradient(135deg, rgba(123,82,45,.035), transparent 42%, rgba(255,255,255,.08));
+  --rd-bg-size: auto;
+}
+#reader-reading-view[data-rd-theme="vellum"] {
+  --bg: #E8D7B9; --text: #352719; --surface: #F1E3CA;
+  --surface2: #DDC8A5; --surface3: #D1B98F;
+  --border: #CDB48D; --text-muted: #725E44;
+  --text-dim: #998269; --accent: #814825;
+  --rd-bg-image:
+    radial-gradient(ellipse at 12% 8%, rgba(255,255,255,.18), transparent 32%),
+    radial-gradient(ellipse at 88% 76%, rgba(107,67,31,.075), transparent 38%),
+    repeating-linear-gradient(2deg, rgba(93,58,25,.018) 0 1px, transparent 1px 4px);
+  --rd-bg-size: auto, auto, 7px 7px;
+}
+#reader-reading-view[data-rd-theme="sage"] {
+  --bg: #E7ECE2; --text: #263028; --surface: #F0F4EC;
+  --surface2: #DCE4D7; --surface3: #CFDAC9;
+  --border: #C7D2C1; --text-muted: #5E6B60;
+  --text-dim: #89958A; --accent: #526B51;
+  --rd-bg-image: linear-gradient(145deg, rgba(255,255,255,.13), transparent 46%, rgba(71,94,69,.025));
+  --rd-bg-size: auto;
+}
+#reader-reading-view[data-rd-theme="mist"] {
+  --bg: #E8EEF2; --text: #222B32; --surface: #F2F6F8;
+  --surface2: #DCE5EA; --surface3: #CFDCE3;
+  --border: #C7D3DA; --text-muted: #5C6972;
+  --text-dim: #87939B; --accent: #49697C;
+  --rd-bg-image:
+    radial-gradient(ellipse at 20% 0%, rgba(255,255,255,.24), transparent 42%),
+    linear-gradient(180deg, transparent, rgba(64,93,110,.018));
+  --rd-bg-size: auto;
+}
+#reader-reading-view[data-rd-theme="eink"] {
+  --bg: #D9D9D4; --text: #20211F; --surface: #E3E3DE;
+  --surface2: #CECEC8; --surface3: #C3C3BD;
+  --border: #BDBDB6; --text-muted: #5C5D59;
+  --text-dim: #858681; --accent: #4F5652;
+  --rd-bg-image:
+    radial-gradient(circle, rgba(20,22,20,.035) 0 .7px, transparent .85px),
+    radial-gradient(circle, rgba(255,255,255,.10) 0 .7px, transparent .9px);
+  --rd-bg-size: 4px 4px, 5px 5px;
 }
 #reader-reading-view[data-rd-theme="ink"] {
   --bg: #14120F; --text: #E8E2D8; --surface: #1D1A16;
   --surface2: #26221D; --surface3: #2E2922;
   --border: #37322A; --text-muted: #A79D8F;
   --text-dim: #7A7164; --accent: #D9A15F;
+  --rd-bg-image: radial-gradient(ellipse at 50% -10%, rgba(217,161,95,.045), transparent 46%);
+  --rd-bg-size: auto;
+}
+#reader-reading-view[data-rd-theme="amoled"] {
+  --bg: #000000; --text: #D8D8D6; --surface: #090909;
+  --surface2: #121212; --surface3: #191919;
+  --border: #292929; --text-muted: #989895;
+  --text-dim: #666663; --accent: #D3A35F;
+  --rd-bg-image: none;
+  --rd-bg-size: auto;
 }
 /* dark theme: accent-on-dark needs dark label text on filled controls */
 #reader-reading-view[data-rd-theme="ink"] .rd-listen.playing,
-#reader-reading-view[data-rd-theme="ink"] .rd-icon.on {
+#reader-reading-view[data-rd-theme="ink"] .rd-icon.on,
+#reader-reading-view[data-rd-theme="amoled"] .rd-listen.playing,
+#reader-reading-view[data-rd-theme="amoled"] .rd-icon.on {
   color: #14120F;
+}
+
+#reader-reading-view,
+#reader-reading-view .rd-page {
+  background-color: var(--bg);
+  background-image: var(--rd-bg-image);
+  background-size: var(--rd-bg-size);
 }
 
 /* Word panel buttons — explicit contrast in all themes */
@@ -2399,6 +2476,7 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
      short panel peeks above the bottom bar on tablet/desktop */
   transform: translateY(calc(100% + 140px)); visibility: hidden;
   transition: transform .25s cubic-bezier(.32,.72,0,1), visibility 0s .25s;
+  max-height: min(86vh, 760px); overflow-y: auto;
 }
 #reader-reading-view .rd-display-panel.show { transform: translateY(0); visibility: visible; transition: transform .25s cubic-bezier(.32,.72,0,1), visibility 0s 0s; }
 
@@ -3396,21 +3474,72 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
 }
 #reader-reading-view .rd-page{
   position:absolute; inset:0; overflow-y:auto;
-  background:var(--bg);
-  backface-visibility:hidden; transform-origin:right center;
-  will-change:transform; display:none;
+  background-color:var(--bg); background-image:var(--rd-bg-image); background-size:var(--rd-bg-size);
+  backface-visibility:hidden; transform:translateZ(0); opacity:1;
+  will-change:transform,opacity; display:none;
 }
 #reader-reading-view .rd-page.rd-page-show{ display:block; }
 #reader-reading-view .rd-page.rd-page-current{ z-index:3; }
-#reader-reading-view .rd-page.rd-page-flip{
-  transition:transform .42s cubic-bezier(.4,.05,.2,1);
-  transform:rotateY(-160deg);
-}
+#reader-reading-view .rd-page.rd-page-in{ z-index:2; }
 #reader-reading-view .rd-page-fold{
   position:absolute; inset:0; pointer-events:none; opacity:0;
   background:linear-gradient(to left, rgba(0,0,0,.2), rgba(0,0,0,0) 35%);
 }
-#reader-reading-view .rd-page.rd-page-flip .rd-page-fold{ transition:opacity .42s; opacity:1; }
+
+/* Physical sheet. Forward and backward turns now bend in opposite directions;
+   the old implementation always rotated left, even while going back. */
+#reader-reading-view .rd-scroll[data-rd-page-animation="flip"] .rd-page{
+  transition:transform .46s cubic-bezier(.38,.04,.18,1), opacity .46s ease;
+}
+#reader-reading-view .rd-scroll[data-rd-page-animation="flip"] .rd-page.rd-page-forward.rd-page-out{
+  transform-origin:left center; transform:perspective(1400px) rotateY(-108deg); opacity:.42;
+}
+#reader-reading-view .rd-scroll[data-rd-page-animation="flip"] .rd-page.rd-page-backward.rd-page-out{
+  transform-origin:right center; transform:perspective(1400px) rotateY(108deg); opacity:.42;
+}
+#reader-reading-view .rd-scroll[data-rd-page-animation="flip"] .rd-page.rd-page-out .rd-page-fold{
+  transition:opacity .46s ease; opacity:1;
+}
+#reader-reading-view .rd-scroll[data-rd-page-animation="flip"] .rd-page.rd-page-backward .rd-page-fold{
+  background:linear-gradient(to right, rgba(0,0,0,.2), rgba(0,0,0,0) 35%);
+}
+
+/* Fast horizontal slide. The next page moves a shorter distance underneath,
+   avoiding a blank frame on slower WebViews. */
+#reader-reading-view .rd-scroll[data-rd-page-animation="slide"] .rd-page{
+  transition:transform .34s cubic-bezier(.22,.72,.2,1), opacity .34s ease;
+}
+#reader-reading-view .rd-scroll[data-rd-page-animation="slide"] .rd-page.rd-page-in.rd-page-forward{ transform:translateX(28%); }
+#reader-reading-view .rd-scroll[data-rd-page-animation="slide"] .rd-page.rd-page-in.rd-page-backward{ transform:translateX(-28%); }
+#reader-reading-view .rd-scroll[data-rd-page-animation="slide"] .rd-page.rd-page-in-active{ transform:translateX(0); }
+#reader-reading-view .rd-scroll[data-rd-page-animation="slide"] .rd-page.rd-page-forward.rd-page-out{ transform:translateX(-104%); opacity:.88; }
+#reader-reading-view .rd-scroll[data-rd-page-animation="slide"] .rd-page.rd-page-backward.rd-page-out{ transform:translateX(104%); opacity:.88; }
+
+/* Card-stack motion: quieter than a full slide, with a small depth cue. */
+#reader-reading-view .rd-scroll[data-rd-page-animation="stack"] .rd-page{
+  transition:transform .38s cubic-bezier(.2,.74,.18,1), opacity .32s ease;
+}
+#reader-reading-view .rd-scroll[data-rd-page-animation="stack"] .rd-page.rd-page-in.rd-page-forward{ transform:translateX(10%) scale(.975); opacity:.35; }
+#reader-reading-view .rd-scroll[data-rd-page-animation="stack"] .rd-page.rd-page-in.rd-page-backward{ transform:translateX(-10%) scale(.975); opacity:.35; }
+#reader-reading-view .rd-scroll[data-rd-page-animation="stack"] .rd-page.rd-page-in-active{ transform:translateX(0) scale(1); opacity:1; }
+#reader-reading-view .rd-scroll[data-rd-page-animation="stack"] .rd-page.rd-page-forward.rd-page-out{ transform:translateX(-18%) scale(.96) rotate(-.35deg); opacity:0; }
+#reader-reading-view .rd-scroll[data-rd-page-animation="stack"] .rd-page.rd-page-backward.rd-page-out{ transform:translateX(18%) scale(.96) rotate(.35deg); opacity:0; }
+
+/* Minimal cross-fade for readers who dislike spatial motion. */
+#reader-reading-view .rd-scroll[data-rd-page-animation="fade"] .rd-page{
+  transition:transform .24s ease, opacity .24s ease;
+}
+#reader-reading-view .rd-scroll[data-rd-page-animation="fade"] .rd-page.rd-page-in{ transform:scale(.992); opacity:.2; }
+#reader-reading-view .rd-scroll[data-rd-page-animation="fade"] .rd-page.rd-page-in-active{ transform:scale(1); opacity:1; }
+#reader-reading-view .rd-scroll[data-rd-page-animation="fade"] .rd-page.rd-page-out{ transform:scale(.985); opacity:0; }
+
+#reader-reading-view .rd-scroll[data-rd-page-animation="none"] .rd-page{ transition:none !important; }
+@media (prefers-reduced-motion: reduce) {
+  #reader-reading-view .rd-scroll.rd-pages-mode .rd-page,
+  #reader-reading-view .rd-scroll.rd-pages-mode .rd-page-fold{
+    transition:none !important;
+  }
+}
 #reader-reading-view .rd-pages-indicator{
   display:none;
   position:absolute; left:0; right:0; bottom:8px; z-index:2; text-align:center;

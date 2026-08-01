@@ -1,0 +1,144 @@
+name: Reader AI LingQ A54 v0.10 Pinyin Stable APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/lingq-v0.10-pinyin-performance
+    paths:
+      - '.github/workflows/reader-lingq-a54-v8-android-apk.yml'
+      - 'scripts/patch-reader-a54-v10.mjs'
+      - 'scripts/prepare-reader-a54-v9-wrapper.sh'
+      - 'scripts/test-reader-chinese*.mjs'
+      - 'index.html'
+      - 'css/**'
+      - 'js/**'
+      - 'icons/**'
+      - 'data/**'
+      - 'manifest.json'
+      - 'sw.js'
+  pull_request:
+    branches:
+      - feature/lingq-reader-v77
+
+permissions:
+  contents: read
+
+jobs:
+  build-a54-v10:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Reader AI v0.10 branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply deterministic Chinese stability patch
+        run: node scripts/patch-reader-a54-v10.mjs js/reader-app.js
+
+      - name: Test Chinese stability, contextual pinyin and A54 runtime
+        run: |
+          node scripts/test-reader-chinese.mjs
+          node scripts/test-reader-chinese-integration.mjs
+          node --check scripts/patch-reader-a54-v10.mjs
+          node --check js/reader-app.js
+          node --check js/reader/chinese-context.js
+          node --check js/reader/interactions.js
+          node --check js/reader/interactions-runtime.js
+          node --check js/reader/chapter-render-next.js
+          node --check js/lingq-reader-restore-v6.js
+          node --check js/reader-mobile-galaxy-a54-v7.js
+          node --check js/reader-mobile-galaxy-a54-search-v71.js
+          node --check js/reader-mobile-galaxy-a54-reading-v8.js
+          node --check js/app.js
+          node --check sw.js
+          bash -n scripts/prepare-reader-a54-v9-wrapper.sh
+          ! grep -Fq 'setInterval(' js/lingq-reader-restore-v6.js
+          ! grep -Fq 'setInterval(' js/reader-mobile-galaxy-a54-v7.js
+          ! grep -Fq 'setInterval(' js/reader-mobile-galaxy-a54-search-v71.js
+          ! grep -Fq 'setInterval(' js/reader-mobile-galaxy-a54-reading-v8.js
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform 35
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Prepare verified A54 v0.10 wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/prepare-reader-a54-v9-wrapper.sh
+          cat > .reader-a54-v9-android/gradle.properties <<'PROPS'
+          android.useAndroidX=true
+          android.enableJetifier=true
+          PROPS
+          grep -F 'android.useAndroidX=true' .reader-a54-v9-android/gradle.properties
+
+      - name: Build verified APK
+        working-directory: .reader-a54-v9-android
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Verify packaged v0.10 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK='.reader-a54-v9-android/app/build/outputs/apk/debug/app-debug.apk'
+          rm -rf /tmp/reader-a54-v10-apk
+          mkdir -p /tmp/reader-a54-v10-apk
+          unzip -q "$APK" -d /tmp/reader-a54-v10-apk
+          ROOT='/tmp/reader-a54-v10-apk/assets/www'
+          test -f "$ROOT/index.html"
+          test ! -f /tmp/reader-a54-v10-apk/assets/index.html
+          test -f "$ROOT/js/reader-mobile-galaxy-a54-reading-v8.js"
+          test -f "$ROOT/js/reader/chinese-context.js"
+          test -f "$ROOT/scripts/patch-reader-a54-v10.mjs"
+          grep -F 'READER_A54_V10_PATCH' "$ROOT/js/reader-app.js"
+          grep -F 'READER_A54_V10_CONTEXT_RULES' "$ROOT/js/reader/chinese-context.js"
+          grep -F 'readerZhDynamicWordSet' "$ROOT/js/reader-app.js"
+          grep -F 'readerZhInlinePinyinCache' "$ROOT/js/reader-app.js"
+          grep -F 'data-reader-pinyin=' "$ROOT/js/reader-app.js"
+          ! grep -Fq 'if (seenOnlyYellow) return false' "$ROOT/js/reader-app.js"
+          ! grep -Fq 'setInterval(' "$ROOT/js/lingq-reader-restore-v6.js"
+          ! grep -Fq 'setInterval(' "$ROOT/js/reader-mobile-galaxy-a54-v7.js"
+          ! grep -Fq 'setInterval(' "$ROOT/js/reader-mobile-galaxy-a54-search-v71.js"
+          ! grep -Fq 'setInterval(' "$ROOT/js/reader-mobile-galaxy-a54-reading-v8.js"
+          grep -F 'reader-app.js?v=77.34-zh-stable-fast' "$ROOT/js/app.js"
+          grep -F 'v77.34-lingq-v010-stable' "$ROOT/sw.js"
+          APKA="$(command -v apkanalyzer || find "$ANDROID_HOME" -path '*/bin/apkanalyzer' -type f | head -n 1)"
+          test -n "$APKA"
+          "$APKA" manifest application-id "$APK" | grep -Fx 'space.saintjust.reader.lingqa54.debug'
+          "$APKA" manifest version-code "$APK" | grep -Fx '15'
+
+      - name: Prepare v0.10 artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp .reader-a54-v9-android/app/build/outputs/apk/debug/app-debug.apk \
+            dist/Reader-AI-LingQ-v0.10.0-Pinyin-Stable-Galaxy-A54.apk
+          sha256sum dist/Reader-AI-LingQ-v0.10.0-Pinyin-Stable-Galaxy-A54.apk | \
+            tee dist/Reader-AI-LingQ-v0.10.0-Pinyin-Stable-Galaxy-A54.apk.sha256
+
+      - name: Upload verified v0.10 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-LingQ-v0.10.0-Pinyin-Stable-Galaxy-A54-APK
+          path: |
+            dist/Reader-AI-LingQ-v0.10.0-Pinyin-Stable-Galaxy-A54.apk
+            dist/Reader-AI-LingQ-v0.10.0-Pinyin-Stable-Galaxy-A54.apk.sha256
+          if-no-files-found: error
+          retention-days: 14

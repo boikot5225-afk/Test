@@ -56,13 +56,17 @@ export function createReaderAudio({
   }
 
   function speakChapter() {
-    const text = String(getParagraphText?.('__chapter__') || '');
-    if (!text) return false;
-    if (text.length > 1800) {
+    // The semantic sentinel bypasses the legacy reader-app branch that joins
+    // structured objects as "[object Object]". Legacy navigation simply returns
+    // an empty string here, so the old sentinel remains a safe fallback.
+    const semanticText = String(getParagraphText?.('__chapter_semantic__') || '');
+    const legacyText = semanticText || String(getParagraphText?.('__chapter__') || '');
+    if (!legacyText) return false;
+    if (legacyText.length > 1800) {
       showToast?.('🎧 Глава длинная: озвучу текущий абзац, чтобы TTS не подавился.');
       return speakCurrentParagraph();
     }
-    return speakText(text);
+    return speakText(legacyText);
   }
 
   return { speakText, stop, speakParagraph, speakCurrentParagraph, speakChapter };
