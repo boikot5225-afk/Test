@@ -99,4 +99,5 @@ window.readerImportAndroidFile = readerImportAndroidFile;
 // A failure here cannot break import, storage, dictionaries or authentication.
 import('../lingq-reader-shell-v2.js?v=0.3.0')
   .then(() => import('../lingq-reader-features-v4.js?v=0.4.0'))
+  .then(() => import('../lingq-reader-completion-v5.js?v=0.5.0'))
   .catch(error => console.warn('[lingq reader shell] skipped:', error));
