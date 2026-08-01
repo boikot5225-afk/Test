@@ -9,6 +9,7 @@ on:
   push:
     branches:
       - claude/check-branches-latest-changes-wydht2
+      - fix/zh-pinyin-stability-77.37
     paths:
       - '.github/workflows/android-apk.yml'
       - 'android/**'
@@ -66,17 +67,18 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Check the Japanese support actually shipped
+      - name: Check the reader assets actually shipped
         shell: bash
         run: |
           set -euo pipefail
           APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
           echo "APK: $APK ($(du -h "$APK" | cut -f1))"
-          # An APK that builds but leaves the dictionary behind would look fine
-          # and read Japanese without furigana, so assert the assets are in it.
           for entry in \
+            assets/www/data/zh_dict_core.json \
             assets/www/data/ja_dict_core.json \
             assets/www/js/reader/ja-dict.js \
+            assets/www/js/reader/word-state.js \
+            assets/www/js/reader/chapter-render-next.js \
             assets/www/js/reader-app.js \
             assets/www/index.html
           do
@@ -84,13 +86,15 @@ jobs:
           done
           unzip -p "$APK" assets/www/js/reader-app.js | grep -qF 'readerTokenizeJapaneseParagraph' \
             || { echo 'reader-app.js in the APK has no Japanese tokenizer'; exit 1; }
-          # Dev tooling must stay out — scripts/ is excluded by syncWebAssets.
+          unzip -p "$APK" assets/www/js/reader/word-state.js | grep -qF 'PASSIVE_RUBY_SENTINEL' \
+            || { echo 'stable CJK ruby policy did not ship'; exit 1; }
+          unzip -p "$APK" assets/www/js/reader/chapter-render-next.js | grep -qF 'holdFirstCjkPaintUntilCore' \
+            || { echo 'single-paint CJK renderer did not ship'; exit 1; }
+          unzip -p "$APK" assets/www/js/reader/chapter-render-next.js | grep -qF 'Подготавливаю слова и пиньинь' \
+            || { echo 'Chinese dictionary warm-up state did not ship'; exit 1; }
           if unzip -l "$APK" | grep -qF 'assets/www/scripts/'; then
             echo 'dev scripts leaked into the APK'; exit 1
           fi
-          # The signing certificate is what decides whether this APK can replace
-          # the installed one, so print its fingerprint: it must stay the same
-          # from build to build.
           APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -name apksigner | sort -V | tail -1)"
           if [[ -n "${APKSIGNER}" ]]; then
             "${APKSIGNER}" verify --print-certs "$APK" | grep -i 'SHA-256 digest' || true
@@ -100,6 +104,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: reader-ai-japanese-debug
+          name: reader-ai-77.37-zh-stable-debug
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
