@@ -46,7 +46,7 @@ jobs:
       - name: Build signed pinyin module
         run: gradle -p tools/smartbook-chinese-pinyin/xposed-module assembleDebug --no-daemon
 
-      - name: Download official universal Smart Book APK
+      - name: Download and verify official Smart Book 3.6 APK
         run: |
           mkdir -p build/download build/output
           curl --fail --location --retry 4 --retry-all-errors \
@@ -57,6 +57,9 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging build/download/smartbook-original.apk \
             | tee build/original-badging.txt
           grep -q "package: name='com.kursx.smartbook'" build/original-badging.txt
+          ORIGINAL_VERSION="$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" build/original-badging.txt | head -n1)"
+          echo "Official universal APK version: $ORIGINAL_VERSION"
+          test "$ORIGINAL_VERSION" = '3.6'
 
       - name: Download latest official NPatch CLI
         env:
@@ -99,6 +102,7 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" \
             | tee build/patched-badging.txt
           grep -q "package: name='com.kursx.smartbook'" build/patched-badging.txt
+          grep -q "versionName='3.6'" build/patched-badging.txt
           unzip -l "$APK" | grep -q 'assets/npatch/modules/com.bulat.smartbookpinyin.apk'
 
       - name: Write reproducibility report
