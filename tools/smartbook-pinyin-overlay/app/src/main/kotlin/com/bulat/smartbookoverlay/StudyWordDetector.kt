@@ -2,118 +2,95 @@ package com.bulat.smartbookoverlay
 
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.Rect
-import android.text.Layout
+import android.graphics.RectF
 import android.text.Spanned
-import android.text.StaticLayout
-import android.text.TextPaint
 import android.text.style.CharacterStyle
 import android.text.style.ForegroundColorSpan
 import android.text.style.TextAppearanceSpan
-import smartbook.pinyin.ChineseSegmenter
-import kotlin.math.abs
-import kotlin.math.max
-import kotlin.math.min
 
-/**
- * Finds words Smart Book has already painted red/pink as being in study.
- *
- * Accessibility usually preserves ForegroundColorSpan. Samsung/Compose/custom views may strip
- * those spans, so a local screenshot detector is kept as a fallback. Nothing is uploaded.
- */
+/** Detects Smart Book words painted red/pink as being in study. */
 object StudyWordDetector {
     data class Block(
         val text: String,
-        val bounds: Rect,
+        val characterLocations: List<RectF?>,
     )
 
-    fun fromStyledText(text: CharSequence): Set<String> {
-        val spanned = text as? Spanned ?: return emptySet()
-        if (spanned.isEmpty()) return emptySet()
+    data class DetectedWord(
+        val word: String,
+        val start: Int,
+        val end: Int,
+        val bounds: RectF,
+    )
 
-        val ranges = LinkedHashSet<IntRange>()
+    fun fromStyledText(
+        text: CharSequence,
+        characterLocations: List<RectF?>,
+    ): List<DetectedWord> {
+        val spanned = text as? Spanned ?: return emptyList()
+        if (spanned.isEmpty() || characterLocations.isEmpty()) return emptyList()
+
+        val marked = BooleanArray(spanned.length)
+        fun mark(span: Any) {
+            val start = spanned.getSpanStart(span).coerceAtLeast(0)
+            val end = spanned.getSpanEnd(span).coerceAtMost(spanned.length)
+            for (index in start until end) marked[index] = true
+        }
+
         spanned.getSpans(0, spanned.length, ForegroundColorSpan::class.java).forEach { span ->
-            if (isStudyColor(span.foregroundColor)) {
-                addSpanRange(spanned, span, ranges)
-            }
+            if (isStudyColor(span.foregroundColor)) mark(span)
         }
         spanned.getSpans(0, spanned.length, TextAppearanceSpan::class.java).forEach { span ->
             val color = span.textColor?.defaultColor ?: return@forEach
-            if (isStudyColor(color)) {
-                addSpanRange(spanned, span, ranges)
-            }
+            if (isStudyColor(color)) mark(span)
         }
-
-        // Some custom ReaderText implementations wrap the color in their own CharacterStyle.
         spanned.getSpans(0, spanned.length, CharacterStyle::class.java).forEach { span ->
             if (span is ForegroundColorSpan || span is TextAppearanceSpan) return@forEach
             val color = reflectColor(span) ?: return@forEach
-            if (isStudyColor(color)) {
-                addSpanRange(spanned, span, ranges)
-            }
+            if (isStudyColor(color)) mark(span)
         }
 
-        return ranges.flatMapTo(LinkedHashSet()) { range ->
-            hanRuns(spanned.subSequence(range.first, range.last + 1).toString())
-        }
+        return group(spanned.toString(), marked, characterLocations)
     }
 
     fun fromScreenshot(
         bitmap: Bitmap,
         blocks: List<Block>,
-        scaledDensity: Float,
-        density: Float,
-    ): Set<String> {
-        if (bitmap.isRecycled || blocks.isEmpty()) return emptySet()
-        val result = LinkedHashSet<String>()
-        val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG)
+        coordinateWidth: Int,
+        coordinateHeight: Int,
+    ): List<DetectedWord> {
+        if (bitmap.isRecycled || blocks.isEmpty()) return emptyList()
+        val scaleX = bitmap.width.toFloat() / coordinateWidth.coerceAtLeast(1)
+        val scaleY = bitmap.height.toFloat() / coordinateHeight.coerceAtLeast(1)
+        val result = mutableListOf<DetectedWord>()
 
         blocks.forEach { block ->
-            if (block.text.isBlank() || block.bounds.isEmpty) return@forEach
-            val layout = closestLayout(
-                text = block.text,
-                widthPx = block.bounds.width(),
-                heightPx = block.bounds.height(),
-                scaledDensity = scaledDensity,
-                paint = paint,
-            )
+            if (block.text.isEmpty() || block.characterLocations.isEmpty()) return@forEach
             val marked = BooleanArray(block.text.length)
-            var offset = 0
-            while (offset < block.text.length) {
-                val codePoint = Character.codePointAt(block.text, offset)
-                val next = offset + Character.charCount(codePoint)
-                if (ChineseSegmenter.isHan(codePoint)) {
-                    val line = layout.getLineForOffset(offset)
-                    val lineEnd = layout.getLineEnd(line)
-                    val safeNext = min(next, lineEnd)
-                    if (safeNext > offset) {
-                        var left = layout.getPrimaryHorizontal(offset)
-                        var right = layout.getPrimaryHorizontal(safeNext)
-                        if (right < left) {
-                            val swap = left
-                            left = right
-                            right = swap
-                        }
-                        if (right - left < scaledDensity * 4f) {
-                            right = left + paint.textSize.coerceAtLeast(scaledDensity * 10f)
-                        }
-
-                        val sample = Rect(
-                            (block.bounds.left + left - density).toInt(),
-                            block.bounds.top + layout.getLineTop(line),
-                            (block.bounds.left + right + density).toInt(),
-                            block.bounds.top + layout.getLineBottom(line),
-                        )
-                        if (containsStudyInk(bitmap, sample)) {
-                            for (index in offset until next.coerceAtMost(marked.size)) marked[index] = true
-                        }
-                    }
+            var index = 0
+            while (index < block.text.length) {
+                val codePoint = Character.codePointAt(block.text, index)
+                val next = index + Character.charCount(codePoint)
+                val location = block.characterLocations.getOrNull(index)
+                if (location != null && !location.isEmpty && containsStudyInk(
+                        bitmap,
+                        RectF(
+                            location.left * scaleX,
+                            location.top * scaleY,
+                            location.right * scaleX,
+                            location.bottom * scaleY,
+                        ),
+                    )
+                ) {
+                    for (position in index until next.coerceAtMost(marked.size)) marked[position] = true
                 }
-                offset = next
+                index = next
             }
-            result += markedHanRuns(block.text, marked)
+            result += group(block.text, marked, block.characterLocations)
         }
+
         return result
+            .distinctBy { Triple(it.word, it.bounds.centerX().toInt(), it.bounds.centerY().toInt()) }
+            .sortedWith(compareBy<DetectedWord> { it.bounds.top }.thenBy { it.bounds.left })
     }
 
     internal fun isStudyColor(color: Int): Boolean {
@@ -121,20 +98,68 @@ object StudyWordDetector {
         val red = Color.red(color)
         val green = Color.green(color)
         val blue = Color.blue(color)
-        return red >= 165 &&
-            red - green >= 55 &&
-            red - blue >= 28 &&
-            green <= 165
+        return red >= 165 && red - green >= 55 && red - blue >= 28 && green <= 165
     }
 
-    private fun addSpanRange(
-        text: Spanned,
-        span: Any,
-        target: MutableSet<IntRange>,
-    ) {
-        val start = text.getSpanStart(span).coerceAtLeast(0)
-        val end = text.getSpanEnd(span).coerceAtMost(text.length)
-        if (end > start) target += start until end
+    private fun containsStudyInk(bitmap: Bitmap, raw: RectF): Boolean {
+        if (raw.width() < 2f || raw.height() < 2f) return false
+
+        // Avoid neighbouring glyphs and anti-aliased colour bleeding at character-box edges.
+        val insetX = (raw.width() * 0.10f).coerceAtLeast(1f)
+        val insetY = (raw.height() * 0.08f).coerceAtLeast(1f)
+        val left = (raw.left + insetX).toInt().coerceIn(0, bitmap.width)
+        val top = (raw.top + insetY).toInt().coerceIn(0, bitmap.height)
+        val right = (raw.right - insetX).toInt().coerceIn(0, bitmap.width)
+        val bottom = (raw.bottom - insetY).toInt().coerceIn(0, bitmap.height)
+        if (right - left < 2 || bottom - top < 2) return false
+
+        val area = (right - left) * (bottom - top)
+        val step = if (area > 8_000) 2 else 1
+        var studyPixels = 0
+        var inkPixels = 0
+        var y = top
+        while (y < bottom) {
+            var x = left
+            while (x < right) {
+                val color = bitmap.getPixel(x, y)
+                if (isStudyColor(color)) studyPixels++
+                if (isInk(color)) inkPixels++
+                x += step
+            }
+            y += step
+        }
+
+        // A red glyph has red as the dominant ink. A grey neighbour may contain a few pink
+        // anti-aliased pixels, but cannot pass this ratio.
+        return studyPixels >= 8 && studyPixels * 100 >= inkPixels.coerceAtLeast(1) * 35
+    }
+
+    private fun isInk(color: Int): Boolean {
+        if (Color.alpha(color) < 60) return false
+        val red = Color.red(color)
+        val green = Color.green(color)
+        val blue = Color.blue(color)
+        return minOf(red, green, blue) < 225
+    }
+
+    private fun group(
+        text: String,
+        marked: BooleanArray,
+        locations: List<RectF?>,
+    ): List<DetectedWord> {
+        val boxes = locations.map { rect ->
+            rect?.takeUnless(RectF::isEmpty)?.let {
+                StudyWordGeometry.Box(it.left, it.top, it.right, it.bottom)
+            }
+        }
+        return StudyWordGeometry.groupMarkedHan(text, marked, boxes).map { word ->
+            DetectedWord(
+                word = word.value,
+                start = word.start,
+                end = word.end,
+                bounds = RectF(word.box.left, word.box.top, word.box.right, word.box.bottom),
+            )
+        }
     }
 
     private fun reflectColor(span: CharacterStyle): Int? = runCatching {
@@ -147,117 +172,9 @@ object StudyWordDetector {
         method.invoke(span) as? Int
     }.getOrNull()
 
-    private fun containsStudyInk(bitmap: Bitmap, rawRect: Rect): Boolean {
-        val rect = Rect(
-            rawRect.left.coerceIn(0, bitmap.width),
-            rawRect.top.coerceIn(0, bitmap.height),
-            rawRect.right.coerceIn(0, bitmap.width),
-            rawRect.bottom.coerceIn(0, bitmap.height),
-        )
-        if (rect.width() < 2 || rect.height() < 2) return false
-
-        val step = if (rect.width() * rect.height() > 7_500) 2 else 1
-        var studyPixels = 0
-        var inkPixels = 0
-        var y = rect.top
-        while (y < rect.bottom) {
-            var x = rect.left
-            while (x < rect.right) {
-                val color = bitmap.getPixel(x, y)
-                if (isStudyColor(color)) studyPixels++
-                val red = Color.red(color)
-                val green = Color.green(color)
-                val blue = Color.blue(color)
-                if (Color.alpha(color) > 60 && min(red, min(green, blue)) < 218) inkPixels++
-                x += step
-            }
-            y += step
-        }
-        return studyPixels >= 4 && studyPixels * 100 >= max(1, inkPixels) * 5
-    }
-
-    private fun closestLayout(
-        text: String,
-        widthPx: Int,
-        heightPx: Int,
-        scaledDensity: Float,
-        paint: TextPaint,
-    ): StaticLayout {
-        var best: StaticLayout? = null
-        var bestDifference = Int.MAX_VALUE
-        var sizeSp = MIN_SOURCE_SP
-        while (sizeSp <= MAX_SOURCE_SP) {
-            paint.textSize = sizeSp * scaledDensity
-            val candidate = StaticLayout.Builder.obtain(text, 0, text.length, paint, max(1, widthPx))
-                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                .setIncludePad(true)
-                .setLineSpacing(0f, 1f)
-                .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
-                .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
-                .build()
-            val difference = abs(candidate.height - heightPx)
-            if (difference < bestDifference) {
-                best = candidate
-                bestDifference = difference
-            }
-            sizeSp += 0.5f
-        }
-        return best ?: error("Could not construct text layout")
-    }
-
-    private fun markedHanRuns(text: String, marked: BooleanArray): Set<String> {
-        val result = LinkedHashSet<String>()
-        var runStart = -1
-        var index = 0
-        while (index < text.length) {
-            val codePoint = Character.codePointAt(text, index)
-            val next = index + Character.charCount(codePoint)
-            val isMarkedHan = ChineseSegmenter.isHan(codePoint) &&
-                (index until next.coerceAtMost(marked.size)).any { marked[it] }
-            if (isMarkedHan) {
-                if (runStart < 0) runStart = index
-            } else if (runStart >= 0) {
-                addRun(text, runStart, index, result)
-                runStart = -1
-            }
-            index = next
-        }
-        if (runStart >= 0) addRun(text, runStart, text.length, result)
-        return result
-    }
-
-    private fun hanRuns(value: String): Set<String> {
-        val result = LinkedHashSet<String>()
-        var runStart = -1
-        var index = 0
-        while (index < value.length) {
-            val codePoint = Character.codePointAt(value, index)
-            val next = index + Character.charCount(codePoint)
-            if (ChineseSegmenter.isHan(codePoint)) {
-                if (runStart < 0) runStart = index
-            } else if (runStart >= 0) {
-                addRun(value, runStart, index, result)
-                runStart = -1
-            }
-            index = next
-        }
-        if (runStart >= 0) addRun(value, runStart, value.length, result)
-        return result
-    }
-
-    private fun addRun(text: String, start: Int, end: Int, target: MutableSet<String>) {
-        if (end <= start) return
-        val word = text.substring(start, end)
-        val codePoints = word.codePointCount(0, word.length)
-        if (codePoints in 1..MAX_WORD_CODEPOINTS) target += word
-    }
-
     private val COLOR_METHOD_NAMES = setOf(
         "getForegroundColor",
         "getTextColor",
         "getColor",
     )
-    private const val MAX_WORD_CODEPOINTS = 24
-    private const val MIN_SOURCE_SP = 12f
-    private const val MAX_SOURCE_SP = 44f
 }
