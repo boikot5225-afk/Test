@@ -16,6 +16,7 @@ data class PinyinAnnotation(
 class PinyinPlanner(
     private val lexicon: ChineseLexicon,
     private val segmenter: ChineseSegmenter = ChineseSegmenter(lexicon),
+    private val contextualResolver: ContextualPinyinResolver = ContextualPinyinResolver(lexicon),
 ) {
     fun plan(
         text: String,
@@ -24,12 +25,15 @@ class PinyinPlanner(
         preferredBoundaries: Set<Int> = emptySet(),
     ): List<PinyinAnnotation> {
         if (mode == PinyinMode.OFF || text.isBlank()) return emptyList()
-        return segmenter.segment(text, preferredBoundaries)
-            .asSequence()
-            .filter { it.isHan }
-            .filterNot { mode == PinyinMode.UNKNOWN_ONLY && isLearnt(it.text) }
-            .mapNotNull { token ->
-                val reading = lexicon.pinyin(token.text)?.let(PinyinFormatter::compact)
+        val tokens = segmenter.segment(text, preferredBoundaries)
+        return tokens.asSequence()
+            .withIndex()
+            .filter { it.value.isHan }
+            .filterNot { mode == PinyinMode.UNKNOWN_ONLY && isLearnt(it.value.text) }
+            .mapNotNull { indexed ->
+                val token = indexed.value
+                val reading = contextualResolver.resolve(token, indexed.index, tokens)
+                    ?.let(PinyinFormatter::compact)
                     ?.takeIf { it.isNotBlank() }
                     ?: return@mapNotNull null
                 PinyinAnnotation(token.text, reading, token.start, token.end)
