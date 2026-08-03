@@ -1,11 +1,11 @@
 {
-  "status": "success",
-  "workflow_sha": "d00659c6ca2c41347357d41724700c6e95866021",
-  "finished_at": "2026-08-03T08:07:40Z",
-  "run_id": "30796003606",
-  "run_url": "https://github.com/boikot5225-afk/Test/actions/runs/30796003606",
+  "status": "failure",
+  "workflow_sha": "0cfd327297016cb62fcca26d88c4ce7c54e63e8b",
+  "finished_at": "2026-08-03T09:30:08Z",
+  "run_id": "30801488229",
+  "run_url": "https://github.com/boikot5225-afk/Test/actions/runs/30801488229",
   "artifact": "SmartBook-Pinyin-Split-Toolchain",
-  "artifact_id": "8848921749",
-  "npatch": "jar-v1.0.6-698-release.jar",
-  "module_sha256": "1ae76de42e85a24e8aa54762b9feb013291b5f304314ed91c416bb197e2c3e1f"
+  "artifact_id": "",
+  "npatch": "",
+  "module_sha256": ""
 }
