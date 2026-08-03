@@ -73,17 +73,21 @@ jobs:
               names = set(z.namelist())
               required = {
                   'AndroidManifest.xml',
-                  'assets/zh_pinyin.tsv.gz',
+                  'assets/zh_pinyin.tsv',
                   'res/xml/pinyin_accessibility_service.xml',
                   'classes.dex',
               }
               missing = sorted(required - names)
               if missing:
                   raise SystemExit(f'missing required APK entries: {missing}')
-              asset = z.getinfo('assets/zh_pinyin.tsv.gz')
-              if asset.file_size < 500_000:
+              asset = z.getinfo('assets/zh_pinyin.tsv')
+              if asset.file_size < 2_000_000:
                   raise SystemExit(f'pinyin dictionary unexpectedly small: {asset.file_size}')
-          print('APK structure and pinyin dictionary verified')
+              with z.open('assets/zh_pinyin.tsv') as stream:
+                  header = stream.readline().decode('utf-8')
+              if not header.startswith('# smartbook-pinyin-v1\t120995\t'):
+                  raise SystemExit(f'unexpected dictionary header: {header!r}')
+          print('APK structure and expanded pinyin dictionary verified')
           PY
 
           {
