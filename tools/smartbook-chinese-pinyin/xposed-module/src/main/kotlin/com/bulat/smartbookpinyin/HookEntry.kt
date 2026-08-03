@@ -338,8 +338,11 @@ class HookEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
 
         private fun loadLexiconFrom(path: String): MapChineseLexicon? {
             ZipFile(path).use { zip ->
-                zip.getEntry(LEXICON_ASSET)?.let { entry ->
+                zip.getEntry(LEXICON_GZIP_ASSET)?.let { entry ->
                     return zip.getInputStream(entry).use(MapChineseLexicon::fromGzipTsv)
+                }
+                zip.getEntry(LEXICON_TSV_ASSET)?.let { entry ->
+                    return zip.getInputStream(entry).use(MapChineseLexicon::fromTsv)
                 }
 
                 val embeddedModule = zip.entries().asSequence().firstOrNull {
@@ -352,8 +355,9 @@ class HookEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
                 ZipInputStream(ByteArrayInputStream(moduleBytes)).use { nested ->
                     while (true) {
                         val entry = nested.nextEntry ?: break
-                        if (entry.name == LEXICON_ASSET) {
-                            return MapChineseLexicon.fromGzipTsv(nested)
+                        when (entry.name) {
+                            LEXICON_GZIP_ASSET -> return MapChineseLexicon.fromGzipTsv(nested)
+                            LEXICON_TSV_ASSET -> return MapChineseLexicon.fromTsv(nested)
                         }
                     }
                 }
@@ -367,6 +371,7 @@ class HookEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
         private const val MODULE_PACKAGE = "com.bulat.smartbookpinyin"
         private const val READER_TEXT_CLASS = "com.kursx.smartbook.shared.ReaderText"
         private const val READER_SPAN_CLASS = "com.kursx.smartbook.reader.span.ReaderSpan"
-        private const val LEXICON_ASSET = "assets/zh_pinyin.tsv.gz"
+        private const val LEXICON_GZIP_ASSET = "assets/zh_pinyin.tsv.gz"
+        private const val LEXICON_TSV_ASSET = "assets/zh_pinyin.tsv"
     }
 }
