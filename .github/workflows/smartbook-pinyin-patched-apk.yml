@@ -106,9 +106,16 @@ jobs:
       - name: Embed pinyin module into Smart Book
         run: |
           set -o pipefail
-          MODULE="$(realpath tools/smartbook-chinese-pinyin/xposed-module/build/outputs/apk/debug/xposed-module-debug.apk)"
-          test -f "$MODULE"
+          MODULE_DIR='tools/smartbook-chinese-pinyin/xposed-module/build/outputs/apk'
+          echo 'Built module APK candidates:'
+          find "$MODULE_DIR" -maxdepth 4 -type f -name '*.apk' -print
+          MODULE="$(find "$MODULE_DIR" -maxdepth 4 -type f -name '*.apk' -print -quit)"
+          test -n "$MODULE"
+          MODULE="$(realpath "$MODULE")"
           test -s "$MODULE"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$MODULE" \
+            | tee build/module-badging.txt
+          grep -q "package: name='com.bulat.smartbookpinyin'" build/module-badging.txt
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$MODULE"
 
           java -cp 'build/npatch-launcher:build/npatch.jar:build/bcprov.jar' NPatchLauncher \
