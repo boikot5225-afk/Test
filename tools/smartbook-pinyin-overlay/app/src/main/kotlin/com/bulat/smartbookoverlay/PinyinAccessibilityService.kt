@@ -117,7 +117,7 @@ class PinyinAccessibilityService : AccessibilityService() {
                     fullText.substring(from, to)
                 else -> event.text
                     .asSequence()
-                    .map(CharSequence::toString)
+                    .map { it.toString() }
                     .mapNotNull(TrackedWordStore::normalize)
                     .firstOrNull()
             }
@@ -131,13 +131,13 @@ class PinyinAccessibilityService : AccessibilityService() {
         val source = event.source
         try {
             val metadata = buildString {
-                append(source?.text.orEmpty())
+                append(source?.text?.toString() ?: "")
                 append(' ')
-                append(source?.contentDescription.orEmpty())
+                append(source?.contentDescription?.toString() ?: "")
                 append(' ')
-                append(source?.viewIdResourceName.orEmpty())
+                append(source?.viewIdResourceName ?: "")
                 append(' ')
-                append(source?.className.orEmpty())
+                append(source?.className?.toString() ?: "")
                 append(' ')
                 event.text.forEach {
                     append(it)
