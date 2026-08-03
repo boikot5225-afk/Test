@@ -46,8 +46,9 @@ class MainActivity : Activity() {
         }, matchWrap(bottom = 12))
 
         root.addView(TextView(this).apply {
-            text = "Оригинальный Smart Book остаётся без изменений. Пиньинь рисуется прозрачной " +
-                "подписью только над словами, которые ты добавляешь в изучение кнопкой «плюс»."
+            text = "Оригинальный Smart Book остаётся без изменений. Служба находит слова, " +
+                "которые Smart Book уже выделил красным как добавленные в изучение, и рисует " +
+                "только маленький прозрачный пиньинь над ними."
             textSize = 17f
             setTextColor(Color.rgb(55, 55, 55))
         }, matchWrap(bottom = 20))
@@ -77,14 +78,15 @@ class MainActivity : Activity() {
         }, matchWrap(bottom = 20))
 
         root.addView(TextView(this).apply {
-            text = "Как добавить слово"
+            text = "Как это работает"
             textSize = 19f
             setTextColor(Color.rgb(30, 30, 30))
         }, matchWrap(bottom = 6))
 
         root.addView(TextView(this).apply {
-            text = "Выдели или открой китайское слово в Smart Book и нажми штатную синюю кнопку «плюс». " +
-                "Служба запомнит это слово. После закрытия карточки пиньинь появится только над ним."
+            text = "Добавь слово в изучение штатной синей кнопкой Smart Book. Когда слово станет " +
+                "красным, служба распознает его автоматически. Уже красные слова тоже подхватятся " +
+                "при открытии абзаца — повторно нажимать плюс не нужно."
             textSize = 16f
             setTextColor(Color.rgb(65, 65, 65))
         }, matchWrap(bottom = 20))
@@ -111,23 +113,23 @@ class MainActivity : Activity() {
             })
         }, matchWrap(bottom = 16))
 
-        root.addView(button("Очистить список слов с пиньинем") {
+        root.addView(button("Очистить локальный список пиньиня") {
             AlertDialog.Builder(this)
                 .setTitle("Очистить список?")
-                .setMessage("Пиньинь исчезнет со всех ранее добавленных слов.")
+                .setMessage("Список снова заполнится по красным словам при открытии Smart Book.")
                 .setNegativeButton("Отмена", null)
                 .setPositiveButton("Очистить") { _, _ ->
                     TrackedWordStore(this).clear()
                     updateStatus()
-                    Toast.makeText(this, "Список очищен", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Локальный список очищен", Toast.LENGTH_SHORT).show()
                 }
                 .show()
         }, matchWrap(bottom = 20))
 
         root.addView(TextView(this).apply {
-            text = "Приложение не использует интернет и читает только интерфейс Smart Book через " +
-                "службу специальных возможностей. Уже добавленные до установки v0.3.0 слова нужно " +
-                "один раз добавить заново, чтобы служба их увидела."
+            text = "Интернет не используется. Если Smart Book не передаёт цвет текста службе " +
+                "специальных возможностей, приложение локально проверяет цвет страницы через " +
+                "системный снимок окна. Снимок никуда не отправляется и не сохраняется."
             textSize = 14f
             setTextColor(Color.rgb(95, 95, 95))
         }, matchWrap(bottom = 10))
@@ -147,7 +149,7 @@ class MainActivity : Activity() {
         )
 
         val count = TrackedWordStore(this).snapshot().size
-        wordsCountView.text = "Слов с пиньинем: $count"
+        wordsCountView.text = "Распознано изучаемых слов: $count"
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
