@@ -17,7 +17,6 @@ import smartbook.pinyin.PinyinPlanner
 import smartbook.pinyin.android.SmartBookPinyinApplier
 import java.io.ByteArrayInputStream
 import java.lang.reflect.Field
-import java.lang.reflect.Method
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.CountDownLatch
@@ -97,9 +96,7 @@ class HookEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
     }
 
     private fun readChapterLanguage(chapterModel: Any): String? {
-        val getter: Method = chapterModel.javaClass.declaredMethods.firstOrNull {
-            it.parameterTypes.isEmpty() && it.returnType == String::class.java
-        } ?: return null
+        val getter = chapterModel.javaClass.getDeclaredMethod(CHAPTER_LANGUAGE_METHOD)
         getter.isAccessible = true
         return getter.invoke(chapterModel) as? String
     }
@@ -254,6 +251,7 @@ class HookEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
         private const val PARAGRAPH_HOLDER_CLASS = "com.kursx.smartbook.reader.holder.ParagraphHolder"
         private const val READER_UI_STATE_CLASS = "com.kursx.smartbook.reader.provider.reader_model.ReaderUIState"
         private const val CHAPTER_MODEL_CLASS = "com.kursx.smartbook.db.book.ChapterModel"
+        private const val CHAPTER_LANGUAGE_METHOD = "c"
         private const val LEXICON_ASSET = "assets/zh_pinyin.tsv.gz"
     }
 }
