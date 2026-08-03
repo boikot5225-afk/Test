@@ -69,7 +69,7 @@ class PinyinAccessibilityService : AccessibilityService() {
     private fun loadDictionary() {
         Thread({
             runCatching {
-                assets.open(LEXICON_ASSET).use(MapChineseLexicon::fromGzipTsv)
+                assets.open(LEXICON_ASSET).use(MapChineseLexicon::fromTsv)
             }.onSuccess { lexicon ->
                 planner = PinyinPlanner(lexicon)
                 mainHandler.post { renderCurrentParagraph() }
@@ -267,7 +267,7 @@ class PinyinAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val READER_TEXT_CLASS = "com.kursx.smartbook.shared.ReaderText"
-        private const val LEXICON_ASSET = "zh_pinyin.tsv.gz"
+        private const val LEXICON_ASSET = "zh_pinyin.tsv"
         private const val MAX_TEXT_LENGTH = 4_000
     }
 }
