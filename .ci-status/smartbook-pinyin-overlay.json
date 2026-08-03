@@ -1,10 +1,10 @@
 {
-  "status": "failure",
-  "workflow_sha": "b051f6f1d93cc1f5bbbf32fdd3005074cadc1305",
-  "run_id": "30807977386",
-  "run_url": "https://github.com/boikot5225-afk/Test/actions/runs/30807977386",
+  "status": "success",
+  "workflow_sha": "131365891e29aa5b26eba37d32f684180a9ac36b",
+  "run_id": "30808494180",
+  "run_url": "https://github.com/boikot5225-afk/Test/actions/runs/30808494180",
   "artifact": "SmartBook-Pinyin-Overlay-v0.3.0",
-  "artifact_id": "",
-  "apk_sha256": "",
-  "finished_at": "2026-08-03T11:05:29Z"
+  "artifact_id": "8853815755",
+  "apk_sha256": "8d1efaa307901017a05bb34e02b27d6bbbc1c40be9110f39430a3c3dff88ec67",
+  "finished_at": "2026-08-03T11:13:02Z"
 }
