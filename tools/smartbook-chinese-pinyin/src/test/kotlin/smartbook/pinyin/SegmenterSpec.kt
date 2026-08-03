@@ -75,9 +75,15 @@ fun main() {
     assertEquals("zhī", reading("一只猫", "只"), "只 after a numeral must be classifier zhī")
     assertEquals("dōu", reading("他们都来", "都"), "ordinary 都 must be dōu, not surname Dū")
 
+    assertTrue(BookLanguage.isChinese("zh"), "zh must enable pinyin")
+    assertTrue(BookLanguage.isChinese("zh_CN"), "zh_CN must enable pinyin")
+    assertTrue(BookLanguage.isChinese("Chinese"), "Chinese must enable pinyin")
+    assertTrue(!BookLanguage.isChinese("ja"), "Japanese books must never get Chinese pinyin")
+    assertTrue(!BookLanguage.isChinese(null), "unknown language must fail closed")
+
     val supplementary = "𠀀人"
     val supplementaryTokens = segmenter.segment(supplementary)
     assertEquals(supplementary, supplementaryTokens.joinToString("") { it.text }, "supplementary CJK must not corrupt offsets")
 
-    println("OK: segmentation, learnt-word filtering and contextual polyphone checks")
+    println("OK: segmentation, learnt-word filtering, language gating and contextual polyphone checks")
 }
