@@ -106,7 +106,11 @@ jobs:
       - name: Embed pinyin module into Smart Book
         run: |
           set -o pipefail
-          MODULE=tools/smartbook-chinese-pinyin/xposed-module/build/outputs/apk/debug/xposed-module-debug.apk
+          MODULE="$(realpath tools/smartbook-chinese-pinyin/xposed-module/build/outputs/apk/debug/xposed-module-debug.apk)"
+          test -f "$MODULE"
+          test -s "$MODULE"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$MODULE"
+
           java -cp 'build/npatch-launcher:build/npatch.jar:build/bcprov.jar' NPatchLauncher \
             --embed "$MODULE" \
             --sigbypasslv 2 \
@@ -115,7 +119,7 @@ jobs:
             build/download/smartbook-original.apk \
             2>&1 | tee build/npatch.log
 
-          if grep -Eq 'PatchError|Failed to register signer|Exception in thread|BKS not found' build/npatch.log; then
+          if grep -Eq 'PatchError|Failed to register signer|Exception in thread|BKS not found|does not exist or is not a valid apk' build/npatch.log; then
             echo 'NPatch reported an internal failure.' >&2
             exit 1
           fi
@@ -123,8 +127,20 @@ jobs:
           PATCHED="$(find build/output -maxdepth 1 -type f -name '*-npatched.apk' -print -quit)"
           test -n "$PATCHED"
           test -s "$PATCHED"
-          unzip -tqq "$PATCHED"
-          unzip -Z1 "$PATCHED" | grep -qx 'AndroidManifest.xml'
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$PATCHED" > build/preliminary-patched-badging.txt
+          python3 - "$PATCHED" <<'PY'
+          import sys, zipfile
+          path = sys.argv[1]
+          with zipfile.ZipFile(path) as apk:
+              names = set(apk.namelist())
+          required = {
+              'AndroidManifest.xml',
+              'assets/npatch/modules/com.bulat.smartbookpinyin.apk',
+          }
+          missing = sorted(required - names)
+          if missing:
+              raise SystemExit(f'missing APK entries: {missing}')
+          PY
           mv "$PATCHED" build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk
 
       - name: Verify patched APK and embedded module
@@ -136,7 +152,13 @@ jobs:
             | tee build/patched-badging.txt
           grep -q "package: name='com.kursx.smartbook'" build/patched-badging.txt
           grep -q "versionName='3.6'" build/patched-badging.txt
-          unzip -Z1 "$APK" | grep -qx 'assets/npatch/modules/com.bulat.smartbookpinyin.apk'
+          python3 - "$APK" <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as apk:
+              names = set(apk.namelist())
+          assert 'AndroidManifest.xml' in names
+          assert 'assets/npatch/modules/com.bulat.smartbookpinyin.apk' in names
+          PY
 
       - name: Write reproducibility report
         run: |
@@ -181,8 +203,7 @@ jobs:
           ORIGINAL_VERSION="$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" build/original-badging.txt 2>/dev/null | head -n1 || true)"
           NPATCH_VERSION="$(cat build/npatch-version.txt 2>/dev/null || true)"
           PATCHED_SHA=''
-          if [[ -f build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk ]] && \
-             unzip -Z1 build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk 2>/dev/null | grep -qx 'AndroidManifest.xml'; then
+          if [[ "$BUILD_STATUS" == 'success' && -f build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk ]]; then
             PATCHED_SHA="$(sha256sum build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk | cut -d' ' -f1)"
           fi
 
