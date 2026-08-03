@@ -1,0 +1,100 @@
+name: Smart Book split installer APK
+
+on:
+  push:
+    branches:
+      - feature/smartbook-chinese-pinyin
+    paths:
+      - tools/smartbook-split-installer/**
+      - .github/workflows/smartbook-split-installer.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: smartbook-split-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-installer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Build installer APK
+        run: |
+          gradle -p tools/smartbook-split-installer :app:assembleDebug --no-daemon
+          mkdir -p build/output
+          cp tools/smartbook-split-installer/app/build/outputs/apk/debug/app-debug.apk \
+            build/output/SmartBook-Split-Installer-v1.0.apk
+
+      - name: Verify installer APK
+        run: |
+          APK=build/output/SmartBook-Split-Installer-v1.0.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" \
+            | tee build/output/INSTALLER_SIGNATURE.txt
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" \
+            | tee build/output/INSTALLER_BADGING.txt
+          grep -q "package: name='com.bulat.smartbookinstaller'" build/output/INSTALLER_BADGING.txt
+          grep -q "versionName='1.0'" build/output/INSTALLER_BADGING.txt
+          unzip -t "$APK"
+          sha256sum "$APK" > build/output/SHA256SUMS.txt
+
+      - id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmartBook-Split-Installer-v1.0
+          path: build/output
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Record latest installer status
+        if: always()
+        env:
+          BUILD_STATUS: ${{ job.status }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+        run: |
+          BRANCH="$GITHUB_REF_NAME"
+          git fetch origin "$BRANCH"
+          NEWER_SOURCE_CHANGES="$(git diff --name-only "$GITHUB_SHA..origin/$BRANCH" | grep -v '^\.ci-status/' || true)"
+          if [[ -n "$NEWER_SOURCE_CHANGES" ]]; then
+            echo 'A newer source commit exists; skip stale status publication.'
+            exit 0
+          fi
+
+          INSTALLER_SHA="$(sha256sum build/output/SmartBook-Split-Installer-v1.0.apk 2>/dev/null | cut -d' ' -f1 || true)"
+
+          git checkout -B "$BRANCH" "origin/$BRANCH"
+          mkdir -p .ci-status
+          jq -n \
+            --arg status "$BUILD_STATUS" \
+            --arg workflow_sha "$GITHUB_SHA" \
+            --arg finished_at "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg artifact_id "$ARTIFACT_ID" \
+            --arg installer_sha256 "$INSTALLER_SHA" \
+            '{status:$status,workflow_sha:$workflow_sha,finished_at:$finished_at,run_id:$run_id,run_url:$run_url,artifact:"SmartBook-Split-Installer-v1.0",artifact_id:$artifact_id,installer_sha256:$installer_sha256}' \
+            > .ci-status/smartbook-split-installer.json
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- .ci-status/smartbook-split-installer.json
+          git commit -m "ci: record Smart Book installer status" || exit 0
+          git push origin "HEAD:$BRANCH"
