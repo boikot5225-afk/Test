@@ -55,9 +55,29 @@ fun main() {
         "OFF mode",
     )
 
+    val contextualLexicon = MapChineseLexicon.from(
+        linkedMapOf(
+            "他" to "tā", "我" to "wǒ", "们" to "men", "得" to "dé", "去" to "qù",
+            "还" to "Huán", "在" to "zài", "看" to "kān", "书" to "shū",
+            "这" to "zhè", "个" to "gè", "办" to "bàn", "法" to "fǎ", "行" to "háng",
+            "一" to "yī", "只" to "zhī", "猫" to "māo", "都" to "Dū", "来" to "lái",
+        )
+    )
+    val contextualPlanner = PinyinPlanner(contextualLexicon)
+    fun reading(text: String, word: String): String? = contextualPlanner
+        .plan(text, PinyinMode.ALL, isLearnt = { false })
+        .firstOrNull { it.word == word }?.pinyin
+
+    assertEquals("děi", reading("我得去", "得"), "得 before an action must be děi")
+    assertEquals("hái", reading("他还在", "还"), "还 as still must be hái")
+    assertEquals("kàn", reading("他看书", "看"), "看 as read/look must be kàn")
+    assertEquals("xíng", reading("这个办法行", "行"), "standalone 行 meaning okay must be xíng")
+    assertEquals("zhī", reading("一只猫", "只"), "只 after a numeral must be classifier zhī")
+    assertEquals("dōu", reading("他们都来", "都"), "ordinary 都 must be dōu, not surname Dū")
+
     val supplementary = "𠀀人"
     val supplementaryTokens = segmenter.segment(supplementary)
     assertEquals(supplementary, supplementaryTokens.joinToString("") { it.text }, "supplementary CJK must not corrupt offsets")
 
-    println("OK: ${tokens.size + ambiguity.size + proper.size} segmentation checks; ${unknownOnly.size} pinyin annotations")
+    println("OK: segmentation, learnt-word filtering and contextual polyphone checks")
 }
