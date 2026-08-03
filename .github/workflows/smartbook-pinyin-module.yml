@@ -32,16 +32,17 @@ jobs:
             tools/smartbook-chinese-pinyin/xposed-module/src/main/assets/zh_pinyin.tsv.gz
       - name: Run core regression tests
         run: gradle -p tools/smartbook-chinese-pinyin smokeTest --no-daemon
-      - name: Build Xposed module APK
-        run: gradle -p tools/smartbook-chinese-pinyin/xposed-module assembleRelease --no-daemon
+      - name: Build signed Xposed module APK
+        run: gradle -p tools/smartbook-chinese-pinyin/xposed-module assembleDebug --no-daemon
       - name: Verify module package
         run: |
-          APK=tools/smartbook-chinese-pinyin/xposed-module/build/outputs/apk/release/xposed-module-release-unsigned.apk
+          APK=tools/smartbook-chinese-pinyin/xposed-module/build/outputs/apk/debug/xposed-module-debug.apk
           test -f "$APK"
           unzip -l "$APK" | grep -q 'assets/xposed_init'
           unzip -l "$APK" | grep -q 'assets/zh_pinyin.tsv.gz'
+          jarsigner -verify "$APK"
       - uses: actions/upload-artifact@v4
         with:
           name: smartbook-chinese-pinyin-module-v0.1.0
-          path: tools/smartbook-chinese-pinyin/xposed-module/build/outputs/apk/release/xposed-module-release-unsigned.apk
+          path: tools/smartbook-chinese-pinyin/xposed-module/build/outputs/apk/debug/xposed-module-debug.apk
           if-no-files-found: error
