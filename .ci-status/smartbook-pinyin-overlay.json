@@ -1,10 +1,10 @@
 {
   "status": "success",
-  "workflow_sha": "9a57eec9b124c01f908b3d45089c9c9ae40ecd81",
-  "run_id": "30809761523",
-  "run_url": "https://github.com/boikot5225-afk/Test/actions/runs/30809761523",
-  "artifact": "SmartBook-Pinyin-Overlay-v0.4.0",
-  "artifact_id": "8854323000",
-  "apk_sha256": "c2202fb47c9c7b3d749b4eee79ebf40b1411110c0040a959f66f641b27ee3c22",
-  "finished_at": "2026-08-03T11:32:31Z"
+  "workflow_sha": "1c4318117de83ab6b8fe405c65473957ec1e8d58",
+  "run_id": "30811799419",
+  "run_url": "https://github.com/boikot5225-afk/Test/actions/runs/30811799419",
+  "artifact": "SmartBook-Pinyin-Overlay-v0.5.0",
+  "artifact_id": "8855128569",
+  "apk_sha256": "7b0dca23ad4c606e39efb440e8ac52c07532964d6bde3f97d47b1c02fc917da7",
+  "finished_at": "2026-08-03T12:03:20Z"
 }
