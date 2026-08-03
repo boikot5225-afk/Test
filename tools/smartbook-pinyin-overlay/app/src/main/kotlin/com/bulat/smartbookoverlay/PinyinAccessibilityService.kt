@@ -9,8 +9,8 @@ import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.text.Layout
 import android.text.SpannableStringBuilder
-import android.text.TextUtils
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -35,7 +35,7 @@ class PinyinAccessibilityService : AccessibilityService() {
     private var planner: PinyinPlanner? = null
 
     private lateinit var windowManager: WindowManager
-    private var overlay: TextView? = null
+    private var overlayView: TextView? = null
     private var overlayParams: WindowManager.LayoutParams? = null
     private var lastText: String? = null
     private var lastBounds: Rect? = null
@@ -185,22 +185,22 @@ class PinyinAccessibilityService : AccessibilityService() {
         val backgroundColor = if (dark) Color.argb(244, 24, 24, 24) else Color.argb(246, 255, 255, 255)
         val foregroundColor = if (dark) Color.WHITE else Color.rgb(25, 25, 25)
 
-        val view = overlay ?: TextView(this).apply {
+        val view = overlayView ?: TextView(this).apply {
             gravity = Gravity.START
             includeFontPadding = true
             setPadding(dp(10), dp(8), dp(10), dp(8))
             setLineSpacing(dp(2).toFloat(), 1.05f)
             ellipsize = null
             maxLines = 30
-            breakStrategy = TextView.BREAK_STRATEGY_SIMPLE
-            hyphenationFrequency = TextView.HYPHENATION_FREQUENCY_NONE
+            breakStrategy = Layout.BREAK_STRATEGY_SIMPLE
+            hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
             elevation = dp(8).toFloat()
-            overlay = this
+            this@PinyinAccessibilityService.overlayView = this
         }
         view.textSize = textSize
         view.setTextColor(foregroundColor)
         view.background = GradientDrawable().apply {
-            color = android.content.res.ColorStateList.valueOf(backgroundColor)
+            setColor(backgroundColor)
             cornerRadius = dp(10).toFloat()
             setStroke(dp(1), if (dark) Color.DKGRAY else Color.LTGRAY)
         }
@@ -238,7 +238,7 @@ class PinyinAccessibilityService : AccessibilityService() {
 
     private fun hideOverlay() {
         mainHandler.post {
-            overlay?.let { view ->
+            overlayView?.let { view ->
                 if (view.parent != null) runCatching { windowManager.removeViewImmediate(view) }
             }
             lastText = null
