@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-patched-apk:
@@ -130,3 +130,42 @@ jobs:
             build/output/BUILD_INFO.txt
           if-no-files-found: error
           retention-days: 14
+
+      - name: Record latest build status
+        if: always()
+        env:
+          BUILD_STATUS: ${{ job.status }}
+        run: |
+          BRANCH="$GITHUB_REF_NAME"
+          git fetch origin "$BRANCH"
+          NEWER_SOURCE_CHANGES="$(git diff --name-only "$GITHUB_SHA..origin/$BRANCH" | grep -v '^\.ci-status/' || true)"
+          if [[ -n "$NEWER_SOURCE_CHANGES" ]]; then
+            echo 'A newer source commit exists; skip stale status publication.'
+            exit 0
+          fi
+
+          ORIGINAL_VERSION="$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" build/original-badging.txt 2>/dev/null | head -n1 || true)"
+          NPATCH_VERSION="$(cat build/npatch-version.txt 2>/dev/null || true)"
+          PATCHED_SHA=''
+          if [[ -f build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk ]]; then
+            PATCHED_SHA="$(sha256sum build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk | cut -d' ' -f1)"
+          fi
+
+          git checkout -B "$BRANCH" "origin/$BRANCH"
+          mkdir -p .ci-status
+          jq -n \
+            --arg status "$BUILD_STATUS" \
+            --arg workflow_sha "$GITHUB_SHA" \
+            --arg finished_at "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg original_version "$ORIGINAL_VERSION" \
+            --arg npatch "$NPATCH_VERSION" \
+            --arg patched_sha256 "$PATCHED_SHA" \
+            '{status:$status,workflow_sha:$workflow_sha,finished_at:$finished_at,run_url:$run_url,original_version:$original_version,npatch:$npatch,patched_sha256:$patched_sha256,artifact:"SmartBook-Chinese-Pinyin-v0.1.0"}' \
+            > .ci-status/smartbook-pinyin-patched.json
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- .ci-status/smartbook-pinyin-patched.json
+          git commit -m "ci: record Smart Book pinyin build status" || exit 0
+          git push origin "HEAD:$BRANCH"
