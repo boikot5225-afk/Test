@@ -10,7 +10,7 @@ import android.util.TypedValue
 import android.view.View
 import kotlin.math.max
 
-/** Full-screen transparent overlay. Labels are already expressed in screen coordinates. */
+/** Full-screen transparent overlay. Label word bounds arrive in absolute screen coordinates. */
 class PinyinRubyOverlayView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -24,6 +24,7 @@ class PinyinRubyOverlayView @JvmOverloads constructor(
         textAlign = Paint.Align.CENTER
         typeface = android.graphics.Typeface.DEFAULT_BOLD
     }
+    private val overlayOrigin = IntArray(2)
     private var labels: List<Label> = emptyList()
     private var preferredRubySp: Float = DEFAULT_RUBY_SP
     private var foregroundColor: Int = Color.DKGRAY
@@ -50,7 +51,12 @@ class PinyinRubyOverlayView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        if (labels.isEmpty()) return
+        if (labels.isEmpty() || width <= 0) return
+
+        // Accessibility character rectangles are absolute screen coordinates. On Samsung the
+        // overlay view can start below the status bar, so drawing them directly shifts ruby down
+        // into the Chinese glyphs. Convert every label to this view's actual local coordinates.
+        getLocationOnScreen(overlayOrigin)
 
         rubyPaint.color = foregroundColor
         val occupied = mutableListOf<RectF>()
@@ -58,28 +64,46 @@ class PinyinRubyOverlayView @JvmOverloads constructor(
             val bounds = label.wordBounds
             var sizeSp = preferredRubySp
             rubyPaint.textSize = sp(sizeSp)
-            var width = rubyPaint.measureText(label.pinyin)
+            var textWidth = rubyPaint.measureText(label.pinyin)
             val maximumWidth = max(bounds.width() * 1.55f, dp(28).toFloat())
-            while (width > maximumWidth && sizeSp > MIN_RUBY_SP) {
+            while (textWidth > maximumWidth && sizeSp > MIN_RUBY_SP) {
                 sizeSp -= 0.5f
                 rubyPaint.textSize = sp(sizeSp)
-                width = rubyPaint.measureText(label.pinyin)
+                textWidth = rubyPaint.measureText(label.pinyin)
             }
 
             val metrics = rubyPaint.fontMetrics
-            val centerX = bounds.centerX()
-            val baseline = bounds.top - dp(2)
-            val labelRect = RectF(
-                centerX - width / 2f - dp(2),
-                baseline + metrics.ascent - dp(1),
-                centerX + width / 2f + dp(2),
-                baseline + metrics.descent + dp(1),
-            )
-            if (labelRect.top < 0f || occupied.any { RectF.intersects(it, labelRect) }) {
-                return@forEach
-            }
+            val placement = RubyLabelGeometry.placeAboveWord(
+                screenWordBounds = RubyLabelGeometry.Box(
+                    bounds.left,
+                    bounds.top,
+                    bounds.right,
+                    bounds.bottom,
+                ),
+                overlayOriginX = overlayOrigin[0].toFloat(),
+                overlayOriginY = overlayOrigin[1].toFloat(),
+                viewportWidth = width.toFloat(),
+                textWidth = textWidth,
+                fontAscent = metrics.ascent,
+                fontDescent = metrics.descent,
+                gapPx = dp(LABEL_GAP_DP).toFloat(),
+                paddingPx = dp(COLLISION_PADDING_DP).toFloat(),
+            ) ?: return@forEach
 
-            canvas.drawText(label.pinyin, centerX, baseline, rubyPaint)
+            val labelRect = RectF(
+                placement.labelBounds.left,
+                placement.labelBounds.top,
+                placement.labelBounds.right,
+                placement.labelBounds.bottom,
+            )
+            if (occupied.any { RectF.intersects(it, labelRect) }) return@forEach
+
+            canvas.drawText(
+                label.pinyin,
+                placement.centerX,
+                placement.baseline,
+                rubyPaint,
+            )
             occupied += labelRect
         }
     }
@@ -96,5 +120,7 @@ class PinyinRubyOverlayView @JvmOverloads constructor(
         const val DEFAULT_RUBY_SP = 10f
         private const val MIN_RUBY_SP = 7f
         private const val MAX_RUBY_SP = 16f
+        private const val LABEL_GAP_DP = 4
+        private const val COLLISION_PADDING_DP = 1
     }
 }
