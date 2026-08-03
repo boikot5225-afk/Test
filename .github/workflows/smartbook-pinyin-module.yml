@@ -1,0 +1,47 @@
+name: Smart Book pinyin module
+
+on:
+  push:
+    branches:
+      - feature/smartbook-chinese-pinyin
+    paths:
+      - data/zh_dict_core.json
+      - tools/smartbook-chinese-pinyin/**
+      - .github/workflows/smartbook-pinyin-module.yml
+  workflow_dispatch:
+
+jobs:
+  build-module:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Build offline pinyin dictionary
+        run: |
+          python3 tools/smartbook-chinese-pinyin/tools/build_lexicon.py \
+            data/zh_dict_core.json \
+            tools/smartbook-chinese-pinyin/xposed-module/src/main/assets/zh_pinyin.tsv.gz
+      - name: Run core regression tests
+        run: gradle -p tools/smartbook-chinese-pinyin smokeTest --no-daemon
+      - name: Build Xposed module APK
+        run: gradle -p tools/smartbook-chinese-pinyin/xposed-module assembleRelease --no-daemon
+      - name: Verify module package
+        run: |
+          APK=tools/smartbook-chinese-pinyin/xposed-module/build/outputs/apk/release/xposed-module-release-unsigned.apk
+          test -f "$APK"
+          unzip -l "$APK" | grep -q 'assets/xposed_init'
+          unzip -l "$APK" | grep -q 'assets/zh_pinyin.tsv.gz'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smartbook-chinese-pinyin-module-v0.1.0
+          path: tools/smartbook-chinese-pinyin/xposed-module/build/outputs/apk/release/xposed-module-release-unsigned.apk
+          if-no-files-found: error
