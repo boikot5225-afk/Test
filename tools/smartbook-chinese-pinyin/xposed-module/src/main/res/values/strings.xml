@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Smart Book Chinese Pinyin</string>
+    <string name="module_description">Offline pinyin above Chinese words in Smart Book; learnt words stay clean.</string>
+</resources>
