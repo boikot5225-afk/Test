@@ -1,6 +1,7 @@
 package com.bulat.smartbookoverlay
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Color
@@ -11,16 +12,18 @@ import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 
 class MainActivity : Activity() {
     private lateinit var statusView: TextView
+    private lateinit var wordsCountView: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(buildContent())
+        setContentView(ScrollView(this).apply { addView(buildContent()) })
     }
 
     override fun onResume() {
@@ -40,11 +43,11 @@ class MainActivity : Activity() {
             textSize = 28f
             setTextColor(Color.rgb(20, 20, 20))
             gravity = Gravity.CENTER
-        }, matchWrap(top = 0, bottom = 12))
+        }, matchWrap(bottom = 12))
 
         root.addView(TextView(this).apply {
-            text = "Smart Book остаётся оригинальным: вход, аккаунт и подписка не ломаются. " +
-                "Это приложение показывает отдельный слой с пиньинем над видимым китайским абзацем."
+            text = "Оригинальный Smart Book остаётся без изменений. Пиньинь рисуется прозрачной " +
+                "подписью только над словами, которые ты добавляешь в изучение кнопкой «плюс»."
             textSize = 17f
             setTextColor(Color.rgb(55, 55, 55))
         }, matchWrap(bottom = 20))
@@ -52,9 +55,17 @@ class MainActivity : Activity() {
         statusView = TextView(this).apply {
             textSize = 18f
             gravity = Gravity.CENTER
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setPadding(dp(12), dp(12), dp(12), dp(6))
         }
-        root.addView(statusView, matchWrap(bottom = 16))
+        root.addView(statusView, matchWrap())
+
+        wordsCountView = TextView(this).apply {
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(70, 70, 70))
+            setPadding(dp(12), dp(2), dp(12), dp(12))
+        }
+        root.addView(wordsCountView, matchWrap(bottom = 12))
 
         root.addView(button("1. Включить службу пиньиня") {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -62,51 +73,67 @@ class MainActivity : Activity() {
 
         root.addView(button("2. Открыть Smart Book") {
             val launch = packageManager.getLaunchIntentForPackage(SMART_BOOK_PACKAGE)
-            if (launch == null) {
-                openOfficialSmartBook()
-            } else {
-                startActivity(launch)
-            }
-        }, matchWrap(bottom = 10))
-
-        root.addView(button("Установить оригинальный Smart Book") {
-            openOfficialSmartBook()
-        }, matchWrap(bottom = 10))
-
-        root.addView(button("Удалить текущий Smart Book") {
-            runCatching {
-                startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$SMART_BOOK_PACKAGE")))
-            }.onFailure {
-                Toast.makeText(this, "Smart Book не установлен", Toast.LENGTH_SHORT).show()
-            }
-        }, matchWrap(bottom = 24))
+            if (launch == null) openOfficialSmartBook() else startActivity(launch)
+        }, matchWrap(bottom = 20))
 
         root.addView(TextView(this).apply {
-            text = "Размер текста и пиньиня"
+            text = "Как добавить слово"
+            textSize = 19f
+            setTextColor(Color.rgb(30, 30, 30))
+        }, matchWrap(bottom = 6))
+
+        root.addView(TextView(this).apply {
+            text = "Выдели или открой китайское слово в Smart Book и нажми штатную синюю кнопку «плюс». " +
+                "Служба запомнит это слово. После закрытия карточки пиньинь появится только над ним."
+            textSize = 16f
+            setTextColor(Color.rgb(65, 65, 65))
+        }, matchWrap(bottom = 20))
+
+        root.addView(TextView(this).apply {
+            text = "Размер пиньиня"
             textSize = 17f
             setTextColor(Color.rgb(35, 35, 35))
         }, matchWrap(bottom = 4))
 
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         root.addView(SeekBar(this).apply {
-            min = 16
-            max = 30
-            progress = prefs.getInt(PREF_TEXT_SIZE, DEFAULT_TEXT_SIZE)
+            min = 7
+            max = 16
+            progress = prefs.getInt(PREF_RUBY_SIZE, DEFAULT_RUBY_SIZE)
+                .coerceIn(min, max)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    if (fromUser) prefs.edit().putInt(PREF_TEXT_SIZE, progress).apply()
+                    if (fromUser) prefs.edit().putInt(PREF_RUBY_SIZE, progress).apply()
                 }
 
                 override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
                 override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
             })
+        }, matchWrap(bottom = 16))
+
+        root.addView(button("Очистить список слов с пиньинем") {
+            AlertDialog.Builder(this)
+                .setTitle("Очистить список?")
+                .setMessage("Пиньинь исчезнет со всех ранее добавленных слов.")
+                .setNegativeButton("Отмена", null)
+                .setPositiveButton("Очистить") { _, _ ->
+                    TrackedWordStore(this).clear()
+                    updateStatus()
+                    Toast.makeText(this, "Список очищен", Toast.LENGTH_SHORT).show()
+                }
+                .show()
         }, matchWrap(bottom = 20))
 
         root.addView(TextView(this).apply {
-            text = "Служба ограничена пакетом Smart Book и не использует интернет. " +
-                "В первой рабочей версии пиньинь показывается над всеми китайскими словами видимого абзаца."
+            text = "Приложение не использует интернет и читает только интерфейс Smart Book через " +
+                "службу специальных возможностей. Уже добавленные до установки v0.3.0 слова нужно " +
+                "один раз добавить заново, чтобы служба их увидела."
             textSize = 14f
             setTextColor(Color.rgb(95, 95, 95))
+        }, matchWrap(bottom = 10))
+
+        root.addView(button("Установить оригинальный Smart Book") {
+            openOfficialSmartBook()
         }, matchWrap(bottom = 0))
 
         return root
@@ -114,14 +141,13 @@ class MainActivity : Activity() {
 
     private fun updateStatus() {
         val enabled = isAccessibilityServiceEnabled()
-        statusView.text = if (enabled) {
-            "Служба включена"
-        } else {
-            "Служба выключена"
-        }
+        statusView.text = if (enabled) "Служба включена" else "Служба выключена"
         statusView.setTextColor(
             if (enabled) Color.rgb(24, 120, 60) else Color.rgb(180, 45, 45),
         )
+
+        val count = TrackedWordStore(this).snapshot().size
+        wordsCountView.text = "Слов с пиньинем: $count"
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
@@ -163,7 +189,8 @@ class MainActivity : Activity() {
     companion object {
         const val SMART_BOOK_PACKAGE = "com.kursx.smartbook"
         const val PREFS = "overlay_settings"
-        const val PREF_TEXT_SIZE = "text_size_sp"
-        const val DEFAULT_TEXT_SIZE = 22
+        const val PREF_TRACKED_WORDS = "tracked_words"
+        const val PREF_RUBY_SIZE = "ruby_size_sp"
+        const val DEFAULT_RUBY_SIZE = 10
     }
 }
