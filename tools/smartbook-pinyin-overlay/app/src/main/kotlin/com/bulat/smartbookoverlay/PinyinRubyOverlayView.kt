@@ -67,7 +67,7 @@ class PinyinRubyOverlayView @JvmOverloads constructor(
         if (sourceText.isEmpty() || annotations.isEmpty()) return
 
         rubyPaint.color = foregroundColor
-        val occupiedByLine = HashMap<Int, MutableList<FloatRange>>()
+        val occupiedByLine = HashMap<Int, MutableList<HorizontalRange>>()
 
         for (annotation in annotations) {
             val start = annotation.start.coerceIn(0, sourceText.length)
@@ -101,10 +101,10 @@ class PinyinRubyOverlayView @JvmOverloads constructor(
             val right = centerX + rubyWidth / 2f
             val ranges = occupiedByLine.getOrPut(line) { mutableListOf() }
             val clashes = ranges.any { existing ->
-                left < existing.endInclusive + dp(2) && right > existing.start - dp(2)
+                left < existing.right + dp(2) && right > existing.left - dp(2)
             }
             if (clashes) continue
-            ranges += left..right
+            ranges += HorizontalRange(left, right)
 
             val lineTop = currentLayout.getLineTop(line)
             val baseline = sourceTopOffsetPx + lineTop - dp(1)
@@ -158,6 +158,11 @@ class PinyinRubyOverlayView @JvmOverloads constructor(
     )
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private data class HorizontalRange(
+        val left: Float,
+        val right: Float,
+    )
 
     companion object {
         const val DEFAULT_RUBY_SP = 10f
