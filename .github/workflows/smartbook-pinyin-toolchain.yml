@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: smartbook-pinyin-toolchain-${{ github.ref }}
@@ -90,11 +90,52 @@ jobs:
           cp "$MODULE" build/toolchain/SmartBook-Pinyin-Module.apk
 
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose build/toolchain/SmartBook-Pinyin-Module.apk
-          sha256sum build/toolchain/* > build/toolchain/SHA256SUMS.txt
+          find build/toolchain -type f ! -name SHA256SUMS.txt -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            > build/toolchain/SHA256SUMS.txt
 
-      - uses: actions/upload-artifact@v4
+      - id: upload
+        uses: actions/upload-artifact@v4
         with:
           name: SmartBook-Pinyin-Split-Toolchain
           path: build/toolchain
           if-no-files-found: error
           retention-days: 7
+
+      - name: Record latest toolchain status
+        if: always()
+        env:
+          BUILD_STATUS: ${{ job.status }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+        run: |
+          BRANCH="$GITHUB_REF_NAME"
+          git fetch origin "$BRANCH"
+          NEWER_SOURCE_CHANGES="$(git diff --name-only "$GITHUB_SHA..origin/$BRANCH" | grep -v '^\.ci-status/' || true)"
+          if [[ -n "$NEWER_SOURCE_CHANGES" ]]; then
+            echo 'A newer source commit exists; skip stale status publication.'
+            exit 0
+          fi
+
+          NPATCH_VERSION="$(cat build/toolchain/npatch-version.txt 2>/dev/null || true)"
+          MODULE_SHA="$(sha256sum build/toolchain/SmartBook-Pinyin-Module.apk 2>/dev/null | cut -d' ' -f1 || true)"
+
+          git checkout -B "$BRANCH" "origin/$BRANCH"
+          mkdir -p .ci-status
+          jq -n \
+            --arg status "$BUILD_STATUS" \
+            --arg workflow_sha "$GITHUB_SHA" \
+            --arg finished_at "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg artifact_id "$ARTIFACT_ID" \
+            --arg npatch "$NPATCH_VERSION" \
+            --arg module_sha256 "$MODULE_SHA" \
+            '{status:$status,workflow_sha:$workflow_sha,finished_at:$finished_at,run_id:$run_id,run_url:$run_url,artifact:"SmartBook-Pinyin-Split-Toolchain",artifact_id:$artifact_id,npatch:$npatch,module_sha256:$module_sha256}' \
+            > .ci-status/smartbook-pinyin-toolchain.json
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- .ci-status/smartbook-pinyin-toolchain.json
+          git commit -m "ci: record Smart Book split toolchain status" || exit 0
+          git push origin "HEAD:$BRANCH"
