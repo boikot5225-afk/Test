@@ -63,7 +63,7 @@ class HookEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
         )
     }
 
-    private class ReaderTextHook : XC_MethodHook() {
+    private inner class ReaderTextHook : XC_MethodHook() {
         override fun beforeHookedMethod(param: MethodHookParam) {
             try {
                 val view = param.thisObject as? TextView ?: return
@@ -284,7 +284,7 @@ class HookEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
                     for (candidate in views) {
                         if (!candidate.isAttachedToWindow) continue
                         val current = candidate.text ?: continue
-                        if (!containsHan(current) || containsPinyinSpan(current)) continue
+                        if (!containsHanForRetry(current) || containsPinyinSpanForRetry(current)) continue
                         candidate.setText(current, TextView.BufferType.SPANNABLE)
                     }
                 }
@@ -293,6 +293,19 @@ class HookEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
                 start()
             }
         }
+
+        private fun containsHanForRetry(text: CharSequence): Boolean {
+            var index = 0
+            while (index < text.length) {
+                val codePoint = Character.codePointAt(text, index)
+                if (ChineseSegmenter.isHan(codePoint)) return true
+                index += Character.charCount(codePoint)
+            }
+            return false
+        }
+
+        private fun containsPinyinSpanForRetry(text: CharSequence): Boolean =
+            text is Spanned && text.getSpans(0, text.length, PinyinSpan::class.java).isNotEmpty()
 
         fun notifyFirstApplied(view: TextView) {
             if (!firstApplied.compareAndSet(false, true)) return
