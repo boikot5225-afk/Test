@@ -9,6 +9,10 @@ on:
       - .github/workflows/smartbook-pinyin-core.yml
   workflow_dispatch:
 
+concurrency:
+  group: smartbook-pinyin-core-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
