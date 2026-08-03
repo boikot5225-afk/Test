@@ -18,10 +18,10 @@ public final class InstallResultReceiver extends BroadcastReceiver {
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
             Intent confirmation;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                confirmation = intent.getParcelableExtra(PackageInstaller.EXTRA_INTENT, Intent.class);
+                confirmation = intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent.class);
             } else {
                 //noinspection deprecation
-                confirmation = intent.getParcelableExtra(PackageInstaller.EXTRA_INTENT);
+                confirmation = intent.getParcelableExtra(Intent.EXTRA_INTENT);
             }
             if (confirmation != null) {
                 confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
