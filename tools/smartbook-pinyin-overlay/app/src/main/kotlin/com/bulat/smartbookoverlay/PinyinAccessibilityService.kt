@@ -3,13 +3,16 @@ package com.bulat.smartbookoverlay
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.TypedValue
+import android.view.Display
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -41,6 +44,8 @@ class PinyinAccessibilityService : AccessibilityService() {
     private val overlays = mutableListOf<OverlayHolder>()
     private var lastSignature: String? = null
     private var pendingWord: PendingWord? = null
+    private var screenshotInFlight = false
+    private var lastScreenshotRequestedAt = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -63,6 +68,11 @@ class PinyinAccessibilityService : AccessibilityService() {
                     AccessibilityEvent.TYPE_VIEW_SELECTED -> refreshPendingWordFromPanel()
                 }
                 scheduleRender()
+                if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
+                    event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                ) {
+                    mainHandler.postDelayed({ renderVisibleText(force = true) }, POST_ACTION_RESCAN_MS)
+                }
             }
             event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> hideOverlays()
         }
@@ -156,10 +166,12 @@ class PinyinAccessibilityService : AccessibilityService() {
 
             when {
                 addAction && pending != null -> {
-                    val saved = trackedWords.add(pending.word) ?: return
-                    pendingWord = PendingWord(saved, SystemClock.elapsedRealtime())
-                    lastSignature = null
-                    Toast.makeText(this, "Пиньинь добавлен: $saved", Toast.LENGTH_SHORT).show()
+                    val added = trackedWords.addAll(listOf(pending.word))
+                    pendingWord = PendingWord(pending.word, SystemClock.elapsedRealtime())
+                    if (added.isNotEmpty()) {
+                        lastSignature = null
+                        Toast.makeText(this, "Пиньинь добавлен: ${pending.word}", Toast.LENGTH_SHORT).show()
+                    }
                     renderVisibleText(force = true)
                 }
                 removeAction && pending != null -> {
@@ -231,12 +243,6 @@ class PinyinAccessibilityService : AccessibilityService() {
     private fun renderVisibleText(force: Boolean = false) {
         val currentPlanner = planner ?: return
         val currentLexicon = lexicon ?: return
-        val learnt = trackedWords.snapshot()
-        if (learnt.isEmpty()) {
-            hideOverlays()
-            return
-        }
-
         val root = rootInActiveWindow ?: run {
             hideOverlays()
             return
@@ -248,6 +254,7 @@ class PinyinAccessibilityService : AccessibilityService() {
             return
         }
 
+        val targetWindowId = root.windowId
         val candidates = try {
             findVisibleChineseBlocks(root)
         } finally {
@@ -255,6 +262,16 @@ class PinyinAccessibilityService : AccessibilityService() {
         }
 
         if (candidates.isEmpty()) {
+            hideOverlays()
+            return
+        }
+
+        // ForegroundColorSpan is the clean path; a screenshot is a local fallback for views that
+        // strip styling from their accessibility text (common on customized Samsung builds).
+        requestScreenshotWordSync(candidates, targetWindowId)
+
+        val learnt = trackedWords.snapshot()
+        if (learnt.isEmpty()) {
             hideOverlays()
             return
         }
@@ -307,6 +324,79 @@ class PinyinAccessibilityService : AccessibilityService() {
 
         showOverlays(renderedBlocks, rubySize.toFloat())
         lastSignature = signature
+    }
+
+    private fun syncDetectedWords(words: Set<String>): Boolean {
+        if (words.isEmpty()) return false
+        val added = trackedWords.addAll(words)
+        if (added.isEmpty()) return false
+        lastSignature = null
+        return true
+    }
+
+    private fun requestScreenshotWordSync(candidates: List<Candidate>, targetWindowId: Int) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || screenshotInFlight) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastScreenshotRequestedAt < SCREENSHOT_THROTTLE_MS) return
+
+        screenshotInFlight = true
+        lastScreenshotRequestedAt = now
+        val blocks = candidates.map { candidate ->
+            StudyWordDetector.Block(candidate.text, Rect(candidate.bounds))
+        }
+        val callback = object : TakeScreenshotCallback {
+            override fun onSuccess(screenshot: ScreenshotResult) {
+                val buffer = screenshot.hardwareBuffer
+                val wrapped = runCatching {
+                    Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace)
+                }.getOrNull()
+                val bitmap = runCatching {
+                    wrapped?.copy(Bitmap.Config.ARGB_8888, false)
+                }.getOrNull()
+                wrapped?.recycle()
+                buffer.close()
+
+                if (bitmap == null) {
+                    screenshotInFlight = false
+                    return
+                }
+
+                Thread({
+                    val detected = runCatching {
+                        StudyWordDetector.fromScreenshot(
+                            bitmap = bitmap,
+                            blocks = blocks,
+                            scaledDensity = resources.displayMetrics.scaledDensity,
+                            density = resources.displayMetrics.density,
+                        )
+                    }.getOrDefault(emptySet())
+                    bitmap.recycle()
+                    mainHandler.post {
+                        screenshotInFlight = false
+                        if (syncDetectedWords(detected)) {
+                            renderVisibleText(force = true)
+                        }
+                    }
+                }, "smartbook-study-color-scan").apply {
+                    isDaemon = true
+                    start()
+                }
+            }
+
+            override fun onFailure(errorCode: Int) {
+                screenshotInFlight = false
+            }
+        }
+
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                takeScreenshotOfWindow(targetWindowId, mainExecutor, callback)
+            } else {
+                takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, callback)
+            }
+        }.onFailure {
+            screenshotInFlight = false
+        }
     }
 
     private fun preferredBoundaries(text: String, learnt: Set<String>): Set<Int> {
@@ -404,7 +494,9 @@ class PinyinAccessibilityService : AccessibilityService() {
             node.isTextSelectable
         if (!looksLikeReaderText) return null
 
-        val text = node.text?.toString() ?: return null
+        val source = node.text ?: return null
+        syncDetectedWords(StudyWordDetector.fromStyledText(source))
+        val text = source.toString()
         val trimmed = text.trim()
         if (trimmed.length !in MIN_TEXT_LENGTH..MAX_TEXT_LENGTH) return null
 
@@ -424,7 +516,7 @@ class PinyinAccessibilityService : AccessibilityService() {
         if (!clipped.intersect(visibleScreen)) return null
         if (clipped.height() < dp(20)) return null
 
-        return Candidate(trimmed, clipped)
+        return Candidate(text, clipped)
     }
 
     private fun showOverlays(blocks: List<RenderedBlock>, rubySizeSp: Float) {
@@ -581,6 +673,8 @@ class PinyinAccessibilityService : AccessibilityService() {
         private const val MAX_VISIBLE_BLOCKS = 8
         private const val MAX_SCANNED_NODES = 800
         private const val PENDING_WORD_TTL_MS = 30_000L
+        private const val SCREENSHOT_THROTTLE_MS = 650L
+        private const val POST_ACTION_RESCAN_MS = 420L
 
         private val ADD_ACTION_MARKERS = listOf(
             "add", "plus", "learn", "study", "vocabulary", "save word",
