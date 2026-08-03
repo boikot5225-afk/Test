@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Пиньинь для Smart Book</string>
+    <string name="service_name">Пиньинь поверх Smart Book</string>
+    <string name="service_description">Читает только видимый китайский текст в Smart Book и показывает его с пиньинем. Данные никуда не отправляются.</string>
+</resources>
