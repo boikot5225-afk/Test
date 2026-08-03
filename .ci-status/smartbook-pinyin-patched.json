@@ -1,0 +1,10 @@
+{
+  "status": "failure",
+  "workflow_sha": "95614cf1ed7189b7b6d7a97f068bff4b76d6ca2e",
+  "finished_at": "2026-08-03T06:01:39Z",
+  "run_url": "https://github.com/boikot5225-afk/Test/actions/runs/30788706407",
+  "original_version": "",
+  "npatch": "",
+  "patched_sha256": "",
+  "artifact": "SmartBook-Chinese-Pinyin-v0.1.0"
+}
