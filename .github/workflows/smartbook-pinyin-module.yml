@@ -10,6 +10,10 @@ on:
       - .github/workflows/smartbook-pinyin-module.yml
   workflow_dispatch:
 
+concurrency:
+  group: smartbook-pinyin-module-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-module:
     runs-on: ubuntu-latest
