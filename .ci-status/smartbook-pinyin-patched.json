@@ -1,10 +1,10 @@
 {
   "status": "failure",
-  "workflow_sha": "4f273933e07a1af164696aa46de7a69f191be71c",
-  "finished_at": "2026-08-03T06:19:35Z",
-  "run_url": "https://github.com/boikot5225-afk/Test/actions/runs/30789684219",
+  "workflow_sha": "a85f4faad2f67ac6b19c08891adbe800a9e3052c",
+  "finished_at": "2026-08-03T06:25:05Z",
+  "run_url": "https://github.com/boikot5225-afk/Test/actions/runs/30790001598",
   "original_version": "3.6",
   "npatch": "jar-v1.0.6-698-release.jar",
-  "patched_sha256": "5bb41cfd67a648a632b2811f071d61572e2e014fff3682e79737d9dfe0e8446b",
+  "patched_sha256": "",
   "artifact": "SmartBook-Chinese-Pinyin-v0.1.0"
 }
