@@ -20,6 +20,7 @@ import lzma
 import os
 import re
 import struct
+import subprocess
 import sys
 import zipfile
 import zlib
@@ -161,10 +162,10 @@ def assert_conventional(apk_path: Path) -> None:
                 )
 
         # The nested payloads must themselves be ordinary readable APK files.
+        from io import BytesIO
+
         for nested_name in (ORIGIN_PATH, MODULE_PATH):
             nested_bytes = check.read(nested_name)
-            from io import BytesIO
-
             with zipfile.ZipFile(BytesIO(nested_bytes), "r") as nested:
                 if "AndroidManifest.xml" not in nested.namelist():
                     raise RuntimeError(f"nested APK lacks a manifest: {nested_name}")
@@ -173,6 +174,56 @@ def assert_conventional(apk_path: Path) -> None:
                     raise RuntimeError(
                         f"nested APK {nested_name} has corrupt entry: {nested_bad}"
                     )
+
+
+def ensure_debug_keystore() -> Path:
+    """Create the exact debug keystore expected by the workflow if absent."""
+    keystore = Path.home() / ".android" / "debug.keystore"
+    if keystore.is_file() and keystore.stat().st_size > 0:
+        print(f"using existing signing keystore: {keystore}", flush=True)
+        return keystore
+
+    keystore.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        "keytool",
+        "-genkeypair",
+        "-noprompt",
+        "-keystore",
+        str(keystore),
+        "-storepass",
+        "android",
+        "-keypass",
+        "android",
+        "-alias",
+        "androiddebugkey",
+        "-keyalg",
+        "RSA",
+        "-keysize",
+        "2048",
+        "-validity",
+        "10000",
+        "-dname",
+        "CN=Android Debug,O=Android,C=US",
+    ]
+    subprocess.run(command, check=True)
+    if not keystore.is_file() or keystore.stat().st_size == 0:
+        raise RuntimeError(f"keytool did not create signing keystore: {keystore}")
+    subprocess.run(
+        [
+            "keytool",
+            "-list",
+            "-keystore",
+            str(keystore),
+            "-storepass",
+            "android",
+            "-alias",
+            "androiddebugkey",
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    print(f"created and verified signing keystore: {keystore}", flush=True)
+    return keystore
 
 
 def normalize(input_apk: Path, output_apk: Path) -> None:
@@ -185,7 +236,8 @@ def normalize(input_apk: Path, output_apk: Path) -> None:
     ) as source, zipfile.ZipFile(
         output_apk, "w", allowZip64=True, strict_timestamps=False
     ) as target:
-        for index, info in enumerate(source.infolist(), start=1):
+        entries = source.infolist()
+        for index, info in enumerate(entries, start=1):
             name = info.filename
             if name in seen:
                 raise RuntimeError(f"duplicate central-directory name: {name}")
@@ -197,7 +249,7 @@ def normalize(input_apk: Path, output_apk: Path) -> None:
                 data = read_entry_direct(raw_stream, info)
             except Exception as exc:
                 raise RuntimeError(
-                    f"failed at entry {index}/{len(source.infolist())}: {name}: {exc}"
+                    f"failed at entry {index}/{len(entries)}: {name}: {exc}"
                 ) from exc
 
             target.writestr(clean_info(info), data)
@@ -211,6 +263,7 @@ def normalize(input_apk: Path, output_apk: Path) -> None:
         f"{input_apk} -> {output_apk}",
         flush=True,
     )
+    ensure_debug_keystore()
 
 
 def main() -> int:
