@@ -11,8 +11,8 @@ android {
         applicationId = "com.bulat.smartbookoverlay"
         minSdk = 28
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
     }
 
     compileOptions {
@@ -43,4 +43,8 @@ android {
     packaging {
         resources.excludes += setOf("META-INF/*.kotlin_module")
     }
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
 }
