@@ -7,6 +7,7 @@ mkdir -p "$BUILD"
 kotlinc \
   "$ROOT/src/main/kotlin/smartbook/pinyin/ChineseLexicon.kt" \
   "$ROOT/src/main/kotlin/smartbook/pinyin/ChineseSegmenter.kt" \
+  "$ROOT/src/main/kotlin/smartbook/pinyin/ContextualPinyinResolver.kt" \
   "$ROOT/src/main/kotlin/smartbook/pinyin/PinyinPlanner.kt" \
   "$ROOT/src/test/kotlin/smartbook/pinyin/SegmenterSpec.kt" \
   -include-runtime -d "$BUILD/smartbook-pinyin-tests.jar"
