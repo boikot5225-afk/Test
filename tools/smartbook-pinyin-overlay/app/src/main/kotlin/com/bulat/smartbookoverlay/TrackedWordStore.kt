@@ -11,12 +11,20 @@ class TrackedWordStore(context: Context) {
             ?.toSet()
             .orEmpty()
 
-    fun add(rawWord: String): String? {
-        val word = normalize(rawWord) ?: return null
+    fun add(rawWord: String): String? = addAll(listOf(rawWord)).firstOrNull()
+        ?: normalize(rawWord)?.takeIf { it in snapshot() }
+
+    /** Returns only words that were not present before this call. */
+    fun addAll(rawWords: Iterable<String>): Set<String> {
+        val normalized = rawWords.mapNotNull(::normalize).toSet()
+        if (normalized.isEmpty()) return emptySet()
+
         val words = snapshot().toMutableSet()
-        if (!words.add(word)) return word
-        prefs.edit().putStringSet(MainActivity.PREF_TRACKED_WORDS, words).apply()
-        return word
+        val added = normalized.filterTo(LinkedHashSet()) { words.add(it) }
+        if (added.isNotEmpty()) {
+            prefs.edit().putStringSet(MainActivity.PREF_TRACKED_WORDS, words).apply()
+        }
+        return added
     }
 
     fun remove(rawWord: String): String? {
