@@ -45,6 +45,8 @@ jobs:
             --deobf \
             --deobf-min 2 \
             --deobf-max 64 \
+            --show-bad-code \
+            --comments-level debug \
             -d build/jadx \
             build/input/smartbook.apk \
             2>&1 | tee build/output/jadx.log
@@ -54,34 +56,34 @@ jobs:
           SRC=build/jadx/sources
           mkdir -p build/output/sources
 
-          {
-            echo '=== Exact reader classes ==='
-            find "$SRC" -type f \( \
-              -name '*ReaderText*.java' -o \
-              -name '*ParagraphHolder*.java' -o \
-              -name '*ReaderSpan*.java' -o \
-              -name '*ReaderUIState*.java' -o \
-              -name '*ChapterModel*.java' \
-            \) -print | sort
-            echo
-            echo '=== Auth-related source files ==='
-            grep -RIlE 'GoogleSignIn|FirebaseAuth|OAuth|signInWith|idToken|Authorization|Login|AuthRepository|AccountManager' \
-              "$SRC/com/kursx" "$SRC" 2>/dev/null | sort -u | head -200
-          } > build/output/file-list.txt
+          find "$SRC" -type f \( \
+            -name '*ReaderText*.java' -o \
+            -name '*ParagraphHolder*.java' -o \
+            -name '*ReaderSpan*.java' -o \
+            -name '*ReaderUIState*.java' -o \
+            -name '*ChapterModel*.java' -o \
+            -name 'GoogleAuth*.java' -o \
+            -name 'GoogleAuthUseCaseImpl*.java' -o \
+            -name 'AuthApi*.java' -o \
+            -name 'LoginFragment*.java' -o \
+            -name 'LoginViewModel*.java' -o \
+            -name 'LoginUseCaseImpl*.java' -o \
+            -name 'Profile*.java' \
+          \) -print | sort -u > build/output/file-list.txt
 
           while IFS= read -r file; do
             [[ -f "$file" ]] || continue
             rel="${file#$SRC/}"
             mkdir -p "build/output/sources/$(dirname "$rel")"
             cp "$file" "build/output/sources/$rel"
-          done < <(grep '^build/jadx/sources/' build/output/file-list.txt | sort -u)
+          done < build/output/file-list.txt
 
           {
             echo '=== Reader references ==='
-            grep -RInE 'ReaderText|ParagraphHolder|ReaderSpan|setText\(' "$SRC/com/kursx/smartbook" 2>/dev/null | head -500
+            grep -RInE 'ReaderText|ParagraphHolder|ReaderSpan|setText\(' "$SRC/com/kursx/smartbook" 2>/dev/null | head -700
             echo
             echo '=== Authorization references ==='
-            grep -RInE 'GoogleSignIn|FirebaseAuth|OAuth|signInWith|idToken|Authorization|Login|AuthRepository|AccountManager|certificate|signature' "$SRC/com/kursx/smartbook" 2>/dev/null | head -800
+            grep -RInE 'GoogleAuth|GetGoogleIdOption|CredentialManager|serverClientId|googleusercontent|idToken|AuthApi|LoginUseCase|certificate|signature' "$SRC/com/kursx/smartbook" 2>/dev/null | head -1200
           } > build/output/references.txt
 
           sha256sum build/input/smartbook.apk > build/output/smartbook-sha256.txt
