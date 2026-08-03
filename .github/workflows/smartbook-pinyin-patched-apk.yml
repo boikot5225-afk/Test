@@ -52,7 +52,7 @@ jobs:
 
       - name: Download and verify official Smart Book 3.6 APK
         run: |
-          mkdir -p build/download build/output
+          mkdir -p build/download build/output build/work
           curl --fail --location --retry 4 --retry-all-errors \
             --user-agent 'Mozilla/5.0 GitHub-Actions SmartBook-Pinyin' \
             'https://smart-book.net/apk' \
@@ -137,22 +137,44 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$PATCHED" > build/preliminary-patched-badging.txt
           python3 - "$PATCHED" <<'PY'
           import sys, zipfile
-          path = sys.argv[1]
-          with zipfile.ZipFile(path) as apk:
+          with zipfile.ZipFile(sys.argv[1]) as apk:
               names = set(apk.namelist())
           required = {
               'AndroidManifest.xml',
+              'assets/npatch/origin.apk',
               'assets/npatch/modules/com.bulat.smartbookpinyin.apk',
+              'classes10.dex',
           }
           missing = sorted(required - names)
           if missing:
-              raise SystemExit(f'missing APK entries: {missing}')
+              raise SystemExit(f'missing NPatch entries: {missing}')
           PY
-          mv "$PATCHED" build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk
+          mv "$PATCHED" build/work/npatch-overlap.apk
 
-      - name: Verify patched APK and embedded module
+      - name: Normalize, align and sign installable APK
         run: |
-          APK=build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk
+          python3 tools/smartbook-chinese-pinyin/tools/normalize_npatch_apk.py \
+            build/work/npatch-overlap.apk \
+            build/work/npatch-normalized-unsigned.apk
+
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" \
+            -P 16 -f -v 4 \
+            build/work/npatch-normalized-unsigned.apk \
+            build/work/npatch-normalized-aligned.apk
+
+          test -f "$HOME/.android/debug.keystore"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
+            --ks "$HOME/.android/debug.keystore" \
+            --ks-key-alias androiddebugkey \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.1.apk \
+            build/work/npatch-normalized-aligned.apk
+
+      - name: Verify installable APK and embedded module
+        run: |
+          APK=build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.1.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -P 16 -c -v 4 "$APK"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" \
             | tee build/patched-signature.txt
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" \
@@ -162,21 +184,39 @@ jobs:
           python3 - "$APK" <<'PY'
           import sys, zipfile
           with zipfile.ZipFile(sys.argv[1]) as apk:
+              bad = apk.testzip()
+              if bad is not None:
+                  raise SystemExit(f'corrupt APK entry: {bad}')
               names = set(apk.namelist())
-          assert 'AndroidManifest.xml' in names
-          assert 'assets/npatch/modules/com.bulat.smartbookpinyin.apk' in names
+              required = {
+                  'AndroidManifest.xml',
+                  'assets/npatch/origin.apk',
+                  'assets/npatch/modules/com.bulat.smartbookpinyin.apk',
+                  'classes10.dex',
+              }
+              missing = sorted(required - names)
+              if missing:
+                  raise SystemExit(f'missing APK entries: {missing}')
+              ordered = sorted(apk.infolist(), key=lambda item: item.header_offset)
+              for current, following in zip(ordered, ordered[1:]):
+                  if current._end_offset > following.header_offset:
+                      raise SystemExit(
+                          f'overlapping APK entries: {current.filename} -> {following.filename}'
+                      )
+          print('APK ZIP structure is conventional and non-overlapping')
           PY
 
       - name: Write reproducibility report
         run: |
           {
-            echo 'Smart Book Chinese Pinyin build'
+            echo 'Smart Book Chinese Pinyin build v0.1.1'
             echo "Git commit: $GITHUB_SHA"
             echo "Built at UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
             echo "Original SHA-256: $(sha256sum build/download/smartbook-original.apk | cut -d' ' -f1)"
-            echo "Patched SHA-256: $(sha256sum build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk | cut -d' ' -f1)"
+            echo "Patched SHA-256: $(sha256sum build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.1.apk | cut -d' ' -f1)"
             echo "NPatch: $(cat build/npatch-version.txt)"
             echo "Bouncy Castle: $(cat build/bcprov-version.txt)"
+            echo 'Packaging: normalized non-overlapping ZIP, zipaligned for 16 KiB pages, APK-signed'
             echo
             echo 'Original package:'
             cat build/original-badging.txt
@@ -187,9 +227,9 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: SmartBook-Chinese-Pinyin-v0.1.0
+          name: SmartBook-Chinese-Pinyin-v0.1.1
           path: |
-            build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk
+            build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.1.apk
             build/output/BUILD_INFO.txt
           if-no-files-found: error
           retention-days: 14
@@ -210,8 +250,8 @@ jobs:
           ORIGINAL_VERSION="$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" build/original-badging.txt 2>/dev/null | head -n1 || true)"
           NPATCH_VERSION="$(cat build/npatch-version.txt 2>/dev/null || true)"
           PATCHED_SHA=''
-          if [[ "$BUILD_STATUS" == 'success' && -f build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk ]]; then
-            PATCHED_SHA="$(sha256sum build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk | cut -d' ' -f1)"
+          if [[ "$BUILD_STATUS" == 'success' && -f build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.1.apk ]]; then
+            PATCHED_SHA="$(sha256sum build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.1.apk | cut -d' ' -f1)"
           fi
 
           git checkout -B "$BRANCH" "origin/$BRANCH"
@@ -224,7 +264,7 @@ jobs:
             --arg original_version "$ORIGINAL_VERSION" \
             --arg npatch "$NPATCH_VERSION" \
             --arg patched_sha256 "$PATCHED_SHA" \
-            '{status:$status,workflow_sha:$workflow_sha,finished_at:$finished_at,run_url:$run_url,original_version:$original_version,npatch:$npatch,patched_sha256:$patched_sha256,artifact:"SmartBook-Chinese-Pinyin-v0.1.0"}' \
+            '{status:$status,workflow_sha:$workflow_sha,finished_at:$finished_at,run_url:$run_url,original_version:$original_version,npatch:$npatch,patched_sha256:$patched_sha256,artifact:"SmartBook-Chinese-Pinyin-v0.1.1"}' \
             > .ci-status/smartbook-pinyin-patched.json
 
           git config user.name 'github-actions[bot]'
