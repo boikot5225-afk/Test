@@ -1,0 +1,10 @@
+CC-CEDICT attribution
+
+This module includes a compact derivative of CC-CEDICT dictionary data used for Chinese word segmentation and pinyin readings.
+
+Project: CC-CEDICT
+Website: https://www.mdbg.net/chinese/dictionary?page=cc-cedict
+License: Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+License text: https://creativecommons.org/licenses/by-sa/4.0/
+
+The compact TSV representation changes storage format only. Dictionary entries remain attributable to the CC-CEDICT project and are distributed under the same CC BY-SA 4.0 terms.
