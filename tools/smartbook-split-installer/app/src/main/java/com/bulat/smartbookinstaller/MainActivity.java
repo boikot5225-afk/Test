@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageInstaller;
 import android.net.Uri;
 import android.os.Build;
@@ -198,7 +199,7 @@ public final class MainActivity extends Activity {
             PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(
                     PackageInstaller.SessionParams.MODE_FULL_INSTALL);
             params.setAppPackageName(TARGET_PACKAGE);
-            params.setInstallLocation(PackageInstaller.SessionParams.INSTALL_LOCATION_AUTO);
+            params.setInstallLocation(PackageInfo.INSTALL_LOCATION_AUTO);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED);
             }
@@ -214,8 +215,7 @@ public final class MainActivity extends Activity {
                     index++;
                     updateStatus("Передаю APK " + index + " из " + apkFiles.size() + ": " + apk.getName());
                     try (InputStream input = new BufferedInputStream(new FileInputStream(apk));
-                         OutputStream output = new BufferedOutputStream(
-                                 session.openWrite(apk.getName(), 0, apk.length()))) {
+                         OutputStream output = session.openWrite(apk.getName(), 0, apk.length())) {
                         int read;
                         while ((read = input.read(buffer)) != -1) {
                             output.write(buffer, 0, read);
@@ -279,7 +279,7 @@ public final class MainActivity extends Activity {
                 }
 
                 String fileName = new File(entry.getName()).getName();
-                File target = new File(workDir, String.format("%02d-%s", count, fileName));
+                File target;
                 if (fileName.equals("base.apk")) {
                     target = new File(workDir, "base.apk");
                 } else {
