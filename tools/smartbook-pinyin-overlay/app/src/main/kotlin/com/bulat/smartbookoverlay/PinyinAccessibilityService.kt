@@ -6,12 +6,15 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.ColorDrawable
 import android.os.Handler
 import android.os.Looper
 import android.text.Layout
 import android.text.SpannableStringBuilder
+import android.text.StaticLayout
+import android.util.TypedValue
 import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -25,20 +28,19 @@ import smartbook.pinyin.android.SmartBookPinyinApplier
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
+import kotlin.math.min
 
 class PinyinAccessibilityService : AccessibilityService() {
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val renderRunnable = Runnable { renderCurrentParagraph() }
+    private val renderRunnable = Runnable { renderVisibleText() }
     private val firstShown = AtomicBoolean(false)
 
     @Volatile
     private var planner: PinyinPlanner? = null
 
     private lateinit var windowManager: WindowManager
-    private var overlayView: TextView? = null
-    private var overlayParams: WindowManager.LayoutParams? = null
-    private var lastText: String? = null
-    private var lastBounds: Rect? = null
+    private val overlays = mutableListOf<OverlayHolder>()
+    private var lastSignature: String? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -47,22 +49,24 @@ class PinyinAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        val packageName = event?.packageName?.toString()
-        if (packageName != MainActivity.SMART_BOOK_PACKAGE) {
-            hideOverlay()
-            return
+        val eventPackage = event?.packageName?.toString()
+        when {
+            eventPackage == packageName -> return
+            eventPackage == MainActivity.SMART_BOOK_PACKAGE -> {
+                mainHandler.removeCallbacks(renderRunnable)
+                mainHandler.postDelayed(renderRunnable, 90L)
+            }
+            event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> hideOverlays()
         }
-        mainHandler.removeCallbacks(renderRunnable)
-        mainHandler.postDelayed(renderRunnable, 140L)
     }
 
     override fun onInterrupt() {
-        hideOverlay()
+        hideOverlays()
     }
 
     override fun onDestroy() {
         mainHandler.removeCallbacksAndMessages(null)
-        hideOverlay()
+        hideOverlays()
         super.onDestroy()
     }
 
@@ -72,7 +76,7 @@ class PinyinAccessibilityService : AccessibilityService() {
                 assets.open(LEXICON_ASSET).use(MapChineseLexicon::fromTsv)
             }.onSuccess { lexicon ->
                 planner = PinyinPlanner(lexicon)
-                mainHandler.post { renderCurrentParagraph() }
+                mainHandler.post { renderVisibleText() }
             }.onFailure { error ->
                 mainHandler.post {
                     Toast.makeText(
@@ -88,57 +92,71 @@ class PinyinAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun renderCurrentParagraph() {
+    private fun renderVisibleText() {
         val currentPlanner = planner ?: return
         val root = rootInActiveWindow ?: run {
-            hideOverlay()
+            hideOverlays()
             return
         }
 
-        val candidate = try {
-            findBestChineseText(root)
+        if (root.packageName?.toString() != MainActivity.SMART_BOOK_PACKAGE) {
+            root.recycle()
+            hideOverlays()
+            return
+        }
+
+        val candidates = try {
+            findVisibleChineseBlocks(root)
         } finally {
             root.recycle()
-        } ?: run {
-            hideOverlay()
+        }
+
+        if (candidates.isEmpty()) {
+            hideOverlays()
             return
         }
 
-        if (candidate.text == lastText && candidate.bounds == lastBounds) return
+        val signature = candidates.joinToString("|") {
+            "${it.bounds.left},${it.bounds.top},${it.bounds.right},${it.bounds.bottom}:${it.text.hashCode()}"
+        }
+        if (signature == lastSignature) return
 
-        val annotations = currentPlanner.plan(
-            text = candidate.text,
-            mode = PinyinMode.ALL,
-            isLearnt = { false },
-        )
-        if (annotations.isEmpty()) {
-            hideOverlay()
+        val renderedBlocks = candidates.mapNotNull { candidate ->
+            val annotations = currentPlanner.plan(
+                text = candidate.text,
+                mode = PinyinMode.ALL,
+                isLearnt = { false },
+            )
+            if (annotations.isEmpty()) return@mapNotNull null
+
+            val rendered = SpannableStringBuilder(candidate.text)
+            SmartBookPinyinApplier.apply(rendered, annotations)
+            RenderedBlock(rendered, candidate.bounds)
+        }
+
+        if (renderedBlocks.isEmpty()) {
+            hideOverlays()
             return
         }
 
-        val rendered = SpannableStringBuilder(candidate.text)
-        SmartBookPinyinApplier.apply(rendered, annotations)
-        showOverlay(rendered, candidate.bounds)
-        lastText = candidate.text
-        lastBounds = Rect(candidate.bounds)
+        showOverlays(renderedBlocks)
+        lastSignature = signature
 
         if (firstShown.compareAndSet(false, true)) {
             Toast.makeText(this, "Пиньинь включён", Toast.LENGTH_SHORT).show()
         }
     }
 
-    private fun findBestChineseText(root: AccessibilityNodeInfo): Candidate? {
+    private fun findVisibleChineseBlocks(root: AccessibilityNodeInfo): List<Candidate> {
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(AccessibilityNodeInfo.obtain(root))
-        var best: Candidate? = null
+        val raw = mutableListOf<Candidate>()
 
         while (queue.isNotEmpty()) {
             val node = queue.removeFirst()
             try {
                 if (node.isVisibleToUser) {
-                    evaluateNode(node)?.let { candidate ->
-                        if (best == null || candidate.score > best!!.score) best = candidate
-                    }
+                    evaluateNode(node)?.let(raw::add)
                 }
                 for (index in 0 until node.childCount) {
                     node.getChild(index)?.let(queue::addLast)
@@ -147,103 +165,190 @@ class PinyinAccessibilityService : AccessibilityService() {
                 node.recycle()
             }
         }
-        return best
+
+        if (raw.isEmpty()) return emptyList()
+
+        val kept = mutableListOf<Candidate>()
+        raw.sortedBy { it.bounds.width().toLong() * it.bounds.height() }.forEach { candidate ->
+            val duplicate = kept.any { existing ->
+                overlapRatio(candidate.bounds, existing.bounds) >= 0.82f &&
+                    (candidate.text.contains(existing.text) || existing.text.contains(candidate.text))
+            }
+            if (!duplicate) kept += candidate
+        }
+
+        return kept
+            .sortedWith(compareBy<Candidate> { it.bounds.top }.thenBy { it.bounds.left })
+            .take(MAX_VISIBLE_BLOCKS)
     }
 
     private fun evaluateNode(node: AccessibilityNodeInfo): Candidate? {
-        val packageName = node.packageName?.toString() ?: return null
-        if (packageName != MainActivity.SMART_BOOK_PACKAGE) return null
-
-        val source = node.text ?: return null
-        val text = source.toString().trim()
-        if (text.length !in 4..MAX_TEXT_LENGTH) return null
-
-        val hanCount = countHan(text)
-        if (hanCount < 2) return null
-
-        val bounds = Rect().also(node::getBoundsInScreen)
-        if (bounds.width() < dp(120) || bounds.height() < dp(24)) return null
+        if (node.packageName?.toString() != MainActivity.SMART_BOOK_PACKAGE) return null
 
         val className = node.className?.toString().orEmpty()
-        var score = hanCount * 40 + text.length
-        if (className == READER_TEXT_CLASS) score += 100_000
-        else if (className.contains("ReaderText", ignoreCase = true)) score += 50_000
-        else if (className.contains("TextView", ignoreCase = true)) score += 4_000
-        if (node.isTextSelectable) score += 2_000
-        score += (bounds.width() * bounds.height() / 5_000).coerceAtMost(2_000)
+        val looksLikeReaderText = className == READER_TEXT_CLASS ||
+            className.contains("ReaderText", ignoreCase = true) ||
+            className.contains("TextView", ignoreCase = true) ||
+            node.isTextSelectable
+        if (!looksLikeReaderText) return null
 
-        return Candidate(text, bounds, score)
+        val source = node.text ?: return null
+        val text = source.toString()
+        val trimmed = text.trim()
+        if (trimmed.length !in MIN_TEXT_LENGTH..MAX_TEXT_LENGTH) return null
+
+        val hanCount = countHan(trimmed)
+        if (hanCount < MIN_HAN_COUNT) return null
+        if (hanCount.toFloat() / trimmed.length < MIN_HAN_RATIO) return null
+
+        val bounds = Rect().also(node::getBoundsInScreen)
+        val screenWidth = resources.displayMetrics.widthPixels
+        val screenHeight = resources.displayMetrics.heightPixels
+        val visibleScreen = Rect(0, 0, screenWidth, screenHeight)
+        if (!Rect.intersects(bounds, visibleScreen)) return null
+        if (bounds.width() < (screenWidth * MIN_WIDTH_RATIO).toInt()) return null
+        if (bounds.height() < dp(28)) return null
+
+        val clipped = Rect(bounds)
+        if (!clipped.intersect(visibleScreen)) return null
+        if (clipped.height() < dp(20)) return null
+
+        return Candidate(trimmed, clipped)
     }
 
-    private fun showOverlay(text: CharSequence, sourceBounds: Rect) {
-        val textSize = getSharedPreferences(MainActivity.PREFS, MODE_PRIVATE)
+    private fun showOverlays(blocks: List<RenderedBlock>) {
+        val prefs = getSharedPreferences(MainActivity.PREFS, MODE_PRIVATE)
+        val preferredTextSize = prefs
             .getInt(MainActivity.PREF_TEXT_SIZE, MainActivity.DEFAULT_TEXT_SIZE)
             .toFloat()
 
         val dark = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
             Configuration.UI_MODE_NIGHT_YES
-        val backgroundColor = if (dark) Color.argb(244, 24, 24, 24) else Color.argb(246, 255, 255, 255)
-        val foregroundColor = if (dark) Color.WHITE else Color.rgb(25, 25, 25)
+        val backgroundColor = if (dark) Color.rgb(24, 24, 24) else Color.WHITE
+        val foregroundColor = if (dark) Color.rgb(235, 235, 235) else Color.rgb(70, 79, 86)
 
-        val view = overlayView ?: TextView(this).apply {
-            gravity = Gravity.START
-            includeFontPadding = true
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            setLineSpacing(dp(2).toFloat(), 1.05f)
-            ellipsize = null
-            maxLines = 30
-            breakStrategy = Layout.BREAK_STRATEGY_SIMPLE
-            hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
-            elevation = dp(8).toFloat()
-            this@PinyinAccessibilityService.overlayView = this
+        blocks.forEachIndexed { index, block ->
+            val holder = getOrCreateOverlay(index)
+            val width = max(1, block.bounds.width())
+            val height = max(dp(24), block.bounds.height())
+
+            holder.view.apply {
+                setTextColor(foregroundColor)
+                background = ColorDrawable(backgroundColor)
+                minHeight = height
+                maxHeight = height
+                setText(block.text, TextView.BufferType.SPANNABLE)
+            }
+
+            fitTextIntoBounds(
+                view = holder.view,
+                text = block.text,
+                widthPx = width,
+                heightPx = height,
+                preferredSp = preferredTextSize,
+            )
+
+            holder.params.width = width
+            holder.params.height = height
+            holder.params.x = block.bounds.left
+            holder.params.y = block.bounds.top
+
+            if (holder.view.parent == null) {
+                windowManager.addView(holder.view, holder.params)
+            } else {
+                windowManager.updateViewLayout(holder.view, holder.params)
+            }
         }
-        view.textSize = textSize
-        view.setTextColor(foregroundColor)
-        view.background = GradientDrawable().apply {
-            setColor(backgroundColor)
-            cornerRadius = dp(10).toFloat()
-            setStroke(dp(1), if (dark) Color.DKGRAY else Color.LTGRAY)
-        }
-        view.setText(text, TextView.BufferType.SPANNABLE)
 
-        val screenWidth = resources.displayMetrics.widthPixels
-        val width = sourceBounds.width().coerceIn(dp(180), screenWidth)
-        val x = sourceBounds.left.coerceIn(0, max(0, screenWidth - width))
-        val y = max(0, sourceBounds.top - dp(4))
-
-        val params = overlayParams ?: WindowManager.LayoutParams(
-            width,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            overlayParams = this
-        }
-        params.width = width
-        params.height = WindowManager.LayoutParams.WRAP_CONTENT
-        params.x = x
-        params.y = y
-
-        if (view.parent == null) {
-            windowManager.addView(view, params)
-        } else {
-            windowManager.updateViewLayout(view, params)
+        for (index in blocks.size until overlays.size) {
+            val holder = overlays[index]
+            if (holder.view.parent != null) {
+                runCatching { windowManager.removeViewImmediate(holder.view) }
+            }
         }
     }
 
-    private fun hideOverlay() {
-        mainHandler.post {
-            overlayView?.let { view ->
-                if (view.parent != null) runCatching { windowManager.removeViewImmediate(view) }
-            }
-            lastText = null
-            lastBounds = null
+    private fun getOrCreateOverlay(index: Int): OverlayHolder {
+        if (index < overlays.size) return overlays[index]
+
+        val view = TextView(this).apply {
+            gravity = Gravity.START or Gravity.TOP
+            includeFontPadding = true
+            setPadding(0, 0, 0, 0)
+            setLineSpacing(0f, 1f)
+            ellipsize = null
+            maxLines = 100
+            breakStrategy = Layout.BREAK_STRATEGY_SIMPLE
+            hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
+            elevation = 0f
+            isClickable = false
+            isLongClickable = false
+            setTextIsSelectable(false)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         }
+
+        val params = WindowManager.LayoutParams(
+            1,
+            1,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.OPAQUE,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+        }
+
+        return OverlayHolder(view, params).also(overlays::add)
+    }
+
+    private fun fitTextIntoBounds(
+        view: TextView,
+        text: CharSequence,
+        widthPx: Int,
+        heightPx: Int,
+        preferredSp: Float,
+    ) {
+        var sizeSp = preferredSp.coerceIn(MIN_TEXT_SIZE_SP, MAX_TEXT_SIZE_SP)
+        val safeWidth = max(1, widthPx)
+        val safeHeight = max(1, heightPx)
+
+        while (sizeSp > MIN_TEXT_SIZE_SP) {
+            view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
+            val layout = StaticLayout.Builder.obtain(text, 0, text.length, view.paint, safeWidth)
+                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                .setIncludePad(true)
+                .setLineSpacing(0f, 1f)
+                .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+                .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+                .build()
+            if (layout.height <= safeHeight) return
+            sizeSp -= 0.5f
+        }
+
+        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, MIN_TEXT_SIZE_SP)
+    }
+
+    private fun hideOverlays() {
+        mainHandler.post {
+            overlays.forEach { holder ->
+                if (holder.view.parent != null) {
+                    runCatching { windowManager.removeViewImmediate(holder.view) }
+                }
+            }
+            lastSignature = null
+        }
+    }
+
+    private fun overlapRatio(first: Rect, second: Rect): Float {
+        val intersection = Rect(first)
+        if (!intersection.intersect(second)) return 0f
+        val intersectionArea = intersection.width().toLong() * intersection.height()
+        val firstArea = first.width().toLong() * first.height()
+        val secondArea = second.width().toLong() * second.height()
+        val smallerArea = min(firstArea, secondArea)
+        if (smallerArea <= 0L) return 0f
+        return intersectionArea.toFloat() / smallerArea
     }
 
     private fun countHan(text: CharSequence): Int {
@@ -262,12 +367,28 @@ class PinyinAccessibilityService : AccessibilityService() {
     private data class Candidate(
         val text: String,
         val bounds: Rect,
-        val score: Int,
+    )
+
+    private data class RenderedBlock(
+        val text: CharSequence,
+        val bounds: Rect,
+    )
+
+    private data class OverlayHolder(
+        val view: TextView,
+        val params: WindowManager.LayoutParams,
     )
 
     companion object {
         private const val READER_TEXT_CLASS = "com.kursx.smartbook.shared.ReaderText"
         private const val LEXICON_ASSET = "zh_pinyin.tsv"
+        private const val MIN_TEXT_LENGTH = 4
         private const val MAX_TEXT_LENGTH = 4_000
+        private const val MIN_HAN_COUNT = 2
+        private const val MIN_HAN_RATIO = 0.18f
+        private const val MIN_WIDTH_RATIO = 0.48f
+        private const val MAX_VISIBLE_BLOCKS = 8
+        private const val MIN_TEXT_SIZE_SP = 14f
+        private const val MAX_TEXT_SIZE_SP = 30f
     }
 }
