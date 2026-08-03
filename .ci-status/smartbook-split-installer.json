@@ -1,0 +1,10 @@
+{
+  "status": "failure",
+  "workflow_sha": "0c709464783fa4fc6cb0aaaa3643da5a63cbef63",
+  "finished_at": "2026-08-03T09:02:51Z",
+  "run_id": "30799488485",
+  "run_url": "https://github.com/boikot5225-afk/Test/actions/runs/30799488485",
+  "artifact": "SmartBook-Split-Installer-v1.0",
+  "artifact_id": "",
+  "installer_sha256": ""
+}
