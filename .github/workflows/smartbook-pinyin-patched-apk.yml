@@ -65,7 +65,7 @@ jobs:
           echo "Official universal APK version: $ORIGINAL_VERSION"
           test "$ORIGINAL_VERSION" = '3.6'
 
-      - name: Download latest official NPatch CLI
+      - name: Download NPatch and BKS provider
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -85,17 +85,46 @@ jobs:
           fi
           printf '%s\n' "$JAR_NAME" > build/npatch-version.txt
 
+          BC_VERSION='1.84'
+          BC_BASE="https://repo.maven.apache.org/maven2/org/bouncycastle/bcprov-jdk18on/$BC_VERSION"
+          curl --fail --location --retry 4 \
+            "$BC_BASE/bcprov-jdk18on-$BC_VERSION.jar" \
+            --output build/bcprov.jar
+          curl --fail --location --retry 4 \
+            "$BC_BASE/bcprov-jdk18on-$BC_VERSION.jar.sha256" \
+            --output build/bcprov.jar.sha256
+          echo "$(tr -d '\r\n ' < build/bcprov.jar.sha256)  build/bcprov.jar" \
+            | sha256sum --check --strict
+          printf '%s\n' "$BC_VERSION" > build/bcprov-version.txt
+
+          mkdir -p build/npatch-launcher
+          javac \
+            -cp 'build/npatch.jar:build/bcprov.jar' \
+            -d build/npatch-launcher \
+            tools/smartbook-chinese-pinyin/tools/NPatchLauncher.java
+
       - name: Embed pinyin module into Smart Book
         run: |
+          set -o pipefail
           MODULE=tools/smartbook-chinese-pinyin/xposed-module/build/outputs/apk/debug/xposed-module-debug.apk
-          java -jar build/npatch.jar \
+          java -cp 'build/npatch-launcher:build/npatch.jar:build/bcprov.jar' NPatchLauncher \
             --embed "$MODULE" \
             --sigbypasslv 2 \
             --output build/output \
             --verbose \
-            build/download/smartbook-original.apk
+            build/download/smartbook-original.apk \
+            2>&1 | tee build/npatch.log
+
+          if grep -Eq 'PatchError|Failed to register signer|Exception in thread|BKS not found' build/npatch.log; then
+            echo 'NPatch reported an internal failure.' >&2
+            exit 1
+          fi
+
           PATCHED="$(find build/output -maxdepth 1 -type f -name '*-npatched.apk' -print -quit)"
           test -n "$PATCHED"
+          test -s "$PATCHED"
+          unzip -tqq "$PATCHED"
+          unzip -Z1 "$PATCHED" | grep -qx 'AndroidManifest.xml'
           mv "$PATCHED" build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk
 
       - name: Verify patched APK and embedded module
@@ -107,7 +136,7 @@ jobs:
             | tee build/patched-badging.txt
           grep -q "package: name='com.kursx.smartbook'" build/patched-badging.txt
           grep -q "versionName='3.6'" build/patched-badging.txt
-          unzip -l "$APK" | grep -q 'assets/npatch/modules/com.bulat.smartbookpinyin.apk'
+          unzip -Z1 "$APK" | grep -qx 'assets/npatch/modules/com.bulat.smartbookpinyin.apk'
 
       - name: Write reproducibility report
         run: |
@@ -118,6 +147,7 @@ jobs:
             echo "Original SHA-256: $(sha256sum build/download/smartbook-original.apk | cut -d' ' -f1)"
             echo "Patched SHA-256: $(sha256sum build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk | cut -d' ' -f1)"
             echo "NPatch: $(cat build/npatch-version.txt)"
+            echo "Bouncy Castle: $(cat build/bcprov-version.txt)"
             echo
             echo 'Original package:'
             cat build/original-badging.txt
@@ -151,7 +181,8 @@ jobs:
           ORIGINAL_VERSION="$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" build/original-badging.txt 2>/dev/null | head -n1 || true)"
           NPATCH_VERSION="$(cat build/npatch-version.txt 2>/dev/null || true)"
           PATCHED_SHA=''
-          if [[ -f build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk ]]; then
+          if [[ -f build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk ]] && \
+             unzip -Z1 build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk 2>/dev/null | grep -qx 'AndroidManifest.xml'; then
             PATCHED_SHA="$(sha256sum build/output/SmartBook-3.6-Chinese-Pinyin-v0.1.0.apk | cut -d' ' -f1)"
           fi
 
