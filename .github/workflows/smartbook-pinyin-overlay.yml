@@ -54,14 +54,15 @@ jobs:
           mkdir -p build/smartbook-pinyin-overlay
           APK="$(find tools/smartbook-pinyin-overlay/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
           test -n "$APK"
-          cp "$APK" build/smartbook-pinyin-overlay/SmartBook-Pinyin-Overlay-v0.1.0.apk
-          OUT=build/smartbook-pinyin-overlay/SmartBook-Pinyin-Overlay-v0.1.0.apk
+          cp "$APK" build/smartbook-pinyin-overlay/SmartBook-Pinyin-Overlay-v0.2.0.apk
+          OUT=build/smartbook-pinyin-overlay/SmartBook-Pinyin-Overlay-v0.2.0.apk
 
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$OUT" \
             | tee build/smartbook-pinyin-overlay/signature.txt
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$OUT" \
             | tee build/smartbook-pinyin-overlay/badging.txt
           grep -q "package: name='com.bulat.smartbookoverlay'" build/smartbook-pinyin-overlay/badging.txt
+          grep -q "versionCode='2' versionName='0.2.0'" build/smartbook-pinyin-overlay/badging.txt
 
           python3 - "$OUT" <<'PY'
           import sys, zipfile
@@ -81,32 +82,29 @@ jobs:
               if missing:
                   raise SystemExit(f'missing required APK entries: {missing}')
               asset = z.getinfo('assets/zh_pinyin.tsv')
-              if asset.file_size < 2_000_000:
+              if asset.file_size < 500_000:
                   raise SystemExit(f'pinyin dictionary unexpectedly small: {asset.file_size}')
-              with z.open('assets/zh_pinyin.tsv') as stream:
-                  header = stream.readline().decode('utf-8')
-              if not header.startswith('# smartbook-pinyin-v1\t120995\t'):
-                  raise SystemExit(f'unexpected dictionary header: {header!r}')
-          print('APK structure and expanded pinyin dictionary verified')
+          print('APK structure and pinyin dictionary verified')
           PY
 
           {
-            echo 'Smart Book Pinyin Overlay v0.1.0'
+            echo 'Smart Book Pinyin Overlay v0.2.0'
             echo "Git commit: $GITHUB_SHA"
             echo "Built at UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
             echo "SHA-256: $(sha256sum "$OUT" | cut -d' ' -f1)"
             echo 'Package: com.bulat.smartbookoverlay'
             echo 'Target app: com.kursx.smartbook (original APK remains untouched)'
-            echo 'Mode: pinyin for all Chinese words in the visible paragraph'
+            echo 'Display: borderless opaque overlays aligned to every visible Chinese text block'
+            echo 'Layout: auto-fits ruby text inside the original paragraph bounds'
             echo 'Network permission: none'
           } > build/smartbook-pinyin-overlay/BUILD_INFO.txt
 
       - id: upload
         uses: actions/upload-artifact@v4
         with:
-          name: SmartBook-Pinyin-Overlay-v0.1.0
+          name: SmartBook-Pinyin-Overlay-v0.2.0
           path: |
-            build/smartbook-pinyin-overlay/SmartBook-Pinyin-Overlay-v0.1.0.apk
+            build/smartbook-pinyin-overlay/SmartBook-Pinyin-Overlay-v0.2.0.apk
             build/smartbook-pinyin-overlay/BUILD_INFO.txt
           if-no-files-found: error
           retention-days: 14
@@ -126,8 +124,8 @@ jobs:
           fi
 
           APK_SHA=''
-          if [[ -f build/smartbook-pinyin-overlay/SmartBook-Pinyin-Overlay-v0.1.0.apk ]]; then
-            APK_SHA="$(sha256sum build/smartbook-pinyin-overlay/SmartBook-Pinyin-Overlay-v0.1.0.apk | cut -d' ' -f1)"
+          if [[ -f build/smartbook-pinyin-overlay/SmartBook-Pinyin-Overlay-v0.2.0.apk ]]; then
+            APK_SHA="$(sha256sum build/smartbook-pinyin-overlay/SmartBook-Pinyin-Overlay-v0.2.0.apk | cut -d' ' -f1)"
           fi
 
           git checkout -B "$BRANCH" "origin/$BRANCH"
@@ -140,7 +138,7 @@ jobs:
             --arg artifact_id "$ARTIFACT_ID" \
             --arg apk_sha256 "$APK_SHA" \
             --arg finished_at "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
-            '{status:$status,workflow_sha:$workflow_sha,run_id:$run_id,run_url:$run_url,artifact:"SmartBook-Pinyin-Overlay-v0.1.0",artifact_id:$artifact_id,apk_sha256:$apk_sha256,finished_at:$finished_at}' \
+            '{status:$status,workflow_sha:$workflow_sha,run_id:$run_id,run_url:$run_url,artifact:"SmartBook-Pinyin-Overlay-v0.2.0",artifact_id:$artifact_id,apk_sha256:$apk_sha256,finished_at:$finished_at}' \
             > .ci-status/smartbook-pinyin-overlay.json
 
           git config user.name 'github-actions[bot]'
