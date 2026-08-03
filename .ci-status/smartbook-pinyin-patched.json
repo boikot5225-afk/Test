@@ -1,8 +1,8 @@
 {
   "status": "failure",
-  "workflow_sha": "a85f4faad2f67ac6b19c08891adbe800a9e3052c",
-  "finished_at": "2026-08-03T06:25:05Z",
-  "run_url": "https://github.com/boikot5225-afk/Test/actions/runs/30790001598",
+  "workflow_sha": "9ced255616b6f996e3e57abc7fbb44b964b61325",
+  "finished_at": "2026-08-03T06:29:57Z",
+  "run_url": "https://github.com/boikot5225-afk/Test/actions/runs/30790259691",
   "original_version": "3.6",
   "npatch": "jar-v1.0.6-698-release.jar",
   "patched_sha256": "",
