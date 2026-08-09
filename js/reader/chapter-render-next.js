@@ -270,8 +270,13 @@ export function createReaderChapterRenderer({
         // active and every existing synchronous caller keeps working exactly
         // as before — and fill the rest in afterward, off the main thread's
         // single unbroken stretch, a chunk at a time.
-        const PRIORITY_WINDOW = 40;
-        const CHUNK_SIZE = 20;
+        // Galaxy A54: keep the synchronous first paint to roughly one viewport.
+        // v77.41 still rendered 40 paragraphs at the start of a chapter (up to
+        // 80 in the middle) before yielding, which is enough CJK token/ruby work
+        // to look like the book never opened. Render only the nearby paragraphs
+        // first, then fill the rest in small cancellable chunks.
+        const PRIORITY_WINDOW = 8;
+        const CHUNK_SIZE = 4;
         if (paragraphs.length <= PRIORITY_WINDOW * 2) {
           chapterText.innerHTML = paragraphs.map(paragraphHtml).join('');
           finalizeChapterDom();
