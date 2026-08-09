@@ -12,6 +12,7 @@ on:
       - fix/zh-pinyin-stability-77.37
       - fix/77.41-zh-open-a54
       - perf/77.41-reader-core
+      - feature/77.41-real-toc
     paths:
       - '.github/workflows/android-apk.yml'
       - 'android/**'
