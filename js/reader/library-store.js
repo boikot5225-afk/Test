@@ -102,10 +102,53 @@ export function createReaderLibraryStore({
     return books;
   }
 
-  function save({ schedule = true } = {}) {
+  // Full library persistence is expensive: JSON.stringify() of all chapters,
+  // translations and analyses plus a localStorage write is synchronous on the
+  // WebView main thread. renderReaderChapter() calls save() on normal navigation,
+  // so doing that work per tap is exactly the kind of hidden long task that
+  // makes every language feel sticky. Positions are tiny and still save
+  // immediately; the multi-megabyte snapshot is coalesced and committed while
+  // the UI is idle. Explicit imports/deletes still update the in-memory list
+  // synchronously, so callers see their changes at once.
+  let localCommitTimer = null;
+  let localIdleHandle = null;
+  let localCommitPending = false;
+
+  function cancelScheduledLocalCommit() {
+    if (localCommitTimer) clearTimeout(localCommitTimer);
+    localCommitTimer = null;
+    if (localIdleHandle != null && typeof cancelIdleCallback === 'function') {
+      try { cancelIdleCallback(localIdleHandle); } catch {}
+    }
+    localIdleHandle = null;
+  }
+
+  function scheduleLocalCommit(delay = 550) {
+    localCommitPending = true;
+    cancelScheduledLocalCommit();
+    localCommitTimer = setTimeout(() => {
+      localCommitTimer = null;
+      const run = () => {
+        localIdleHandle = null;
+        commitLocalSnapshot();
+      };
+      if (typeof requestIdleCallback === 'function') {
+        localIdleHandle = requestIdleCallback(run, { timeout: 1800 });
+      } else {
+        setTimeout(run, 0);
+      }
+    }, delay);
+  }
+
+  function commitLocalSnapshot() {
+    cancelScheduledLocalCommit();
+    if (!localCommitPending) return getBooks() || [];
+    localCommitPending = false;
+
     let books = dedupeBooks(getBooks() || []);
     setBooks(books);
     savePositions(books);
+
     // localStorage is only the fast in-session cache now — IndexedDB below is
     // the durable store (no ~5MB ceiling) and cloud sync mirrors it. A quota
     // failure here alone doesn't endanger the data, so it's logged, not surfaced.
@@ -140,9 +183,30 @@ export function createReaderLibraryStore({
       onError('[reader] library IndexedDB save failed', error);
       if (!localOk) onSaveError?.(error);
     });
+    return books;
+  }
+
+  function save({ schedule = true } = {}) {
+    // Keep dedupe semantics synchronous because import code relies on the
+    // returned list, but keep the expensive multi-MB serialization out of the
+    // interaction frame.
+    const books = dedupeBooks(getBooks() || []);
+    setBooks(books);
+    savePositions(books);
+    localCommitPending = true;
+    scheduleLocalCommit(550);
     if (schedule) scheduleCloudSave();
     return books;
   }
+
+  // Best-effort flush when Android backgrounds/destroys the page. This happens
+  // off the interaction path, so doing the synchronous snapshot here is a much
+  // better trade than risking the last import/annotation on an abrupt close.
+  try {
+    globalThis.addEventListener?.('pagehide', () => {
+      if (localCommitPending) commitLocalSnapshot();
+    });
+  } catch {}
 
   // Until hydrateFromIndexedDB has merged the durable copy into memory once,
   // a blind put() would overwrite IndexedDB's full library with whatever
@@ -251,9 +315,11 @@ export function createReaderLibraryStore({
   function scheduleCloudSave() {
     const timer = getCloudSaveTimer();
     if (timer) clearTimeout(timer);
+    // Cloud serialization/upsert also walks the whole library. Give interaction
+    // bursts time to settle so ten page turns become one upload.
     setCloudSaveTimer(setTimeout(() => {
       saveToCloud().catch(error => onError('[reader cloud] save skipped:', error?.message || error));
-    }, 1200));
+    }, 2200));
   }
 
   async function saveToCloud(options = {}) {
