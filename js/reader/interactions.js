@@ -1,5 +1,11 @@
 // DOM event bindings for the reader.
 // Navigation, AI actions, TTS and word-panel behavior are injected from app.js.
+//
+// Performance note: this module intentionally uses delegation. The old reader
+// attached one click listener to every .reader-word / paragraph / action button
+// after each background render chunk. On long chapters that meant repeatedly
+// scanning thousands of nodes while the DOM kept growing — effectively O(n²)
+// setup work. One listener on the chapter root handles current and future nodes.
 
 export function createReaderInteractions({
   getRoot,
@@ -42,62 +48,62 @@ export function createReaderInteractions({
     }, { passive: true });
   }
 
-  function bindParagraphEvents() {
-    bindSwipe();
-    const root = getRoot();
-    if (!root) return;
+  function stopReaderClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+  }
 
-    root.querySelectorAll('.reader-word').forEach((wordElement) => {
-      if (wordElement.dataset.boundReaderWord === '1') return;
-      wordElement.dataset.boundReaderWord = '1';
-      wordElement.addEventListener('click', (event) => {
+  function bindClickDelegation() {
+    const root = getRoot();
+    if (!root || root.dataset.boundReaderDelegation === '1') return;
+    root.dataset.boundReaderDelegation = '1';
+
+    root.addEventListener('click', (event) => {
+      const target = event.target;
+      if (!target?.closest) return;
+
+      const wordElement = target.closest('.reader-word');
+      if (wordElement && root.contains(wordElement)) {
         if (window.__readerSuppressWordTap) {
           window.__readerSuppressWordTap = false;
-          event.preventDefault();
-          event.stopPropagation();
+          stopReaderClick(event);
           return;
         }
         if (hasNativeSelection()) {
           scheduleSelectionUpdate();
-          event.preventDefault();
-          event.stopPropagation();
-          if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
-          return false;
+          stopReaderClick(event);
+          return;
         }
-        event.preventDefault();
-        event.stopPropagation();
-        if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+        stopReaderClick(event);
         const word = wordElement.dataset.word || wordElement.textContent || '';
         const index = Number(wordElement.dataset.readerIndex);
         openWordPanel(word, Number.isFinite(index) ? index : (getCurrentBook()?.currentParagraph || 0));
-        return false;
-      }, { capture: true });
-    });
+        return;
+      }
 
-    root.querySelectorAll('.reader-action-btn').forEach((button) => {
-      if (button.dataset.boundReaderAction === '1') return;
-      button.dataset.boundReaderAction = '1';
-      button.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+      const button = target.closest('.reader-action-btn');
+      if (button && root.contains(button)) {
+        stopReaderClick(event);
         const action = button.dataset.readerAction;
-        const index = Number(button.dataset.readerIndex);
+        const rawIndex = button.dataset.readerIndex;
+        const index = rawIndex == null || rawIndex === '' ? null : Number(rawIndex);
         runAction(event, action, Number.isFinite(index) ? index : null);
-        return false;
-      }, { capture: true });
-    });
+        return;
+      }
 
-    root.querySelectorAll('.reader-paragraph').forEach((paragraph) => {
-      if (paragraph.dataset.boundReaderSelect === '1') return;
-      paragraph.dataset.boundReaderSelect = '1';
-      paragraph.addEventListener('click', (event) => {
-        if (event.target?.closest?.('.reader-action-btn, .reader-word, details, summary, button, input, textarea, select, a')) return;
-        const index = Number(paragraph.dataset.p);
-        if (!Number.isFinite(index)) return;
-        selectParagraph(index);
-      });
-    });
+      if (target.closest('.reader-action-btn, .reader-word, details, summary, button, input, textarea, select, a')) return;
+      const paragraph = target.closest('.reader-paragraph');
+      if (!paragraph || !root.contains(paragraph)) return;
+      const index = Number(paragraph.dataset.p);
+      if (!Number.isFinite(index)) return;
+      selectParagraph(index);
+    }, true);
+  }
+
+  function bindParagraphEvents() {
+    bindSwipe();
+    bindClickDelegation();
   }
 
   function installActionDelegation() {
@@ -105,7 +111,11 @@ export function createReaderInteractions({
     window.__readerActionDelegationInstalled = true;
     document.addEventListener('click', (event) => {
       const button = event.target?.closest?.('.reader-action-btn');
-      if (!button || event.defaultPrevented || button.dataset.boundReaderAction === '1') return;
+      if (!button || event.defaultPrevented) return;
+      // Reader-chapter actions are handled by the root delegate above. Keep this
+      // document-level fallback only for action buttons rendered outside it.
+      const root = getRoot();
+      if (root?.contains(button)) return;
       event.preventDefault();
       event.stopPropagation();
       if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
