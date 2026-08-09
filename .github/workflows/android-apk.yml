@@ -101,10 +101,11 @@ jobs:
             || { echo 'reader-app.js in the APK has no Japanese tokenizer'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/word-state.js | grep -qF 'PASSIVE_RUBY_SENTINEL' \
             || { echo 'stable CJK ruby policy did not ship'; exit 1; }
-          unzip -p "$APK" assets/www/js/reader/chapter-render-next.js | grep -qF 'holdFirstCjkPaintUntilCore' \
-            || { echo 'single-paint CJK renderer did not ship'; exit 1; }
-          unzip -p "$APK" assets/www/js/reader/chapter-render-next.js | grep -qF 'Подготавливаю слова и пиньинь' \
-            || { echo 'Chinese dictionary warm-up state did not ship'; exit 1; }
+          unzip -p "$APK" assets/www/js/reader/chapter-render-next.js | grep -qF 'startCjkCoreWarmupInBackground' \
+            || { echo 'non-blocking CJK dictionary warm-up did not ship'; exit 1; }
+          if unzip -p "$APK" assets/www/js/reader/chapter-render-next.js | grep -qF 'holdFirstCjkPaintUntilCore'; then
+            echo 'blocking single-paint CJK renderer is back — first paint must never wait on the dictionary'; exit 1
+          fi
           if unzip -l "$APK" | grep -qF 'assets/www/scripts/'; then
             echo 'dev scripts leaked into the APK'; exit 1
           fi
