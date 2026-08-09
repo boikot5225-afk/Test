@@ -120,3 +120,42 @@ jobs:
           name: reader-ai-77.37-zh-stable-debug
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+  # Manual-dispatch-only: commits the just-built APK to a dedicated branch as
+  # a plain file. The normal artifact download (above) redirects to Azure
+  # blob storage, which isn't reachable from every environment that might
+  # need the APK — this makes it fetchable as an ordinary
+  # raw.githubusercontent.com file instead.
+  deliver:
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download the APK just built above
+        uses: actions/download-artifact@v4
+        with:
+          name: reader-ai-77.37-zh-stable-debug
+          path: apk-out
+
+      - name: Commit APK to delivery branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find apk-out -name '*.apk' | head -1)"
+          echo "found: $APK ($(du -h "$APK" | cut -f1))"
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout --orphan apk-delivery
+          git rm -rf . >/dev/null 2>&1 || true
+          mkdir -p delivered
+          cp "$APK" delivered/reader-ai-77.37-zh-stable-debug.apk
+          git add delivered/reader-ai-77.37-zh-stable-debug.apk
+          git commit -m "chore: deliver reader-ai-77.37-zh-stable-debug.apk from run ${{ github.run_id }}"
+          git push --force origin HEAD:apk-delivery
