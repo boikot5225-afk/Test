@@ -562,7 +562,18 @@ function readerNormalizeZhCoreEntry(row = {}, surface = '') {
   };
 }
 
-function readerBuildZhCoreJsonMap(payload) {
+// 120k+ CC-CEDICT rows, each going through regex-based normalization and a
+// fresh object allocation — measured at ~550ms on a fast desktop V8, and
+// confirmed with Chrome DevTools' 6x "mid-tier mobile" CPU throttle to take
+// ~20+ SECONDS on a slower device. That ran entirely synchronously inside
+// the fetch .then() — one unbroken main-thread block, no paint, no input,
+// for the whole stretch. That IS the "Подготавливаю слова и пиньинь…"
+// freeze: not a stuck network request, a stuck CPU-bound loop. Chunk it so
+// the main thread gets control back every CHUNK_SIZE entries.
+const READER_ZH_CORE_MAP_CHUNK_SIZE = 3000;
+const readerYield = () => new Promise(resolve => setTimeout(resolve, 0));
+
+async function readerBuildZhCoreJsonMap(payload) {
   const map = {};
   const src = Array.isArray(payload)
     ? payload
@@ -570,18 +581,22 @@ function readerBuildZhCoreJsonMap(payload) {
       ? payload.entries
       : payload?.map || payload?.words || payload?.dict || payload || {};
   if (Array.isArray(src)) {
-    src.forEach(row => {
-      const entry = readerNormalizeZhCoreEntry(row);
+    for (let i = 0; i < src.length; i++) {
+      const entry = readerNormalizeZhCoreEntry(src[i]);
       if (entry?.word) map[entry.word] = entry;
-    });
+      if (i > 0 && i % READER_ZH_CORE_MAP_CHUNK_SIZE === 0) await readerYield();
+    }
   } else {
-    Object.entries(src || {}).forEach(([word, row]) => {
+    const rows = Object.entries(src || {});
+    for (let i = 0; i < rows.length; i++) {
+      const [word, row] = rows[i];
       let raw;
       if (Array.isArray(row)) raw = row;
       else raw = { ...(row || {}), word: row?.word || word };
       const entry = readerNormalizeZhCoreEntry(raw, word);
       if (entry?.word) map[entry.word] = entry;
-    });
+      if (i > 0 && i % READER_ZH_CORE_MAP_CHUNK_SIZE === 0) await readerYield();
+    }
   }
   return Object.freeze(map);
 }
@@ -609,8 +624,8 @@ function readerEnsureZhCoreJsonLoaded(options = {}) {
       if (!res.ok) throw new Error('zh_dict_core.json HTTP ' + res.status);
       return res.json();
     })
-    .then(payload => {
-      readerZhCoreJson = readerBuildZhCoreJsonMap(payload);
+    .then(async payload => {
+      readerZhCoreJson = await readerBuildZhCoreJsonMap(payload);
       try {
         localStorage.setItem(READER_ZH_CORE_JSON_META_KEY, JSON.stringify({
           loadedAt: new Date().toISOString(),
@@ -878,7 +893,22 @@ function readerLookupChineseWord(word) {
   const src = READER_ZH_READING_LEXICON[w] ? 'zh_reading' : READER_ZH_CORE_LEXICON[w] ? 'zh_core' : hit._source || 'zh_core_json';
   return { ...hit, word: w, surface: word, lemma: w, pinyin: hit.pinyin || '', _source: src, _note: hit._note || 'локальный китайский словарь' };
 }
+// readerTokenizeChineseParagraph calls this once per paragraph, and a full
+// chapter render calls that in a tight synchronous loop over every paragraph
+// (300+ for a real book) — rebuilding this Set from scratch every time, even
+// though nothing about the user's known/saved words changes mid-render.
+// Measured with Chrome DevTools' 6x CPU throttle: a single full chapter
+// render took 21+ SECONDS, matching the "Подготавливаю слова и пиньинь…"
+// freeze reported on-device — this repeated, redundant rebuild (not the
+// dictionary load, which only happens once) was the dominant cost.
+// Cache it for the current synchronous burst of work via queueMicrotask:
+// nothing can mutate word state or the lexical cache mid-render (JS is
+// single-threaded and the render loop has no awaits), so every call within
+// one render pass safely reuses the same Set, and the cache is gone before
+// anything else gets to run.
+let readerChineseWordSetCache = null;
 function readerBuildChineseWordSet() {
+  if (readerChineseWordSetCache) return readerChineseWordSetCache;
   // Dynamic/user words only. The full CC-CEDICT map can be 120k+ entries,
   // so we do NOT copy it into a Set on every paragraph render.
   if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: true });
@@ -895,6 +925,8 @@ function readerBuildChineseWordSet() {
     const w = readerNormalizeWord(st.word, 'zh');
     if (w) dict.add(w);
   });
+  readerChineseWordSetCache = dict;
+  queueMicrotask(() => { readerChineseWordSetCache = null; });
   return dict;
 }
 
