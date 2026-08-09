@@ -70,9 +70,6 @@ export function createReaderChapterRenderer({
     else jaCoreWarmPromise = startWarmup();
   }
 
-  // Yield chapter back-fill to an actual idle slice instead of chaining
-  // setTimeout(0). The latter still queues continuous main-thread work and can
-  // make taps/scrolling stutter for seconds while a large chapter is filling.
   function waitForIdle() {
     return new Promise(resolve => {
       if (typeof requestIdleCallback === 'function') {
@@ -83,7 +80,6 @@ export function createReaderChapterRenderer({
     });
   }
 
-  // ── Fast navigation helpers ──────────────────────────────────────
   function tryFastNav(chapterText, chapterIndex, paragraphs, paragraphIndex, chapter, translations, book) {
     const prevChIdx = Number(chapterText.dataset.renderedChapter ?? -1);
     const prevParCount = Number(chapterText.dataset.renderedParCount ?? 0);
@@ -224,11 +220,6 @@ export function createReaderChapterRenderer({
           bindReaderInteractions();
         };
 
-        // First paint stays small. The rest is filled only during browser idle
-        // slices, so a 300-paragraph chapter cannot monopolize the UI thread.
-        // Pending shells are filled IN PLACE: this preserves IntersectionObserver
-        // registrations and avoids constantly replacing DOM nodes under the
-        // browser while it is trying to scroll/layout the chapter.
         const PRIORITY_WINDOW = 8;
         const isCjk = ['zh', 'ja'].includes(canonicalLang(activeReaderLang));
         const CHUNK_SIZE = isCjk ? 2 : 6;
@@ -262,6 +253,14 @@ export function createReaderChapterRenderer({
                 const currentActive = Number(chapterText.dataset.activeParagraph);
                 shell.classList.toggle('active', index === currentActive);
               }
+            }
+
+            // Temporary one-paragraph pages are used while shells are empty.
+            // Once the chapter is real DOM, repaginate exactly once with actual
+            // heights. Scroll mode returns false here and does no extra work.
+            if (syncPagesMode?.({ queryOnly: true }) === true) {
+              await waitForIdle();
+              if (!stale()) syncPagesMode?.({ full: true });
             }
           })();
         }
