@@ -84,6 +84,19 @@ export function createReaderChapterRenderer({
     else jaCoreWarmPromise = startWarmup();
   }
 
+  // Yield chapter back-fill to an actual idle slice instead of chaining
+  // setTimeout(0). The latter still queues continuous main-thread work and can
+  // make taps/scrolling stutter for seconds while a large chapter is filling.
+  function waitForIdle() {
+    return new Promise(resolve => {
+      if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(() => resolve(), { timeout: 180 });
+      } else {
+        setTimeout(resolve, 16);
+      }
+    });
+  }
+
   // ── Fast navigation helpers ──────────────────────────────────────
   // Returns true if we successfully updated only active-paragraph state
   // without rebuilding all DOM. Falls back to false → full render.
@@ -116,18 +129,11 @@ export function createReaderChapterRenderer({
     const prevActive = Number(chapterText.dataset.activeParagraph ?? -1);
     if (prevActive === paragraphIndex) return true; // nothing to do
 
-    // Translation/analysis blocks are rendered for every paragraph that HAS
-    // one (not just the active paragraph — see the full-render path below),
-    // so switching the active paragraph only ever needs to move the
-    // highlight, never add/remove help blocks that belong to other
-    // paragraphs. The active paragraph's own block is only inserted here if
-    // it's missing (e.g. translated after the initial render).
     const oldEl = chapterText.querySelector(`.reader-paragraph[data-p="${prevActive}"]`);
-    if (oldEl) oldEl.classList.remove('active');
-
     const newEl = chapterText.querySelector(`.reader-paragraph[data-p="${paragraphIndex}"]`);
-    if (!newEl) return false; // DOM mismatch — fall back to full render
+    if (!newEl || newEl.dataset.readerPending === '1') return false;
 
+    if (oldEl) oldEl.classList.remove('active');
     newEl.classList.add('active');
     {
       const translationKey = `${chapter?.id}:${paragraphIndex}`;
@@ -152,15 +158,7 @@ export function createReaderChapterRenderer({
     const readingView = document.getElementById('reader-reading-view');
     if (readingView) {
       readingView.dataset.readerLang = activeReaderLang;
-      // Declaring the language matters most on Android, where the Noto CJK
-      // fonts the CSS asks for by name are usually not installed and the system
-      // falls back on its own. Without a lang the fallback prefers Simplified
-      // Chinese shapes, so Japanese renders with the wrong forms of 今 直 骨 —
-      // the exact problem the per-language font stacks were meant to avoid.
       readingView.lang = activeReaderLang;
-      // Layout, line-height and the ruby scaffold are the same for every
-      // space-less script, only the font differs — so the CSS keys off the
-      // script and reserves data-reader-lang for the font choice.
       readingView.dataset.readerScript = ['zh', 'ja'].includes(canonicalLang(activeReaderLang)) ? 'cjk' : 'latin';
     }
 
@@ -194,8 +192,6 @@ export function createReaderChapterRenderer({
     }
 
     if (progressBar) progressBar.style.width = progress + '%';
-    // Mirror into the always-on-top line that stays visible when the reader
-    // chrome auto-hides (calm-reader mode).
     const freeProg = document.getElementById('rd-free-prog-fill');
     if (freeProg) freeProg.style.width = progress + '%';
     if (progressText) progressText.textContent = `${progress}% · абзац ${paragraphIndex + 1} / ${Math.max(1, paragraphs.length)}`;
@@ -242,10 +238,6 @@ export function createReaderChapterRenderer({
         const paragraphHtml = (paragraph, index) => {
           const translationKey = `${chapter?.id}:${index}`;
           const translation = translations[translationKey];
-          // Every paragraph that HAS a translation/analysis shows it, not just
-          // the active one — otherwise switching the active paragraph away and
-          // back was the only way to "regain" a help block that was already
-          // there, since it got attached/detached purely based on activeness.
           return `<div class="reader-paragraph ${index === paragraphIndex ? 'active' : ''}" data-p="${index}"><div class="reader-paragraph-text">${renderParagraphText(paragraph, index)}</div>${translation ? renderTranslationBlock(translation) : ''}${book.readerAnalyses?.[translationKey] ? renderAnalysisBlock(book.readerAnalyses[translationKey]) : ''}</div>`;
         };
 
@@ -259,24 +251,13 @@ export function createReaderChapterRenderer({
           bindReaderInteractions();
         };
 
-        // Per-paragraph Chinese/Japanese rendering (tokenize + pinyin/furigana
-        // ruby HTML per word) is real work, and a long chapter has hundreds of
-        // paragraphs — building all of it into one HTML string in a single
-        // synchronous pass measured at 20+ SECONDS of unbroken main-thread
-        // work under a mid-tier-mobile CPU profile, which is exactly the
-        // "Подготавливаю слова и пиньинь…" freeze reported on real devices
-        // (opening a book calls this same "Full render" path). Render a
-        // window around the active paragraph synchronously — so scroll-to-
-        // active and every existing synchronous caller keeps working exactly
-        // as before — and fill the rest in afterward, off the main thread's
-        // single unbroken stretch, a chunk at a time.
-        // Galaxy A54: keep the synchronous first paint to roughly one viewport.
-        // v77.41 still rendered 40 paragraphs at the start of a chapter (up to
-        // 80 in the middle) before yielding, which is enough CJK token/ruby work
-        // to look like the book never opened. Render only the nearby paragraphs
-        // first, then fill the rest in small cancellable chunks.
+        // First paint stays small. The rest is filled only during browser idle
+        // slices, so a 300-paragraph chapter cannot monopolize the UI thread.
+        // Because interactions are delegated at the chapter root, newly-filled
+        // words need ZERO listener-binding scans.
         const PRIORITY_WINDOW = 8;
-        const CHUNK_SIZE = 4;
+        const isCjk = ['zh', 'ja'].includes(canonicalLang(activeReaderLang));
+        const CHUNK_SIZE = isCjk ? 2 : 6;
         if (paragraphs.length <= PRIORITY_WINDOW * 2) {
           chapterText.innerHTML = paragraphs.map(paragraphHtml).join('');
           finalizeChapterDom();
@@ -292,30 +273,22 @@ export function createReaderChapterRenderer({
           const stale = () => chapterText._readerFillToken !== renderToken || !chapterText.isConnected;
           (async () => {
             const pending = [];
-            for (let i = 0; i < lo; i++) pending.push(i);
+            // Prefer forward text first: that's where normal reading is heading.
             for (let i = hi; i < paragraphs.length; i++) pending.push(i);
+            for (let i = lo - 1; i >= 0; i--) pending.push(i);
+
             for (let i = 0; i < pending.length; i += CHUNK_SIZE) {
-              await new Promise(resolve => setTimeout(resolve, 0));
-              // Bail out if the user navigated away (new chapter/book render,
-              // or this exact render got superseded) while we were filling in —
-              // checked before every paragraph, not just every chunk, so a
-              // superseded fill can't keep doing real work (and stacking with
-              // whatever superseded it) for a whole chunk after it's stale.
+              await waitForIdle();
               if (stale()) return;
               for (const index of pending.slice(i, i + CHUNK_SIZE)) {
                 if (stale()) return;
                 const shell = chapterText.querySelector(`.reader-paragraph[data-p="${index}"][data-reader-pending="1"]`);
                 if (!shell) continue;
                 shell.outerHTML = paragraphHtml(paragraphs[index], index);
-                // paragraphHtml() closed over paragraphIndex from when this
-                // fill started; fast-nav (tryFastNav) moves the active
-                // paragraph afterward without bumping _readerFillToken, so
-                // re-sync against whichever paragraph is actually active now.
                 const currentActive = Number(chapterText.dataset.activeParagraph);
                 const filled = chapterText.querySelector(`.reader-paragraph[data-p="${index}"]`);
                 filled?.classList.toggle('active', index === currentActive);
               }
-              bindReaderInteractions();
             }
           })();
         }
