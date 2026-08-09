@@ -69,7 +69,7 @@ function ensureStyles() {
   style.id = 'reader-canonical-toc-style';
   style.textContent = `
     #reader-toc-list .rd-toc-item.rd-toc-canonical {
-      padding-left: calc(16px + min(var(--toc-depth, 0), 5) * 18px);
+      padding-left: calc(16px + var(--toc-indent, 0px));
       min-height: 44px;
     }
     #reader-toc-list .rd-toc-item.rd-toc-canonical .rd-toc-num {
@@ -149,7 +149,7 @@ function renderCanonicalToc(book) {
     ].filter(Boolean).join(' ');
     const click = mapped ? `onclick="readerGoToTocItem(${index})"` : 'disabled';
     const countLabel = mapped && count ? `${count} абз.` : '';
-    return `<button class="${classes}" style="--toc-depth:${depth}" ${click}>
+    return `<button class="${classes}" style="--toc-indent:${depth * 18}px" ${click}>
       <span class="rd-toc-num">${markerText}</span>
       <span class="rd-toc-title">${escapeHtml(item?.title || `Раздел ${index + 1}`)}</span>
       <span class="rd-toc-count">${escapeHtml(countLabel)}</span>
