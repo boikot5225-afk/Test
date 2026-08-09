@@ -7,7 +7,8 @@ import {
   chapterContentText,
   firstReadableContentIndex,
 } from './semantic-content.js?v=4';
-import { parseSemanticEpubFile } from './semantic-import-stage1.js?v=5';
+import { parseSemanticEpubFileWithToc } from './semantic-import-toc.js?v=1';
+import { installCanonicalTocUi } from './toc-ui.js?v=1';
 
 let pendingImport = null;
 let bridgeStarted = false;
@@ -97,7 +98,7 @@ async function handleSemanticEpub(event, originalImport) {
   if (preview) preview.value = '';
 
   try {
-    const result = await parseSemanticEpubFile(file, {
+    const result = await parseSemanticEpubFileWithToc(file, {
       bookId: newBookId(),
       onProgress: message => setStatus(`⏳ ${message}`),
     });
@@ -118,8 +119,9 @@ async function handleSemanticEpub(event, originalImport) {
     const diag = result.diagnostics || {};
     const missing = diag.missingImages?.length || 0;
     const footnotePart = diag.footnotes ? ` · ${diag.footnotes} сносок` : '';
+    const tocPart = diag.tocEntries ? ` · оглавление: ${diag.tocEntries}` : '';
     setStatus(
-      `✅ EPUB проверен: ${diag.chapters || 0} глав · ${diag.images || 0} изображений${footnotePart} · ${diag.textChars || 0} знаков${missing ? ` · не найдено изображений: ${missing}` : ''}. Нажми «Сохранить».`,
+      `✅ EPUB проверен: ${diag.chapters || 0} глав${tocPart} · ${diag.images || 0} изображений${footnotePart} · ${diag.textChars || 0} знаков${missing ? ` · не найдено изображений: ${missing}` : ''}. Нажми «Сохранить».`,
       missing ? 'progress' : 'ok',
     );
   } catch (error) {
@@ -153,14 +155,19 @@ async function savePendingSemanticBook(originalSave) {
   const now = new Date().toISOString();
   const chapters = pendingImport.chapters || [];
   const footnotes = pendingImport.footnotes || {};
+  const toc = Array.isArray(pendingImport.toc) ? pendingImport.toc : [];
   const firstItems = chapters[0]?.paragraphs || [];
   const charCount = Number(pendingImport.diagnostics?.textChars || 0);
   const footnoteCount = Object.keys(footnotes).length;
-  const importKey = `semantic-v3:${language}:${hashText(`${title}|${author}|${chapters.length}|${charCount}|${footnoteCount}`)}`;
+  const contentHash = hashText(`${title}|${author}|${chapters.length}|${charCount}|${footnoteCount}`);
+  const legacyChapterCount = Number(pendingImport.diagnostics?.legacyChapterCount || chapters.length);
+  const legacyContentHash = hashText(`${title}|${author}|${legacyChapterCount}|${charCount}|${footnoteCount}`);
+  const importKey = `semantic-v4:${language}:${contentHash}`;
+  const legacyImportKey = `semantic-v3:${language}:${legacyContentHash}`;
 
   const book = {
     id: pendingImport.bookId,
-    schemaVersion: 3,
+    schemaVersion: Number(pendingImport.schemaVersion) || 4,
     title,
     author,
     level,
@@ -176,6 +183,7 @@ async function savePendingSemanticBook(originalSave) {
     currentChapter: 0,
     currentParagraph: firstReadableContentIndex(firstItems),
     chapters,
+    toc,
     footnotes,
     _semanticLineItemsV1: true,
     _semanticTextChunksV1: true,
@@ -187,9 +195,19 @@ async function savePendingSemanticBook(originalSave) {
   const durableBooks = await readDurableBooks(key);
   const books = mergeBookLists(durableBooks, localBooks);
   const existing = books.find(item => item?.importKey === importKey);
+  const legacyExisting = existing ? null : books.find(item => item?.importKey === legacyImportKey);
+  if (legacyExisting) {
+    // Re-importing a pre-TOC semantic EPUB upgrades it instead of silently
+    // opening the old copy with the broken generated chapter list. Keep the
+    // approximate reading position but use the newly parsed book/image keys.
+    book.currentChapter = Math.max(0, Math.min(Number(legacyExisting.currentChapter) || 0, Math.max(0, chapters.length - 1)));
+    const currentItems = chapters[book.currentChapter]?.paragraphs || [];
+    book.currentParagraph = Math.max(0, Math.min(Number(legacyExisting.currentParagraph) || 0, Math.max(0, currentItems.length - 1)));
+    book.createdAt = legacyExisting.createdAt || now;
+  }
   const next = existing
     ? books
-    : mergeBookLists([book], books.filter(item => item?.id !== book.id));
+    : mergeBookLists([book], books.filter(item => item?.id !== book.id && item?.id !== legacyExisting?.id));
 
   let localSaved = false;
   let durableSaved = false;
@@ -218,6 +236,9 @@ async function savePendingSemanticBook(originalSave) {
   if (existing && importedBookId !== existing.id) {
     await imgStoreDeleteBook(importedBookId).catch(() => {});
   }
+  if (legacyExisting?.id && legacyExisting.id !== importedBookId) {
+    await imgStoreDeleteBook(legacyExisting.id).catch(() => {});
+  }
 
   window.closeReaderImportModal?.();
   await window.renderReaderScreen?.();
@@ -225,6 +246,8 @@ async function savePendingSemanticBook(originalSave) {
 
   if (existing) {
     window.showToast?.('📚 Такая книга уже есть — открыта существующая');
+  } else if (legacyExisting) {
+    window.showToast?.('📚 Книга обновлена: восстановлено настоящее оглавление');
   } else if (localSaved && durableSaved) {
     window.showToast?.('📖 EPUB добавлен в семантическом формате');
   } else if (durableSaved) {
@@ -275,6 +298,7 @@ export function installSemanticRouteNow() {
 }
 
 export function installSemanticImportBridge() {
+  installCanonicalTocUi();
   if (bridgeStarted) return;
   bridgeStarted = true;
   if (installWhenReady()) return;
