@@ -63,6 +63,8 @@ export function createReaderPagesMode({
   let animating = false;
   let resizeBound = false;
   let resizeTimer = null;
+  let lastMeasuredWidth = 0;
+  let lastMeasuredHeight = 0;
   const turnClasses = [
     'rd-page-in', 'rd-page-in-active', 'rd-page-out',
     'rd-page-forward', 'rd-page-backward', 'rd-page-flip',
@@ -82,8 +84,7 @@ export function createReaderPagesMode({
     wraps.forEach((wrap) => {
       [...wrap.querySelectorAll(':scope > .reader-paragraph')].forEach((p) => frag.appendChild(p));
     });
-    chapterText.innerHTML = '';
-    chapterText.appendChild(frag);
+    chapterText.replaceChildren(frag);
   }
 
   function measurePageRanges(chapterText, scroller) {
@@ -93,35 +94,51 @@ export function createReaderPagesMode({
     const padTop = parseFloat(cs.paddingTop) || 0;
     const padBot = parseFloat(cs.paddingBottom) || 0;
     const avail = Math.max(120, scroller.clientHeight - padTop - padBot);
-    const scrollerTop = scroller.getBoundingClientRect().top - scroller.scrollTop;
-    const topOf = (el) => el.getBoundingClientRect().top - scrollerTop;
+    const scrollerRect = scroller.getBoundingClientRect();
+    const scrollerTop = scrollerRect.top - scroller.scrollTop;
+
+    // One geometry read per paragraph. The previous implementation called
+    // getBoundingClientRect() two or three times for the same node; on a large
+    // WebView DOM that needlessly multiplied layout-query overhead.
+    const rects = paragraphs.map((el) => {
+      const rect = el.getBoundingClientRect();
+      const top = rect.top - scrollerTop;
+      return { top, bottom: top + rect.height };
+    });
 
     const ranges = [];
     let start = 0;
-    let startTop = topOf(paragraphs[0]);
+    let startTop = rects[0].top;
     for (let i = 0; i < paragraphs.length; i++) {
-      const bottom = topOf(paragraphs[i]) + paragraphs[i].getBoundingClientRect().height;
+      const bottom = rects[i].bottom;
       if (i > start && bottom - startTop > avail) {
         ranges.push({ start, end: i - 1 });
         start = i;
-        startTop = topOf(paragraphs[i]);
+        startTop = rects[i].top;
       }
     }
     ranges.push({ start, end: paragraphs.length - 1 });
+    lastMeasuredWidth = scroller.clientWidth;
+    lastMeasuredHeight = scroller.clientHeight;
     return { ranges, paragraphs };
   }
 
   function buildPageElements(chapterText, ranges, paragraphs) {
-    return ranges.map(({ start, end }) => {
+    const fragment = document.createDocumentFragment();
+    const nextPages = ranges.map(({ start, end }) => {
       const wrap = document.createElement('div');
       wrap.className = 'rd-page';
       for (let i = start; i <= end; i++) wrap.appendChild(paragraphs[i]);
       const fold = document.createElement('div');
       fold.className = 'rd-page-fold';
       wrap.appendChild(fold);
-      chapterText.appendChild(wrap);
+      fragment.appendChild(wrap);
       return { start, end, el: wrap };
     });
+    // One connected-tree insertion instead of appending every page wrapper
+    // separately. Paragraphs are moved while wrappers are detached.
+    chapterText.appendChild(fragment);
+    return nextPages;
   }
 
   function pageIndexForParagraph(idx) {
@@ -183,10 +200,6 @@ export function createReaderPagesMode({
     if (target < 0 || target >= pages.length) return false;
     const curPage = pages[currentPageIndex];
     const nextPage = pages[target];
-    // Guard against a stale `pages` array (e.g. a rebuild landed between this
-    // call being scheduled and running) — without this, a missing .el would
-    // throw after `animating` is already true, leaving it stuck forever and
-    // every future tap/swipe silently doing nothing ("иногда не листается").
     if (!curPage?.el || !nextPage?.el) return false;
     const directionClass = delta > 0 ? 'rd-page-forward' : 'rd-page-backward';
     const finishTurn = () => {
@@ -212,9 +225,8 @@ export function createReaderPagesMode({
         return true;
       }
 
-      // Commit the incoming page's starting transform before activating both
-      // transitions. Without this layout read, WebView may coalesce the two
-      // class changes and skip the incoming motion altogether.
+      // One intentional layout read to commit the incoming page's starting
+      // transform before activating both transitions.
       void nextPage.el.offsetWidth;
       requestAnimationFrame(() => {
         curPage.el.classList.add('rd-page-out');
@@ -255,7 +267,20 @@ export function createReaderPagesMode({
   function handleResize() {
     if (!enabled) return;
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(rebuild, 150);
+    resizeTimer = setTimeout(() => {
+      const scroller = getScroller();
+      if (!scroller) return;
+      // Ignore tiny viewport jitter from browser/UI chrome. A real rotate,
+      // window resize or keyboard change is still large enough to repaginate.
+      const dw = Math.abs(scroller.clientWidth - lastMeasuredWidth);
+      const dh = Math.abs(scroller.clientHeight - lastMeasuredHeight);
+      if (lastMeasuredWidth && lastMeasuredHeight && dw < 8 && dh < 24) return;
+      if (animating) {
+        handleResize();
+        return;
+      }
+      rebuild();
+    }, 240);
   }
   function bindResize() {
     if (resizeBound) return;
