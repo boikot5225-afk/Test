@@ -26,8 +26,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 22
-        versionName '77.42-toc2'
+        versionCode 23
+        versionName '77.42-toc3'
     }
 
     buildFeatures {
@@ -81,8 +81,8 @@ dependencies {
  *
  * The repository root is the single source of truth — the same tree is what
  * Firebase Hosting serves. Only the parts that a phone actually runs are
- * staged here; server-side code, build tooling and the dev preview pages stay
- * in the repository but never reach the APK.
+ * staged here; server-side code, build tooling and the dev preview pages stay in
+ * the repository but never reach the APK.
  */
 tasks.register('syncWebAssets', Sync) {
     from(rootProject.projectDir.parentFile) {
