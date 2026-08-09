@@ -1,0 +1,54 @@
+name: Deliver APK to raw branch
+
+# One-off helper: pulls an already-built debug APK (from an android-apk.yml
+# run) out of GitHub Actions artifact storage and commits it to a dedicated
+# branch, so it can be fetched afterward as a plain raw.githubusercontent.com
+# file instead of through the artifacts API. Manual dispatch only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Run ID of the android-apk.yml build to pull the APK from'
+        required: true
+      dest_branch:
+        description: 'Branch to commit the APK to'
+        required: false
+        default: 'apk-delivery'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  deliver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download the built APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: reader-ai-77.37-zh-stable-debug
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apk-out
+
+      - name: Commit APK to delivery branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find apk-out -name '*.apk' | head -1)"
+          echo "found: $APK ($(du -h "$APK" | cut -f1))"
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout --orphan "${{ inputs.dest_branch }}"
+          git rm -rf . >/dev/null 2>&1 || true
+          mkdir -p delivered
+          cp "$APK" delivered/reader-ai-77.37-zh-stable-debug.apk
+          git add delivered/reader-ai-77.37-zh-stable-debug.apk
+          git commit -m "chore: deliver reader-ai-77.37-zh-stable-debug.apk from run ${{ inputs.source_run_id }}"
+          git push --force origin "HEAD:${{ inputs.dest_branch }}"
