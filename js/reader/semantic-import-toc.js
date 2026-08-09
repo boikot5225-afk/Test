@@ -46,8 +46,8 @@ function firstTocTitleForPath(toc, sourcePath, fallback) {
   return cleanText((toc || []).find(item => cleanPath(item?.sourcePath) === path)?.title) || fallback;
 }
 
-function hasReadableText(items = []) {
-  return items.some(item => semanticItemText(item).trim().length > 1);
+function hasReadableContent(items = []) {
+  return items.some(item => item?.type === 'image' || semanticItemText(item).trim().length > 1);
 }
 
 async function recoverMissingTocDocuments(entries, chapters, toc) {
@@ -66,7 +66,7 @@ async function recoverMissingTocDocuments(entries, chapters, toc) {
       const basePath = path.split('/').slice(0, -1).join('/');
       const parsed = htmlToSemanticItems(html, { basePath })
         .flatMap(item => splitSemanticItemChunks(item));
-      if (!hasReadableText(parsed)) continue;
+      if (!hasReadableContent(parsed)) continue;
       chapters.push({
         id: `toc_recovered_${chapters.length}`,
         sourcePath: path,
@@ -89,8 +89,10 @@ function sortChaptersBySpine(chapters, packageInfo) {
   });
   const originalOrder = new Map((chapters || []).map((chapter, index) => [chapter, index]));
   chapters.sort((a, b) => {
-    const ar = rank.has(cleanPath(a?.sourcePath)) ? rank.get(cleanPath(a?.sourcePath)) : Number.MAX_SAFE_INTEGER;
-    const br = rank.has(cleanPath(b?.sourcePath)) ? rank.get(cleanPath(b?.sourcePath)) : Number.MAX_SAFE_INTEGER;
+    const aPath = cleanPath(a?.sourcePath);
+    const bPath = cleanPath(b?.sourcePath);
+    const ar = rank.has(aPath) ? rank.get(aPath) : Number.MAX_SAFE_INTEGER;
+    const br = rank.has(bPath) ? rank.get(bPath) : Number.MAX_SAFE_INTEGER;
     return ar - br || (originalOrder.get(a) || 0) - (originalOrder.get(b) || 0);
   });
   return chapters;
@@ -119,6 +121,7 @@ export async function parseSemanticEpubFileWithToc(file, options = {}) {
     }
 
     const chapters = result.chapters || [];
+    const legacyChapterCount = chapters.length;
     await recoverMissingTocDocuments(entries, chapters, canonical);
     sortChaptersBySpine(chapters, pkg.packageInfo);
 
@@ -135,6 +138,7 @@ export async function parseSemanticEpubFileWithToc(file, options = {}) {
       tocCanonical: true,
       tocMapped: mapped.filter(item => Number.isInteger(item.chapterIndex)).length,
       tocUnavailable: mapped.filter(item => !Number.isInteger(item.chapterIndex)).length,
+      legacyChapterCount,
     };
     return result;
   } catch (error) {
