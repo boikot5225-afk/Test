@@ -21,7 +21,10 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
 
+import androidx.webkit.ServiceWorkerClientCompat;
+import androidx.webkit.ServiceWorkerControllerCompat;
 import androidx.webkit.WebViewAssetLoader;
+import androidx.webkit.WebViewFeature;
 
 import org.json.JSONObject;
 
@@ -53,6 +56,7 @@ public class MainActivity extends Activity {
 
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;
+    private boolean serviceWorkerClientInstalled = false;
 
     private Uri pendingImportUri;
     private String pendingImportName = "";
@@ -63,6 +67,35 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // Build the local HTTPS asset router before creating/loading the WebView.
+        // v77.41 only unregistered an old service worker from JavaScript. That is
+        // not enough for the page that is already controlled by that worker: its
+        // fetch() calls can still run until the next navigation and bypass the
+        // normal WebViewClient, leaving the static library chrome visible while
+        // JS modules / the Chinese dictionary hang forever. Intercept service-
+        // worker requests too, through the same bundled-asset loader.
+        final WebViewAssetLoader assetLoader = new WebViewAssetLoader.Builder()
+                .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
+                .build();
+
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE)
+                && WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_SHOULD_INTERCEPT_REQUEST)) {
+            ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(new ServiceWorkerClientCompat() {
+                @Override
+                public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
+                    Uri requestUri = request.getUrl();
+                    if (!WebViewAssetLoader.DEFAULT_DOMAIN.equals(requestUri.getHost())) {
+                        return null;
+                    }
+                    if (IMPORT_PATH.equals(requestUri.getPath())) {
+                        return openPendingImportResponse();
+                    }
+                    return assetLoader.shouldInterceptRequest(requestUri);
+                }
+            });
+            serviceWorkerClientInstalled = true;
+        }
 
         webView = new WebView(this);
         webView.setBackgroundColor(Color.rgb(17, 17, 17));
@@ -85,10 +118,6 @@ public class MainActivity extends Activity {
         cookies.setAcceptThirdPartyCookies(webView, true);
 
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
-
-        final WebViewAssetLoader assetLoader = new WebViewAssetLoader.Builder()
-                .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
-                .build();
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -303,6 +332,15 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (serviceWorkerClientInstalled
+                && WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE)) {
+            try {
+                ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(null);
+            } catch (Exception ignored) {
+                // WebView provider changed or is already gone; nothing left to clean up.
+            }
+            serviceWorkerClientInstalled = false;
+        }
         if (webView != null) {
             webView.loadUrl("about:blank");
             webView.stopLoading();
