@@ -33,8 +33,6 @@ function prefersReducedMotion() {
   catch { return false; }
 }
 
-// Race a transitionend against a timeout so a dropped/never-fired event
-// (backgrounded tab, missed frame) can't leave the turn stuck forever.
 function onceTransitionOrTimeout(el, handler, timeoutMs = 650) {
   let done = false;
   const finish = () => {
@@ -58,7 +56,7 @@ export function createReaderPagesMode({
 }) {
   let enabled = loadMode() === 'pages';
   let animation = loadAnimation();
-  let pages = []; // [{ start, end, el }]
+  let pages = [];
   let currentPageIndex = 0;
   let animating = false;
   let resizeBound = false;
@@ -90,6 +88,23 @@ export function createReaderPagesMode({
   function measurePageRanges(chapterText, scroller) {
     const paragraphs = [...chapterText.querySelectorAll(':scope > .reader-paragraph')];
     if (!paragraphs.length) return [];
+
+    // Long chapters first paint only a small window and leave lightweight
+    // paragraph shells to be filled during idle time. Empty shells have no real
+    // height, so measuring them would cram hundreds into one fake page and then
+    // let that page explode as text arrives. Until back-fill finishes, use one
+    // paragraph per temporary page: stable, cheap, and immediately navigable.
+    // chapter-render-next asks for one proper repagination after the last shell
+    // is filled, at which point the normal height-based grouping below takes over.
+    if (paragraphs.some((el) => el.dataset.readerPending === '1')) {
+      lastMeasuredWidth = scroller.clientWidth;
+      lastMeasuredHeight = scroller.clientHeight;
+      return {
+        ranges: paragraphs.map((_, index) => ({ start: index, end: index })),
+        paragraphs,
+      };
+    }
+
     const cs = getComputedStyle(scroller);
     const padTop = parseFloat(cs.paddingTop) || 0;
     const padBot = parseFloat(cs.paddingBottom) || 0;
@@ -97,9 +112,6 @@ export function createReaderPagesMode({
     const scrollerRect = scroller.getBoundingClientRect();
     const scrollerTop = scrollerRect.top - scroller.scrollTop;
 
-    // One geometry read per paragraph. The previous implementation called
-    // getBoundingClientRect() two or three times for the same node; on a large
-    // WebView DOM that needlessly multiplied layout-query overhead.
     const rects = paragraphs.map((el) => {
       const rect = el.getBoundingClientRect();
       const top = rect.top - scrollerTop;
@@ -135,8 +147,6 @@ export function createReaderPagesMode({
       fragment.appendChild(wrap);
       return { start, end, el: wrap };
     });
-    // One connected-tree insertion instead of appending every page wrapper
-    // separately. Paragraphs are moved while wrappers are detached.
     chapterText.appendChild(fragment);
     return nextPages;
   }
@@ -180,18 +190,17 @@ export function createReaderPagesMode({
     showPageInstant(pageIndexForParagraph(getActiveParagraphIndex()));
   }
 
-  // Cheap path for renders that only moved the active paragraph within the
-  // same already-built page structure (fast-nav) — no re-measure needed,
-  // just jump to whichever page now contains the active paragraph.
   function resync() {
     if (!enabled || !pages.length) return;
     const target = pageIndexForParagraph(getActiveParagraphIndex());
     if (target !== currentPageIndex) showPageInstant(target);
   }
 
-  function syncAfterRender({ full }) {
+  function syncAfterRender({ full = false, queryOnly = false } = {}) {
+    if (queryOnly) return enabled;
     if (full) rebuild();
     else resync();
+    return enabled;
   }
 
   function turn(delta) {
@@ -225,8 +234,6 @@ export function createReaderPagesMode({
         return true;
       }
 
-      // One intentional layout read to commit the incoming page's starting
-      // transform before activating both transitions.
       void nextPage.el.offsetWidth;
       requestAnimationFrame(() => {
         curPage.el.classList.add('rd-page-out');
@@ -270,8 +277,6 @@ export function createReaderPagesMode({
     resizeTimer = setTimeout(() => {
       const scroller = getScroller();
       if (!scroller) return;
-      // Ignore tiny viewport jitter from browser/UI chrome. A real rotate,
-      // window resize or keyboard change is still large enough to repaginate.
       const dw = Math.abs(scroller.clientWidth - lastMeasuredWidth);
       const dh = Math.abs(scroller.clientHeight - lastMeasuredHeight);
       if (lastMeasuredWidth && lastMeasuredHeight && dw < 8 && dh < 24) return;
