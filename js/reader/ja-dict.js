@@ -215,11 +215,21 @@ export function createJapaneseDictionary({ url, log = console }) {
   function needsLoad() { return !index && !loading; }
   function count() { return index ? Object.keys(index).length : 0; }
 
+  // Same-origin bundled asset — should resolve near instantly. But chapter
+  // rendering blocks the first CJK paint on this promise, so a fetch that
+  // never settles (WebView quirk, stuck service-worker fetch handler) left
+  // the reader stuck forever with nothing to read. Bound it so a hung
+  // request degrades to the existing empty-index fallback instead.
+  const LOAD_TIMEOUT_MS = 12000;
+
   function ensureLoaded(options = {}) {
     if (index) return Promise.resolve(index);
     if (loading) return loading;
-    loading = fetch(url, { cache: 'force-cache' })
+    const timeoutController = new AbortController();
+    const timeoutTimer = setTimeout(() => timeoutController.abort(), LOAD_TIMEOUT_MS);
+    loading = fetch(url, { cache: 'force-cache', signal: timeoutController.signal })
       .then(res => {
+        clearTimeout(timeoutTimer);
         if (!res.ok) throw new Error('ja_dict_core.json HTTP ' + res.status);
         return res.json();
       })
@@ -230,7 +240,8 @@ export function createJapaneseDictionary({ url, log = console }) {
         return index;
       })
       .catch(error => {
-        log.warn?.('[ja core json] load failed:', error?.message || error);
+        clearTimeout(timeoutTimer);
+        log.warn?.('[ja core json] load failed:', error?.name === 'AbortError' ? 'timed out' : (error?.message || error));
         entries = [];
         index = Object.freeze({});
         return index;

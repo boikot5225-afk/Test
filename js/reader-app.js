@@ -590,11 +590,22 @@ function readerZhCoreJsonCount() {
   return readerZhCoreJson ? Object.keys(readerZhCoreJson).length : 0;
 }
 
+// The dictionary is a same-origin bundled asset, so this should resolve near
+// instantly — but holdFirstCjkPaintUntilCore() blocks the *first* chapter
+// paint on it, and a fetch that never settles (a WebView quirk, a stuck
+// service-worker fetch handler) meant the reader could get stuck forever on
+// "Подготавливаю слова и пиньинь…" with nothing to read. Bound it so a
+// hung request degrades to the existing empty-dict fallback instead.
+const READER_ZH_CORE_JSON_TIMEOUT_MS = 12000;
+
 function readerEnsureZhCoreJsonLoaded(options = {}) {
   if (readerZhCoreJson) return Promise.resolve(readerZhCoreJson);
   if (readerZhCoreJsonPromise) return readerZhCoreJsonPromise;
-  readerZhCoreJsonPromise = fetch(READER_ZH_CORE_JSON_URL, { cache: 'force-cache' })
+  const timeoutController = new AbortController();
+  const timeoutTimer = setTimeout(() => timeoutController.abort(), READER_ZH_CORE_JSON_TIMEOUT_MS);
+  readerZhCoreJsonPromise = fetch(READER_ZH_CORE_JSON_URL, { cache: 'force-cache', signal: timeoutController.signal })
     .then(res => {
+      clearTimeout(timeoutTimer);
       if (!res.ok) throw new Error('zh_dict_core.json HTTP ' + res.status);
       return res.json();
     })
@@ -613,7 +624,8 @@ function readerEnsureZhCoreJsonLoaded(options = {}) {
       return readerZhCoreJson;
     })
     .catch(e => {
-      console.warn('[zh core json] load failed:', e?.message || e);
+      clearTimeout(timeoutTimer);
+      console.warn('[zh core json] load failed:', e?.name === 'AbortError' ? 'timed out' : (e?.message || e));
       readerZhCoreJson = Object.freeze({});
       return readerZhCoreJson;
     });
