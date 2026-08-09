@@ -1979,6 +1979,15 @@ body:has(#screen-reader.active) .bottom-nav { display:flex !important; }
   padding:6px 8px 6px 13px; margin:2px 0;
   border-left:3px solid transparent; border-radius:10px;
   transition:background .18s, border-color .18s; cursor:pointer;
+  /* A book chapter can be 300+ paragraphs with thousands of individual
+     word/ruby spans. Without containment, toggling .active on ONE paragraph
+     (a tap to the next/previous paragraph) forces the browser to recalculate
+     style and layout for the WHOLE chapter, not just this element — measured
+     via a Chrome trace at ~450-500ms of Document::recalcStyle +
+     UpdateStyleAndLayout PER TAP under a mid-tier-mobile CPU profile, which
+     is what made paging itself feel like it barely moved. `contain` scopes
+     both to this paragraph alone. */
+  contain: layout style;
 }
 #reader-reading-view .reader-paragraph.active{border-left-color:var(--accent); background:color-mix(in srgb, var(--accent) 6%, transparent);}
 #reader-reading-view .reader-word{border-radius:4px; padding:0 1px; cursor:pointer; transition:.1s;}

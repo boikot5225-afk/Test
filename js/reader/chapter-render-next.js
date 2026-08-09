@@ -292,6 +292,7 @@ export function createReaderChapterRenderer({
 
           const renderToken = Symbol('renderToken');
           chapterText._readerFillToken = renderToken;
+          const stale = () => chapterText._readerFillToken !== renderToken || !chapterText.isConnected;
           (async () => {
             const pending = [];
             for (let i = 0; i < lo; i++) pending.push(i);
@@ -299,12 +300,23 @@ export function createReaderChapterRenderer({
             for (let i = 0; i < pending.length; i += CHUNK_SIZE) {
               await new Promise(resolve => setTimeout(resolve, 0));
               // Bail out if the user navigated away (new chapter/book render,
-              // or this exact render got superseded) while we were filling in.
-              if (chapterText._readerFillToken !== renderToken || !chapterText.isConnected) return;
+              // or this exact render got superseded) while we were filling in —
+              // checked before every paragraph, not just every chunk, so a
+              // superseded fill can't keep doing real work (and stacking with
+              // whatever superseded it) for a whole chunk after it's stale.
+              if (stale()) return;
               for (const index of pending.slice(i, i + CHUNK_SIZE)) {
+                if (stale()) return;
                 const shell = chapterText.querySelector(`.reader-paragraph[data-p="${index}"][data-reader-pending="1"]`);
                 if (!shell) continue;
                 shell.outerHTML = paragraphHtml(paragraphs[index], index);
+                // paragraphHtml() closed over paragraphIndex from when this
+                // fill started; fast-nav (tryFastNav) moves the active
+                // paragraph afterward without bumping _readerFillToken, so
+                // re-sync against whichever paragraph is actually active now.
+                const currentActive = Number(chapterText.dataset.activeParagraph);
+                const filled = chapterText.querySelector(`.reader-paragraph[data-p="${index}"]`);
+                filled?.classList.toggle('active', index === currentActive);
               }
               bindReaderInteractions();
             }
