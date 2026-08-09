@@ -146,7 +146,8 @@ function parseNcx(xmlText, navigationPath) {
 
   const rows = [];
   function walkPoint(point, depth) {
-    const label = firstXmlDescendant(firstXmlChild(point, 'navlabel') || point, 'text');
+    const navLabel = firstXmlChild(point, 'navlabel') || firstXmlDescendant(point, 'navlabel');
+    const label = firstXmlDescendant(navLabel || point, 'text');
     const content = firstXmlChild(point, 'content') || firstXmlDescendant(point, 'content');
     const title = cleanText(label?.textContent || '');
     const href = content?.getAttribute?.('src') || '';
@@ -165,16 +166,56 @@ function parseNcx(xmlText, navigationPath) {
   return normalizeEntries(rows);
 }
 
+function inferredHtmlDepth(link) {
+  for (let node = link; node; node = node.parentElement) {
+    const cls = String(node.getAttribute?.('class') || '');
+    const match = cls.match(/(?:toc|contents?)[-_\s]*(\d+)(?:[-_\s]*level)?/i)
+      || cls.match(/(?:level|lvl)[-_\s]*(\d+)/i);
+    if (match) return Math.max(0, Number(match[1]) - 1);
+  }
+  let listDepth = 0;
+  for (let node = link.parentElement; node; node = node.parentElement) {
+    if (['ol', 'ul'].includes(localName(node))) listDepth += 1;
+  }
+  return Math.max(0, listDepth - 1);
+}
+
+function parseHtmlToc(html, navigationPath) {
+  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  const rows = [];
+  for (const link of [...(doc.querySelectorAll?.('a[href]') || [])]) {
+    const title = cleanText(link.textContent || '');
+    const href = link.getAttribute('href') || '';
+    if (!title || !href || /^(?:https?:|mailto:|tel:|javascript:)/i.test(href)) continue;
+    rows.push({
+      title,
+      depth: inferredHtmlDepth(link),
+      hasChildren: false,
+      ...splitHref(href, navigationPath),
+    });
+  }
+  for (let index = 0; index < rows.length; index += 1) {
+    rows[index].hasChildren = index + 1 < rows.length && rows[index + 1].depth > rows[index].depth;
+  }
+  return normalizeEntries(rows);
+}
+
 function navigationCandidates(packageInfo = {}) {
   const manifest = Object.values(packageInfo.manifest || {});
   const nav = manifest.filter(item => (item.properties || []).includes('nav'));
   const ncx = manifest.filter(item => /application\/x-dtbncx\+xml/i.test(item.mediaType || '') || /\.ncx$/i.test(item.href || ''));
-  return { nav, ncx };
+  const html = manifest.filter(item => {
+    const href = String(item.href || '');
+    const id = String(item.id || '');
+    const isHtml = /xhtml|html/i.test(item.mediaType || '') || /\.(?:xhtml|html|htm)$/i.test(href);
+    return isHtml && /(?:^|[/_.-])(?:toc|contents?|navigation|nav)(?:[/_.-]|$)/i.test(`${id}/${href}`);
+  });
+  return { nav, ncx, html };
 }
 
 export async function extractCanonicalEpubToc(entries, packageInfo = {}) {
   if (!entries || typeof DOMParser === 'undefined') return [];
-  const { nav, ncx } = navigationCandidates(packageInfo);
+  const { nav, ncx, html } = navigationCandidates(packageInfo);
 
   for (const item of nav) {
     const path = cleanPath(item.href);
@@ -195,6 +236,17 @@ export async function extractCanonicalEpubToc(entries, packageInfo = {}) {
       if (parsed.length) return parsed;
     } catch (error) {
       console.warn('[reader epub toc] NCX parse failed', path, error?.message || error);
+    }
+  }
+
+  for (const item of html) {
+    const path = cleanPath(item.href);
+    if (!path || !entries.has(path)) continue;
+    try {
+      const parsed = parseHtmlToc(await entries.get(path).text(), path);
+      if (parsed.length) return parsed;
+    } catch (error) {
+      console.warn('[reader epub toc] HTML TOC parse failed', path, error?.message || error);
     }
   }
   return [];
@@ -245,7 +297,7 @@ export function fallbackTocFromChapters(chapters = []) {
 export function applyCanonicalTocTitles(chapters = [], toc = []) {
   const firstByChapter = new Map();
   for (const item of toc || []) {
-    const chapterIndex = Number(item?.chapterIndex);
+    const chapterIndex = item?.chapterIndex;
     if (!Number.isInteger(chapterIndex) || chapterIndex < 0 || chapterIndex >= chapters.length) continue;
     if (!firstByChapter.has(chapterIndex) && cleanText(item?.title)) firstByChapter.set(chapterIndex, cleanText(item.title));
   }
