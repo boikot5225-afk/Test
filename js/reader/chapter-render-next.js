@@ -33,20 +33,6 @@ export function createReaderChapterRenderer({
   let zhCoreWarmFailed = false;
   let jaCoreWarmFailed = false;
 
-  // Used to hold the whole chapter paint until the dictionary arrived — a
-  // blocking "Подготавливаю слова и пиньинь…" screen with nothing else on
-  // it. Whatever the exact reason (network condition, a WebView quirk,
-  // sheer parse/build time on slower hardware), that wait was observed on
-  // a real device to not resolve, ever: the book never opened. There is no
-  // load time short enough to safely gate the FIRST paint on — so don't.
-  // Never block: kick the dictionary load off in the background if it
-  // isn't already running, and let the caller render immediately with
-  // whatever's available (the small bundled lexicon covers common words;
-  // readerSegmentChineseLocal's fallback still segments the rest). When the
-  // full dictionary lands, re-render in place — tryFastNav already bails to
-  // a full rebuild on its own when isZhCoreLoaded()/isJaCoreLoaded() flips,
-  // so existing paragraphs pick up full pinyin/furigana coverage without
-  // the reader ever having stared at a blank screen for it.
   function startCjkCoreWarmupInBackground(lang) {
     const code = canonicalLang(lang);
     const isZh = code === 'zh';
@@ -98,26 +84,14 @@ export function createReaderChapterRenderer({
   }
 
   // ── Fast navigation helpers ──────────────────────────────────────
-  // Returns true if we successfully updated only active-paragraph state
-  // without rebuilding all DOM. Falls back to false → full render.
   function tryFastNav(chapterText, chapterIndex, paragraphs, paragraphIndex, chapter, translations, book) {
-    const prevChIdx   = Number(chapterText.dataset.renderedChapter  ?? -1);
+    const prevChIdx = Number(chapterText.dataset.renderedChapter ?? -1);
     const prevParCount = Number(chapterText.dataset.renderedParCount ?? 0);
-    // If zh-core JSON loaded after the initial render, tokenisation changes
-    // (individual chars → multi-char words) — must do a full rebuild.
-    const prevZhCore  = chapterText.dataset.renderedZhCore;
-    const curZhCore   = String(!!(isZhCoreLoaded?.()));
-    // Same for the Japanese dictionary: it is what supplies furigana, so a
-    // chapter rendered before it arrived has none and cannot be patched up by
-    // the fast path.
-    const prevJaCore  = chapterText.dataset.renderedJaCore;
-    const curJaCore   = String(!!(isJaCoreLoaded?.()));
+    const prevZhCore = chapterText.dataset.renderedZhCore;
+    const curZhCore = String(!!(isZhCoreLoaded?.()));
+    const prevJaCore = chapterText.dataset.renderedJaCore;
+    const curJaCore = String(!!(isJaCoreLoaded?.()));
 
-    // Fast path is only valid when DOM matches current chapter/state exactly.
-    // Translation visibility deliberately does NOT invalidate it: help blocks
-    // are always rendered into the DOM and shown/hidden by the
-    // body.reader-hide-translation CSS class alone — that's what lets the 👁
-    // toggle be instant instead of freezing on a full chapter rebuild.
     if (
       prevChIdx !== chapterIndex ||
       prevParCount !== paragraphs.length ||
@@ -127,7 +101,7 @@ export function createReaderChapterRenderer({
     ) return false;
 
     const prevActive = Number(chapterText.dataset.activeParagraph ?? -1);
-    if (prevActive === paragraphIndex) return true; // nothing to do
+    if (prevActive === paragraphIndex) return true;
 
     const oldEl = chapterText.querySelector(`.reader-paragraph[data-p="${prevActive}"]`);
     const newEl = chapterText.querySelector(`.reader-paragraph[data-p="${paragraphIndex}"]`);
@@ -221,7 +195,6 @@ export function createReaderChapterRenderer({
         bindReaderInteractions();
         bindSongStropheEvents(book, chapter);
       } else {
-        // ── Fast nav path: skip full DOM rebuild when only active paragraph changed ──
         if (tryFastNav(chapterText, chapterIndex, paragraphs, paragraphIndex, chapter, translations, book)) {
           saveBooks();
           schedulePrefetch();
@@ -231,15 +204,15 @@ export function createReaderChapterRenderer({
           return;
         }
 
-        // ── Full render ──
         const scroller = document.querySelector('#reader-reading-view .rd-scroll');
         const scrollTop = scroller ? scroller.scrollTop : 0;
 
-        const paragraphHtml = (paragraph, index) => {
+        const paragraphInnerHtml = (paragraph, index) => {
           const translationKey = `${chapter?.id}:${index}`;
           const translation = translations[translationKey];
-          return `<div class="reader-paragraph ${index === paragraphIndex ? 'active' : ''}" data-p="${index}"><div class="reader-paragraph-text">${renderParagraphText(paragraph, index)}</div>${translation ? renderTranslationBlock(translation) : ''}${book.readerAnalyses?.[translationKey] ? renderAnalysisBlock(book.readerAnalyses[translationKey]) : ''}</div>`;
+          return `<div class="reader-paragraph-text">${renderParagraphText(paragraph, index)}</div>${translation ? renderTranslationBlock(translation) : ''}${book.readerAnalyses?.[translationKey] ? renderAnalysisBlock(book.readerAnalyses[translationKey]) : ''}`;
         };
+        const paragraphHtml = (paragraph, index) => `<div class="reader-paragraph ${index === paragraphIndex ? 'active' : ''}" data-p="${index}">${paragraphInnerHtml(paragraph, index)}</div>`;
 
         const finalizeChapterDom = () => {
           chapterText.dataset.renderedChapter = String(chapterIndex);
@@ -253,8 +226,9 @@ export function createReaderChapterRenderer({
 
         // First paint stays small. The rest is filled only during browser idle
         // slices, so a 300-paragraph chapter cannot monopolize the UI thread.
-        // Because interactions are delegated at the chapter root, newly-filled
-        // words need ZERO listener-binding scans.
+        // Pending shells are filled IN PLACE: this preserves IntersectionObserver
+        // registrations and avoids constantly replacing DOM nodes under the
+        // browser while it is trying to scroll/layout the chapter.
         const PRIORITY_WINDOW = 8;
         const isCjk = ['zh', 'ja'].includes(canonicalLang(activeReaderLang));
         const CHUNK_SIZE = isCjk ? 2 : 6;
@@ -273,7 +247,6 @@ export function createReaderChapterRenderer({
           const stale = () => chapterText._readerFillToken !== renderToken || !chapterText.isConnected;
           (async () => {
             const pending = [];
-            // Prefer forward text first: that's where normal reading is heading.
             for (let i = hi; i < paragraphs.length; i++) pending.push(i);
             for (let i = lo - 1; i >= 0; i--) pending.push(i);
 
@@ -284,10 +257,10 @@ export function createReaderChapterRenderer({
                 if (stale()) return;
                 const shell = chapterText.querySelector(`.reader-paragraph[data-p="${index}"][data-reader-pending="1"]`);
                 if (!shell) continue;
-                shell.outerHTML = paragraphHtml(paragraphs[index], index);
+                shell.innerHTML = paragraphInnerHtml(paragraphs[index], index);
+                shell.removeAttribute('data-reader-pending');
                 const currentActive = Number(chapterText.dataset.activeParagraph);
-                const filled = chapterText.querySelector(`.reader-paragraph[data-p="${index}"]`);
-                filled?.classList.toggle('active', index === currentActive);
+                shell.classList.toggle('active', index === currentActive);
               }
             }
           })();
