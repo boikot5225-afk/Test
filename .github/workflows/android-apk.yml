@@ -12,6 +12,7 @@ on:
       - fix/zh-pinyin-stability-77.37
       - fix/77.41-zh-open-a54
       - perf/77.41-reader-core
+      - feature/77.42-epub-toc
     paths:
       - '.github/workflows/android-apk.yml'
       - 'android/**'
@@ -98,6 +99,21 @@ jobs:
           grep -qF 'function waitForIdle()' js/reader/chapter-render-next.js \
             || { echo 'idle chapter backfill missing'; exit 1; }
 
+      - name: Check EPUB TOC guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qF "parseNcxToc" js/reader/toc-upgrade.js \
+            || { echo 'EPUB2 NCX parser missing'; exit 1; }
+          grep -qF "parseNavToc" js/reader/toc-upgrade.js \
+            || { echo 'EPUB3 navigation parser missing'; exit 1; }
+          grep -qF "book.toc = upgrade.toc" js/reader/toc-upgrade.js \
+            || { echo 'book TOC persistence missing'; exit 1; }
+          grep -qF "window.readerOpenToc = openUpgradedToc" js/reader/toc-upgrade.js \
+            || { echo 'hierarchical TOC UI override missing'; exit 1; }
+          grep -qF "import './toc-upgrade.js?v=1'" js/reader/interactions-runtime.js \
+            || { echo 'TOC runtime is not loaded'; exit 1; }
+
       - name: Build debug APK
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
@@ -115,6 +131,8 @@ jobs:
             assets/www/js/reader/word-state.js \
             assets/www/js/reader/library-store.js \
             assets/www/js/reader/interactions.js \
+            assets/www/js/reader/interactions-runtime.js \
+            assets/www/js/reader/toc-upgrade.js \
             assets/www/js/reader/library-idb-store.js \
             assets/www/js/reader/word-state-idb-store.js \
             assets/www/js/reader/lexical-cache-idb-store.js \
@@ -140,6 +158,12 @@ jobs:
             || { echo 'idle chapter backfill did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/chapter-render-next.js | grep -qF 'const PRIORITY_WINDOW = 8' \
             || { echo 'A54 first-paint window did not ship'; exit 1; }
+          unzip -p "$APK" assets/www/js/reader/toc-upgrade.js | grep -qF 'EPUB2 NCX' \
+            || { echo 'EPUB2 TOC support did not ship'; exit 1; }
+          unzip -p "$APK" assets/www/js/reader/toc-upgrade.js | grep -qF 'EPUB3 nav' \
+            || { echo 'EPUB3 TOC support did not ship'; exit 1; }
+          unzip -p "$APK" assets/www/js/reader/toc-upgrade.js | grep -qF 'book.toc = upgrade.toc' \
+            || { echo 'TOC persistence did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/library-idb-store.js | grep -qF 'IDB_READ_TIMEOUT_MS = 1200' \
             || { echo 'library IndexedDB deadline did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/word-state-idb-store.js | grep -qF 'IDB_READ_TIMEOUT_MS = 700' \
@@ -163,13 +187,13 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: reader-ai-77.41-perf1-debug
+          name: reader-ai-77.42-toc1-debug
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
   deliver:
     needs: build
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/perf/77.41-reader-core'
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feature/77.42-epub-toc'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -182,7 +206,7 @@ jobs:
       - name: Download the APK just built above
         uses: actions/download-artifact@v4
         with:
-          name: reader-ai-77.41-perf1-debug
+          name: reader-ai-77.42-toc1-debug
           path: apk-out
 
       - name: Commit APK to delivery branch
@@ -196,7 +220,7 @@ jobs:
           git checkout --orphan apk-delivery
           git rm -rf . >/dev/null 2>&1 || true
           mkdir -p delivered
-          cp "$APK" delivered/reader-ai-77.41-perf1-debug.apk
-          git add delivered/reader-ai-77.41-perf1-debug.apk
-          git commit -m "chore: deliver reader-ai-77.41-perf1-debug.apk from run ${{ github.run_id }}"
+          cp "$APK" delivered/reader-ai-77.42-toc1-debug.apk
+          git add delivered/reader-ai-77.42-toc1-debug.apk
+          git commit -m "chore: deliver reader-ai-77.42-toc1-debug.apk from run ${{ github.run_id }}"
           git push --force origin HEAD:apk-delivery
