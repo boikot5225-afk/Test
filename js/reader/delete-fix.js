@@ -159,7 +159,7 @@ async function installDeleteFix() {
   try {
     // Dynamic import avoids a static reader-app <-> chapter-render cycle. By the
     // time this timer runs the original module has finished evaluating.
-    moduleRef = await import('../reader-app.js');
+    moduleRef = await import('../reader-app.js?v=77.31');
     const originalDelete = window.readerDeleteBook;
     if (originalDelete?.__readerDurableDeleteFix) return;
 

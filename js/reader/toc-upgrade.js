@@ -33,7 +33,7 @@ let installed = false;
 let readerAppModulePromise = null;
 
 function readerAppModule() {
-  if (!readerAppModulePromise) readerAppModulePromise = import('../reader-app.js');
+  if (!readerAppModulePromise) readerAppModulePromise = import('../reader-app.js?v=77.31');
   return readerAppModulePromise;
 }
 
