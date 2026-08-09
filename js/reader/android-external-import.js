@@ -4,23 +4,35 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function waitUntilReady(timeoutMs = 60000) {
+function currentHandler(name) {
+  // Reader upgrades (EPUB TOC, durable deletion) are installed after app.js
+  // finalizes its buffering stubs. Prefer the live window handler so Android
+  // external imports cannot bypass a newer wrapper via a stale __real_* copy.
+  const live = window[name];
+  if (typeof live === 'function' && !live.__isStub) return live;
+  const real = window[`__real_${name}`];
+  return typeof real === 'function' && !real.__isStub ? real : null;
+}
+
+async function waitUntilReady(timeoutMs = 60000, { requireEpubToc = false } = {}) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const main = document.getElementById('main-app');
-    const importHandler = window.__real_readerImportFromFile || window.readerImportFromFile;
-    const saveHandler = window.__real_saveReaderImport || window.saveReaderImport;
+    const importHandler = currentHandler('readerImportFromFile');
+    const saveHandler = currentHandler('saveReaderImport');
+    const tocReady = !requireEpubToc || typeof window.readerTocDiagnostics === 'function';
     if (main?.style.display !== 'none'
       && typeof window.showReaderImportModal === 'function'
       && typeof importHandler === 'function'
-      && !importHandler.__isStub
       && typeof saveHandler === 'function'
-      && !saveHandler.__isStub) {
+      && tocReady) {
       return { importHandler, saveHandler };
     }
     await wait(120);
   }
-  throw new Error('Reader AI не завершил вход. Войди в приложение или выбери гостевой режим.');
+  throw new Error(requireEpubToc
+    ? 'Reader AI не подготовил EPUB-оглавление. Перезапусти приложение и попробуй снова.'
+    : 'Reader AI не завершил вход. Войди в приложение или выбери гостевой режим.');
 }
 
 function safeFileName(value) {
@@ -57,7 +69,13 @@ export async function readerImportAndroidFile(payload = {}) {
   }
 
   try {
-    const { importHandler, saveHandler } = await waitUntilReady();
+    // EPUB absolutely must go through the TOC wrapper. Previous builds grabbed
+    // stale __real_readerImportFromFile/__real_saveReaderImport handlers here,
+    // which silently skipped toc.ncx/nav.xhtml parsing on Android even though
+    // the same parser worked in the normal browser file picker.
+    const { importHandler, saveHandler } = await waitUntilReady(60000, {
+      requireEpubToc: extension === 'epub',
+    });
     window.showScreen?.('reader');
     window.showReaderImportModal?.();
 
