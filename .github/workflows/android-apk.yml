@@ -11,6 +11,7 @@ on:
       - claude/check-branches-latest-changes-wydht2
       - fix/zh-pinyin-stability-77.37
       - fix/77.41-zh-open-a54
+      - perf/77.41-reader-core
     paths:
       - '.github/workflows/android-apk.yml'
       - 'android/**'
@@ -44,13 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      # The keystore file is the only secret worth storing — its password and
-      # alias are useless without it and has defaults in the build file. Absent
-      # this, each runner signs with its own generated debug key and Android
-      # refuses to install the new APK over the previous one.
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-      # Optional: only needed if the keystore is ever replaced by one that does
-      # not use the defaults in android/app/build.gradle.
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
     steps:
@@ -85,6 +80,24 @@ jobs:
             node --check "$file"
           done < <(find js -type f -name '*.js' -print0)
 
+      - name: Check performance guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qF "root.addEventListener('click'" js/reader/interactions.js \
+            || { echo 'reader interactions are not delegated'; exit 1; }
+          if grep -qF "root.querySelectorAll('.reader-word')" js/reader/interactions.js; then
+            echo 'per-word listener scan returned'; exit 1
+          fi
+          grep -qF 'HOT PATH: once the state is in memory, load() must be O(1)' js/reader/word-state.js \
+            || { echo 'O(1) word-state cache guard missing'; exit 1; }
+          grep -qF 'const store = load();' js/reader/word-state.js \
+            || { echo 'word-state paragraph batching missing'; exit 1; }
+          grep -qF 'scheduleLocalCommit(550)' js/reader/library-store.js \
+            || { echo 'deferred library commit missing'; exit 1; }
+          grep -qF 'function waitForIdle()' js/reader/chapter-render-next.js \
+            || { echo 'idle chapter backfill missing'; exit 1; }
+
       - name: Build debug APK
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
@@ -100,6 +113,8 @@ jobs:
             assets/www/data/ja_dict_core.json \
             assets/www/js/reader/ja-dict.js \
             assets/www/js/reader/word-state.js \
+            assets/www/js/reader/library-store.js \
+            assets/www/js/reader/interactions.js \
             assets/www/js/reader/library-idb-store.js \
             assets/www/js/reader/word-state-idb-store.js \
             assets/www/js/reader/lexical-cache-idb-store.js \
@@ -113,10 +128,18 @@ jobs:
             || { echo 'reader-app.js in the APK has no Japanese tokenizer'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/word-state.js | grep -qF 'PASSIVE_RUBY_SENTINEL' \
             || { echo 'stable CJK ruby policy did not ship'; exit 1; }
+          unzip -p "$APK" assets/www/js/reader/word-state.js | grep -qF 'load() must be O(1)' \
+            || { echo 'word-state O(1) hot-path fix did not ship'; exit 1; }
+          unzip -p "$APK" assets/www/js/reader/interactions.js | grep -qF "root.addEventListener('click'" \
+            || { echo 'delegated reader interactions did not ship'; exit 1; }
+          unzip -p "$APK" assets/www/js/reader/library-store.js | grep -qF 'scheduleLocalCommit(550)' \
+            || { echo 'deferred library snapshot did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/chapter-render-next.js | grep -qF 'startCjkCoreWarmupInBackground' \
             || { echo 'non-blocking CJK dictionary warm-up did not ship'; exit 1; }
+          unzip -p "$APK" assets/www/js/reader/chapter-render-next.js | grep -qF 'function waitForIdle()' \
+            || { echo 'idle chapter backfill did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/chapter-render-next.js | grep -qF 'const PRIORITY_WINDOW = 8' \
-            || { echo 'A54 CJK first-paint window did not ship'; exit 1; }
+            || { echo 'A54 first-paint window did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/library-idb-store.js | grep -qF 'IDB_READ_TIMEOUT_MS = 1200' \
             || { echo 'library IndexedDB deadline did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/word-state-idb-store.js | grep -qF 'IDB_READ_TIMEOUT_MS = 700' \
@@ -124,7 +147,7 @@ jobs:
           unzip -p "$APK" assets/www/js/reader/lexical-cache-idb-store.js | grep -qF 'IDB_READ_TIMEOUT_MS = 700' \
             || { echo 'lexical-cache IndexedDB deadline did not ship'; exit 1; }
           if unzip -p "$APK" assets/www/js/reader/chapter-render-next.js | grep -qF 'holdFirstCjkPaintUntilCore'; then
-            echo 'blocking single-paint CJK renderer is back — first paint must never wait on the dictionary'; exit 1
+            echo 'blocking single-paint CJK renderer is back'; exit 1
           fi
           unzip -p "$APK" classes.dex | strings | grep -qF 'ServiceWorkerControllerCompat' \
             || { echo 'native service-worker interception did not compile into the APK'; exit 1; }
@@ -140,16 +163,13 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: reader-ai-77.41-zh-open-a54-debug
+          name: reader-ai-77.41-perf1-debug
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-  # Commit the tested APK to the dedicated delivery branch too, so it can be
-  # installed from a normal GitHub file link even when Actions' blob-storage
-  # artifact URL is inconvenient on the phone.
   deliver:
     needs: build
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/fix/77.41-zh-open-a54'
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/perf/77.41-reader-core'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -162,7 +182,7 @@ jobs:
       - name: Download the APK just built above
         uses: actions/download-artifact@v4
         with:
-          name: reader-ai-77.41-zh-open-a54-debug
+          name: reader-ai-77.41-perf1-debug
           path: apk-out
 
       - name: Commit APK to delivery branch
@@ -176,7 +196,7 @@ jobs:
           git checkout --orphan apk-delivery
           git rm -rf . >/dev/null 2>&1 || true
           mkdir -p delivered
-          cp "$APK" delivered/reader-ai-77.41-zh-open-a54-debug.apk
-          git add delivered/reader-ai-77.41-zh-open-a54-debug.apk
-          git commit -m "chore: deliver reader-ai-77.41-zh-open-a54-debug.apk from run ${{ github.run_id }}"
+          cp "$APK" delivered/reader-ai-77.41-perf1-debug.apk
+          git add delivered/reader-ai-77.41-perf1-debug.apk
+          git commit -m "chore: deliver reader-ai-77.41-perf1-debug.apk from run ${{ github.run_id }}"
           git push --force origin HEAD:apk-delivery
