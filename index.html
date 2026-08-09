@@ -57,7 +57,30 @@
 
     // Register service worker for PWA. Scope берётся от текущей папки:
     // работает и в корне, и в /Test/, без GitHub Actions и без жёстких путей.
-    if ('serviceWorker' in navigator) {
+    //
+    // NOT inside the native Android shell, though (host is
+    // appassets.androidplatform.net there — see android/.../MainActivity.java,
+    // WebViewAssetLoader.DEFAULT_DOMAIN). That app already serves every asset
+    // from the APK, offline, through WebViewClient.shouldInterceptRequest —
+    // a service worker adds nothing there. Worse, once it starts controlling
+    // the page, every same-origin fetch (including the multi-MB zh/ja
+    // dictionaries the reader blocks its first paint on) gets rerouted
+    // through sw.js's own fetch handler, which does its own live
+    // fetch(req, {cache:'no-store'}) — and that one is NOT covered by
+    // shouldInterceptRequest (Android requires a separate
+    // ServiceWorkerControllerCompat hook for that, which this app's
+    // MainActivity never sets up). Requests made from inside the worker fall
+    // through to the real network stack trying to resolve
+    // appassets.androidplatform.net as an actual host, and hang — which is
+    // exactly the "Подготавливаю слова и пиньинь…" freeze reported on
+    // device. Also actively unregister any worker a previous (broken) install
+    // already left running, so upgrading fixes it without a fresh install.
+    const isNativeAndroidShell = location.hostname === 'appassets.androidplatform.net';
+    if ('serviceWorker' in navigator && isNativeAndroidShell) {
+      navigator.serviceWorker.getRegistrations()
+        .then((regs) => Promise.all(regs.map((reg) => reg.unregister())))
+        .catch(() => {});
+    } else if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         const swUrl = new URL('sw.js', location.href);
         const swScope = new URL('./', location.href).pathname;
