@@ -9,14 +9,46 @@ const DB_NAME = 'reader-lexical-cache';
 const STORE_NAME = 'cache';
 const BLOB_KEY = 'all-entries';
 let _db = null;
+const IDB_READ_TIMEOUT_MS = 700;
+
+function timeoutError(op) {
+  return new Error(`[reader] lexical-cache IndexedDB ${op} timed out`);
+}
+
+function withDeadline(executor, timeoutMs = IDB_READ_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
+    const timer = setTimeout(() => finish(reject, timeoutError('request')), timeoutMs);
+    try { executor(value => finish(resolve, value), error => finish(reject, error)); }
+    catch (error) { finish(reject, error); }
+  });
+}
 
 function openDB() {
   if (_db) return Promise.resolve(_db);
-  return new Promise((resolve, reject) => {
+  return withDeadline((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = (e) => e.target.result.createObjectStore(STORE_NAME);
-    req.onsuccess = (e) => { _db = e.target.result; resolve(_db); };
-    req.onerror = () => reject(req.error);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+    };
+    req.onsuccess = (e) => {
+      const db = e.target.result;
+      db.onversionchange = () => {
+        try { db.close(); } catch {}
+        if (_db === db) _db = null;
+      };
+      _db = db;
+      resolve(db);
+    };
+    req.onblocked = () => reject(new Error('[reader] lexical-cache IndexedDB open blocked'));
+    req.onerror = () => reject(req.error || new Error('[reader] lexical-cache IndexedDB open failed'));
   });
 }
 
@@ -32,10 +64,11 @@ export async function lexicalCacheIdbPut(key, data) {
 
 export async function lexicalCacheIdbGet(key) {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  return withDeadline((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readonly');
     const req = tx.objectStore(STORE_NAME).get(key || BLOB_KEY);
     req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
+    req.onerror = () => reject(req.error || tx.error || new Error('[reader] lexical-cache IndexedDB read failed'));
+    tx.onabort = () => reject(tx.error || new Error('[reader] lexical-cache IndexedDB read aborted'));
   });
 }
