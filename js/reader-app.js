@@ -520,7 +520,7 @@ function readerEnsureJaCoreJsonLoaded(options = {}) {
         }));
       } catch {}
       if (options.rerender && readerCurrentLang() === 'ja') {
-        setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
+        renderReaderChapterInPlace();
       }
     },
   });
@@ -608,7 +608,7 @@ function readerEnsureZhCoreJsonLoaded(options = {}) {
         }));
       } catch {}
       if (options.rerender && readerCurrentLang() === 'zh') {
-        setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
+        renderReaderChapterInPlace();
       }
       return readerZhCoreJson;
     })
@@ -950,7 +950,7 @@ function readerScheduleChineseSegmentation(text) {
         const c = loadReaderZhSegmentCache();
         c[key] = { words: picked, t: Date.now(), source: picked === words ? 'segment-text' : 'local-dict-preferred' };
         saveReaderZhSegmentCache();
-        try { if (readerCurrentLang() === 'zh') renderReaderChapter(); } catch {}
+        try { if (readerCurrentLang() === 'zh') renderReaderChapterInPlace(); } catch {}
       }
     })
     .catch(e => {
@@ -3104,6 +3104,27 @@ function renderReaderChapter() {
   return readerChapterRenderer.render();
 }
 
+// Background re-render that preserves the scroll position of .rd-scroll.
+// Async callbacks (dictionary load, remote segmentation, AI word analysis)
+// used to call renderReaderChapter() directly, which replaces the chapter
+// DOM without restoring scroll — on a long Chinese book, where dozens of
+// paragraphs each trigger their own background segmentation fetch, this
+// made the page jump/jitter while reading, to the point of feeling broken.
+// Use this instead for any re-render NOT caused by the user navigating —
+// navigation renders still call renderReaderChapter() directly and follow
+// with readerScrollActiveParagraph().
+let _renderInPlaceTimer = null;
+function renderReaderChapterInPlace() {
+  if (_renderInPlaceTimer) return; // coalesce rapid back-to-back calls
+  _renderInPlaceTimer = setTimeout(() => {
+    _renderInPlaceTimer = null;
+    const scroller = document.querySelector('#reader-reading-view .rd-scroll');
+    const saved = scroller ? scroller.scrollTop : 0;
+    try { readerChapterRenderer.render(); } catch {}
+    if (scroller) scroller.scrollTop = saved;
+  }, 0);
+}
+
 
 function bindReaderSwipe() {
   const root = document.getElementById('reader-chapter-text');
@@ -3680,7 +3701,7 @@ async function readerOpenWordPanel(word, paragraphIndex = 0) {
           await readerTranslateWordAI({ force: true, skipLocal: true });
         }
       } catch {}
-      if (activeLang === 'zh') setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
+      if (activeLang === 'zh') renderReaderChapterInPlace();
       return;
     }
     await readerTranslateWordAI(false);
@@ -4352,7 +4373,7 @@ async function readerTranslateWordAI(forceOrOptions = true) {
     readerPutCachedLexical(word, payload, readerCurrentLang());
     readerRenderWordAnalysis(payload, 'deepseek');
     // Re-render so the freshly learned pinyin/furigana appears over the token.
-    if (readerIsCjkLang(readerCurrentLang())) setTimeout(() => { try { renderReaderChapter(); } catch {} }, 0);
+    if (readerIsCjkLang(readerCurrentLang())) renderReaderChapterInPlace();
     if (st) {
       st.style.display = 'block';
       st.style.color = 'var(--good)';
