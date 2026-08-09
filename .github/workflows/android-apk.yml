@@ -114,6 +114,21 @@ jobs:
           grep -qF "import './toc-upgrade.js?v=1'" js/reader/interactions-runtime.js \
             || { echo 'TOC runtime is not loaded'; exit 1; }
 
+      - name: Check durable delete guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qF "TOMBSTONES_BASE_KEY" js/reader/delete-fix.js \
+            || { echo 'reader deletion tombstones missing'; exit 1; }
+          grep -qF "libraryIdbPut(storageKey, books)" js/reader/delete-fix.js \
+            || { echo 'reader deletion does not update IndexedDB immediately'; exit 1; }
+          grep -qF "deleteCloudBook(id)" js/reader/delete-fix.js \
+            || { echo 'reader deletion cloud cleanup missing'; exit 1; }
+          grep -qF "__readerDurableDeleteFix" js/reader/delete-fix.js \
+            || { echo 'reader deletion override marker missing'; exit 1; }
+          grep -qF "import './delete-fix.js?v=1'" js/reader/chapter-render.js \
+            || { echo 'durable delete runtime is not loaded'; exit 1; }
+
       - name: Build debug APK
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
@@ -132,7 +147,9 @@ jobs:
             assets/www/js/reader/library-store.js \
             assets/www/js/reader/interactions.js \
             assets/www/js/reader/interactions-runtime.js \
+            assets/www/js/reader/chapter-render.js \
             assets/www/js/reader/toc-upgrade.js \
+            assets/www/js/reader/delete-fix.js \
             assets/www/js/reader/library-idb-store.js \
             assets/www/js/reader/word-state-idb-store.js \
             assets/www/js/reader/lexical-cache-idb-store.js \
@@ -164,6 +181,12 @@ jobs:
             || { echo 'EPUB3 TOC support did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/toc-upgrade.js | grep -qF 'book.toc = upgrade.toc' \
             || { echo 'TOC persistence did not ship'; exit 1; }
+          unzip -p "$APK" assets/www/js/reader/delete-fix.js | grep -qF 'TOMBSTONES_BASE_KEY' \
+            || { echo 'durable book deletion did not ship'; exit 1; }
+          unzip -p "$APK" assets/www/js/reader/delete-fix.js | grep -qF 'libraryIdbPut(storageKey, books)' \
+            || { echo 'immediate delete IndexedDB write did not ship'; exit 1; }
+          unzip -p "$APK" assets/www/js/reader/chapter-render.js | grep -qF "import './delete-fix.js?v=1'" \
+            || { echo 'delete fix loader did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/library-idb-store.js | grep -qF 'IDB_READ_TIMEOUT_MS = 1200' \
             || { echo 'library IndexedDB deadline did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/word-state-idb-store.js | grep -qF 'IDB_READ_TIMEOUT_MS = 700' \
@@ -187,7 +210,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: reader-ai-77.42-toc1-debug
+          name: reader-ai-77.42-toc2-debug
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
@@ -206,7 +229,7 @@ jobs:
       - name: Download the APK just built above
         uses: actions/download-artifact@v4
         with:
-          name: reader-ai-77.42-toc1-debug
+          name: reader-ai-77.42-toc2-debug
           path: apk-out
 
       - name: Commit APK to delivery branch
@@ -220,7 +243,7 @@ jobs:
           git checkout --orphan apk-delivery
           git rm -rf . >/dev/null 2>&1 || true
           mkdir -p delivered
-          cp "$APK" delivered/reader-ai-77.42-toc1-debug.apk
-          git add delivered/reader-ai-77.42-toc1-debug.apk
-          git commit -m "chore: deliver reader-ai-77.42-toc1-debug.apk from run ${{ github.run_id }}"
+          cp "$APK" delivered/reader-ai-77.42-toc2-debug.apk
+          git add delivered/reader-ai-77.42-toc2-debug.apk
+          git commit -m "chore: deliver reader-ai-77.42-toc2-debug.apk from run ${{ github.run_id }}"
           git push --force origin HEAD:apk-delivery
