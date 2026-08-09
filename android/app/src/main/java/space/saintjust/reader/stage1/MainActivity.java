@@ -3,6 +3,7 @@ package space.saintjust.reader.stage1;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.net.Uri;
@@ -53,6 +54,8 @@ public class MainActivity extends Activity {
     private static final String IMPORT_PATH = "/android-import/current";
     private static final String FALLBACK_MIME = "application/octet-stream";
     private static final int FILE_CHOOSER_REQUEST = 2201;
+    private static final String SHELL_PREFS = "reader_shell_runtime";
+    private static final String WEB_ASSET_VERSION_KEY = "web_asset_version";
 
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;
@@ -72,9 +75,8 @@ public class MainActivity extends Activity {
         // v77.41 only unregistered an old service worker from JavaScript. That is
         // not enough for the page that is already controlled by that worker: its
         // fetch() calls can still run until the next navigation and bypass the
-        // normal WebViewClient, leaving the static library chrome visible while
-        // JS modules / the Chinese dictionary hang forever. Intercept service-
-        // worker requests too, through the same bundled-asset loader.
+        // normal WebViewClient. Intercept service-worker requests too, through
+        // the same bundled-asset loader.
         final WebViewAssetLoader assetLoader = new WebViewAssetLoader.Builder()
                 .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
                 .build();
@@ -101,6 +103,23 @@ public class MainActivity extends Activity {
         webView.setBackgroundColor(Color.rgb(17, 17, 17));
         setContentView(webView, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // The APK serves JS modules under stable appassets URLs. Android WebView's
+        // HTTP cache survives an APK upgrade, so changing word-state.js while the
+        // URL still ends in ?v=4 can otherwise execute the OLD module after the
+        // new APK is installed. Clear that HTTP cache exactly once per version
+        // code — not on every launch — while leaving localStorage/IndexedDB and
+        // therefore the user's books/progress untouched.
+        SharedPreferences shellPrefs = getSharedPreferences(SHELL_PREFS, MODE_PRIVATE);
+        int cachedAssetVersion = shellPrefs.getInt(WEB_ASSET_VERSION_KEY, -1);
+        if (cachedAssetVersion != BuildConfig.VERSION_CODE) {
+            try {
+                webView.clearCache(true);
+            } catch (Exception ignored) {
+                // A provider-specific cache failure must never stop the reader.
+            }
+            shellPrefs.edit().putInt(WEB_ASSET_VERSION_KEY, BuildConfig.VERSION_CODE).apply();
+        }
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
