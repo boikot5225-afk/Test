@@ -33,57 +33,55 @@ export function createReaderChapterRenderer({
   let zhCoreWarmFailed = false;
   let jaCoreWarmFailed = false;
 
-  // Do not paint a Chinese/Japanese chapter once without readings and then
-  // rebuild the whole page when the dictionary arrives. That two-stage paint
-  // was the visible "pinyin appears/disappears" jump on Android. Wait for the
-  // bundled local dictionary and produce one final layout instead.
-  function holdFirstCjkPaintUntilCore(lang, book) {
+  // Used to hold the whole chapter paint until the dictionary arrived — a
+  // blocking "Подготавливаю слова и пиньинь…" screen with nothing else on
+  // it. Whatever the exact reason (network condition, a WebView quirk,
+  // sheer parse/build time on slower hardware), that wait was observed on
+  // a real device to not resolve, ever: the book never opened. There is no
+  // load time short enough to safely gate the FIRST paint on — so don't.
+  // Never block: kick the dictionary load off in the background if it
+  // isn't already running, and let the caller render immediately with
+  // whatever's available (the small bundled lexicon covers common words;
+  // readerSegmentChineseLocal's fallback still segments the rest). When the
+  // full dictionary lands, re-render in place — tryFastNav already bails to
+  // a full rebuild on its own when isZhCoreLoaded()/isJaCoreLoaded() flips,
+  // so existing paragraphs pick up full pinyin/furigana coverage without
+  // the reader ever having stared at a blank screen for it.
+  function startCjkCoreWarmupInBackground(lang) {
     const code = canonicalLang(lang);
     const isZh = code === 'zh';
     const isJa = code === 'ja';
-    if (!isZh && !isJa) return false;
+    if (!isZh && !isJa) return;
 
     const loaded = isZh ? !!isZhCoreLoaded?.() : !!isJaCoreLoaded?.();
     const failed = isZh ? zhCoreWarmFailed : jaCoreWarmFailed;
-    if (loaded || failed) return false;
+    if (loaded || failed) return;
 
     const ensure = isZh ? ensureZhCoreLoaded : ensureJaCoreLoaded;
-    if (typeof ensure !== 'function') return false;
-
-    const root = document.getElementById('reader-chapter-text');
-    if (root && root.dataset.readerCoreWarmup !== code) {
-      root.dataset.readerCoreWarmup = code;
-      // Build marker rendered right into this placeholder — if it ever gets
-      // stuck again, a screenshot alone says which build is actually running,
-      // instead of that having to be established by asking.
-      const buildMark = (() => { try { return String(globalThis.AN2_BUILD || ''); } catch { return ''; } })();
-      root.innerHTML = `
-        <div class="reader-core-warmup" role="status" aria-live="polite"
-          style="min-height:42vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:28px;color:var(--text-muted);font-family:'IBM Plex Sans',sans-serif;font-size:.82rem;line-height:1.5">
-          <div><span style="display:block;font-size:1.25rem;margin-bottom:8px">${isZh ? '拼' : '振'}</span>${isZh ? 'Подготавливаю слова и пиньинь…' : 'Подготавливаю слова и фуригану…'}${buildMark ? `<span style="display:block;margin-top:10px;font-size:.68rem;opacity:.55">build ${buildMark}</span>` : ''}</div>
-        </div>`;
-    }
+    if (typeof ensure !== 'function') return;
+    if (isZh ? zhCoreWarmPromise : jaCoreWarmPromise) return;
 
     const startWarmup = () => Promise.resolve().then(() => ensure({ rerender: false }))
       .catch((error) => {
         if (isZh) zhCoreWarmFailed = true;
         else jaCoreWarmFailed = true;
-        console.warn(`[reader] ${code} core warm-up failed; using fallback render`, error?.message || error);
+        console.warn(`[reader] ${code} core warm-up failed; keeping the local fallback`, error?.message || error);
       })
       .finally(() => {
         if (isZh) zhCoreWarmPromise = null;
         else jaCoreWarmPromise = null;
         const current = getCurrentBook?.();
         if (!current) return;
-        requestAnimationFrame(() => render());
+        const scroller = document.querySelector('#reader-reading-view .rd-scroll');
+        const savedScrollTop = scroller ? scroller.scrollTop : 0;
+        requestAnimationFrame(() => {
+          render();
+          if (scroller) scroller.scrollTop = savedScrollTop;
+        });
       });
 
-    if (isZh) {
-      if (!zhCoreWarmPromise) zhCoreWarmPromise = startWarmup();
-    } else if (!jaCoreWarmPromise) {
-      jaCoreWarmPromise = startWarmup();
-    }
-    return true;
+    if (isZh) zhCoreWarmPromise = startWarmup();
+    else jaCoreWarmPromise = startWarmup();
   }
 
   // ── Fast navigation helpers ──────────────────────────────────────
@@ -166,13 +164,7 @@ export function createReaderChapterRenderer({
       readingView.dataset.readerScript = ['zh', 'ja'].includes(canonicalLang(activeReaderLang)) ? 'cjk' : 'latin';
     }
 
-    if (holdFirstCjkPaintUntilCore(activeReaderLang, book)) return;
-
-    // A failed prewarm is allowed to use the old non-blocking fallback. This is
-    // deliberately after the one-paint guard so a healthy local dictionary
-    // never causes a second chapter layout.
-    if (canonicalLang(activeReaderLang) === 'zh' && needsZhCoreLoad?.()) ensureZhCoreLoaded?.({ rerender: false });
-    if (canonicalLang(activeReaderLang) === 'ja' && needsJaCoreLoad?.()) ensureJaCoreLoaded?.({ rerender: false });
+    startCjkCoreWarmupInBackground(activeReaderLang);
 
     const chapters = book.chapters || [];
     const chapterIndex = Math.max(0, Math.min(book.currentChapter || 0, chapters.length - 1));
