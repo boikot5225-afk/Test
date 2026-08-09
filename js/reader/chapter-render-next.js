@@ -53,10 +53,14 @@ export function createReaderChapterRenderer({
     const root = document.getElementById('reader-chapter-text');
     if (root && root.dataset.readerCoreWarmup !== code) {
       root.dataset.readerCoreWarmup = code;
+      // Build marker rendered right into this placeholder — if it ever gets
+      // stuck again, a screenshot alone says which build is actually running,
+      // instead of that having to be established by asking.
+      const buildMark = (() => { try { return String(globalThis.AN2_BUILD || ''); } catch { return ''; } })();
       root.innerHTML = `
         <div class="reader-core-warmup" role="status" aria-live="polite"
           style="min-height:42vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:28px;color:var(--text-muted);font-family:'IBM Plex Sans',sans-serif;font-size:.82rem;line-height:1.5">
-          <div><span style="display:block;font-size:1.25rem;margin-bottom:8px">${isZh ? '拼' : '振'}</span>${isZh ? 'Подготавливаю слова и пиньинь…' : 'Подготавливаю слова и фуригану…'}</div>
+          <div><span style="display:block;font-size:1.25rem;margin-bottom:8px">${isZh ? '拼' : '振'}</span>${isZh ? 'Подготавливаю слова и пиньинь…' : 'Подготавливаю слова и фуригану…'}${buildMark ? `<span style="display:block;margin-top:10px;font-size:.68rem;opacity:.55">build ${buildMark}</span>` : ''}</div>
         </div>`;
     }
 
