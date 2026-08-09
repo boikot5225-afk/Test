@@ -128,12 +128,16 @@ export function createReaderWordState(opts) {
     try { globalThis.an2ReaderWordStateSnapshot = () => value; } catch {}
     return value;
   };
+
+  // HOT PATH: once the state is in memory, load() must be O(1). The old code
+  // called stabilizeAllPassiveRuby(cached) here. visual() calls load() once for
+  // every rendered word, so a 6000-word history multiplied by hundreds of words
+  // in the chapter turned a simple paint into millions of iterations. Do the
+  // full normalization once when data enters memory instead; individual state
+  // mutations stabilize only the state they touched.
   const load = () => {
     const cached = cacheRead();
-    if (cached) {
-      stabilizeAllPassiveRuby(cached);
-      return publishLiveSnapshot(cached);
-    }
+    if (cached) return publishLiveSnapshot(cached);
     let data = {};
     try { data = JSON.parse(localStorage.getItem(storageKey()) || '{}') || {}; } catch (_) {}
     let changed = pruneAll(data);
@@ -144,10 +148,22 @@ export function createReaderWordState(opts) {
     cacheWrite(data);
     return publishLiveSnapshot(data);
   };
-  const save = () => {
+
+  let scheduledSaveTimer = null;
+  let scheduledIdleHandle = null;
+  let scheduledSaveDueAt = 0;
+
+  const persistNow = () => {
+    if (scheduledSaveTimer) clearTimeout(scheduledSaveTimer);
+    scheduledSaveTimer = null;
+    scheduledSaveDueAt = 0;
+    if (scheduledIdleHandle != null && typeof cancelIdleCallback === 'function') {
+      try { cancelIdleCallback(scheduledIdleHandle); } catch {}
+    }
+    scheduledIdleHandle = null;
+
     const data = load();
     for (const item of Object.values(data)) pruneClickContexts(item);
-    stabilizeAllPassiveRuby(data);
     pruneOverflow(data);
     let localOk = true;
     try {
@@ -166,26 +182,36 @@ export function createReaderWordState(opts) {
       if (!localOk) onSaveError?.(e);
     });
     onSaved?.();
+    return data;
   };
 
-  // save() re-scans and re-serializes EVERY word ever tracked, not just the
-  // ones that changed — cost grows with total vocabulary seen this session.
-  // trackParagraph() calls this on every paragraph with new/changed words,
-  // i.e. on ordinary reading/paging through never-before-seen text. Measured
-  // under a mid-tier-mobile CPU profile: navigating forward through a book
-  // went from ~1.2s/tap to 12s, then 20s, then 40s, then 63s per tap as the
-  // tracked-word count grew — a real O(n²) blowup across a reading session,
-  // which is exactly "everything hangs and barely turns pages". Explicit
-  // user actions (mark known/saved/clicked) still save immediately —
-  // deliberate intent shouldn't wait. Passive per-paragraph tracking doesn't
-  // need that: coalesce rapid saves into one after activity settles.
-  let scheduledSaveTimer = null;
-  const scheduleSave = () => {
-    if (scheduledSaveTimer) return;
+  // Heavy JSON serialization is deliberately pushed out of the tap/scroll
+  // frame. Explicit actions ask for a shorter delay, passive paragraph tracking
+  // for a longer one; whichever is sooner wins. requestIdleCallback keeps the
+  // commit away from active animation/scroll frames when WebView supports it.
+  const scheduleSave = (delay = 900) => {
+    const now = Date.now();
+    const due = now + Math.max(0, delay);
+    if (scheduledSaveTimer && scheduledSaveDueAt <= due) return;
+    if (scheduledSaveTimer) clearTimeout(scheduledSaveTimer);
+    scheduledSaveDueAt = due;
     scheduledSaveTimer = setTimeout(() => {
       scheduledSaveTimer = null;
-      save();
-    }, 800);
+      scheduledSaveDueAt = 0;
+      if (typeof requestIdleCallback === 'function') {
+        scheduledIdleHandle = requestIdleCallback(() => {
+          scheduledIdleHandle = null;
+          persistNow();
+        }, { timeout: 1800 });
+      } else {
+        persistNow();
+      }
+    }, Math.max(0, due - now));
+  };
+
+  const save = () => {
+    scheduleSave(350);
+    return load();
   };
 
   const hydrateFromIndexedDB = async () => {
@@ -210,26 +236,49 @@ export function createReaderWordState(opts) {
     try { localStorage.setItem(storageKey(), JSON.stringify(current)); } catch (_) {}
     return true;
   };
+
   const key = (word, lang = null) => {
     const language = canonicalLang(lang || currentLang());
     return `${language}:${normalizeImportKey(normalizeWord(word, language))}`;
   };
-  const get = (word, lang = null) => {
-    const language = canonicalLang(lang || currentLang()), k = key(word, language), state = load();
-    if (!state[k]) state[k] = { word: normalizeWord(word, language), lang: language, seen: 0, clicked: 0, saved: false, known: false, status: 'new', places: {}, clickContexts: {}, updatedAt: new Date().toISOString() };
+
+  const stateKey = (word, language) => `${language}:${normalizeImportKey(normalizeWord(word, language))}`;
+  const ensureIn = (state, word, language) => {
+    const k = stateKey(word, language);
+    if (!state[k]) state[k] = {
+      word: normalizeWord(word, language), lang: language, seen: 0, clicked: 0,
+      saved: false, known: false, status: 'new', places: {}, clickContexts: {},
+      updatedAt: new Date().toISOString(),
+    };
     return state[k];
   };
+
+  const get = (word, lang = null) => {
+    const language = canonicalLang(lang || currentLang());
+    return ensureIn(load(), word, language);
+  };
   const touch = (word, lang = null) => { const state = get(word, lang); state.updatedAt = new Date().toISOString(); return state; };
+
   const trackParagraph = (book, chapter, index, text) => {
     if (!book || !chapter) return false;
-    const language = getBookLang(book), place = `${book.id || 'book'}:${chapter.id || String(book.currentChapter || 0)}:${index}`;
+    const language = getBookLang(book);
+    const place = `${book.id || 'book'}:${chapter.id || String(book.currentChapter || 0)}:${index}`;
+    const store = load();
     let changed = false;
-    new Set(tokenizeParagraph(text, language).map(x => normalizeWord(x, language)).filter(Boolean)).forEach(word => {
-      const state = get(word, language); state.places ||= {};
-      if (!state.places[place] && Object.keys(state.places).length < PLACES_CAP) { state.places[place] = true; changed = true; }
+    const words = new Set(tokenizeParagraph(text, language).map(x => normalizeWord(x, language)).filter(Boolean));
+    for (const word of words) {
+      // Do NOT call get() here: get()->load() used to run a whole-store CJK
+      // stabilization pass for every unique token in the paragraph.
+      const state = ensureIn(store, word, language);
+      state.places ||= {};
+      if (!state.places[place] && Object.keys(state.places).length < PLACES_CAP) {
+        state.places[place] = true;
+        changed = true;
+      }
       const seen = Math.max(state.seen || 0, Object.keys(state.places).length);
       if (state.seen !== seen) { state.seen = seen; changed = true; }
       if (isCommonWord(word, language)) {
+        if (!state.known || state.status !== 'known') changed = true;
         state.known = true;
         state.autoKnown = 'common';
         state.status = 'known';
@@ -237,8 +286,8 @@ export function createReaderWordState(opts) {
       } else {
         changed = stabilizePassiveRuby(state) || changed;
       }
-    });
-    if (changed) scheduleSave();
+    }
+    if (changed) scheduleSave(1000);
     // CJK word-state changes used to rebuild every ruby token 420 ms after it
     // entered the viewport. Keep tracking/syncing, but repaint colours/ruby only
     // on an actual navigation or explicit word action, not in the reader's face.
@@ -357,16 +406,32 @@ export function createReaderWordState(opts) {
     save();
   };
   const markKnown = (word, lang = null) => { const state = touch(word, lang); delete state.autoRubyVisible; state.known = true; state.status = 'known'; state.autoKnown = false; save(); };
+
+  // French verb-form detection used to scan the whole verb table every time the
+  // same token was painted. Memoize it for the lifetime of this reader store.
+  const frenchKnownFormCache = new Map();
+  const isFrenchKnownForm = (normalized, language) => {
+    if (language !== 'fr') return false;
+    if (frenchKnownFormCache.has(normalized)) return frenchKnownFormCache.get(normalized);
+    const known = !!findVerbByForm(normalized);
+    if (frenchKnownFormCache.size > 2500) frenchKnownFormCache.clear();
+    frenchKnownFormCache.set(normalized, known);
+    return known;
+  };
+
   const visual = (word, lang = null) => {
-    const language = canonicalLang(lang || currentLang()), normalized = normalizeWord(word, language);
+    const language = canonicalLang(lang || currentLang());
+    const normalized = normalizeWord(word, language);
     if (!normalized) return { cls: 'rw-known', title: 'служебное/частое слово' };
-    const state = load()[key(normalized, language)], seen = Number(state?.seen || 0);
+    const store = load();
+    const state = store[stateKey(normalized, language)];
+    const seen = Number(state?.seen || 0);
     if (state?.known || state?.status === 'known') return { cls: 'rw-known', title: 'изучено' };
     if (state?.status === 'problem' || state?.status === 'hard') return { cls: 'rw-problem', title: 'проблемное слово' };
     if (state?.status === 'familiar') return { cls: 'rw-familiar', title: 'закрепляется' };
     if (state?.status === 'learning' || state?.saved) return { cls: 'rw-learning', title: 'изучаю' };
     if (state?.status === 'looked' || (state?.clicked || 0) > 0) return { cls: 'rw-looked', title: `просмотрено ${state?.clicked || 1} раз` };
-    if (isCommonWord(normalized, language) || (language === 'fr' && findVerbByForm(normalized))) return { cls: 'rw-known', title: 'изучено' };
+    if (isCommonWord(normalized, language) || isFrenchKnownForm(normalized, language)) return { cls: 'rw-known', title: 'изучено' };
     if (seen >= fadeAfter) return { cls: 'rw-faded', title: `встречалось ${seen} раз — подсветка скрыта` };
     if (seen >= seenAfter) return { cls: 'rw-seen', title: `часто встречалось: ${seen} абз.` };
     return { cls: 'rw-new', title: language === 'zh' ? 'новый китайский сегмент' : language === 'ja' ? 'новый японский сегмент' : 'новое слово' };
