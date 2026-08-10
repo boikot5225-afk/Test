@@ -1,4 +1,5 @@
 import './delete-fix.js?v=1';
+import './toc-reconcile.js?v=1';
 import { setTocVisibleBook } from './toc-runtime.js?v=2';
 import { createReaderChapterRenderer as createBaseRenderer } from './chapter-render-dialogue.js?v=8';
 
