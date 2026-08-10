@@ -1,17 +1,12 @@
-// Reconcile exact EPUB package TOC with the real saved book.
+// Reconcile exact EPUB package TOCs with the real saved book.
 //
-// Why this exists: 77.42-toc9 parsed NCX correctly, but when a re-import made a
-// tiny duplicate first, toc-direct picked the newest matching title and attached
-// the 44-row NCX to that 1-chapter duplicate. The real 44-chapter book therefore
-// kept "Глава N" even though the exact TOC was already present in the library.
-//
-// This module fixes the DATA, not the sheet. For books with the same title /
-// author / language it finds an exact EPUB2/3 TOC, moves it to the richest book
-// whose chapter count actually fits that TOC, renames those chapters 1:1 when
-// counts match, and removes only catastrophically-poor duplicates produced by
-// the failed import path. Removed ids get the same durable tombstone used by
-// delete-fix, so cloud/IndexedDB cannot resurrect them.
+// Source of truth is now toc-registry.js, not a lucky book object. This module
+// performs a bounded migration pass: choose the richest matching book, apply
+// exact NCX/nav rows to it, and remove only unmistakable 1-chapter failed-import
+// stubs. There is deliberately NO permanent 5-second writer loop: the old loop
+// could race a user deletion and write a stale snapshot back into the library.
 
+import { getExactTocRecords } from './toc-registry.js?v=1';
 import { libraryIdbPut } from './library-idb-store.js?v=1';
 import { sb, sbGetCurrentUserId, isSupabaseReady } from '../supabase.js';
 
@@ -21,7 +16,7 @@ const TOMBSTONES_BASE_KEY = 'an2_reader_book_tombstones_v1';
 const MAX_TOMBSTONES = 500;
 let appPromise = null;
 let running = null;
-let timer = null;
+let scheduled = null;
 
 function appModule() {
   if (!appPromise) appPromise = import(READER_APP_URL);
@@ -38,112 +33,6 @@ function key(value) {
   catch { return raw.toLowerCase().replace(/[^a-z0-9]+/g, ''); }
 }
 
-function groupKey(book) {
-  const title = key(book?.title || '');
-  if (!title) return '';
-  const author = key(book?.author || '');
-  const lang = key(book?.lang || book?.sourceLang || '');
-  return `${title}|${author}|${lang}`;
-}
-
-function exactRows(book) {
-  const rows = Array.isArray(book?.toc) ? book.toc : [];
-  const source = String(book?.epubTocSource || '');
-  return rows.length >= 2 && (/^EPUB[23]/i.test(source) || book?._epubTocExact === true)
-    ? rows
-    : null;
-}
-
-function textOf(item) {
-  if (typeof item === 'string') return item;
-  if (!item || typeof item !== 'object') return '';
-  return String(item.text || item.value || item.content || item.caption || item.alt || '');
-}
-
-function bookStats(book) {
-  const chapters = Array.isArray(book?.chapters) ? book.chapters : [];
-  let paragraphs = 0;
-  let chars = 0;
-  for (const chapter of chapters) {
-    for (const item of chapter?.paragraphs || []) {
-      paragraphs++;
-      const text = clean(textOf(item));
-      if (text) chars += text.replace(/\s+/g, '').length;
-    }
-  }
-  return { chapters: chapters.length, paragraphs, chars };
-}
-
-function targetScore(book, tocLength) {
-  const s = bookStats(book);
-  const diff = Math.abs(s.chapters - tocLength);
-  let score = 0;
-  if (diff === 0) score += 1_000_000;
-  else if (diff === 1) score += 500_000;
-  else if (diff <= 3) score += 250_000 - diff * 20_000;
-  else score -= diff * 15_000;
-  // Content richness breaks ties. Recency intentionally does NOT: that was the
-  // toc9 bug (the just-created 1/1 duplicate won merely because it was newest).
-  score += Math.min(120_000, s.paragraphs * 120);
-  score += Math.min(80_000, Math.floor(s.chars / 25));
-  if (book?.source === 'epub') score += 20_000;
-  return score;
-}
-
-function cloneRows(rows) {
-  return rows.map((row, index) => ({
-    ...row,
-    title: clean(row?.title) || `Раздел ${index + 1}`,
-    depth: Math.max(0, Number(row?.depth) || 0),
-    hasChildren: row?.hasChildren === true || Number(rows[index + 1]?.depth || 0) > Number(row?.depth || 0),
-  }));
-}
-
-function applyRowsToTarget(source, target) {
-  const sourceRows = exactRows(source);
-  if (!sourceRows || !target?.chapters?.length) return { ok: false, mapped: 0 };
-  const rows = cloneRows(sourceRows);
-  const chapters = target.chapters;
-  let mapped = 0;
-
-  // This is the important path for El narco and for any sane importer: when
-  // package TOC and saved chapter counts agree, they are the same reading-order
-  // units. Map directly instead of trying to infer titles from paragraph text.
-  if (chapters.length === rows.length) {
-    for (let i = 0; i < rows.length; i++) {
-      rows[i].chapterIndex = i;
-      chapters[i].title = rows[i].title;
-      if (rows[i].path && !chapters[i].sourcePath) chapters[i].sourcePath = rows[i].path;
-      mapped++;
-    }
-  } else {
-    // Fallback for books imported by older builds that skipped cover/map/part
-    // pages. Prefer explicit sourcePath matches and keep unmapped TOC parents
-    // visible rather than lying about a target.
-    const byPath = new Map();
-    for (let i = 0; i < chapters.length; i++) {
-      const path = String(chapters[i]?.sourcePath || '').replace(/^\/+/, '');
-      if (path) byPath.set(path, i);
-    }
-    for (const row of rows) {
-      const path = String(row?.path || '').replace(/^\/+/, '');
-      const ci = byPath.get(path);
-      if (!Number.isInteger(ci)) { row.chapterIndex = null; continue; }
-      row.chapterIndex = ci;
-      chapters[ci].title = row.title;
-      mapped++;
-    }
-  }
-
-  target.toc = rows;
-  target.epubTocSource = source.epubTocSource || 'EPUB TOC';
-  target._epubTocExact = true;
-  target._epubTocCount = rows.length;
-  if (source._epubTocFile) target._epubTocFile = source._epubTocFile;
-  target.updatedAt = new Date().toISOString();
-  return { ok: mapped > 0, mapped, rows: rows.length };
-}
-
 function scopedKey(base) {
   try {
     return typeof window.an2ReaderStorageKey === 'function'
@@ -152,17 +41,139 @@ function scopedKey(base) {
   } catch { return base; }
 }
 
-function tombstone(ids) {
-  if (!ids?.length) return;
-  const k = scopedKey(TOMBSTONES_BASE_KEY);
-  let existing = {};
-  try { existing = JSON.parse(localStorage.getItem(k) || '{}') || {}; } catch {}
-  const now = Date.now();
-  for (const id of ids) if (id) existing[String(id)] = now;
-  const compact = Object.entries(existing)
+function readTombstones() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(scopedKey(TOMBSTONES_BASE_KEY)) || '{}') || {};
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  } catch { return {}; }
+}
+
+function writeTombstones(value) {
+  const compact = Object.entries(value || {})
+    .filter(([id]) => !!id)
     .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
     .slice(0, MAX_TOMBSTONES);
-  try { localStorage.setItem(k, JSON.stringify(Object.fromEntries(compact))); } catch {}
+  try { localStorage.setItem(scopedKey(TOMBSTONES_BASE_KEY), JSON.stringify(Object.fromEntries(compact))); } catch {}
+}
+
+function tombstone(ids) {
+  if (!ids?.length) return;
+  const current = readTombstones();
+  const now = Date.now();
+  for (const id of ids) if (id) current[String(id)] = now;
+  writeTombstones(current);
+}
+
+function textOf(item) {
+  if (typeof item === 'string') return item;
+  if (!item || typeof item !== 'object') return '';
+  return String(item.text || item.value || item.content || item.caption || item.alt || '');
+}
+
+function stats(book) {
+  const chapters = Array.isArray(book?.chapters) ? book.chapters : [];
+  let paragraphs = 0;
+  let chars = 0;
+  for (const chapter of chapters) {
+    for (const item of chapter?.paragraphs || []) {
+      paragraphs++;
+      chars += clean(textOf(item)).replace(/\s+/g, '').length;
+    }
+  }
+  return { chapters: chapters.length, paragraphs, chars };
+}
+
+function sameBookIdentity(book, record) {
+  if (!book || key(book.title) !== key(record.title)) return false;
+  const wantedAuthor = key(record.author || '');
+  const bookAuthor = key(book.author || '');
+  // Old broken imports occasionally lost the author; empty must not block the
+  // migration, but two different non-empty authors are never merged.
+  if (wantedAuthor && bookAuthor && wantedAuthor !== bookAuthor) return false;
+  return true;
+}
+
+function targetScore(book, tocLength) {
+  const s = stats(book);
+  const diff = Math.abs(s.chapters - tocLength);
+  let score = 0;
+  if (diff === 0) score += 2_000_000;
+  else if (diff === 1) score += 900_000;
+  else if (diff <= 3) score += 400_000 - diff * 60_000;
+  else score -= diff * 40_000;
+  score += Math.min(300_000, s.paragraphs * 150);
+  score += Math.min(180_000, Math.floor(s.chars / 20));
+  // Richness wins; recency intentionally does not. The recency bonus was what
+  // made the freshly-created El narco 1/1 stub beat the real 44-chapter book.
+  return score;
+}
+
+function cloneRows(rows) {
+  return (rows || []).map((row, index) => ({
+    title: clean(row?.title) || `Раздел ${index + 1}`,
+    path: String(row?.path || ''),
+    fragment: String(row?.fragment || ''),
+    depth: Math.max(0, Number(row?.depth) || 0),
+    hasChildren: row?.hasChildren === true || Number(rows?.[index + 1]?.depth || 0) > Number(row?.depth || 0),
+    order: index,
+    chapterIndex: null,
+  }));
+}
+
+function applyRows(target, record) {
+  const chapters = Array.isArray(target?.chapters) ? target.chapters : [];
+  const rows = cloneRows(record.rows);
+  if (!chapters.length || !rows.length) return { ok: false, mapped: 0, rows: rows.length };
+  let mapped = 0;
+
+  if (chapters.length === rows.length) {
+    // El narco's damaged full copy is exactly this shape: 44 real reading-order
+    // chapters already exist, only their labels were replaced with "Глава N".
+    // The NCX has the same 44 reading-order targets, so mapping 1:1 is exact.
+    for (let i = 0; i < rows.length; i++) {
+      rows[i].chapterIndex = i;
+      chapters[i].title = rows[i].title;
+      if (rows[i].path) chapters[i].sourcePath = rows[i].path;
+      mapped++;
+    }
+  } else {
+    // Future correctly imported EPUBs persist sourcePath. Use it when a package
+    // has several nav entries into the same XHTML or an old build skipped a
+    // structural page. Never guess by raw index when counts differ.
+    const byPath = new Map();
+    for (let i = 0; i < chapters.length; i++) {
+      const path = String(chapters[i]?.sourcePath || '').replace(/^\/+/, '');
+      if (path) byPath.set(path, i);
+    }
+    for (const row of rows) {
+      const path = String(row.path || '').replace(/^\/+/, '');
+      const ci = byPath.get(path);
+      if (!Number.isInteger(ci)) continue;
+      row.chapterIndex = ci;
+      chapters[ci].title = row.title;
+      mapped++;
+    }
+  }
+
+  if (!mapped) return { ok: false, mapped: 0, rows: rows.length };
+  target.toc = rows;
+  target.epubTocSource = /^EPUB[23]/i.test(String(record.source || '')) ? record.source : 'EPUB TOC';
+  target._epubTocExact = true;
+  target._epubTocCount = rows.length;
+  if (record.fileName) target._epubTocFile = record.fileName;
+  target.updatedAt = new Date().toISOString();
+  return { ok: true, mapped, rows: rows.length };
+}
+
+function poorStub(candidate, target, tocLength) {
+  if (!candidate || candidate === target || !sameBookIdentity(candidate, target)) return false;
+  const a = stats(candidate);
+  const b = stats(target);
+  if (b.chapters < Math.max(10, tocLength * 0.5)) return false;
+  const tinyChapters = a.chapters <= 2;
+  const tinyParagraphs = a.paragraphs <= Math.max(6, Math.floor(b.paragraphs * 0.03));
+  const tinyChars = a.chars <= Math.max(2500, Math.floor(b.chars * 0.03));
+  return tinyChapters && tinyParagraphs && tinyChars;
 }
 
 async function deleteCloud(ids) {
@@ -175,36 +186,17 @@ async function deleteCloud(ids) {
       const { error } = await sb.from('reader_books').delete().eq('user_id', userId).eq('id', id);
       if (error) throw error;
     } catch (error) {
-      console.warn('[toc-reconcile] cloud duplicate cleanup postponed', id, error);
+      console.warn('[toc-reconcile] cloud stub delete postponed', id, error);
     }
   }
 }
 
-function copyUsefulMetadata(from, to) {
-  // Failed re-imports sometimes carried a cover the older, richer copy did not.
-  // Keep harmless cover metadata if it is directly portable; never overwrite
-  // reading position, ids, chapters, timestamps or progress.
-  for (const [name, value] of Object.entries(from || {})) {
-    if (!/cover/i.test(name)) continue;
-    if (to[name] == null || to[name] === '') to[name] = value;
-  }
-}
-
-function poorDuplicate(candidate, target, tocLength) {
-  if (!candidate || candidate === target) return false;
-  const a = bookStats(candidate);
-  const b = bookStats(target);
-  // Only delete an unmistakable failed-import stub. Two legitimate editions
-  // with similar amounts of content are left alone.
-  const tinyChapters = a.chapters <= Math.max(2, Math.floor(tocLength * 0.12));
-  const targetFits = Math.abs(b.chapters - tocLength) <= 1;
-  const tinyContent = a.paragraphs <= Math.max(5, Math.floor(b.paragraphs * 0.08))
-    && a.chars <= Math.max(3000, Math.floor(b.chars * 0.08));
-  return targetFits && tinyChapters && tinyContent;
-}
-
 async function persist(app, books, removedIds) {
   if (removedIds.length) tombstone(removedIds);
+  const deleted = new Set(Object.keys(readTombstones()));
+  const kept = books.filter(book => !deleted.has(String(book?.id || '')));
+  books.splice(0, books.length, ...kept);
+
   const storageKey = scopedKey(BOOKS_BASE_KEY);
   try { localStorage.setItem(storageKey, JSON.stringify(books)); } catch {}
   try { await libraryIdbPut(storageKey, books); }
@@ -220,72 +212,98 @@ export async function reconcileExactTocDuplicates({ render = true } = {}) {
     const books = app.loadReaderBooks?.() || [];
     if (!Array.isArray(books) || !books.length) return { changed: false, repaired: 0, removed: 0 };
 
-    const groups = new Map();
+    // Respect manual deletions before doing ANY migration. This prevents this
+    // module itself from resurrecting a stale snapshot.
+    const deleted = new Set(Object.keys(readTombstones()));
+    if (deleted.size) {
+      const kept = books.filter(book => !deleted.has(String(book?.id || '')));
+      if (kept.length !== books.length) books.splice(0, books.length, ...kept);
+    }
+
+    const records = [...getExactTocRecords()];
+    // Also salvage exact TOCs that old builds managed to attach to the wrong
+    // book. No source==='epub' requirement: a broken wrapper could mislabel the
+    // stub as manual_text while its NCX rows are still perfectly valid.
     for (const book of books) {
-      if (!book || book.source !== 'epub') continue;
-      const gk = groupKey(book);
-      if (!gk) continue;
-      if (!groups.has(gk)) groups.set(gk, []);
-      groups.get(gk).push(book);
+      if (!Array.isArray(book?.toc) || !book.toc.length) continue;
+      if (!book?._epubTocExact && !/^EPUB[23]/i.test(String(book?.epubTocSource || ''))) continue;
+      records.push({
+        title: book.title,
+        author: book.author,
+        source: book.epubTocSource || 'EPUB TOC',
+        fileName: book._epubTocFile || '',
+        rows: book.toc,
+        savedAt: new Date(book.updatedAt || 0).getTime() || 0,
+      });
+    }
+
+    // Newest durable record wins for the same title+author; migration records
+    // have savedAt=1 and therefore only fill a hole left by the broken builds.
+    const byRecord = new Map();
+    for (const record of records) {
+      if (!record?.rows?.length || !key(record.title)) continue;
+      const rk = `${key(record.title)}|${key(record.author)}`;
+      const old = byRecord.get(rk);
+      if (!old || Number(record.savedAt || 0) >= Number(old.savedAt || 0)) byRecord.set(rk, record);
     }
 
     let changed = false;
     let repaired = 0;
     const removedIds = [];
 
-    for (const group of groups.values()) {
-      const sources = group.filter(book => exactRows(book));
-      if (!sources.length) continue;
-      // Prefer the source with the largest exact outline. A failed 1/1 duplicate
-      // can still be the source of truth for labels even though it is a terrible
-      // reading target.
-      sources.sort((a, b) => exactRows(b).length - exactRows(a).length);
-      const source = sources[0];
-      const tocLength = exactRows(source).length;
-      const target = [...group].sort((a, b) => targetScore(b, tocLength) - targetScore(a, tocLength))[0];
+    for (const record of byRecord.values()) {
+      const candidates = books.filter(book => sameBookIdentity(book, record));
+      if (!candidates.length) continue;
+      const target = [...candidates].sort((a, b) => targetScore(b, record.rows.length) - targetScore(a, record.rows.length))[0];
       if (!target?.chapters?.length) continue;
 
-      const targetAlreadyExact = exactRows(target)?.length === tocLength
-        && target.chapters.length === tocLength
-        && target.chapters.every((chapter, i) => clean(chapter?.title) === clean(exactRows(target)[i]?.title));
-      if (!targetAlreadyExact) {
-        const applied = applyRowsToTarget(source, target);
+      const alreadyExact = target._epubTocExact === true
+        && /^EPUB[23]/i.test(String(target.epubTocSource || ''))
+        && Array.isArray(target.toc)
+        && target.toc.length === record.rows.length
+        && target.chapters.length === record.rows.length
+        && target.chapters.every((chapter, index) => clean(chapter?.title) === clean(record.rows[index]?.title));
+
+      if (!alreadyExact) {
+        const applied = applyRows(target, record);
         if (applied.ok) {
-          copyUsefulMetadata(source, target);
           repaired++;
           changed = true;
-          console.info('[toc-reconcile] exact TOC moved to real book', {
+          console.info('[toc-reconcile] exact TOC applied to richest copy', {
             title: target.title,
-            rows: applied.rows,
-            mapped: applied.mapped,
-            sourceId: source.id,
             targetId: target.id,
             targetChapters: target.chapters.length,
+            rows: applied.rows,
+            mapped: applied.mapped,
+            source: record.source,
           });
         }
       }
 
-      for (const candidate of group) {
-        if (!poorDuplicate(candidate, target, tocLength)) continue;
-        if (!removedIds.includes(String(candidate.id))) removedIds.push(String(candidate.id));
+      for (const candidate of candidates) {
+        if (!poorStub(candidate, target, record.rows.length)) continue;
+        const id = String(candidate.id || '');
+        if (id && !removedIds.includes(id)) removedIds.push(id);
       }
     }
 
     if (removedIds.length) {
-      const removeSet = new Set(removedIds);
-      const kept = books.filter(book => !removeSet.has(String(book?.id || '')));
+      const remove = new Set(removedIds);
+      const kept = books.filter(book => !remove.has(String(book?.id || '')));
       books.splice(0, books.length, ...kept);
       changed = true;
     }
 
-    if (changed) {
+    if (changed || deleted.size) {
       await persist(app, books, removedIds);
       if (render && document.getElementById('reader-reading-view')?.style.display !== 'flex') {
         try { await app.renderReaderScreen?.(); } catch {}
       }
-      window.showToast?.(removedIds.length
-        ? `📚 Оглавление EPUB исправлено · лишняя копия удалена`
-        : `📚 Оглавление EPUB исправлено`);
+      if (repaired || removedIds.length) {
+        window.showToast?.(removedIds.length
+          ? '📚 Оглавление исправлено · сломанный дубль удалён'
+          : '📚 Оглавление EPUB исправлено');
+      }
     }
     return { changed, repaired, removed: removedIds.length };
   })().finally(() => { running = null; });
@@ -293,23 +311,21 @@ export async function reconcileExactTocDuplicates({ render = true } = {}) {
 }
 
 function schedule(delay = 0) {
-  setTimeout(() => reconcileExactTocDuplicates({ render: true }).catch(error => {
-    console.warn('[toc-reconcile] skipped', error);
-  }), delay);
+  if (scheduled) clearTimeout(scheduled);
+  scheduled = setTimeout(() => {
+    scheduled = null;
+    reconcileExactTocDuplicates({ render: true }).catch(error => console.warn('[toc-reconcile] skipped', error));
+  }, delay);
 }
 
-// Repair current toc9 damage immediately after upgrading, then catch the exact
-// moment a future import finishes and attaches its NCX to the wrong duplicate.
-for (const delay of [250, 900, 2500, 6000]) schedule(delay);
-timer = setInterval(() => schedule(0), 5000);
+// Bounded startup retries cover IndexedDB/cloud hydration. After that we only
+// run on meaningful events; no permanent writer loop.
+for (const delay of [250, 1200, 3500, 8000]) setTimeout(() => schedule(0), delay);
+window.addEventListener('reader-exact-toc-saved', () => schedule(50));
 window.addEventListener('pageshow', () => schedule(150));
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') schedule(150);
 });
-window.addEventListener('pagehide', () => {
-  if (timer) clearInterval(timer);
-  timer = null;
-});
 
 try { window.readerReconcileExactTocDuplicates = reconcileExactTocDuplicates; } catch {}
-console.info('[toc-reconcile] loaded');
+console.info('[toc-reconcile] loaded v2');
