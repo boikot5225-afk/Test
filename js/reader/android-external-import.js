@@ -1,3 +1,5 @@
+import { captureEpubTocFile, applyCapturedEpubToc } from './toc-direct.js?v=1';
+
 const SUPPORTED_EXTENSIONS = new Set(['epub', 'fb2', 'txt', 'text', 'md']);
 
 function wait(ms) {
@@ -14,25 +16,21 @@ function currentHandler(name) {
   return typeof real === 'function' && !real.__isStub ? real : null;
 }
 
-async function waitUntilReady(timeoutMs = 60000, { requireEpubToc = false } = {}) {
+async function waitUntilReady(timeoutMs = 60000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const main = document.getElementById('main-app');
     const importHandler = currentHandler('readerImportFromFile');
     const saveHandler = currentHandler('saveReaderImport');
-    const tocReady = !requireEpubToc || typeof window.readerTocDiagnostics === 'function';
     if (main?.style.display !== 'none'
       && typeof window.showReaderImportModal === 'function'
       && typeof importHandler === 'function'
-      && typeof saveHandler === 'function'
-      && tocReady) {
+      && typeof saveHandler === 'function') {
       return { importHandler, saveHandler };
     }
     await wait(120);
   }
-  throw new Error(requireEpubToc
-    ? 'Reader AI не подготовил EPUB-оглавление. Перезапусти приложение и попробуй снова.'
-    : 'Reader AI не завершил вход. Войди в приложение или выбери гостевой режим.');
+  throw new Error('Reader AI не завершил вход. Войди в приложение или выбери гостевой режим.');
 }
 
 function safeFileName(value) {
@@ -69,13 +67,7 @@ export async function readerImportAndroidFile(payload = {}) {
   }
 
   try {
-    // EPUB absolutely must go through the TOC wrapper. Previous builds grabbed
-    // stale __real_readerImportFromFile/__real_saveReaderImport handlers here,
-    // which silently skipped toc.ncx/nav.xhtml parsing on Android even though
-    // the same parser worked in the normal browser file picker.
-    const { importHandler, saveHandler } = await waitUntilReady(60000, {
-      requireEpubToc: extension === 'epub',
-    });
+    const { importHandler, saveHandler } = await waitUntilReady();
     window.showScreen?.('reader');
     window.showReaderImportModal?.();
 
@@ -95,13 +87,27 @@ export async function readerImportAndroidFile(payload = {}) {
       lastModified: Number(payload.lastModified || Date.now()),
     });
 
+    // Crucial: capture the actual File here, before it is passed through any
+    // synthetic DOM event / runtime handler. This makes EPUB TOC parsing a
+    // direct Android import step instead of a monkey-patch side effect.
+    const tocRecord = extension === 'epub' ? captureEpubTocFile(file) : null;
+
     await importHandler({ target: { files: [file], value: '' }, androidExternal: true });
     const status = document.getElementById('reader-import-status');
     if (String(status?.textContent || '').trim().startsWith('❌')) return false;
 
     const selectedLang = document.getElementById('reader-import-lang');
     if (selectedLang && !selectedLang.value) selectedLang.value = globalThis.AN2_LANG || 'fr';
+
+    const title = String(document.getElementById('reader-import-title')?.value || '').trim();
+    const author = String(document.getElementById('reader-import-author')?.value || '').trim();
     await Promise.resolve(saveHandler());
+
+    if (tocRecord) {
+      setExternalStatus('⏳ Применяю настоящее оглавление EPUB...');
+      const applied = await applyCapturedEpubToc({ title, author, record: tocRecord });
+      if (applied?.ok) setExternalStatus(`✅ EPUB: ${applied.rows} пунктов оглавления · ${applied.mapped} переходов`, 'ok');
+    }
     return true;
   } catch (error) {
     const message = String(error?.message || error);
