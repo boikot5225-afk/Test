@@ -1,4 +1,3 @@
-import './toc-upgrade.js?v=1';
 import './handler-bridge.js?v=1';
 import { createReaderInteractions } from './interactions.js?v=1';
 
