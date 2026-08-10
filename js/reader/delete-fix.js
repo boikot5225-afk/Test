@@ -1,16 +1,13 @@
-// Durable reader-book deletion for Reader AI 77.42.
+// Authoritative durable reader-book deletion.
 //
-// The library snapshot is intentionally written with a delay during normal
-// reading, but readerDeleteBook() used to remove a book from memory and then
-// immediately call renderReaderScreen(). That render calls load() again before
-// the delayed localStorage commit, so the just-deleted book was read back from
-// the stale snapshot and appeared to be impossible to delete. IndexedDB/cloud
-// copies could resurrect it again for the same reason.
-//
-// Keep a tiny per-owner tombstone list and make deletion itself synchronous for
-// localStorage + durable for IndexedDB before re-rendering. Cloud deletion is
-// retried in the background and every successful retry re-applies tombstones to
-// memory, so an in-flight cloud hydrate cannot bring an old book back.
+// The canonical reader-app delete path is still unsafe: it removes the book in
+// memory, schedules the big library snapshot for later, and immediately renders.
+// renderReaderScreen() calls load(), which can read the stale snapshot and put
+// the just-deleted book back. Cloud/IndexedDB can do the same later. This module
+// owns deletion until that legacy function is removed: tombstone first, write
+// localStorage + IndexedDB immediately, then render. It also installs itself in
+// BOTH window.readerDeleteBook and window.__real_readerDeleteBook because the
+// startup buffering stubs may dispatch through either one.
 
 import { libraryIdbPut } from './library-idb-store.js?v=1';
 import { imgStoreDeleteBook } from './image-store.js?v=1';
@@ -21,37 +18,33 @@ import { showToast } from '../utils.js';
 const BOOKS_BASE_KEY = 'an2_reader_books_v1';
 const TOMBSTONES_BASE_KEY = 'an2_reader_book_tombstones_v1';
 const MAX_TOMBSTONES = 500;
-let installStarted = false;
 let moduleRef = null;
+let durableDelete = null;
+let installPromise = null;
 let reconcilePromise = null;
+let guardTimer = null;
 
 function scopedKey(base) {
   try {
     return typeof window.an2ReaderStorageKey === 'function'
       ? window.an2ReaderStorageKey(base)
       : base;
-  } catch {
-    return base;
-  }
+  } catch { return base; }
 }
 
 function readTombstones() {
   try {
     const raw = JSON.parse(localStorage.getItem(scopedKey(TOMBSTONES_BASE_KEY)) || '{}') || {};
     return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  } catch {
-    return {};
-  }
+  } catch { return {}; }
 }
 
-function writeTombstones(tombstones) {
-  try {
-    const entries = Object.entries(tombstones || {})
-      .filter(([id]) => !!id)
-      .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
-      .slice(0, MAX_TOMBSTONES);
-    localStorage.setItem(scopedKey(TOMBSTONES_BASE_KEY), JSON.stringify(Object.fromEntries(entries)));
-  } catch (_) {}
+function writeTombstones(value) {
+  const compact = Object.entries(value || {})
+    .filter(([id]) => !!id)
+    .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
+    .slice(0, MAX_TOMBSTONES);
+  try { localStorage.setItem(scopedKey(TOMBSTONES_BASE_KEY), JSON.stringify(Object.fromEntries(compact))); } catch {}
 }
 
 function markDeleted(id) {
@@ -68,152 +61,169 @@ function removePosition(id) {
       delete positions[id];
       localStorage.setItem(key, JSON.stringify(positions));
     }
-  } catch (_) {}
+  } catch {}
 }
 
-async function persistFilteredBooks(readerModule, { render = false } = {}) {
-  const tombstones = readTombstones();
-  const deletedIds = new Set(Object.keys(tombstones));
-  if (!deletedIds.size) return false;
+async function persistFilteredBooks({ render = false } = {}) {
+  if (!moduleRef) return false;
+  const deleted = new Set(Object.keys(readTombstones()));
+  if (!deleted.size) return false;
 
-  const books = readerModule.loadReaderBooks();
+  const books = moduleRef.loadReaderBooks?.() || [];
   if (!Array.isArray(books)) return false;
-  const kept = books.filter(book => !deletedIds.has(String(book?.id || '')));
+  const kept = books.filter(book => !deleted.has(String(book?.id || '')));
   if (kept.length === books.length) return false;
 
-  // loadReaderBooks() returns the reader's actual in-memory array. Mutate that
-  // same array instead of replacing an inaccessible module-local variable.
   books.splice(0, books.length, ...kept);
-  for (const id of deletedIds) removePosition(id);
-
+  for (const id of deleted) removePosition(id);
   const storageKey = scopedKey(BOOKS_BASE_KEY);
-  try { localStorage.setItem(storageKey, JSON.stringify(books)); } catch (_) {}
+  try { localStorage.setItem(storageKey, JSON.stringify(books)); } catch {}
   try { await libraryIdbPut(storageKey, books); }
   catch (error) { console.warn('[reader delete] IndexedDB write failed', error); }
-
-  // Keep the normal store's position/cloud machinery in sync. The expensive
-  // snapshot it schedules later now sees the already-correct local + IDB state.
-  try { readerModule.saveReaderBooks(); } catch (_) {}
-  if (render) {
-    try { await readerModule.renderReaderScreen(); } catch (_) {}
+  try { moduleRef.saveReaderBooks?.(); } catch {}
+  if (render && document.getElementById('reader-reading-view')?.style.display !== 'flex') {
+    try { await moduleRef.renderReaderScreen?.(); } catch {}
   }
   return true;
 }
 
-function wait(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 async function deleteCloudBook(id) {
-  const delays = [0, 700, 1800, 4500, 9000];
+  const delays = [0, 600, 1600, 4000, 9000];
   let lastError = null;
   for (const delay of delays) {
     if (delay) await wait(delay);
     try {
       const userId = typeof sbGetCurrentUserId === 'function' ? sbGetCurrentUserId() : null;
       if (!userId || !isSupabaseReady?.()) continue;
-      const { error } = await sb.from('reader_books')
-        .delete()
-        .eq('user_id', userId)
-        .eq('id', id);
+      const { error } = await sb.from('reader_books').delete().eq('user_id', userId).eq('id', id);
       if (error) throw error;
       return true;
-    } catch (error) {
-      lastError = error;
-    }
+    } catch (error) { lastError = error; }
   }
-  if (lastError) console.warn('[reader delete] cloud delete postponed', lastError);
+  if (lastError) console.warn('[reader delete] cloud delete postponed', id, lastError);
   return false;
 }
 
-async function reconcileTombstones({ render = false, cloud = true } = {}) {
-  if (!moduleRef) return false;
-  if (reconcilePromise) return reconcilePromise;
-  reconcilePromise = (async () => {
-    const tombstones = readTombstones();
-    const ids = Object.keys(tombstones);
-    if (!ids.length) return false;
+async function deleteAllCloudTombstones() {
+  const ids = Object.keys(readTombstones());
+  for (const id of ids) {
+    const ok = await deleteCloudBook(id);
+    if (ok) await persistFilteredBooks({ render: true });
+  }
+}
 
-    let changed = await persistFilteredBooks(moduleRef, { render: false });
-    if (cloud) {
-      for (const id of ids) {
-        const removed = await deleteCloudBook(id);
-        if (removed) {
-          // A cloud hydrate may have completed while the delete request was in
-          // flight. Strip the tombstoned row from memory/local/IDB one more time.
-          changed = (await persistFilteredBooks(moduleRef, { render: false })) || changed;
-        }
-      }
-    }
-    if (render && changed) {
-      try { await moduleRef.renderReaderScreen(); } catch (_) {}
-    }
-    return changed;
-  })().finally(() => { reconcilePromise = null; });
+async function reconcileTombstones({ render = false } = {}) {
+  if (reconcilePromise) return reconcilePromise;
+  reconcilePromise = persistFilteredBooks({ render })
+    .finally(() => { reconcilePromise = null; });
   return reconcilePromise;
 }
 
+function installHandler() {
+  if (!durableDelete) return;
+  window.readerDeleteBook = durableDelete;
+  // Critical for the index.html buffering proxy. Old builds only replaced the
+  // first property, leaving __real_readerDeleteBook pointing at the broken
+  // delayed-save implementation.
+  window.__real_readerDeleteBook = durableDelete;
+}
+
 async function installDeleteFix() {
-  if (installStarted) return;
-  installStarted = true;
-  try {
-    // Dynamic import avoids a static reader-app <-> chapter-render cycle. By the
-    // time this timer runs the original module has finished evaluating.
+  if (installPromise) return installPromise;
+  installPromise = (async () => {
     moduleRef = await import('../reader-app.js?v=77.31');
-    const originalDelete = window.readerDeleteBook;
-    if (originalDelete?.__readerDurableDeleteFix) return;
 
-    const durableDelete = async function readerDeleteBookDurable(id) {
-      const books = moduleRef.loadReaderBooks();
-      const book = Array.isArray(books) ? books.find(item => item?.id === id) : null;
-      if (!book) {
-        // If a stale UI card survives one frame, tombstone it anyway and clean
-        // every backing store instead of doing nothing.
-        markDeleted(id);
-        await reconcileTombstones({ render: true, cloud: true });
-        return;
+    durableDelete = async function readerDeleteBookDurable(id) {
+      const wantedId = String(id || '');
+      if (!wantedId) return false;
+      const books = moduleRef.loadReaderBooks?.() || [];
+      const book = Array.isArray(books) ? books.find(item => String(item?.id || '') === wantedId) : null;
+      if (book && !confirm(`Удалить текст «${book.title || 'Без названия'}»?`)) return false;
+
+      // Even a stale card gets a tombstone. That makes deletion idempotent and
+      // prevents a cloud/IDB copy from resurrecting it later.
+      markDeleted(wantedId);
+      if (Array.isArray(books)) {
+        const kept = books.filter(item => String(item?.id || '') !== wantedId);
+        books.splice(0, books.length, ...kept);
       }
-      if (!confirm(`Удалить текст «${book.title || 'Без названия'}»?`)) return;
-
-      markDeleted(id);
-      const kept = books.filter(item => item?.id !== id);
-      books.splice(0, books.length, ...kept);
-      removePosition(id);
+      removePosition(wantedId);
 
       const storageKey = scopedKey(BOOKS_BASE_KEY);
-      try { localStorage.setItem(storageKey, JSON.stringify(books)); } catch (_) {}
+      try { localStorage.setItem(storageKey, JSON.stringify(books)); } catch {}
       try { await libraryIdbPut(storageKey, books); }
       catch (error) { console.warn('[reader delete] immediate IndexedDB write failed', error); }
-      try { moduleRef.saveReaderBooks(); } catch (_) {}
+      try { moduleRef.saveReaderBooks?.(); } catch {}
 
-      imgStoreDeleteBook(id).catch(() => {});
-      audioStoreDelete(id).catch(() => {});
+      imgStoreDeleteBook(wantedId).catch(() => {});
+      audioStoreDelete(wantedId).catch(() => {});
 
+      try { await moduleRef.renderReaderScreen?.(); } catch {}
       showToast('🗑 Текст удалён');
-      try { await moduleRef.renderReaderScreen(); } catch (_) {}
 
-      // Network work never blocks the UI. Tombstone remains locally even after
-      // success, which is intentional: an old device/backup must not resurrect
-      // a book the user explicitly deleted.
-      deleteCloudBook(id)
-        .then(() => persistFilteredBooks(moduleRef, { render: true }))
+      // Network never blocks the UI. The tombstone remains permanently, so an
+      // offline device or stale backup cannot reintroduce an explicit deletion.
+      deleteCloudBook(wantedId)
+        .then(() => reconcileTombstones({ render: true }))
         .catch(() => {});
+      return true;
     };
     durableDelete.__readerDurableDeleteFix = true;
-    durableDelete.__original = originalDelete;
-    window.readerDeleteBook = durableDelete;
+    installHandler();
 
-    // Clean up any book that was "deleted" by the broken 77.42 build but got
-    // resurrected before this update. Existing tombstones are cheap to replay.
-    reconcileTombstones({ render: true, cloud: true }).catch(() => {});
-    window.addEventListener('online', () => reconcileTombstones({ render: true, cloud: true }).catch(() => {}));
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') reconcileTombstones({ render: true, cloud: true }).catch(() => {});
+    // Capture the actual trash-button click too. This bypasses every historical
+    // inline-handler/proxy race and makes the UI use exactly this function.
+    if (!window.__readerDurableDeleteCapture) {
+      window.__readerDurableDeleteCapture = true;
+      document.addEventListener('click', event => {
+        const target = event.target instanceof Element ? event.target : null;
+        const button = target?.closest?.('.lib-action-btn.danger');
+        if (!button) return;
+        const inline = String(button.getAttribute('onclick') || '');
+        const match = inline.match(/readerDeleteBook\(\s*(['"])(.*?)\1\s*\)/);
+        if (!match) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        durableDelete(match[2]).catch(error => console.warn('[reader delete] click failed', error));
+      }, true);
+    }
+
+    // Strip anything already tombstoned by previous failed builds.
+    await reconcileTombstones({ render: true });
+    deleteAllCloudTombstones().catch(() => {});
+
+    // Reassert handler identity and strip a cloud resurrection. Cheap when no
+    // tombstones exist; no large writes happen unless a deleted id reappears.
+    guardTimer = setInterval(() => {
+      installHandler();
+      if (Object.keys(readTombstones()).length) reconcileTombstones({ render: true }).catch(() => {});
+    }, 2500);
+
+    window.addEventListener('pageshow', () => {
+      installHandler();
+      reconcileTombstones({ render: true }).catch(() => {});
     });
-  } catch (error) {
-    installStarted = false;
-    console.warn('[reader delete] fix install failed', error);
-  }
+    window.addEventListener('online', () => deleteAllCloudTombstones().catch(() => {}));
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      installHandler();
+      reconcileTombstones({ render: true }).catch(() => {});
+      deleteAllCloudTombstones().catch(() => {});
+    });
+    window.addEventListener('pagehide', () => {
+      if (guardTimer) clearInterval(guardTimer);
+      guardTimer = null;
+    });
+    return true;
+  })().catch(error => {
+    installPromise = null;
+    console.warn('[reader delete] authoritative install failed', error);
+    return false;
+  });
+  return installPromise;
 }
 
 setTimeout(() => { installDeleteFix(); }, 0);
