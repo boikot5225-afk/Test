@@ -1,5 +1,6 @@
 import './delete-fix.js?v=1';
 import { setTocVisibleBook } from './toc-authority.js?v=1';
+import './toc-direct.js?v=1';
 import { createReaderChapterRenderer as createBaseRenderer } from './chapter-render-dialogue.js?v=8';
 
 export function createReaderChapterRenderer(deps) {
