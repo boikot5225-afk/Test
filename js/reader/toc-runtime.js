@@ -1,9 +1,14 @@
 // Single user-facing TOC runtime.
-// It renders exact package navigation only when nav.xhtml/NCX was attached from
-// the source EPUB. Old generic "Глава N" data is shown as legacy, never called
-// "restored".
+//
+// The exact EPUB TOC belongs to the source package, not to a transient saved
+// book id. Older 77.42 builds could leave two books with the same title and then
+// delete/re-dedupe the one that was still visible. The old runtime required the
+// visible id to survive OR the title to be unique, so a perfectly visible book
+// could produce "Не нашёл открытую книгу". This runtime resolves by logical
+// identity and content richness, then applies the durable NCX/nav registry on
+// demand before drawing the sheet.
 
-import { applyCapturedEpubToc } from './toc-direct.js?v=2';
+import { getExactTocRecords } from './toc-registry.js?v=1';
 
 const READER_APP_URL = '../reader-app.js?v=77.31';
 let appPromise = null;
@@ -18,6 +23,12 @@ function appModule() {
 
 function clean(value) {
   return String(value || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function key(value) {
+  const raw = clean(value).normalize?.('NFKC') || clean(value);
+  try { return raw.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ''); }
+  catch { return raw.toLowerCase().replace(/[^a-z0-9]+/g, ''); }
 }
 
 function esc(value) {
@@ -44,12 +55,116 @@ function fallbackTitle(book, chapter, index) {
     if (!text) continue;
     if (text.toLowerCase() === clean(book?.title).toLowerCase()) continue;
     if (text.toLowerCase() === clean(book?.author).toLowerCase()) continue;
-    const numbered = text.match(/^(\d{1,3})\s+(.{1,70}?)(?=\s+[A-ZÁÉÍÓÚÑÜ][\p{Ll}áéíóúñü])/u);
-    if (numbered) return `${numbered[1]}. ${clean(numbered[2])}`;
     if (text.length <= 100) return text;
     break;
   }
   return current || `Раздел ${index + 1}`;
+}
+
+function exactRows(book) {
+  const rows = Array.isArray(book?.toc) ? book.toc : [];
+  const exact = !!book?._epubTocExact && rows.length > 0 && /^EPUB[23]/i.test(String(book.epubTocSource || ''));
+  return exact ? rows : null;
+}
+
+function bookStats(book) {
+  const chapters = Array.isArray(book?.chapters) ? book.chapters : [];
+  let paragraphs = 0;
+  let chars = 0;
+  for (const chapter of chapters) {
+    for (const item of chapter?.paragraphs || []) {
+      paragraphs++;
+      chars += clean(itemText(item)).replace(/\s+/g, '').length;
+    }
+  }
+  return { chapters: chapters.length, paragraphs, chars };
+}
+
+function sameIdentity(book, record) {
+  if (!book || !record || key(book.title) !== key(record.title)) return false;
+  const a = key(book.author || '');
+  const b = key(record.author || '');
+  return !a || !b || a === b;
+}
+
+function recordForBook(book) {
+  const records = (getExactTocRecords?.() || []).filter(record => sameIdentity(book, record) && record?.rows?.length);
+  if (!records.length) return null;
+  const chapters = Array.isArray(book?.chapters) ? book.chapters.length : 0;
+  records.sort((a, b) => {
+    const da = Math.abs((a.rows?.length || 0) - chapters);
+    const db = Math.abs((b.rows?.length || 0) - chapters);
+    if (da !== db) return da - db;
+    const aa = key(a.author || '') === key(book.author || '') ? 1 : 0;
+    const ab = key(b.author || '') === key(book.author || '') ? 1 : 0;
+    if (aa !== ab) return ab - aa;
+    return Number(b.savedAt || 0) - Number(a.savedAt || 0);
+  });
+  return records[0];
+}
+
+function cloneRows(rows) {
+  return (rows || []).map((row, index) => ({
+    title: clean(row?.title) || `Раздел ${index + 1}`,
+    path: String(row?.path || ''),
+    fragment: String(row?.fragment || ''),
+    depth: Math.max(0, Number(row?.depth) || 0),
+    hasChildren: row?.hasChildren === true || Number(rows?.[index + 1]?.depth || 0) > Number(row?.depth || 0),
+    order: index,
+    chapterIndex: null,
+  }));
+}
+
+function attachExactRecord(book, record) {
+  if (!book?.chapters?.length || !record?.rows?.length) return false;
+  const rows = cloneRows(record.rows);
+  const chapters = book.chapters;
+  let mapped = 0;
+
+  if (chapters.length === rows.length) {
+    for (let i = 0; i < rows.length; i++) {
+      rows[i].chapterIndex = i;
+      chapters[i].title = rows[i].title;
+      if (rows[i].path) chapters[i].sourcePath = rows[i].path;
+      mapped++;
+    }
+  } else {
+    const byPath = new Map();
+    for (let i = 0; i < chapters.length; i++) {
+      const path = String(chapters[i]?.sourcePath || '').replace(/^\/+/, '');
+      if (path) byPath.set(path, i);
+    }
+    for (const row of rows) {
+      const ci = byPath.get(String(row.path || '').replace(/^\/+/, ''));
+      if (!Number.isInteger(ci)) continue;
+      row.chapterIndex = ci;
+      chapters[ci].title = row.title;
+      mapped++;
+    }
+  }
+
+  if (!mapped) return false;
+  book.toc = rows;
+  book.epubTocSource = /^EPUB[23]/i.test(String(record.source || '')) ? record.source : 'EPUB TOC';
+  book._epubTocExact = true;
+  book._epubTocCount = rows.length;
+  if (record.fileName) book._epubTocFile = record.fileName;
+  book.updatedAt = new Date().toISOString();
+  return true;
+}
+
+function candidateScore(book, title, record) {
+  const s = bookStats(book);
+  let score = s.chapters * 10000 + Math.min(100000, s.paragraphs * 20) + Math.min(50000, Math.floor(s.chars / 100));
+  if (exactRows(book)) score += 5_000_000;
+  if (record?.rows?.length) {
+    const diff = Math.abs(s.chapters - record.rows.length);
+    if (diff === 0) score += 4_000_000;
+    else if (diff === 1) score += 1_000_000;
+    else score -= diff * 50000;
+  }
+  if (key(book.title) === key(title)) score += 1000;
+  return score;
 }
 
 export function setTocVisibleBook(book) {
@@ -62,20 +177,49 @@ async function freshBook() {
   const app = await appModule();
   let books = [];
   try { books = app.loadReaderBooks?.() || []; } catch {}
-  if (visibleBookId) {
-    const byId = books.find(book => String(book?.id || '') === visibleBookId);
-    if (byId?.chapters?.length) return byId;
+  if (!Array.isArray(books) || !books.length) return null;
+
+  let current = null;
+  try { current = app.readerCurrentBook?.() || null; } catch {}
+  const domTitle = clean(document.getElementById('reader-book-title')?.textContent || '');
+  const title = domTitle || visibleTitle || clean(current?.title || '');
+
+  const byVisibleId = visibleBookId ? books.find(book => String(book?.id || '') === visibleBookId) : null;
+  const byCurrentId = current?.id ? books.find(book => String(book?.id || '') === String(current.id)) : null;
+  const matches = title ? books.filter(book => key(book?.title) === key(title)) : [];
+
+  // Duplicates are expected after the broken imports. Never require title
+  // uniqueness: select the copy that best fits the exact package TOC / richest
+  // content. This is the central fix for the screenshot where a visible El narco
+  // produced "Не нашёл открытую книгу".
+  const pool = matches.length ? matches : [byVisibleId, byCurrentId].filter(Boolean);
+  if (!pool.length) return null;
+
+  let best = null;
+  let bestScore = -Infinity;
+  for (const book of pool) {
+    const record = recordForBook(book);
+    const score = candidateScore(book, title, record);
+    if (score > bestScore) { bestScore = score; best = book; }
   }
-  try {
-    const current = app.readerCurrentBook?.();
-    if (current?.chapters?.length) return current;
-  } catch {}
-  const title = clean(document.getElementById('reader-book-title')?.textContent || visibleTitle);
-  if (title) {
-    const matches = books.filter(book => clean(book?.title) === title);
-    if (matches.length === 1) return matches[0];
+  if (!best) return null;
+
+  const record = recordForBook(best);
+  if (!exactRows(best) && record && attachExactRecord(best, record)) {
+    try { app.saveReaderBooks?.(); } catch {}
   }
-  return null;
+
+  const oldCurrentId = String(current?.id || '');
+  setTocVisibleBook(best);
+  // If a migration removed the book that is still painted on screen, re-anchor
+  // readerCurrentBookId to the surviving logical book before navigation/TOC.
+  if (document.getElementById('reader-reading-view')?.style.display === 'flex'
+      && String(best.id || '') && oldCurrentId !== String(best.id || '')) {
+    try { await app.readerOpenBook?.(best.id); } catch (error) {
+      console.warn('[toc-runtime] re-anchor visible book failed', error);
+    }
+  }
+  return best;
 }
 
 function ensureStyle() {
@@ -95,12 +239,6 @@ function ensureStyle() {
     .rd-toc-legacy-note{padding:10px 18px 12px;font:500 .76rem/1.45 'IBM Plex Sans',sans-serif;color:var(--text-muted);border-bottom:1px solid var(--border)}
   `;
   document.head.appendChild(style);
-}
-
-function exactRows(book) {
-  const rows = Array.isArray(book?.toc) ? book.toc : [];
-  const exact = !!book?._epubTocExact && rows.length > 0 && /^EPUB[23]/i.test(String(book.epubTocSource || ''));
-  return exact ? rows : null;
 }
 
 function legacyRows(book) {
@@ -126,7 +264,7 @@ async function goTo(book, chapterIndex) {
 export async function openToc() {
   const book = await freshBook();
   if (!book?.chapters?.length) {
-    window.showToast?.('⚠️ Не нашёл открытую книгу в библиотеке');
+    window.showToast?.('⚠️ Открытая книга потеряла связь с библиотекой');
     return false;
   }
   setTocVisibleBook(book);
@@ -142,9 +280,7 @@ export async function openToc() {
   const rows = exact || legacyRows(book);
   const cur = Math.max(0, Number(book.currentChapter) || 0);
   const source = exact ? clean(book.epubTocSource) : 'без исходного TOC';
-  if (header) {
-    header.innerHTML = `<span>Оглавление</span><span class="rd-toc-meta">${rows.length} пунктов · ${esc(source)}</span>`;
-  }
+  if (header) header.innerHTML = `<span>Оглавление</span><span class="rd-toc-meta">${rows.length} пунктов · ${esc(source)}</span>`;
 
   list.innerHTML = rows.map((row, i) => {
     const raw = row.chapterIndex;
@@ -166,8 +302,7 @@ export async function openToc() {
   }).join('');
 
   if (!exact) {
-    list.insertAdjacentHTML('afterbegin',
-      '<div class="rd-toc-legacy-note">В этой старой записи EPUB-оглавление не сохранилось. Повторный импорт исходного EPUB обновит эту же книгу и подставит настоящее NCX/nav-оглавление.</div>');
+    list.insertAdjacentHTML('afterbegin', '<div class="rd-toc-legacy-note">У этой записи нет сохранённого NCX/nav. Для EPUB приложение больше не угадывает названия из текста.</div>');
   }
 
   list.querySelectorAll('[data-toc-chapter]').forEach(button => {
@@ -183,8 +318,9 @@ export async function openToc() {
   back.classList.add('show');
   sheet.classList.add('show');
   setTimeout(() => list.querySelector('.current')?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }), 50);
-  console.info('[toc-runtime] open', {
+  console.info('[toc-runtime] open v3', {
     book: book.title,
+    id: book.id,
     rows: rows.length,
     exact: !!exact,
     source: book.epubTocSource || '',
@@ -199,30 +335,6 @@ function installOpen() {
   window.__real_readerOpenToc = openToc;
 }
 
-function installSaveWrapper() {
-  const fn = window.saveReaderImport;
-  if (typeof fn !== 'function' || fn.__isStub || fn.__tocRuntimeSaveV2) return;
-  const wrapped = function saveReaderImportWithExactToc(...args) {
-    const title = clean(document.getElementById('reader-import-title')?.value || '');
-    const author = clean(document.getElementById('reader-import-author')?.value || '');
-    const result = fn.apply(this, args);
-    Promise.resolve(result)
-      .then(() => applyCapturedEpubToc({ title, author }))
-      .then(applied => {
-        if (applied?.ok) {
-          visibleBookId = String(applied.bookId || visibleBookId);
-          visibleTitle = clean(applied.book?.title || visibleTitle);
-        }
-      })
-      .catch(error => console.warn('[toc-runtime] exact EPUB TOC post-save failed', error));
-    return result;
-  };
-  wrapped.__tocRuntimeSaveV2 = true;
-  wrapped.__wrapped = fn;
-  window.saveReaderImport = wrapped;
-  window.__real_saveReaderImport = wrapped;
-}
-
 document.addEventListener('click', event => {
   const target = event.target instanceof Element ? event.target : null;
   const trigger = target?.closest?.('.rd-head,[onclick*="readerOpenToc"]');
@@ -235,20 +347,14 @@ document.addEventListener('click', event => {
   });
 }, true);
 
-function refresh() {
-  installOpen();
-  installSaveWrapper();
-}
-
-for (const delay of [0, 50, 150, 400, 1000, 2500, 6000]) setTimeout(refresh, delay);
+function refresh() { installOpen(); }
+for (const delay of [0, 50, 150, 400, 1000, 2500]) setTimeout(refresh, delay);
 window.addEventListener('pageshow', refresh);
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') refresh();
-});
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(); });
 refreshTimer = setInterval(refresh, 10000);
 window.addEventListener('pagehide', () => {
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = null;
 });
 
-console.info('[toc-runtime] loaded');
+console.info('[toc-runtime] loaded v3');
