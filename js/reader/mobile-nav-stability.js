@@ -81,7 +81,7 @@ if (isNativeAndroidShell) {
         left: 0 !important;
         right: 0 !important;
         bottom: 0 !important;
-        z-index: 2147483000 !important;
+        z-index: 200 !important;
 
         /* A fixed translucent backdrop-filter layer can flicker in Android
            WebView even after the bad absolute-position workaround is gone. */
@@ -113,7 +113,8 @@ if (isNativeAndroidShell) {
     const bar = document.getElementById('bottom-nav');
     if (!bar || enforcing) return;
 
-    // Do not change display: reader mode and auth intentionally hide the bar.
+    // Do not change display or z-index: reader mode/auth intentionally hide or
+    // layer this bar differently. Only undo the legacy absolute positioning.
     const position = bar.style.getPropertyValue('position');
     const top = bar.style.getPropertyValue('top');
     const bottom = bar.style.getPropertyValue('bottom');
@@ -126,7 +127,6 @@ if (isNativeAndroidShell) {
       bar.style.setProperty('left', '0', 'important');
       bar.style.setProperty('right', '0', 'important');
       bar.style.setProperty('bottom', '0', 'important');
-      bar.style.setProperty('z-index', '2147483000', 'important');
     } finally {
       enforcing = false;
     }
