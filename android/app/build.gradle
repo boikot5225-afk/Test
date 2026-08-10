@@ -26,8 +26,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 28
-        versionName '77.42-toc8'
+        versionCode 29
+        versionName '77.42-toc9'
     }
 
     buildFeatures {
@@ -61,7 +61,7 @@ android {
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion_17
     }
 
     // The web app is the repository root; syncWebAssets stages a copy of it here.
