@@ -1,4 +1,4 @@
-import { captureEpubTocFile, applyCapturedEpubToc } from './toc-direct.js?v=1';
+import { captureEpubTocFile, applyCapturedEpubToc } from './toc-direct.js?v=2';
 
 const SUPPORTED_EXTENSIONS = new Set(['epub', 'fb2', 'txt', 'text', 'md']);
 
@@ -7,9 +7,6 @@ function wait(ms) {
 }
 
 function currentHandler(name) {
-  // Reader upgrades (EPUB TOC, durable deletion) are installed after app.js
-  // finalizes its buffering stubs. Prefer the live window handler so Android
-  // external imports cannot bypass a newer wrapper via a stale __real_* copy.
   const live = window[name];
   if (typeof live === 'function' && !live.__isStub) return live;
   const real = window[`__real_${name}`];
@@ -87,9 +84,8 @@ export async function readerImportAndroidFile(payload = {}) {
       lastModified: Number(payload.lastModified || Date.now()),
     });
 
-    // Crucial: capture the actual File here, before it is passed through any
-    // synthetic DOM event / runtime handler. This makes EPUB TOC parsing a
-    // direct Android import step instead of a monkey-patch side effect.
+    // Parse the package TOC from the actual Android File before the legacy text
+    // importer touches it. The record survives duplicate detection in saveReaderImport.
     const tocRecord = extension === 'epub' ? captureEpubTocFile(file) : null;
 
     await importHandler({ target: { files: [file], value: '' }, androidExternal: true });
@@ -104,9 +100,10 @@ export async function readerImportAndroidFile(payload = {}) {
     await Promise.resolve(saveHandler());
 
     if (tocRecord) {
-      setExternalStatus('⏳ Применяю настоящее оглавление EPUB...');
+      setExternalStatus('⏳ Применяю NCX/nav.xhtml из EPUB...');
       const applied = await applyCapturedEpubToc({ title, author, record: tocRecord });
-      if (applied?.ok) setExternalStatus(`✅ EPUB: ${applied.rows} пунктов оглавления · ${applied.mapped} переходов`, 'ok');
+      if (!applied?.ok) throw new Error(`оглавление не применено: ${applied?.reason || 'неизвестная ошибка'}`);
+      setExternalStatus(`✅ ${applied.source}: ${applied.rows} пунктов · ${applied.mapped} переходов`, 'ok');
     }
     return true;
   } catch (error) {
