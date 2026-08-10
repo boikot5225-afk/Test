@@ -95,8 +95,6 @@ async function locatePackage(entries) {
   const spineIds = [];
   let spineTocId = '';
 
-  // Regex is deliberate here: it is namespace-agnostic and works on EPUB2
-  // package files in Android WebView exactly the same as on desktop.
   for (const match of String(opfText).matchAll(/<item\b[^>]*>/gi)) {
     const a = attrs(match[0]);
     const id = a.id || '';
@@ -177,8 +175,6 @@ function parseNcxDom(text, ncxPath) {
   return rows;
 }
 
-// Android fallback that does not depend on XML namespace behaviour at all.
-// It is a tiny stack parser over navPoint/navLabel/content and preserves nesting.
 function parseNcxTokens(text, ncxPath) {
   const base = ncxPath.split('/').slice(0, -1).join('/');
   const rows = [];
@@ -214,8 +210,6 @@ function parseNcxTokens(text, ncxPath) {
 function parseNcx(text, ncxPath) {
   const dom = dedupeRows(parseNcxDom(text, ncxPath));
   const token = dedupeRows(parseNcxTokens(text, ncxPath));
-  // Token parser is a second implementation, not just an error handler. If
-  // WebView's XML DOM silently loses namespace nodes, keep the fuller result.
   return token.length > dom.length ? token : dom;
 }
 
@@ -292,7 +286,7 @@ function matchScore(a, b) {
     if (a.length >= n && b.length >= n && a.slice(0, n) === b.slice(0, n)) return scores[i];
   }
   const a80 = a.slice(0, 80), b80 = b.slice(0, 80);
-  if (a80.length > 45 && (a.includes(b80) || b.includes(a80))) return 250;
+  if (a80.length > 45 && b80.length > 45 && (a.includes(b80) || b.includes(a80))) return 250;
   return 0;
 }
 
@@ -392,8 +386,6 @@ function mapRowsToBook(book, parsed) {
   const usedChapters = new Set();
   const pathToChapter = new Map();
 
-  // Match only when content agrees. A skipped map/part/photo page is left
-  // visible but non-clickable rather than shifting every following target.
   for (const [path, fp] of parsed.fingerprints) {
     if (!fp) continue;
     let bestIndex = -1;
@@ -410,7 +402,6 @@ function mapRowsToBook(book, parsed) {
     }
   }
 
-  // If a chapter already carries sourcePath from a newer importer, it wins.
   for (let ci = 0; ci < chapters.length; ci++) {
     const path = safeDecode(chapters[ci]?.sourcePath || '');
     if (path) pathToChapter.set(path, ci);
@@ -421,7 +412,6 @@ function mapRowsToBook(book, parsed) {
     if (Number.isInteger(ci)) row.chapterIndex = ci;
   }
 
-  // Exact package labels rename the actual mapped chapters.
   const named = new Set();
   for (const row of rows) {
     const ci = row.chapterIndex;
@@ -488,8 +478,6 @@ export async function applyCapturedEpubToc({ title = '', author = '', record = p
   return result;
 }
 
-// Kept as an API compatibility no-op for older modules. Guessing from chapter
-// prose is not an EPUB TOC and must never overwrite/masquerade as one.
 export async function repairBookTocFromContent() {
   return false;
 }
