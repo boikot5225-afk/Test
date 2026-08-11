@@ -19,17 +19,9 @@ export function createReaderLibraryStore({
   getCurrentBookId,
   onError = console.warn,
   onSaveError = null,
-  // localStorage caps out around 5MB/origin — a library with enough transcripts
-  // and cached AI translations/analyses can exceed that, and both the normal and
-  // slim-retry writes below then fail silently, quietly rolling everything back
-  // to the last snapshot that fit. IndexedDB has a much larger practical quota,
-  // so it's used as the durable backing store; idbGet/idbPut are optional so this
-  // module still works (minus the durability) if they aren't wired up.
   idbGet = async () => null,
   idbPut = async () => {},
 }) {
-  // Reading positions live in a tiny sidecar key so they survive even when the
-  // main library JSON outgrows the localStorage quota and its writes start failing.
   function positionsKey() { return storageKey() + '_pos'; }
 
   function loadPositions() {
@@ -42,7 +34,11 @@ export function createReaderLibraryStore({
       const positions = {};
       for (const book of books) {
         if (!book?.id) continue;
-        positions[book.id] = { c: book.currentChapter || 0, p: book.currentParagraph || 0, t: book.updatedAt || '' };
+        positions[book.id] = {
+          c: book.currentChapter || 0,
+          p: book.currentParagraph || 0,
+          t: book.updatedAt || '',
+        };
       }
       localStorage.setItem(positionsKey(), JSON.stringify(positions));
     } catch (error) {
@@ -51,13 +47,68 @@ export function createReaderLibraryStore({
     }
   }
 
+  function sameBookKey(a, b) {
+    if (!a || !b) return false;
+    try { return String(bookImportKey(a) || '') === String(bookImportKey(b) || ''); }
+    catch { return false; }
+  }
+
+  // Dedupe used to choose the duplicate with the greatest historical progress.
+  // That is reasonable for an offline cleanup, but catastrophically wrong while
+  // somebody is actively reading: an explicit TOC jump backwards/elsewhere is a
+  // NEW navigation decision, not "lost progress". The next render calls save(),
+  // dedupe resurrects the farther-ahead duplicate, and the reader teleports to
+  // exactly the place it came from.
+  //
+  // While a book is open, its id + currentChapter/currentParagraph are therefore
+  // authoritative. Duplicates may still contribute richer content/annotations via
+  // dedupeBooks(), but they can never replace the live reading cursor or its id.
+  function dedupePreservingOpenBook(source) {
+    const input = Array.isArray(source) ? source : [];
+    const currentId = String(getCurrentBookId?.() || '');
+    const liveBooks = getBooks() || [];
+    const live = currentId
+      ? liveBooks.find(book => String(book?.id || '') === currentId) || null
+      : null;
+    const inInput = currentId
+      ? input.find(book => String(book?.id || '') === currentId) || null
+      : null;
+    const authoritative = inInput || live;
+
+    const deduped = dedupeBooks(input);
+    if (!currentId || !authoritative?.id || !Array.isArray(deduped) || !deduped.length) {
+      return deduped;
+    }
+
+    let index = deduped.findIndex(book => String(book?.id || '') === currentId);
+    if (index < 0) index = deduped.findIndex(book => sameBookKey(book, authoritative));
+    if (index < 0) return deduped;
+
+    const winner = deduped[index];
+    const winnerId = String(winner?.id || '');
+    const wantedId = String(authoritative.id || '');
+    const beforeChapter = Number(winner?.currentChapter || 0);
+    const beforeParagraph = Number(winner?.currentParagraph || 0);
+    const wantedChapter = Math.max(0, Number(authoritative.currentChapter) || 0);
+    const wantedParagraph = Math.max(0, Number(authoritative.currentParagraph) || 0);
+
+    winner.id = authoritative.id;
+    winner.currentChapter = wantedChapter;
+    winner.currentParagraph = wantedParagraph;
+    if (authoritative.updatedAt) winner.updatedAt = authoritative.updatedAt;
+
+    if (winnerId !== wantedId || beforeChapter !== wantedChapter || beforeParagraph !== wantedParagraph) {
+      console.warn('[reader library] blocked stale duplicate position rollback', {
+        bookId: wantedId,
+        from: [beforeChapter, beforeParagraph],
+        to: [wantedChapter, wantedParagraph],
+      });
+    }
+    return deduped;
+  }
+
   // localStorage may hold a stale copy when quota blocks writes; never let it
-  // roll back books that are fresher in memory (e.g. reading position) — and
-  // never DROP memory books the snapshot doesn't contain at all. That drop was
-  // how the library kept shrinking on every tab switch: the IndexedDB hydrate
-  // restored the full list to memory, its localStorage write-back silently
-  // failed on quota, and the next load() truncated memory right back to the
-  // stale snapshot's subset.
+  // roll back books that are fresher in memory or drop memory-only books.
   function mergeNewerFromMemory(fromStorage) {
     const inMemory = getBooks();
     if (!Array.isArray(inMemory) || !inMemory.length) return fromStorage;
@@ -65,9 +116,11 @@ export function createReaderLibraryStore({
     for (const mem of inMemory) {
       if (!mem?.id) continue;
       const stored = byId.get(mem.id);
-      if (!stored || new Date(mem.updatedAt || 0) >= new Date(stored.updatedAt || 0)) byId.set(mem.id, mem);
+      if (!stored || new Date(mem.updatedAt || 0) >= new Date(stored.updatedAt || 0)) {
+        byId.set(mem.id, mem);
+      }
     }
-    return dedupeBooks([...byId.values()]);
+    return dedupePreservingOpenBook([...byId.values()]);
   }
 
   function applyPositions(books) {
@@ -90,8 +143,10 @@ export function createReaderLibraryStore({
       const raw = localStorage.getItem(storageKey());
       books = raw ? JSON.parse(raw) : [];
       if (!Array.isArray(books)) books = [];
-      const deduped = dedupeBooks(books);
-      if (deduped.length !== books.length) localStorage.setItem(storageKey(), JSON.stringify(deduped));
+      const deduped = dedupePreservingOpenBook(books);
+      if (deduped.length !== books.length) {
+        localStorage.setItem(storageKey(), JSON.stringify(deduped));
+      }
       books = deduped;
     } catch (_) {
       books = [];
@@ -102,14 +157,6 @@ export function createReaderLibraryStore({
     return books;
   }
 
-  // Full library persistence is expensive: JSON.stringify() of all chapters,
-  // translations and analyses plus a localStorage write is synchronous on the
-  // WebView main thread. renderReaderChapter() calls save() on normal navigation,
-  // so doing that work per tap is exactly the kind of hidden long task that
-  // makes every language feel sticky. Positions are tiny and still save
-  // immediately; the multi-megabyte snapshot is coalesced and committed while
-  // the UI is idle. Explicit imports/deletes still update the in-memory list
-  // synchronously, so callers see their changes at once.
   let localCommitTimer = null;
   let localIdleHandle = null;
   let localCommitPending = false;
@@ -145,20 +192,15 @@ export function createReaderLibraryStore({
     if (!localCommitPending) return getBooks() || [];
     localCommitPending = false;
 
-    let books = dedupeBooks(getBooks() || []);
+    let books = dedupePreservingOpenBook(getBooks() || []);
     setBooks(books);
     savePositions(books);
 
-    // localStorage is only the fast in-session cache now — IndexedDB below is
-    // the durable store (no ~5MB ceiling) and cloud sync mirrors it. A quota
-    // failure here alone doesn't endanger the data, so it's logged, not surfaced.
     let localOk = true;
     try {
       localStorage.setItem(storageKey(), JSON.stringify(books));
     } catch (error) {
       onError('[reader] library localStorage cache write failed', error);
-      // Quota is full: retry without per-book AI caches (translations/analyses are
-      // re-fetchable; reading position and word progress are not).
       try {
         const slim = books.map(({ readerAnalyses, readerTranslations, ...rest }) => rest);
         localStorage.setItem(storageKey(), JSON.stringify(slim));
@@ -166,19 +208,13 @@ export function createReaderLibraryStore({
       } catch (retryError) {
         localOk = false;
         onError('[reader] slim retry also failed (IndexedDB still holds the data)', retryError);
-        // Even the slim copy doesn't fit — this multi-MB key is exactly what
-        // starves every OTHER localStorage write (word colors, positions,
-        // caches) of quota, while the library itself is already durable in
-        // IndexedDB + cloud. Drop it: load() falls back to memory + the
-        // IndexedDB hydrate, and the rest of the app gets its quota back.
         try {
           localStorage.removeItem(storageKey());
           onError('[reader] removed oversized library key from localStorage to free quota');
         } catch (_) {}
       }
     }
-    // The durable write. Only when BOTH this and localStorage fail is the data
-    // actually at risk (in-memory + cloud only) — that's the case worth a toast.
+
     writeThroughToIndexedDB(books).catch(error => {
       onError('[reader] library IndexedDB save failed', error);
       if (!localOk) onSaveError?.(error);
@@ -187,10 +223,7 @@ export function createReaderLibraryStore({
   }
 
   function save({ schedule = true } = {}) {
-    // Keep dedupe semantics synchronous because import code relies on the
-    // returned list, but keep the expensive multi-MB serialization out of the
-    // interaction frame.
-    const books = dedupeBooks(getBooks() || []);
+    const books = dedupePreservingOpenBook(getBooks() || []);
     setBooks(books);
     savePositions(books);
     localCommitPending = true;
@@ -199,22 +232,12 @@ export function createReaderLibraryStore({
     return books;
   }
 
-  // Best-effort flush when Android backgrounds/destroys the page. This happens
-  // off the interaction path, so doing the synchronous snapshot here is a much
-  // better trade than risking the last import/annotation on an abrupt close.
   try {
     globalThis.addEventListener?.('pagehide', () => {
       if (localCommitPending) commitLocalSnapshot();
     });
   } catch {}
 
-  // Until hydrateFromIndexedDB has merged the durable copy into memory once,
-  // a blind put() would overwrite IndexedDB's full library with whatever
-  // subset this session happens to hold (e.g. a save firing right after boot
-  // from a quota-truncated localStorage snapshot) — that's exactly how books
-  // were "randomly disappearing" and only coming back when cloud sync ran.
-  // Before hydration: read-merge-write (newer-wins by updatedAt, same rule as
-  // hydrate/cloud). After hydration memory is a superset, plain put is safe.
   let idbHydratedOnce = false;
   async function writeThroughToIndexedDB(books) {
     if (!idbHydratedOnce) {
@@ -229,15 +252,12 @@ export function createReaderLibraryStore({
             byId.set(idbBook.id, idbBook);
           }
         }
-        books = dedupeBooks([...byId.values()]);
+        books = dedupePreservingOpenBook([...byId.values()]);
       }
     }
     await idbPut(storageKey(), books);
   }
 
-  // Call once when the reader UI opens (or on app start) to recover from a
-  // localStorage snapshot that's stale or missing books due to a past quota
-  // failure. Newer-wins merge by updatedAt, same rule used for cloud sync.
   async function hydrateFromIndexedDB() {
     let fromIdb;
     try {
@@ -262,7 +282,7 @@ export function createReaderLibraryStore({
     }
     if (!changed) return false;
 
-    const merged = dedupeBooks([...byId.values()]);
+    const merged = dedupePreservingOpenBook([...byId.values()]);
     applyPositions(merged);
     setBooks(merged);
     try { localStorage.setItem(storageKey(), JSON.stringify(merged)); } catch (_) {}
@@ -292,17 +312,19 @@ export function createReaderLibraryStore({
           byId.set(remote.id, remote);
         }
       }
-      const merged = dedupeBooks([...byId.values()]);
+      const merged = dedupePreservingOpenBook([...byId.values()]);
       applyPositions(merged);
       setBooks(merged);
       try { localStorage.setItem(storageKey(), JSON.stringify(merged)); } catch (_) {}
-      // Persist the cloud-recovered list durably too, so books restored from
-      // the cloud survive the next offline start instead of vanishing again.
-      writeThroughToIndexedDB(merged).catch(error => onError('[reader] IndexedDB save after cloud load failed', error));
+      writeThroughToIndexedDB(merged).catch(error => {
+        onError('[reader] IndexedDB save after cloud load failed', error);
+      });
       setCloudLoadedOnce(true);
 
       if (merged.length !== byId.size) {
-        setTimeout(() => saveToCloud({ replaceAll: true }).catch(error => onError('[reader cloud] duplicate cleanup skipped:', error?.message || error)), 0);
+        setTimeout(() => saveToCloud({ replaceAll: true }).catch(error => {
+          onError('[reader cloud] duplicate cleanup skipped:', error?.message || error);
+        }), 0);
       }
       return true;
     } catch (error) {
@@ -315,8 +337,6 @@ export function createReaderLibraryStore({
   function scheduleCloudSave() {
     const timer = getCloudSaveTimer();
     if (timer) clearTimeout(timer);
-    // Cloud serialization/upsert also walks the whole library. Give interaction
-    // bursts time to settle so ten page turns become one upload.
     setCloudSaveTimer(setTimeout(() => {
       saveToCloud().catch(error => onError('[reader cloud] save skipped:', error?.message || error));
     }, 2200));
@@ -326,7 +346,7 @@ export function createReaderLibraryStore({
     const userId = getCloudUserId();
     if (!userId || !isCloudReady() || getCloudSaving()) return false;
 
-    const books = dedupeBooks(getBooks() || []);
+    const books = dedupePreservingOpenBook(getBooks() || []);
     setBooks(books);
     if (!books.length) {
       if (options.replaceAll) await db().from('reader_books').delete().eq('user_id', userId);
@@ -344,7 +364,11 @@ export function createReaderLibraryStore({
       }
 
       const rows = books.map(raw => {
-        const book = { ...raw, importKey: bookImportKey(raw), updatedAt: raw.updatedAt || new Date().toISOString() };
+        const book = {
+          ...raw,
+          importKey: bookImportKey(raw),
+          updatedAt: raw.updatedAt || new Date().toISOString(),
+        };
         return {
           id: book.id,
           user_id: userId,
@@ -382,7 +406,9 @@ export function createReaderLibraryStore({
   function continueBook() {
     const books = getBooks() || [];
     if (!books.length) return null;
-    return [...books].sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))[0];
+    return [...books].sort((a, b) =>
+      new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0)
+    )[0];
   }
 
   return {
