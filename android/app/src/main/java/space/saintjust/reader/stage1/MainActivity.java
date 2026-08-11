@@ -35,18 +35,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Locale;
 
-/**
- * Thin native shell around the Reader AI web app.
- *
- * The whole front-end lives in assets/www and is served over
- * https://appassets.androidplatform.net/assets/ by WebViewAssetLoader, so the
- * page runs on a real https origin and keeps a stable storage partition for
- * localStorage / IndexedDB across launches.
- *
- * Books opened from other apps (VIEW / SEND intents) are not copied anywhere:
- * the content Uri is parked in pendingImportUri and streamed to the page
- * through the virtual /android-import/current endpoint below.
- */
+/** Thin native shell around the bundled Reader AI web app. */
 public class MainActivity extends Activity {
 
     private static final String ASSET_ORIGIN = "https://appassets.androidplatform.net/";
@@ -71,12 +60,6 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Build the local HTTPS asset router before creating/loading the WebView.
-        // v77.41 only unregistered an old service worker from JavaScript. That is
-        // not enough for the page that is already controlled by that worker: its
-        // fetch() calls can still run until the next navigation and bypass the
-        // normal WebViewClient. Intercept service-worker requests too, through
-        // the same bundled-asset loader.
         final WebViewAssetLoader assetLoader = new WebViewAssetLoader.Builder()
                 .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
                 .build();
@@ -87,6 +70,10 @@ public class MainActivity extends Activity {
                 @Override
                 public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
                     Uri requestUri = request.getUrl();
+                    WebResourceResponse startupBypass = interceptNativeStartupDependency(requestUri);
+                    if (startupBypass != null) {
+                        return startupBypass;
+                    }
                     if (!WebViewAssetLoader.DEFAULT_DOMAIN.equals(requestUri.getHost())) {
                         return null;
                     }
@@ -104,12 +91,6 @@ public class MainActivity extends Activity {
         setContentView(webView, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // The APK serves JS modules under stable appassets URLs. Android WebView's
-        // HTTP cache survives an APK upgrade, so changing word-state.js while the
-        // URL still ends in ?v=4 can otherwise execute the OLD module after the
-        // new APK is installed. Clear that HTTP cache exactly once per version
-        // code — not on every launch — while leaving localStorage/IndexedDB and
-        // therefore the user's books/progress untouched.
         SharedPreferences shellPrefs = getSharedPreferences(SHELL_PREFS, MODE_PRIVATE);
         int cachedAssetVersion = shellPrefs.getInt(WEB_ASSET_VERSION_KEY, -1);
         if (cachedAssetVersion != BuildConfig.VERSION_CODE) {
@@ -142,6 +123,19 @@ public class MainActivity extends Activity {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 Uri requestUri = request.getUrl();
+
+                // index.html used to synchronously wait for several remote CDN files
+                // before the first BODY node existed. When gstatic/jsDelivr/Google
+                // Fonts were slow or blocked, the only thing Android could paint was
+                // this Activity's #111 background: the reported blank dark screen.
+                // firebase-config.js is bundled and installs the REST-compatible
+                // Firebase adapter before those tags, so the native shell can safely
+                // short-circuit the optional compat SDK during first paint.
+                WebResourceResponse startupBypass = interceptNativeStartupDependency(requestUri);
+                if (startupBypass != null) {
+                    return startupBypass;
+                }
+
                 if (WebViewAssetLoader.DEFAULT_DOMAIN.equals(requestUri.getHost())
                         && IMPORT_PATH.equals(requestUri.getPath())) {
                     return openPendingImportResponse();
@@ -191,11 +185,76 @@ public class MainActivity extends Activity {
 
         captureExternalIntent(getIntent());
 
-        if (savedInstanceState == null) {
-            webView.loadUrl(APP_URL);
-        } else {
-            webView.restoreState(savedInstanceState);
+        boolean restored = false;
+        if (savedInstanceState != null) {
+            try {
+                restored = webView.restoreState(savedInstanceState) != null;
+            } catch (Exception ignored) {
+                restored = false;
+            }
         }
+        if (!restored) {
+            webView.loadUrl(APP_URL);
+        }
+    }
+
+    /**
+     * Fail fast for resources that must never be allowed to hold Android's first
+     * paint hostage. The actual app/auth code is bundled in the APK.
+     */
+    private WebResourceResponse interceptNativeStartupDependency(Uri requestUri) {
+        if (requestUri == null) {
+            return null;
+        }
+        String host = requestUri.getHost();
+        String path = requestUri.getPath();
+        if (host == null) {
+            return null;
+        }
+
+        if ("fonts.googleapis.com".equalsIgnoreCase(host)) {
+            return textResponse("text/css", "/* Reader AI native: system-font startup fallback. */");
+        }
+
+        if ("www.gstatic.com".equalsIgnoreCase(host)
+                && path != null && path.startsWith("/firebasejs/")) {
+            return textResponse("application/javascript",
+                    "// Reader AI native uses the bundled Firebase REST adapter during startup.\n");
+        }
+
+        if ("cdn.jsdelivr.net".equalsIgnoreCase(host) && path != null) {
+            if (path.contains("/npm/firebase@")) {
+                return textResponse("application/javascript",
+                        "// Reader AI native uses the bundled Firebase REST adapter during startup.\n");
+            }
+
+            // XLSX is useful only when the user actually imports a spreadsheet.
+            // Replace the parser-blocking request with a tiny loader that retries
+            // it asynchronously after the page is visible. The query marker keeps
+            // the later request from being intercepted a second time.
+            if (path.contains("/npm/xlsx@")
+                    && requestUri.getQueryParameter("readerAsync") == null) {
+                Uri laterUri = requestUri.buildUpon()
+                        .appendQueryParameter("readerAsync", "1")
+                        .build();
+                String source = JSONObject.quote(laterUri.toString());
+                String loader = "(function(){"
+                        + "function loadXlsx(){if(window.XLSX)return;"
+                        + "var s=document.createElement('script');s.async=true;s.src=" + source + ";"
+                        + "document.head.appendChild(s);}"
+                        + "if(document.readyState==='complete'){setTimeout(loadXlsx,0);}"
+                        + "else{window.addEventListener('load',loadXlsx,{once:true});}"
+                        + "})();";
+                return textResponse("application/javascript", loader);
+            }
+        }
+
+        return null;
+    }
+
+    private WebResourceResponse textResponse(String mimeType, String body) {
+        return new WebResourceResponse(mimeType, "utf-8",
+                new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
     }
 
     /** Picks up a book handed to us by another app and queues it for the page. */
@@ -263,10 +322,6 @@ public class MainActivity extends Activity {
         return detected == null ? FALLBACK_MIME : detected;
     }
 
-    /**
-     * Streams the queued book straight from its content Uri. Called on the
-     * WebView's background thread for every /android-import/current request.
-     */
     private WebResourceResponse openPendingImportResponse() {
         Uri uri = pendingImportUri;
         if (uri == null) {
@@ -290,11 +345,6 @@ public class MainActivity extends Activity {
                 new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
     }
 
-    /**
-     * Hands the queued book to js/reader/android-external-import.js. The page
-     * may still be booting (login, module loading), so the injected snippet
-     * retries for up to 30s until readerImportAndroidFile shows up.
-     */
     private void dispatchPendingImport() {
         if (!pageReady || webView == null || pendingImportUri == null) {
             return;
@@ -336,7 +386,9 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onSaveInstanceState(Bundle outState) {
-        webView.saveState(outState);
+        if (webView != null) {
+            webView.saveState(outState);
+        }
         super.onSaveInstanceState(outState);
     }
 
