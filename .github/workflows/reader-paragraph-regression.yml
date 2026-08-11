@@ -1,0 +1,26 @@
+name: Reader paragraph render regression
+
+on:
+  push:
+    branches:
+      - feature/77.42-epub-toc
+    paths:
+      - 'js/reader/chapter-render-next.js'
+      - 'scripts/check-reader-paragraph-help-render.mjs'
+      - '.github/workflows/reader-paragraph-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  same-active-translation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Reproduce same-active paragraph translation render
+        run: node scripts/check-reader-paragraph-help-render.mjs
