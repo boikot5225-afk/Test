@@ -16,6 +16,7 @@ window.AN2_AUTH_BOOTSTRAP = 'reader-auth-v71.7';
   const listeners = new Set();
   const base = new URL('.', document.currentScript?.src || location.href);
   const isNativeAndroid = location.hostname === 'appassets.androidplatform.net';
+  let refreshPromise = null;
 
   let session;
   try {
@@ -68,31 +69,63 @@ window.AN2_AUTH_BOOTSTRAP = 'reader-auth-v71.7';
     });
   }
 
+  function tokenExpiresSoon(token, skewSeconds = 120) {
+    try {
+      const part = String(token || '').split('.')[1];
+      if (!part) return false;
+      const normalized = part.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+      const payload = JSON.parse(atob(padded));
+      const exp = Number(payload?.exp || 0);
+      if (!Number.isFinite(exp) || exp <= 0) return false;
+      return (exp * 1000) <= (Date.now() + Math.max(0, Number(skewSeconds) || 0) * 1000);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function refreshIdToken(data) {
+    if (!data?.refreshToken) return data?.idToken || '';
+    if (refreshPromise) return refreshPromise;
+    refreshPromise = (async () => {
+      const body = new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: data.refreshToken,
+      });
+      const response = await fetch(
+        `https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(config.apiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body,
+        },
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.error) throw firebaseError(result);
+      data.idToken = result.id_token || data.idToken;
+      data.refreshToken = result.refresh_token || data.refreshToken;
+      session = data;
+      saveSession();
+      return data.idToken;
+    })();
+    try {
+      return await refreshPromise;
+    } finally {
+      refreshPromise = null;
+    }
+  }
+
   function makeUser(data) {
     if (!data) return null;
     return {
       uid: data.uid,
       email: data.email || '',
       async getIdToken(forceRefresh = false) {
-        if (forceRefresh && data.refreshToken) {
-          const body = new URLSearchParams({
-            grant_type: 'refresh_token',
-            refresh_token: data.refreshToken,
-          });
-          const response = await fetch(
-            `https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(config.apiKey)}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body,
-            },
-          );
-          const result = await response.json().catch(() => ({}));
-          if (!response.ok || result.error) throw firebaseError(result);
-          data.idToken = result.id_token || data.idToken;
-          data.refreshToken = result.refresh_token || data.refreshToken;
-          session = data;
-          saveSession();
+        // Firebase Web SDK refreshes expired/near-expiry ID tokens even when
+        // forceRefresh=false. The native REST fallback must preserve that
+        // contract because TTS/database callers use the normal getter.
+        if ((forceRefresh || tokenExpiresSoon(data.idToken)) && data.refreshToken) {
+          await refreshIdToken(data);
         }
         return data.idToken;
       },
@@ -206,8 +239,6 @@ window.AN2_AUTH_BOOTSTRAP = 'reader-auth-v71.7';
     if (!response.ok || result?.error) throw callableError(result, response.status);
 
     if (Object.prototype.hasOwnProperty.call(result, 'result')) return { data: result.result };
-    // Some local/emulator/proxy implementations expose `data`; accepting it is
-    // harmless and keeps the fallback compatible with those environments.
     if (Object.prototype.hasOwnProperty.call(result, 'data')) return { data: result.data };
     throw callableError({ error: { status: 'INTERNAL', message: 'Firebase callable response has no result.' } }, response.status);
   }
@@ -221,9 +252,6 @@ window.AN2_AUTH_BOOTSTRAP = 'reader-auth-v71.7';
   }
 
   const app = { name: '[DEFAULT]' };
-  // The native shell deliberately skips remote Firebase compat scripts during
-  // startup. Give its local fallback the Functions compat surface too, so
-  // readerAI keeps working without re-introducing a parser-blocking CDN fetch.
   if (isNativeAndroid) app.functions = functions;
 
   const firebaseFallback = {
