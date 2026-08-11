@@ -6,8 +6,10 @@ on:
       - feature/77.42-epub-toc
     paths:
       - 'js/reader/chapter-render-next.js'
+      - 'js/reader/interactions.js'
       - 'scripts/check-reader-paragraph-help-render.mjs'
       - 'scripts/check-reader-paragraph-help-runtime.mjs'
+      - 'scripts/check-reader-paragraph-tap-selection.mjs'
       - '.github/workflows/reader-paragraph-regression.yml'
   workflow_dispatch:
 
@@ -27,3 +29,5 @@ jobs:
         run: node scripts/check-reader-paragraph-help-render.mjs
       - name: Exercise same-active paragraph translation runtime
         run: node scripts/check-reader-paragraph-help-runtime.mjs
+      - name: Check paragraph tap selection
+        run: node scripts/check-reader-paragraph-tap-selection.mjs
