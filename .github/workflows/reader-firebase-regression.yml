@@ -1,0 +1,26 @@
+name: Reader Firebase fallback regression
+
+on:
+  push:
+    branches:
+      - feature/77.42-epub-toc
+    paths:
+      - '.github/workflows/reader-firebase-regression.yml'
+      - 'js/firebase-config.js'
+      - 'scripts/check-firebase-functions-fallback.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  callable-fallback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Reproduce native Firebase callable fallback
+        run: node scripts/check-firebase-functions-fallback.mjs
