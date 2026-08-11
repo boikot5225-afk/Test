@@ -17,6 +17,20 @@ function nearestReadableIndex(items = [], requested = 0) {
   return lastReadableContentIndex(items, start - 1);
 }
 
+function bumpNavigationEpoch() {
+  globalThis.__readerNavigationEpoch = Number(globalThis.__readerNavigationEpoch || 0) + 1;
+  return globalThis.__readerNavigationEpoch;
+}
+
+function withExplicitChapterNavigation(work) {
+  globalThis.__readerExplicitNavigationDepth = Number(globalThis.__readerExplicitNavigationDepth || 0) + 1;
+  bumpNavigationEpoch();
+  try { return work(); }
+  finally {
+    globalThis.__readerExplicitNavigationDepth = Math.max(0, Number(globalThis.__readerExplicitNavigationDepth || 0) - 1);
+  }
+}
+
 export function createReaderNavigation(deps) {
   const { getBook, render, closeParagraphTime, scrollActiveParagraph, showToast } = deps;
 
@@ -37,6 +51,7 @@ export function createReaderNavigation(deps) {
     if (!book) return;
     const chapter = book.chapters?.[book.currentChapter || 0];
     const items = chapter?.paragraphs || [];
+    bumpNavigationEpoch();
     book.currentParagraph = nearestReadableIndex(items, index);
     book.updatedAt = new Date().toISOString();
     render();
@@ -46,22 +61,26 @@ export function createReaderNavigation(deps) {
     const book = getBook();
     if (!book) return;
     if ((book.currentChapter || 0) >= (book.chapters?.length || 1) - 1) return showToast('Это последняя глава');
-    book.currentChapter = (book.currentChapter || 0) + 1;
-    const chapter = book.chapters[book.currentChapter];
-    book.currentParagraph = firstReadableContentIndex(chapter?.paragraphs || []);
-    book.updatedAt = new Date().toISOString();
-    render();
+    return withExplicitChapterNavigation(() => {
+      book.currentChapter = (book.currentChapter || 0) + 1;
+      const chapter = book.chapters[book.currentChapter];
+      book.currentParagraph = firstReadableContentIndex(chapter?.paragraphs || []);
+      book.updatedAt = new Date().toISOString();
+      render();
+    });
   }
 
   function previousChapter() {
     const book = getBook();
     if (!book) return;
     if ((book.currentChapter || 0) <= 0) return showToast('Это первая глава');
-    book.currentChapter = (book.currentChapter || 0) - 1;
-    const chapter = book.chapters[book.currentChapter];
-    book.currentParagraph = firstReadableContentIndex(chapter?.paragraphs || []);
-    book.updatedAt = new Date().toISOString();
-    render();
+    return withExplicitChapterNavigation(() => {
+      book.currentChapter = (book.currentChapter || 0) - 1;
+      const chapter = book.chapters[book.currentChapter];
+      book.currentParagraph = firstReadableContentIndex(chapter?.paragraphs || []);
+      book.updatedAt = new Date().toISOString();
+      render();
+    });
   }
 
   function nextParagraph() {
@@ -74,18 +93,24 @@ export function createReaderNavigation(deps) {
     const next = firstReadableContentIndex(items, (book.currentParagraph || 0) + 1);
 
     if (next < items.length && hasReadableText(items[next])) {
+      bumpNavigationEpoch();
       book.currentParagraph = next;
-    } else if ((book.currentChapter || 0) < (book.chapters?.length || 1) - 1) {
-      book.currentChapter = (book.currentChapter || 0) + 1;
-      const newChapter = book.chapters[book.currentChapter];
-      book.currentParagraph = firstReadableContentIndex(newChapter?.paragraphs || []);
-    } else {
-      return showToast('Это конец текста');
+      book.updatedAt = new Date().toISOString();
+      render();
+      scrollActiveParagraph();
+      return;
     }
-
-    book.updatedAt = new Date().toISOString();
-    render();
-    scrollActiveParagraph();
+    if ((book.currentChapter || 0) < (book.chapters?.length || 1) - 1) {
+      return withExplicitChapterNavigation(() => {
+        book.currentChapter = (book.currentChapter || 0) + 1;
+        const newChapter = book.chapters[book.currentChapter];
+        book.currentParagraph = firstReadableContentIndex(newChapter?.paragraphs || []);
+        book.updatedAt = new Date().toISOString();
+        render();
+        scrollActiveParagraph();
+      });
+    }
+    return showToast('Это конец текста');
   }
 
   function previousParagraph() {
@@ -98,18 +123,24 @@ export function createReaderNavigation(deps) {
     const previous = lastReadableContentIndex(items, (book.currentParagraph || 0) - 1);
 
     if (previous >= 0 && previous < (book.currentParagraph || 0) && hasReadableText(items[previous])) {
+      bumpNavigationEpoch();
       book.currentParagraph = previous;
-    } else if ((book.currentChapter || 0) > 0) {
-      book.currentChapter = (book.currentChapter || 0) - 1;
-      const previousChapter = book.chapters[book.currentChapter];
-      book.currentParagraph = lastReadableContentIndex(previousChapter?.paragraphs || []);
-    } else {
-      return showToast('Это начало текста');
+      book.updatedAt = new Date().toISOString();
+      render();
+      scrollActiveParagraph();
+      return;
     }
-
-    book.updatedAt = new Date().toISOString();
-    render();
-    scrollActiveParagraph();
+    if ((book.currentChapter || 0) > 0) {
+      return withExplicitChapterNavigation(() => {
+        book.currentChapter = (book.currentChapter || 0) - 1;
+        const previousChapter = book.chapters[book.currentChapter];
+        book.currentParagraph = lastReadableContentIndex(previousChapter?.paragraphs || []);
+        book.updatedAt = new Date().toISOString();
+        render();
+        scrollActiveParagraph();
+      });
+    }
+    return showToast('Это начало текста');
   }
 
   return {
