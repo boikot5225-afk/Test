@@ -7,6 +7,7 @@ on:
     paths:
       - 'js/reader/chapter-render-next.js'
       - 'scripts/check-reader-paragraph-help-render.mjs'
+      - 'scripts/check-reader-paragraph-help-runtime.mjs'
       - '.github/workflows/reader-paragraph-regression.yml'
   workflow_dispatch:
 
@@ -22,5 +23,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Reproduce same-active paragraph translation render
+      - name: Check same-active paragraph translation guard
         run: node scripts/check-reader-paragraph-help-render.mjs
+      - name: Exercise same-active paragraph translation runtime
+        run: node scripts/check-reader-paragraph-help-runtime.mjs
