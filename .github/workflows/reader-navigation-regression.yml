@@ -1,0 +1,28 @@
+name: Reader navigation regression
+
+on:
+  push:
+    branches:
+      - feature/77.42-epub-toc
+    paths:
+      - '.github/workflows/reader-navigation-regression.yml'
+      - 'js/reader/navigation-position-guard.js'
+      - 'js/reader/library-store.js'
+      - 'js/reader/toc-navigation-fix.js'
+      - 'scripts/check-reader-navigation-position.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Reproduce stale async cursor rollback
+        run: node scripts/check-reader-navigation-position.mjs
