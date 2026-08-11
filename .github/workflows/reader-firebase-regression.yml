@@ -24,3 +24,20 @@ jobs:
           node-version: '22'
       - name: Reproduce native Firebase callable fallback
         run: node scripts/check-firebase-functions-fallback.mjs
+      - name: Probe deployed readerAI callable endpoint
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const url = 'https://asia-southeast1-french-da79a.cloudfunctions.net/readerAI';
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: { task: 'reader_word', word: 'test', sourceLang: 'fr' } }),
+          });
+          const body = await response.json().catch(() => ({}));
+          if (body?.error?.status !== 'UNAUTHENTICATED') {
+            console.error('Unexpected callable probe response', response.status, body);
+            process.exit(1);
+          }
+          console.log('deployed readerAI callable: PASS', response.status, body.error.status);
+          NODE
