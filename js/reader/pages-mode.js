@@ -63,6 +63,12 @@ export function createReaderPagesMode({
   let resizeTimer = null;
   let lastMeasuredWidth = 0;
   let lastMeasuredHeight = 0;
+  // Every full chapter/pagination rebuild invalidates callbacks captured by an
+  // older page-turn animation. Android WebView can finish transitionend/timeout
+  // after a TOC jump has already replaced the entire chapter DOM; without a
+  // generation check that stale callback writes an old page cursor into the new
+  // chapter and triggers a render back at the previous reading position.
+  let paginationGeneration = 0;
   const turnClasses = [
     'rd-page-in', 'rd-page-in-active', 'rd-page-out',
     'rd-page-forward', 'rd-page-backward', 'rd-page-flip',
@@ -167,6 +173,9 @@ export function createReaderPagesMode({
   }
 
   function rebuild() {
+    // Invalidate any transitionend/timeout callback that was created against
+    // the previous wrappers before touching the DOM.
+    paginationGeneration += 1;
     const chapterText = getChapterText();
     const scroller = getScroller();
     if (!chapterText || !scroller) return;
@@ -229,12 +238,14 @@ export function createReaderPagesMode({
       unwrap(chapterText);
       const paragraphs = [...chapterText.querySelectorAll(':scope > .reader-paragraph')];
       if (paragraphs.length > 1) {
+        paginationGeneration += 1;
         const ranges = paragraphs.map((_, index) => ({ start: index, end: index }));
         pages = buildPageElements(chapterText, ranges, paragraphs);
         animating = false;
         showPageInstant(pageIndexForParagraph(getActiveParagraphIndex()));
         console.warn('[reader pages] recovered collapsed single-page chapter', { paragraphs: paragraphs.length });
       } else if (paragraphs.length === 1 && !pages.length) {
+        paginationGeneration += 1;
         pages = buildPageElements(chapterText, [{ start: 0, end: 0 }], paragraphs);
         animating = false;
         showPageInstant(0);
@@ -275,8 +286,34 @@ export function createReaderPagesMode({
       rebuild();
       return false;
     }
+
+    const turnGeneration = paginationGeneration;
+    const turnPages = pages;
+    const turnChapterText = getChapterText();
     const directionClass = delta > 0 ? 'rd-page-forward' : 'rd-page-backward';
     const finishTurn = () => {
+      // Never let an animation that started on an older chapter/re-pagination
+      // write into the live reader. This is the exact race visible in the A54
+      // recording: the correct new page begins animating, then the old timeout
+      // fires and the reader jumps back to the pre-TOC position.
+      const stale =
+        turnGeneration !== paginationGeneration ||
+        pages !== turnPages ||
+        getChapterText() !== turnChapterText ||
+        !curPage.el.isConnected ||
+        !nextPage.el.isConnected ||
+        curPage.el.parentElement !== turnChapterText ||
+        nextPage.el.parentElement !== turnChapterText;
+      if (stale) {
+        clearTurnClasses(curPage.el);
+        clearTurnClasses(nextPage.el);
+        console.warn('[reader pages] ignored stale page-turn callback', {
+          turnGeneration,
+          currentGeneration: paginationGeneration,
+        });
+        return;
+      }
+
       curPage.el.classList.remove('rd-page-show', 'rd-page-current');
       clearTurnClasses(curPage.el);
       clearTurnClasses(nextPage.el);
@@ -284,7 +321,10 @@ export function createReaderPagesMode({
       currentPageIndex = target;
       animating = false;
       onPageChange?.(currentPageIndex, pages.length);
-      setActiveParagraphIndex(pages[target].start);
+      // Use the page object captured when the gesture began. Looking up
+      // pages[target] here is unsafe because a rebuild can replace the array
+      // while CSS animation is still in flight.
+      setActiveParagraphIndex(nextPage.start);
     };
 
     animating = true;
@@ -301,6 +341,8 @@ export function createReaderPagesMode({
 
       void nextPage.el.offsetWidth;
       requestAnimationFrame(() => {
+        // The DOM may have been rebuilt between the gesture and this RAF.
+        if (turnGeneration !== paginationGeneration || pages !== turnPages) return;
         curPage.el.classList.add('rd-page-out');
         nextPage.el.classList.add('rd-page-in-active');
       });
