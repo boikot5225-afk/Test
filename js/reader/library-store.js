@@ -1,3 +1,5 @@
+import { repairBookCursorFromRenderedState } from './navigation-position-guard.js?v=1';
+
 // Reader library storage and sync.
 // UI rendering and import stay outside this module.
 
@@ -45,6 +47,47 @@ export function createReaderLibraryStore({
       onError('[reader] positions save failed', error);
       onSaveError?.(error);
     }
+  }
+
+  // Async translation/analysis callbacks in reader-app were written when the
+  // requested paragraph was still the active one. They await the network and
+  // then assign book.currentParagraph = capturedIndex before save(). If the user
+  // has meanwhile jumped through the TOC and kept reading, that late assignment
+  // is stale. The DOM is still showing the paragraph the user actually chose,
+  // so repair the cursor from the rendered surface BEFORE dedupe/persistence.
+  //
+  // Explicit TOC navigation is the inverse situation: readerGoToChapter() saves
+  // before rendering the newly selected position. toc-navigation-fix brackets
+  // that synchronous save with __readerExplicitNavigationDepth, so the old DOM
+  // cannot cancel an intentional same-chapter jump to paragraph 0.
+  function repairOpenBookCursorFromRenderedDom(source) {
+    const books = Array.isArray(source) ? source : [];
+    const currentId = String(getCurrentBookId?.() || '');
+    if (!currentId || typeof document === 'undefined') return books;
+
+    const book = books.find(item => String(item?.id || '') === currentId);
+    const root = document.getElementById('reader-chapter-text');
+    if (!book || !root) return books;
+
+    const active = root.dataset.activeParagraph
+      ?? root.querySelector?.('.reader-paragraph.active')?.dataset?.p;
+    const result = repairBookCursorFromRenderedState({
+      book,
+      currentBookId: currentId,
+      renderedBookId: root.dataset.readerBookId || '',
+      renderedChapter: root.dataset.renderedChapter,
+      renderedParagraph: active,
+      explicitNavigation: Number(globalThis.__readerExplicitNavigationDepth || 0) > 0,
+    });
+
+    if (result.changed) {
+      console.warn('[reader library] blocked stale async paragraph rollback', {
+        bookId: currentId,
+        from: result.from,
+        to: result.to,
+      });
+    }
+    return books;
   }
 
   function sameBookKey(a, b) {
@@ -192,7 +235,8 @@ export function createReaderLibraryStore({
     if (!localCommitPending) return getBooks() || [];
     localCommitPending = false;
 
-    let books = dedupePreservingOpenBook(getBooks() || []);
+    const current = repairOpenBookCursorFromRenderedDom(getBooks() || []);
+    let books = dedupePreservingOpenBook(current);
     setBooks(books);
     savePositions(books);
 
@@ -223,7 +267,8 @@ export function createReaderLibraryStore({
   }
 
   function save({ schedule = true } = {}) {
-    const books = dedupePreservingOpenBook(getBooks() || []);
+    const current = repairOpenBookCursorFromRenderedDom(getBooks() || []);
+    const books = dedupePreservingOpenBook(current);
     setBooks(books);
     savePositions(books);
     localCommitPending = true;
@@ -346,7 +391,8 @@ export function createReaderLibraryStore({
     const userId = getCloudUserId();
     if (!userId || !isCloudReady() || getCloudSaving()) return false;
 
-    const books = dedupePreservingOpenBook(getBooks() || []);
+    const current = repairOpenBookCursorFromRenderedDom(getBooks() || []);
+    const books = dedupePreservingOpenBook(current);
     setBooks(books);
     if (!books.length) {
       if (options.replaceAll) await db().from('reader_books').delete().eq('user_id', userId);
