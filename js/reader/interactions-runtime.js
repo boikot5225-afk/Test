@@ -1,6 +1,6 @@
 import './toc-upgrade.js?v=1'; // retired no-op shim; kept for old cache/CI compatibility
 import './handler-bridge.js?v=1';
-import { createReaderInteractions } from './interactions.js?v=1';
+import { createReaderInteractions } from './interactions.js?v=2';
 
 function getRoot() {
   return document.getElementById('reader-chapter-text');
@@ -10,6 +10,20 @@ function activeParagraphIndex() {
   const index = Number(getRoot()?.querySelector('.reader-paragraph.active')?.dataset?.p);
   return Number.isFinite(index) ? index : 0;
 }
+
+function toggleReadingChrome() {
+  const view = document.getElementById('reader-reading-view');
+  if (!view || view.style.display === 'none') return false;
+  const hidden = view.classList.toggle('rd-chrome-hidden');
+  // Bars are absolutely overlaid, so toggling them must not change the logical
+  // paragraph/page. Re-measure only ancillary player heights; no render/nav.
+  try { window.__rdMeasureChrome?.(); } catch {}
+  try {
+    window.dispatchEvent(new CustomEvent('reader:chromechange', { detail: { hidden } }));
+  } catch {}
+  return hidden;
+}
+try { window.readerToggleReadingChrome = toggleReadingChrome; } catch {}
 
 function hasNativeSelection() {
   const root = getRoot();
@@ -28,6 +42,7 @@ const readerInteractions = createReaderInteractions({
   openWordPanel: (word, index) => window.readerOpenWordPanel?.(word, index),
   runAction: (event, action, index) => window.readerAction?.(event, action, index),
   selectParagraph: (index) => window.readerSelectParagraph?.(index),
+  toggleChrome: toggleReadingChrome,
   nextParagraph: () => window.readerNextParagraph?.(),
   previousParagraph: () => window.readerPrevParagraph?.(),
 });
