@@ -84,7 +84,30 @@ function installTocBridge() {
   return true;
 }
 
+const CANONICAL_READER_HANDLER_NAMES = [
+  'readerOpenBook', 'readerBackToLibrary',
+  'readerNextParagraph', 'readerPrevParagraph',
+  'readerNextChapter', 'readerPrevChapter',
+  'readerSelectParagraph', 'readerGoToChapter',
+  'renderReaderChapter',
+];
+
+function syncCanonicalReaderHandlers() {
+  return appModule().then(app => {
+    for (const name of CANONICAL_READER_HANDLER_NAMES) {
+      const fn = app?.[name];
+      if (typeof fn !== 'function') continue;
+      window[name] = fn;
+      window[`__real_${name}`] = fn;
+    }
+    globalThis.__readerCanonicalModuleUrl = READER_APP_URL;
+    globalThis.__readerCanonicalHandlersBound = true;
+    return app;
+  });
+}
+
 function syncUpgradedHandlers() {
+  syncCanonicalReaderHandlers().catch(error => console.warn('[reader handlers] canonical navigation bind failed', error));
   installTocBridge();
   // TOC/import wrappers and the durable delete patch are asynchronous. Once
   // they are present, mirror them into __real_* so old stubs/native bridges do
