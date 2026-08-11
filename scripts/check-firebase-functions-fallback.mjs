@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 
+// Re-run marker: keep the regression logic unchanged; this commit validates
+// the current native fallback after the token-refresh implementation landed.
 const source = fs.readFileSync('js/firebase-config.js', 'utf8');
 const calls = [];
 
