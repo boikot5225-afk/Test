@@ -177,17 +177,76 @@ export function createReaderPagesMode({
     if (!enabled) {
       scroller.classList.remove('rd-pages-mode');
       readingView?.classList.remove('rd-pages-active');
+      pages = [];
+      currentPageIndex = 0;
+      animating = false;
       return;
     }
 
     const { ranges, paragraphs } = measurePageRanges(chapterText, scroller) || {};
-    if (!ranges || !ranges.length) { scroller.classList.remove('rd-pages-mode'); readingView?.classList.remove('rd-pages-active'); return; }
+    if (!ranges || !ranges.length) {
+      pages = [];
+      currentPageIndex = 0;
+      animating = false;
+      scroller.classList.remove('rd-pages-mode');
+      readingView?.classList.remove('rd-pages-active');
+      return;
+    }
 
     pages = buildPageElements(chapterText, ranges, paragraphs);
     scroller.classList.add('rd-pages-mode');
     readingView?.classList.add('rd-pages-active');
     animating = false;
     showPageInstant(pageIndexForParagraph(getActiveParagraphIndex()));
+  }
+
+  // A TOC jump rebuilds the chapter DOM wholesale. On the real Android build
+  // there was a race where the visible DOM had already switched to the new
+  // chapter while this object still held `.rd-page` nodes from the previous
+  // one. `next()` then saw an apparently valid pages array, tried to animate
+  // detached elements, returned false, and every press of ▶ became a no-op.
+  // Validate the live DOM at the moment of the turn instead of trusting cached
+  // wrappers from the previous render.
+  function ensureLivePagesForTurn() {
+    if (!enabled) return;
+    const chapterText = getChapterText();
+    if (!chapterText) return;
+
+    const livePages = [...chapterText.querySelectorAll(':scope > .rd-page')];
+    const cachedDisconnected = pages.some((page) => !page?.el?.isConnected || page.el.parentElement !== chapterText);
+    const currentConnected = pages[currentPageIndex]?.el?.isConnected;
+    if (!pages.length || livePages.length !== pages.length || cachedDisconnected || !currentConnected) {
+      rebuild();
+    }
+
+    // Defensive fallback for a second failure mode: if WebView reports a bogus
+    // oversized scroller height, height-based pagination can collapse a long
+    // chapter into one giant page. That makes ▶/◀ look dead even though the
+    // chapter contains hundreds of paragraphs. A one-paragraph temporary pager
+    // is always correct and remains fully interactive; a later normal rebuild
+    // can regroup the paragraphs when geometry becomes sane again.
+    if (pages.length <= 1) {
+      unwrap(chapterText);
+      const paragraphs = [...chapterText.querySelectorAll(':scope > .reader-paragraph')];
+      if (paragraphs.length > 1) {
+        const ranges = paragraphs.map((_, index) => ({ start: index, end: index }));
+        pages = buildPageElements(chapterText, ranges, paragraphs);
+        animating = false;
+        showPageInstant(pageIndexForParagraph(getActiveParagraphIndex()));
+        console.warn('[reader pages] recovered collapsed single-page chapter', { paragraphs: paragraphs.length });
+      } else if (paragraphs.length === 1 && !pages.length) {
+        pages = buildPageElements(chapterText, [{ start: 0, end: 0 }], paragraphs);
+        animating = false;
+        showPageInstant(0);
+      }
+    }
+
+    // A transition has its own timeout, but if its old DOM was replaced while
+    // it was running the timeout can leave `animating` true until much later.
+    // No live transition classes means there is nothing left to wait for.
+    if (animating && !chapterText.querySelector('.rd-page-out, .rd-page-in-active')) {
+      animating = false;
+    }
   }
 
   function resync() {
@@ -204,12 +263,18 @@ export function createReaderPagesMode({
   }
 
   function turn(delta) {
-    if (!enabled || animating) return false;
+    if (!enabled) return false;
+    ensureLivePagesForTurn();
+    if (animating) return false;
+
     const target = currentPageIndex + delta;
     if (target < 0 || target >= pages.length) return false;
     const curPage = pages[currentPageIndex];
     const nextPage = pages[target];
-    if (!curPage?.el || !nextPage?.el) return false;
+    if (!curPage?.el || !nextPage?.el || !curPage.el.isConnected || !nextPage.el.isConnected) {
+      rebuild();
+      return false;
+    }
     const directionClass = delta > 0 ? 'rd-page-forward' : 'rd-page-backward';
     const finishTurn = () => {
       curPage.el.classList.remove('rd-page-show', 'rd-page-current');
