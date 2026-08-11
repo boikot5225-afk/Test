@@ -2,8 +2,6 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 
-// Re-run marker: keep the regression logic unchanged; this commit validates
-// the current native fallback after the token-refresh implementation landed.
 const source = fs.readFileSync('js/firebase-config.js', 'utf8');
 const calls = [];
 
@@ -55,10 +53,14 @@ async function fetch(url, options = {}) {
   }
   if (String(url).includes('.cloudfunctions.net/readerAI')) {
     assert.equal(options?.headers?.Authorization, `Bearer ${freshToken}`, 'callable must use refreshed ID token');
+    const request = JSON.parse(options?.body || '{}')?.data || {};
+    const ru = request.task === 'translate_paragraph'
+      ? 'Ну, раз так, проблемы нет, — сказал Буэнавентура.'
+      : 'нашёл';
     return {
       ok: true,
       status: 200,
-      async json() { return { result: { data: { ru: 'нашёл' } } }; },
+      async json() { return { result: { data: { ru } } }; },
     };
   }
   throw new Error(`unexpected fetch in fallback test: ${url}`);
@@ -92,34 +94,55 @@ assert.equal(typeof context.firebase.functions, 'function', 'firebase.functions 
 const app = context.firebase.app();
 assert.equal(typeof app.functions, 'function', 'firebase.app().functions fallback is missing');
 
-// This is the exact path used by tts.js. A real Firebase SDK refreshes an
-// expired ID token even when the caller passes forceRefresh=false. The native
-// REST fallback must preserve that contract or TTS dies after about an hour.
+// Exact path used by tts.js: getIdToken(false) must silently refresh an
+// expired JWT instead of handing the expired token to ttsAudio.
 const tokenFromNormalGetter = await context.firebase.auth().currentUser.getIdToken(false);
 assert.equal(tokenFromNormalGetter, freshToken, 'getIdToken(false) must transparently refresh an expired JWT');
 assert.equal(calls.filter((call) => call.url.includes('securetoken.googleapis.com/v1/token')).length, 1, 'expired token should be refreshed exactly once');
 
 const callable = app.functions('asia-southeast1').httpsCallable('readerAI');
 assert.equal(typeof callable, 'function', 'httpsCallable(readerAI) should be a function');
-const payload = { task: 'reader_word', word: 'chercha', sourceLang: 'fr' };
-const result = await callable(payload);
-assert.equal(result?.data?.data?.ru, 'нашёл', 'callable result shape must match Firebase compat SDK');
+
+const wordPayload = { task: 'reader_word', word: 'chercha', sourceLang: 'fr' };
+const wordResult = await callable(wordPayload);
+assert.equal(wordResult?.data?.data?.ru, 'нашёл', 'reader_word result shape must match Firebase compat SDK');
+
+// Exact AI task used when tapping/auto-translating a paragraph in the reader.
+const paragraphPayload = {
+  task: 'translate_paragraph',
+  text: "Enfin, comme ça, il n'y a pas de problème, dit Buenaventura.",
+  sourceLang: 'fr',
+  targetLang: 'ru',
+};
+const paragraphResult = await callable(paragraphPayload);
+assert.equal(
+  paragraphResult?.data?.data?.ru,
+  'Ну, раз так, проблемы нет, — сказал Буэнавентура.',
+  'translate_paragraph must survive the same refreshed native session used by TTS',
+);
 
 const functionCalls = calls.filter((call) => call.url.includes('.cloudfunctions.net/readerAI'));
-assert.equal(functionCalls.length, 1, 'readerAI should make exactly one callable request after proactive refresh');
-const call = functionCalls[0];
+assert.equal(functionCalls.length, 2, 'word + paragraph should make two callable requests after one proactive refresh');
+for (const call of functionCalls) {
+  assert.equal(
+    call.url,
+    'https://asia-southeast1-french-da79a.cloudfunctions.net/readerAI',
+    'callable endpoint is wrong',
+  );
+  assert.equal(call.options?.method, 'POST');
+  assert.equal(call.options?.headers?.['Content-Type'], 'application/json');
+  assert.equal(call.options?.headers?.Authorization, `Bearer ${freshToken}`);
+}
+assert.deepEqual(JSON.parse(functionCalls[0].options?.body || '{}'), { data: wordPayload });
+assert.deepEqual(JSON.parse(functionCalls[1].options?.body || '{}'), { data: paragraphPayload });
 assert.equal(
-  call.url,
-  'https://asia-southeast1-french-da79a.cloudfunctions.net/readerAI',
-  'callable endpoint is wrong',
+  calls.filter((call) => call.url.includes('securetoken.googleapis.com/v1/token')).length,
+  1,
+  'TTS/word/paragraph must share one refreshed session instead of refreshing repeatedly',
 );
-assert.equal(call.options?.method, 'POST');
-assert.equal(call.options?.headers?.['Content-Type'], 'application/json');
-assert.equal(call.options?.headers?.Authorization, `Bearer ${freshToken}`);
-assert.deepEqual(JSON.parse(call.options?.body || '{}'), { data: payload });
 
 const saved = JSON.parse(store.get('an2_firebase_rest_session_v1') || '{}');
 assert.equal(saved.idToken, freshToken, 'refreshed token must be persisted for TTS/database/callables');
 assert.equal(saved.refreshToken, 'test-refresh-token-2', 'rotated refresh token must be persisted');
 
-console.log('firebase native auth/functions token refresh: PASS');
+console.log('firebase native TTS + reader word + paragraph auth refresh: PASS');
