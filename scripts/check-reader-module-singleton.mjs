@@ -11,8 +11,11 @@ const canonicalSpecifier = canonicalMatch[1];
 const canonicalQuery = canonicalMatch[2] || '';
 if (!canonicalQuery) throw new Error('canonical reader-app import must be versioned');
 
+// Scan every quoted Reader URL, not just direct import(...) syntax. Several
+// runtime modules keep the URL in READER_APP_URL and import that variable later;
+// those are equally capable of creating a second ES-module instance.
 const refs = [];
-const importRe = /(?:from\s*|import\s*\()\s*['"]([^'"]*reader-app\.js(?:\?[^'"]*)?)['"]/g;
+const readerUrlRe = /['"]([^'"\n]*reader-app\.js(?:\?[^'"\n]*)?)['"]/g;
 
 function walk(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -20,7 +23,7 @@ function walk(dir) {
     if (entry.isDirectory()) walk(full);
     else if (entry.isFile() && entry.name.endsWith('.js')) {
       const text = fs.readFileSync(full, 'utf8');
-      for (const match of text.matchAll(importRe)) {
+      for (const match of text.matchAll(readerUrlRe)) {
         refs.push({ file: path.relative(repo, full).replaceAll('\\', '/'), specifier: match[1] });
       }
     }
@@ -28,18 +31,19 @@ function walk(dir) {
 }
 walk(jsRoot);
 
-const offenders = refs.filter(({ specifier }) => {
-  const base = specifier.split('?')[0];
-  if (!base.endsWith('reader-app.js')) return false;
-  return !specifier.endsWith(`reader-app.js${canonicalQuery}`);
-});
+const actualReaderRefs = refs.filter(({ specifier }) => specifier.split('?')[0].endsWith('reader-app.js'));
+const offenders = actualReaderRefs.filter(({ specifier }) => !specifier.endsWith(`reader-app.js${canonicalQuery}`));
 
 console.log('canonical reader module:', canonicalSpecifier);
-for (const ref of refs) console.log(`${ref.file}: ${ref.specifier}`);
+for (const ref of actualReaderRefs) console.log(`${ref.file}: ${ref.specifier}`);
 if (offenders.length) {
   console.error('\nDuplicate Reader module URLs detected:');
   for (const ref of offenders) console.error(`  ${ref.file}: ${ref.specifier}`);
-  console.error('All executable imports must resolve to the same versioned reader-app URL.');
+  console.error('Every Reader module URL must use the canonical versioned identity.');
   process.exit(1);
 }
-console.log(`reader module singleton: PASS (${refs.length} imports, one URL identity)`);
+if (actualReaderRefs.length < 5) {
+  console.error(`Too few Reader URL references were found (${actualReaderRefs.length}); scanner may have regressed.`);
+  process.exit(1);
+}
+console.log(`reader module singleton: PASS (${actualReaderRefs.length} URL references, one identity)`);
