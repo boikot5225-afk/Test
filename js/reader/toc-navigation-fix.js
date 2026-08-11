@@ -80,6 +80,14 @@ async function navigateToChapter(chapterIndex) {
       return false;
     }
 
+    // toc-runtime intercepts the "Оглавление" button in capture phase, so the
+    // button's inline readerCloseMoreSheet() never gets to run. Without closing
+    // it here, the old More sheet stays behind the TOC and pops back into view
+    // immediately after a chapter is selected (exactly what the recording shows).
+    try { window.readerCloseMoreSheet?.(); } catch {}
+    document.getElementById('reader-sheet-back')?.classList.remove('show');
+    document.getElementById('reader-more-sheet')?.classList.remove('show');
+
     app.readerCloseToc?.();
     app.readerGoToChapter?.(ci);
 
