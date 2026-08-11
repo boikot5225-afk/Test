@@ -52,6 +52,14 @@ function richestMatchingBook(app, chapterIndex) {
   })[0];
 }
 
+function beginExplicitNavigation() {
+  globalThis.__readerExplicitNavigationDepth = Number(globalThis.__readerExplicitNavigationDepth || 0) + 1;
+}
+
+function endExplicitNavigation() {
+  globalThis.__readerExplicitNavigationDepth = Math.max(0, Number(globalThis.__readerExplicitNavigationDepth || 0) - 1);
+}
+
 async function navigateToChapter(chapterIndex) {
   if (navigating) return false;
   navigating = true;
@@ -89,7 +97,17 @@ async function navigateToChapter(chapterIndex) {
     document.getElementById('reader-more-sheet')?.classList.remove('show');
 
     app.readerCloseToc?.();
-    app.readerGoToChapter?.(ci);
+
+    // readerGoToChapter() saves BEFORE it renders. That is important when the
+    // user deliberately chooses the start of the SAME chapter: the DOM still
+    // carries the old paragraph for one synchronous save call. Mark this call so
+    // library-store's stale-async guard never mistakes that old DOM for authority.
+    beginExplicitNavigation();
+    try {
+      app.readerGoToChapter?.(ci);
+    } finally {
+      endExplicitNavigation();
+    }
 
     // readerGoToChapter is synchronous; verify the canonical current object was
     // actually moved so a future regression is visible instead of silently
