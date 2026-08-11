@@ -80,6 +80,20 @@ export function createReaderChapterRenderer({
     });
   }
 
+  function syncParagraphHelpBlocks(paragraphEl, chapter, paragraphIndex, translations, book) {
+    if (!paragraphEl || paragraphEl.dataset.readerPending === '1') return;
+    const translationKey = `${chapter?.id}:${paragraphIndex}`;
+    const translation = translations[translationKey];
+    const textDiv = paragraphEl.querySelector('.reader-paragraph-text');
+    if (!textDiv) return;
+    if (translation && !paragraphEl.querySelector('.reader-translation-block')) {
+      textDiv.insertAdjacentHTML('afterend', renderTranslationBlock(translation));
+    }
+    if (book.readerAnalyses?.[translationKey] && !paragraphEl.querySelector('.reader-sentence-analysis')) {
+      textDiv.insertAdjacentHTML('afterend', renderAnalysisBlock(book.readerAnalyses[translationKey]));
+    }
+  }
+
   function tryFastNav(chapterText, chapterIndex, paragraphs, paragraphIndex, chapter, translations, book) {
     const prevChIdx = Number(chapterText.dataset.renderedChapter ?? -1);
     const prevParCount = Number(chapterText.dataset.renderedParCount ?? 0);
@@ -97,7 +111,11 @@ export function createReaderChapterRenderer({
     ) return false;
 
     const prevActive = Number(chapterText.dataset.activeParagraph ?? -1);
-    if (prevActive === paragraphIndex) return true;
+    if (prevActive === paragraphIndex) {
+      const activeEl = chapterText.querySelector(`.reader-paragraph[data-p="${paragraphIndex}"]`);
+      syncParagraphHelpBlocks(activeEl, chapter, paragraphIndex, translations, book);
+      return true;
+    }
 
     const oldEl = chapterText.querySelector(`.reader-paragraph[data-p="${prevActive}"]`);
     const newEl = chapterText.querySelector(`.reader-paragraph[data-p="${paragraphIndex}"]`);
@@ -105,15 +123,7 @@ export function createReaderChapterRenderer({
 
     if (oldEl) oldEl.classList.remove('active');
     newEl.classList.add('active');
-    {
-      const translationKey = `${chapter?.id}:${paragraphIndex}`;
-      const translation = translations[translationKey];
-      const textDiv = newEl.querySelector('.reader-paragraph-text');
-      if (textDiv) {
-        if (translation && !newEl.querySelector('.reader-translation-block')) textDiv.insertAdjacentHTML('afterend', renderTranslationBlock(translation));
-        if (book.readerAnalyses?.[translationKey] && !newEl.querySelector('.reader-sentence-analysis')) textDiv.insertAdjacentHTML('afterend', renderAnalysisBlock(book.readerAnalyses[translationKey]));
-      }
-    }
+    syncParagraphHelpBlocks(newEl, chapter, paragraphIndex, translations, book);
 
     chapterText.dataset.activeParagraph = String(paragraphIndex);
     return true;
