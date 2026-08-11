@@ -15,9 +15,12 @@ export function createReaderInteractions({
   openWordPanel,
   runAction,
   selectParagraph,
+  toggleChrome,
   nextParagraph,
   previousParagraph,
 }) {
+  let suppressClickUntil = 0;
+
   function bindSwipe() {
     const root = getRoot();
     if (!root || root.dataset.boundReaderSwipe === '1') return;
@@ -25,6 +28,7 @@ export function createReaderInteractions({
     let startX = 0;
     let startY = 0;
     let startedAt = 0;
+    let moved = false;
 
     root.addEventListener('touchstart', (event) => {
       const touch = event.touches?.[0];
@@ -32,6 +36,13 @@ export function createReaderInteractions({
       startX = touch.clientX;
       startY = touch.clientY;
       startedAt = Date.now();
+      moved = false;
+    }, { passive: true });
+
+    root.addEventListener('touchmove', (event) => {
+      const touch = event.touches?.[0];
+      if (!touch) return;
+      if (Math.abs(touch.clientX - startX) > 10 || Math.abs(touch.clientY - startY) > 10) moved = true;
     }, { passive: true });
 
     root.addEventListener('touchend', (event) => {
@@ -41,7 +52,11 @@ export function createReaderInteractions({
       const dx = touch.clientX - startX;
       const dy = touch.clientY - startY;
       if (Date.now() - startedAt > 600) return;
+      // Android may still synthesize a click after a drag/swipe. Do not let
+      // that synthetic click toggle immersive mode immediately afterwards.
+      if (moved) suppressClickUntil = Date.now() + 350;
       if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.7) {
+        suppressClickUntil = Date.now() + 450;
         if (dx < 0) nextParagraph();
         else previousParagraph();
       }
@@ -92,12 +107,22 @@ export function createReaderInteractions({
         return;
       }
 
-      if (target.closest('.reader-action-btn, .reader-word, details, summary, button, input, textarea, select, a')) return;
+      if (target.closest('.reader-action-btn, .reader-word, details, summary, button, input, textarea, select, a, audio')) return;
       const paragraph = target.closest('.reader-paragraph');
       if (!paragraph || !root.contains(paragraph)) return;
-      const index = Number(paragraph.dataset.p);
-      if (!Number.isFinite(index)) return;
-      selectParagraph(index);
+
+      // A normal tap on the reading surface is the reader's immersive/full-screen
+      // gesture. The old handler called selectParagraph() here. In page mode that
+      // changes the logical active paragraph and resyncs pagination, so a harmless
+      // tap could jump to another paragraph/page instead of hiding the chrome.
+      // Paragraph selection is already maintained by page navigation / visibility
+      // tracking; do not mutate reading position on a plain tap.
+      if (Date.now() < suppressClickUntil) {
+        stopReaderClick(event);
+        return;
+      }
+      stopReaderClick(event);
+      if (typeof toggleChrome === 'function') toggleChrome();
     }, true);
   }
 
