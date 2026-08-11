@@ -1,4 +1,5 @@
 // Runtime handler bridge for Reader AI 77.42.
+// toc23 invariant: every navigation handler is rebound to the same reader-app module instance.
 //
 // index.html installs buffering stubs and app.js later copies real handlers to
 // window.__real_NAME. Reader TOC/delete upgrades are installed asynchronously,
