@@ -31,6 +31,45 @@ function consumeWordTapRenderGuard() {
   return now <= until;
 }
 
+function renderedBookKey(book) {
+  return String(book?.id || book?.importKey || book?.title || 'book');
+}
+
+// The visible chapter is the last navigation decision the user actually saw.
+// Background work (translation, cloud/IDB hydration, delayed page callbacks)
+// is allowed to enrich the book, but it must never move the reader to another
+// chapter. Intentional chapter changes are bracketed with
+// __readerExplicitNavigationDepth by TOC/navigation.js, so only an unmarked
+// mismatch is treated as a stale rollback.
+function repairUnexpectedChapterRollback(deps) {
+  if (Number(globalThis.__readerExplicitNavigationDepth || 0) > 0) return false;
+  const root = document.getElementById('reader-chapter-text');
+  const book = deps.getCurrentBook?.();
+  if (!root || !book) return false;
+
+  const rootBookId = String(root.dataset.readerBookId || '');
+  const currentBookId = renderedBookKey(book);
+  if (!rootBookId || rootBookId !== currentBookId) return false;
+
+  const renderedChapter = Number(root.dataset.renderedChapter);
+  const stateChapter = Number(book.currentChapter || 0);
+  if (!Number.isInteger(renderedChapter) || renderedChapter < 0 || renderedChapter === stateChapter) return false;
+
+  const renderedParagraph = Number(root.dataset.activeParagraph);
+  const from = [stateChapter, Number(book.currentParagraph || 0)];
+  book.currentChapter = renderedChapter;
+  if (Number.isInteger(renderedParagraph) && renderedParagraph >= 0) {
+    book.currentParagraph = renderedParagraph;
+  }
+  book.updatedAt = new Date().toISOString();
+  console.warn('[reader render] blocked background chapter rollback', {
+    bookId: currentBookId,
+    from,
+    to: [book.currentChapter, book.currentParagraph],
+  });
+  return true;
+}
+
 installWordTapRenderGuard();
 
 export function createReaderChapterRenderer(deps) {
@@ -45,6 +84,8 @@ export function createReaderChapterRenderer(deps) {
         console.info('[reader word tap] skipped redundant full chapter rebuild');
         return undefined;
       }
+
+      repairUnexpectedChapterRollback(deps);
 
       // TOC is resolved on demand from the exact EPUB registry. Do not run a
       // background book-rewriter here: older builds could delete/reconcile the
