@@ -89,8 +89,6 @@ function pinyinReading(data = {}) {
 function compactRussian(value) {
   const full = String(value || '').replace(/\s+/g, ' ').trim();
   if (!full) return '';
-  // Inline glosses should stay tiny. Preserve at most the first two dictionary
-  // senses and let the normal word card carry the full explanation.
   const parts = full.split(/\s*[;；]\s*/).filter(Boolean);
   const picked = parts.slice(0, 2).join(' · ');
   return picked.length > 28 ? picked.slice(0, 27).trimEnd() + '…' : picked;
@@ -103,9 +101,17 @@ function isChineseWordElement(el) {
 }
 
 function isKnownElement(el) {
-  // The core renderer is the source of truth for user knowledge state.
-  // rw-known is only assigned to explicitly learned Chinese words.
   return !!el?.classList?.contains('rw-known');
+}
+
+function clearAnnotation(el) {
+  if (!el) return;
+  el.classList?.remove('rw-zh-gloss');
+  try {
+    delete el.dataset.zhGloss;
+    delete el.dataset.zhGlossPinyin;
+    delete el.dataset.zhGlossRu;
+  } catch {}
 }
 
 function getParagraphContext(el) {
@@ -139,25 +145,13 @@ function annotateWord(el, hint = {}) {
   const fullRu = hint.fullRu || hint.ru || '';
   const ru = compactRussian(fullRu);
 
+  // Keep toc27's word/ruby DOM intact. The optional aid is only metadata + CSS
+  // pseudo-elements, so word taps, selection and known-state classes keep using
+  // the stable reader handlers.
   el.classList.add('rw-zh-gloss');
   el.dataset.zhGloss = '1';
-  el.innerHTML = '';
-
-  const py = document.createElement('span');
-  py.className = 'rw-zh-gloss-pinyin';
-  py.textContent = pinyin || '\u00a0';
-  el.appendChild(py);
-
-  const hanzi = document.createElement('span');
-  hanzi.className = 'rw-zh-gloss-hanzi';
-  hanzi.textContent = word;
-  el.appendChild(hanzi);
-
-  const gloss = document.createElement('span');
-  gloss.className = 'rw-zh-gloss-ru';
-  gloss.textContent = ru || '…';
-  if (fullRu) gloss.title = fullRu;
-  el.appendChild(gloss);
+  el.dataset.zhGlossPinyin = pinyin || '';
+  el.dataset.zhGlossRu = ru || '…';
   return true;
 }
 
@@ -169,34 +163,26 @@ function updateVisibleWord(word, context, data = {}) {
   root.querySelectorAll('.reader-word.rw-zh-gloss[data-lang="zh"]').forEach((el) => {
     if (String(el.dataset.word || '') !== word) return;
     if (cacheKey(word, getParagraphContext(el)) !== expectedKey) return;
-    const py = el.querySelector('.rw-zh-gloss-pinyin');
-    const ru = el.querySelector('.rw-zh-gloss-ru');
     const pinyin = pinyinReading(data);
     const fullRu = russianMeaning(data);
-    if (py && pinyin) py.textContent = pinyin;
-    if (ru && fullRu) {
-      ru.textContent = compactRussian(fullRu);
-      ru.title = fullRu;
-    }
+    if (pinyin) el.dataset.zhGlossPinyin = pinyin;
+    if (fullRu) el.dataset.zhGlossRu = compactRussian(fullRu);
   });
 }
 
 async function callReaderWord(word, context, fallbackPinyin = '') {
-  if (!globalThis.firebase?.app) throw new Error('Firebase unavailable');
-  const region = String(globalThis.AN2_FIREBASE_FUNCTIONS_REGION || 'asia-southeast1').trim() || 'asia-southeast1';
-  const callable = globalThis.firebase.app().functions(region).httpsCallable('readerAI');
-  const result = await Promise.race([
-    callable({
-      task: 'reader_word',
-      sourceLang: 'zh',
-      word,
-      surface: word,
-      context,
-      instruction: 'Return JSON only: {pinyin,ru}. pinyin: Mandarin pinyin with tone marks for this word in THIS context. ru: one short contextual Russian gloss, ideally 1-4 words. For a personal/place name, give a short Russian transliteration or label. No explanations.',
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('reader_word timeout')), 22000)),
-  ]);
-  const raw = result?.data?.data || result?.data || {};
+  // Reuse the exact readerAI client from the stable reader core. Do not create
+  // a second Firebase/callable/auth path here: toc27 already owns token refresh,
+  // timeout handling and the callable response shape.
+  const app = await canonicalApp();
+  if (typeof app?.readerAI !== 'function') throw new Error('readerAI unavailable');
+  const raw = await app.readerAI({
+    task: 'reader_word',
+    sourceLang: 'zh',
+    word,
+    surface: word,
+    context,
+  });
   return {
     pinyin: pinyinReading(raw) || fallbackPinyin || '',
     ru: russianMeaning(raw),
@@ -248,11 +234,8 @@ function injectStyles() {
   const style = document.createElement('style');
   style.id = 'rd-zh-unknown-gloss-style';
   style.textContent = `
-    /* Optional Chinese unknown-word scaffold. Absolute annotations keep each
-       token's measured width stable; the mode class reserves vertical room
-       BEFORE page-mode measures the chapter. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-paragraph-text {
-      line-height: 3.05 !important;
+      line-height: 2.48 !important;
     }
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss {
       position: relative;
@@ -264,38 +247,40 @@ function injectStyles() {
       text-decoration: none;
       cursor: pointer;
     }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-hanzi {
-      display: inline-block;
-      white-space: nowrap;
-      line-height: 1.2;
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss rt {
+      display: none !important;
     }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-pinyin,
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-ru {
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss::before,
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss::after {
       position: absolute;
       left: 50%;
       transform: translateX(-50%);
+      display: block;
       font-family: 'IBM Plex Sans', sans-serif;
       font-weight: 500;
       white-space: nowrap;
       pointer-events: none;
       text-align: center;
-      max-width: 8.5em;
+      max-width: 9.5em;
       overflow: hidden;
       text-overflow: ellipsis;
+      z-index: 1;
     }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-pinyin {
-      bottom: calc(100% + .08em);
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss::before {
+      content: attr(data-zh-gloss-pinyin);
+      bottom: calc(100% - .02em);
       color: color-mix(in srgb, var(--text-muted) 86%, var(--accent));
-      font-size: .56em;
-      line-height: 1;
-    }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-ru {
-      top: calc(100% + .08em);
-      color: var(--text-muted);
       font-size: .5em;
       line-height: 1;
     }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss.rw-problem .rw-zh-gloss-ru {
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss::after {
+      content: attr(data-zh-gloss-ru);
+      top: calc(100% - .02em);
+      color: var(--text-muted);
+      font-size: .46em;
+      line-height: 1.05;
+    }
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss.rw-problem::after {
       color: var(--bad);
     }
   `;
@@ -342,10 +327,6 @@ async function setMode(next) {
   try { localStorage.setItem(MODE_KEY, value); } catch {}
   syncControl();
 
-  // A core re-render is intentional ONLY on explicit mode changes. It restores
-  // the exact stable reader markup when turning the feature off, and when
-  // turning it on lets page mode measure the reserved annotation line-height
-  // before this module decorates the words.
   try {
     const app = await canonicalApp();
     app.renderReaderChapter?.();
@@ -367,7 +348,6 @@ function scan() {
   const root = document.getElementById('reader-chapter-text');
   if (!view || !root || view.dataset.readerLang !== 'zh') return;
 
-  // Freeze clean paragraph contexts before any annotation text is added.
   root.querySelectorAll('.reader-paragraph').forEach((paragraph) => {
     if (!paragraphSourceText.has(paragraph)) {
       const source = String(paragraph.querySelector('.reader-paragraph-text')?.textContent || paragraph.textContent || '')
@@ -382,7 +362,11 @@ function scan() {
   const lexicalCache = readJson(scopedKey('an2_reader_lexical_cache_v1'));
   let queuedForActive = 0;
   root.querySelectorAll('.reader-word[data-lang="zh"]').forEach((el) => {
-    if (!isChineseWordElement(el) || isKnownElement(el)) return;
+    if (!isChineseWordElement(el)) return;
+    if (isKnownElement(el)) {
+      clearAnnotation(el);
+      return;
+    }
     const word = String(el.dataset.word || '').trim();
     const context = getParagraphContext(el);
     const existingRt = String(el.querySelector('rt')?.textContent || '').trim();
@@ -391,12 +375,11 @@ function scan() {
 
     if (el.dataset.zhGloss !== '1') annotateWord(el, hint);
     else {
-      const py = el.querySelector('.rw-zh-gloss-pinyin');
-      const ru = el.querySelector('.rw-zh-gloss-ru');
-      if (py && hint.pinyin && !String(py.textContent || '').trim()) py.textContent = hint.pinyin;
-      if (ru && hint.ru && String(ru.textContent || '') === '…') {
-        ru.textContent = compactRussian(hint.fullRu || hint.ru);
-        ru.title = hint.fullRu || hint.ru;
+      if (hint.pinyin && !String(el.dataset.zhGlossPinyin || '').trim()) {
+        el.dataset.zhGlossPinyin = hint.pinyin;
+      }
+      if (hint.ru && String(el.dataset.zhGlossRu || '') === '…') {
+        el.dataset.zhGlossRu = compactRussian(hint.fullRu || hint.ru);
       }
     }
 
