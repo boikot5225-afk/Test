@@ -7,9 +7,12 @@ on:
     paths:
       - 'js/reader/chapter-render-next.js'
       - 'js/reader/interactions.js'
+      - 'js/reader/interactions-runtime.js'
+      - 'js/reader/zh-unknown-gloss.js'
       - 'scripts/check-reader-paragraph-help-render.mjs'
       - 'scripts/check-reader-paragraph-help-runtime.mjs'
       - 'scripts/check-reader-paragraph-tap-selection.mjs'
+      - 'scripts/check-reader-zh-unknown-gloss.mjs'
       - '.github/workflows/reader-paragraph-regression.yml'
   workflow_dispatch:
 
@@ -31,3 +34,5 @@ jobs:
         run: node scripts/check-reader-paragraph-help-runtime.mjs
       - name: Check paragraph tap selection
         run: node scripts/check-reader-paragraph-tap-selection.mjs
+      - name: Check optional Chinese unknown-word gloss mode
+        run: node scripts/check-reader-zh-unknown-gloss.mjs
