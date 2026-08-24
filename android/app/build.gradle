@@ -26,9 +26,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        // toc31 rebuild after the Chinese unknown-gloss null guard + cache bust.
-        versionCode 51
-        versionName '77.42-toc31'
+        versionCode 52
+        versionName '77.42-toc32'
     }
 
     buildFeatures {
