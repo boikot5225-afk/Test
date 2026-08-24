@@ -1,14 +1,13 @@
 import { normalizeImportKey } from '../utils.js';
 
-// Optional Chinese reading aid. This module deliberately sits OUTSIDE the
-// reader core: when disabled (the default), it does not alter rendered text,
-// navigation, pagination, TTS, translations or word state.
+// Optional Chinese reading aid. This module deliberately stays outside the
+// reader core. OFF (the default) means toc27 markup/behaviour is untouched.
 const MODE_KEY = 'an2_reader_zh_unknown_gloss_mode_v1';
 const CACHE_BASE_KEY = 'an2_reader_zh_unknown_gloss_cache_v1';
 const READER_APP_URL = '../reader-app.js?v=77.31';
 const MAX_CACHE = 1200;
 const MAX_CONCURRENT = 2;
-const MAX_ENRICH_PER_ACTIVE_PARAGRAPH = 12;
+const MAX_ENRICH_VISIBLE = 12;
 const RETRY_AFTER_MS = 5 * 60 * 1000;
 
 let appPromise = null;
@@ -51,7 +50,10 @@ function writeJson(key, value) {
 function textHash(text) {
   const s = String(text || '');
   let h = 2166136261;
-  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
   return (h >>> 0).toString(36);
 }
 
@@ -65,9 +67,7 @@ function saveOwnCache(cache) {
   const entries = Object.entries(cache || {});
   if (entries.length > MAX_CACHE) {
     entries.sort((a, b) => Number(b[1]?.t || 0) - Number(a[1]?.t || 0));
-    const keep = Object.fromEntries(entries.slice(0, MAX_CACHE));
-    writeJson(scopedKey(CACHE_BASE_KEY), keep);
-    return keep;
+    cache = Object.fromEntries(entries.slice(0, MAX_CACHE));
   }
   writeJson(scopedKey(CACHE_BASE_KEY), cache || {});
   return cache;
@@ -79,7 +79,7 @@ function existingLexical(word, cache = null) {
 }
 
 function russianMeaning(data = {}) {
-  return String(data.ru || data.translation_ru || data.russian || data.meaning_ru || data.translation || data.meaning || '').trim();
+  return String(data.ru || data.translation_ru || data.russian || data.meaning_ru || '').trim();
 }
 
 function pinyinReading(data = {}) {
@@ -91,7 +91,7 @@ function compactRussian(value) {
   if (!full) return '';
   const parts = full.split(/\s*[;；]\s*/).filter(Boolean);
   const picked = parts.slice(0, 2).join(' · ');
-  return picked.length > 28 ? picked.slice(0, 27).trimEnd() + '…' : picked;
+  return picked.length > 22 ? picked.slice(0, 21).trimEnd() + '…' : picked;
 }
 
 function isChineseWordElement(el) {
@@ -104,14 +104,17 @@ function isKnownElement(el) {
   return !!el?.classList?.contains('rw-known');
 }
 
-function clearAnnotation(el) {
-  if (!el) return;
-  el.classList?.remove('rw-zh-gloss');
-  try {
-    delete el.dataset.zhGloss;
-    delete el.dataset.zhGlossPinyin;
-    delete el.dataset.zhGlossRu;
-  } catch {}
+function wrapperFor(el) {
+  const parent = el?.parentElement;
+  return parent?.classList?.contains('rw-zh-gloss-wrap') ? parent : null;
+}
+
+function unwrapWord(el) {
+  const wrap = wrapperFor(el);
+  if (!wrap || !wrap.parentNode) return false;
+  wrap.parentNode.insertBefore(el, wrap);
+  wrap.remove();
+  return true;
 }
 
 function getParagraphContext(el) {
@@ -128,31 +131,35 @@ function getParagraphContext(el) {
 function bestCachedHint(word, context, existingPinyin = '', ownCache = null, lexicalCache = null) {
   const own = (ownCache || loadOwnCache())[cacheKey(word, context)] || null;
   const lexical = existingLexical(word, lexicalCache) || null;
+  const ownRu = russianMeaning(own);
+  const lexicalRu = russianMeaning(lexical);
   return {
     pinyin: pinyinReading(own) || pinyinReading(lexical) || existingPinyin || '',
-    ru: russianMeaning(own) || russianMeaning(lexical) || '',
-    fullRu: russianMeaning(own) || russianMeaning(lexical) || '',
+    ru: ownRu || lexicalRu || '',
+    fullRu: ownRu || lexicalRu || '',
   };
 }
 
-function annotateWord(el, hint = {}) {
-  if (!isChineseWordElement(el) || isKnownElement(el)) return false;
+function ensureWrapper(el, hint = {}) {
+  if (!isChineseWordElement(el) || isKnownElement(el)) return null;
   const word = String(el.dataset.word || '').trim();
-  if (!word) return false;
+  if (!word) return null;
+
+  let wrap = wrapperFor(el);
+  if (!wrap) {
+    wrap = document.createElement('span');
+    wrap.className = 'rw-zh-gloss-wrap';
+    wrap.dataset.zhGloss = '1';
+    el.parentNode?.insertBefore(wrap, el);
+    wrap.appendChild(el);
+  }
 
   const existingRt = String(el.querySelector?.('rt')?.textContent || '').trim();
   const pinyin = hint.pinyin || existingRt || '';
-  const fullRu = hint.fullRu || hint.ru || '';
-  const ru = compactRussian(fullRu);
-
-  // Keep toc27's word/ruby DOM intact. The optional aid is only metadata + CSS
-  // pseudo-elements, so word taps, selection and known-state classes keep using
-  // the stable reader handlers.
-  el.classList.add('rw-zh-gloss');
-  el.dataset.zhGloss = '1';
-  el.dataset.zhGlossPinyin = pinyin || '';
-  el.dataset.zhGlossRu = ru || '…';
-  return true;
+  const ru = compactRussian(hint.fullRu || hint.ru || '');
+  wrap.dataset.zhGlossPinyin = pinyin || '';
+  wrap.dataset.zhGlossRu = ru || '…';
+  return wrap;
 }
 
 function updateVisibleWord(word, context, data = {}) {
@@ -160,20 +167,20 @@ function updateVisibleWord(word, context, data = {}) {
   const root = document.getElementById('reader-chapter-text');
   if (!root) return;
   const expectedKey = cacheKey(word, context);
-  root.querySelectorAll('.reader-word.rw-zh-gloss[data-lang="zh"]').forEach((el) => {
+  root.querySelectorAll('.reader-word[data-lang="zh"]').forEach((el) => {
     if (String(el.dataset.word || '') !== word) return;
     if (cacheKey(word, getParagraphContext(el)) !== expectedKey) return;
+    const wrap = wrapperFor(el);
+    if (!wrap) return;
     const pinyin = pinyinReading(data);
-    const fullRu = russianMeaning(data);
-    if (pinyin) el.dataset.zhGlossPinyin = pinyin;
-    if (fullRu) el.dataset.zhGlossRu = compactRussian(fullRu);
+    const ru = compactRussian(russianMeaning(data));
+    if (pinyin) wrap.dataset.zhGlossPinyin = pinyin;
+    if (ru) wrap.dataset.zhGlossRu = ru;
   });
 }
 
 async function callReaderWord(word, context, fallbackPinyin = '') {
-  // Reuse the exact readerAI client from the stable reader core. Do not create
-  // a second Firebase/callable/auth path here: toc27 already owns token refresh,
-  // timeout handling and the callable response shape.
+  // Use toc27's already-tested readerAI/Firebase/auth path. No second auth stack.
   const app = await canonicalApp();
   if (typeof app?.readerAI !== 'function') throw new Error('readerAI unavailable');
   const raw = await app.readerAI({
@@ -229,58 +236,88 @@ function pumpQueue() {
   }
 }
 
+function isVisibleWord(el) {
+  try {
+    const rect = el.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+    const top = 0;
+    const bottom = Math.max(document.documentElement?.clientHeight || 0, window.innerHeight || 0);
+    return rect.bottom >= top && rect.top <= bottom;
+  } catch {
+    return true;
+  }
+}
+
 function injectStyles() {
   if (document.getElementById('rd-zh-unknown-gloss-style')) return;
   const style = document.createElement('style');
   style.id = 'rd-zh-unknown-gloss-style';
   style.textContent = `
+    /* Reserve one compact annotation lane above and below every text line.
+       The inline-grid itself stays within this height, so pagination does not
+       grow again after the word wrappers are installed. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-paragraph-text {
-      line-height: 2.48 !important;
+      line-height: 2.34 !important;
     }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss {
-      position: relative;
-      display: inline-block;
-      vertical-align: baseline;
-      padding: 0 .08em;
-      margin: 0 .04em;
-      border-radius: .24em;
-      text-decoration: none;
-      cursor: pointer;
-    }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss rt {
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-known rt {
       display: none !important;
     }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss::before,
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss::after {
-      position: absolute;
-      left: 50%;
-      transform: translateX(-50%);
-      display: block;
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap {
+      display: inline-grid;
+      grid-template-rows: .56em 1.02em .50em;
+      grid-template-columns: auto;
+      align-items: center;
+      justify-items: center;
+      vertical-align: -.50em;
+      line-height: 1 !important;
+      margin: 0 .025em;
+      padding: 0;
+      position: relative;
+      overflow: visible;
+    }
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap > .reader-word {
+      grid-row: 2;
+      grid-column: 1;
+      align-self: center;
+      justify-self: center;
+      display: inline !important;
+      margin: 0 !important;
+      padding: 0 1px !important;
+      line-height: 1.02 !important;
+    }
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap > .reader-word rt {
+      display: none !important;
+    }
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap::before,
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap::after {
+      grid-column: 1;
+      justify-self: center;
+      width: 0;
+      min-width: 0;
+      overflow: visible;
+      white-space: nowrap;
+      text-align: center;
+      pointer-events: none;
       font-family: 'IBM Plex Sans', sans-serif;
       font-weight: 500;
-      white-space: nowrap;
-      pointer-events: none;
-      text-align: center;
-      max-width: 9.5em;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      color: var(--text-muted);
+      line-height: 1;
       z-index: 1;
     }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss::before {
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap::before {
       content: attr(data-zh-gloss-pinyin);
-      bottom: calc(100% - .02em);
+      grid-row: 1;
+      align-self: end;
+      font-size: .48em;
       color: color-mix(in srgb, var(--text-muted) 86%, var(--accent));
-      font-size: .5em;
-      line-height: 1;
     }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss::after {
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap::after {
       content: attr(data-zh-gloss-ru);
-      top: calc(100% - .02em);
-      color: var(--text-muted);
-      font-size: .46em;
-      line-height: 1.05;
+      grid-row: 3;
+      align-self: start;
+      font-size: .43em;
     }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-word.rw-zh-gloss.rw-problem::after {
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-problem)::after {
       color: var(--bad);
     }
   `;
@@ -327,13 +364,15 @@ async function setMode(next) {
   try { localStorage.setItem(MODE_KEY, value); } catch {}
   syncControl();
 
+  // Explicit mode changes may rebuild the chapter. OFF therefore restores the
+  // exact stable toc27 markup; ON lets page mode measure the reserved line-height.
   try {
     const app = await canonicalApp();
     app.renderReaderChapter?.();
   } catch (error) {
     console.warn('[zh unknown gloss] reader refresh skipped:', error?.message || error);
   }
-  scheduleScan(40);
+  scheduleScan(60);
 }
 
 function scheduleScan(delay = 0) {
@@ -357,38 +396,34 @@ function scan() {
     }
   });
 
-  const active = root.querySelector('.reader-paragraph.active');
   const ownCache = loadOwnCache();
   const lexicalCache = readJson(scopedKey('an2_reader_lexical_cache_v1'));
-  let queuedForActive = 0;
-  root.querySelectorAll('.reader-word[data-lang="zh"]').forEach((el) => {
-    if (!isChineseWordElement(el)) return;
+  let queuedVisible = 0;
+  const words = Array.from(root.querySelectorAll('.reader-word[data-lang="zh"]'));
+
+  for (const el of words) {
+    if (!isChineseWordElement(el)) continue;
     if (isKnownElement(el)) {
-      clearAnnotation(el);
-      return;
+      unwrapWord(el);
+      continue;
     }
+
     const word = String(el.dataset.word || '').trim();
     const context = getParagraphContext(el);
     const existingRt = String(el.querySelector('rt')?.textContent || '').trim();
     const lexicalEntry = existingLexical(word, lexicalCache);
     const hint = bestCachedHint(word, context, existingRt, ownCache, lexicalCache);
+    const wrap = ensureWrapper(el, hint);
+    if (!wrap) continue;
 
-    if (el.dataset.zhGloss !== '1') annotateWord(el, hint);
-    else {
-      if (hint.pinyin && !String(el.dataset.zhGlossPinyin || '').trim()) {
-        el.dataset.zhGlossPinyin = hint.pinyin;
-      }
-      if (hint.ru && String(el.dataset.zhGlossRu || '') === '…') {
-        el.dataset.zhGlossRu = compactRussian(hint.fullRu || hint.ru);
-      }
-    }
+    if (hint.pinyin) wrap.dataset.zhGlossPinyin = hint.pinyin;
+    if (hint.ru) wrap.dataset.zhGlossRu = compactRussian(hint.fullRu || hint.ru);
 
-    const paragraph = el.closest('.reader-paragraph');
-    if (paragraph === active && !hint.ru && queuedForActive < MAX_ENRICH_PER_ACTIVE_PARAGRAPH) {
-      queuedForActive++;
+    if (!hint.ru && queuedVisible < MAX_ENRICH_VISIBLE && isVisibleWord(el)) {
+      queuedVisible++;
       enqueueEnrichment(word, context, hint.pinyin || existingRt, lexicalEntry);
     }
-  });
+  }
 }
 
 function installObservers() {
@@ -398,13 +433,21 @@ function installObservers() {
 
   const root = document.getElementById('reader-chapter-text');
   if (root && !rootObserver) {
-    rootObserver = new MutationObserver(() => scheduleScan(20));
-    rootObserver.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    rootObserver = new MutationObserver(() => scheduleScan(30));
+    rootObserver.observe(root, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class'],
+    });
   }
 
   const view = document.getElementById('reader-reading-view');
   if (view && !viewObserver) {
-    viewObserver = new MutationObserver(() => { syncControl(); scheduleScan(20); });
+    viewObserver = new MutationObserver(() => {
+      syncControl();
+      scheduleScan(30);
+    });
     viewObserver.observe(view, { attributes: true, attributeFilter: ['data-reader-lang', 'style'] });
   }
 
@@ -414,9 +457,15 @@ function installObservers() {
 if (typeof window !== 'undefined') {
   window.readerSetZhUnknownGlossMode = setMode;
   window.readerGetZhUnknownGlossMode = mode;
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installObservers, { once: true });
-  else installObservers();
-  window.addEventListener('pageshow', () => { installObservers(); scheduleScan(50); });
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', installObservers, { once: true });
+  } else {
+    installObservers();
+  }
+  window.addEventListener('pageshow', () => {
+    installObservers();
+    scheduleScan(60);
+  });
 }
 
 export { mode, enabled, compactRussian, isKnownElement, cacheKey };
