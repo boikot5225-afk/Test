@@ -79,11 +79,13 @@ function existingLexical(word, cache = null) {
 }
 
 function russianMeaning(data = {}) {
-  return String(data.ru || data.translation_ru || data.russian || data.meaning_ru || '').trim();
+  const value = data && typeof data === 'object' ? data : {};
+  return String(value.ru || value.translation_ru || value.russian || value.meaning_ru || '').trim();
 }
 
 function pinyinReading(data = {}) {
-  return String(data.pinyin || data.py || data.pinyin_marked || data.pinyinTone || data.pronunciation || '').trim();
+  const value = data && typeof data === 'object' ? data : {};
+  return String(value.pinyin || value.py || value.pinyin_marked || value.pinyinTone || value.pronunciation || '').trim();
 }
 
 function compactRussian(value) {
