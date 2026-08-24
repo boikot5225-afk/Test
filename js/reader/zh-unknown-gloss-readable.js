@@ -4,6 +4,9 @@
 
 let rootObserver = null;
 let retryTimer = null;
+let lastTappedWordSlot = null;
+const pendingKnownSlots = new Map();
+const PENDING_SLOT_TTL_MS = 2500;
 
 function compactMeaning(value) {
   const raw = String(value || '').replace(/\s+/g, ' ').trim();
@@ -36,34 +39,104 @@ function stableKnownWrapperFor(word) {
   return parent?.classList?.contains('rw-zh-known-stable-wrap') ? parent : null;
 }
 
-// Marking a word known used to remove its annotation wrapper immediately.
-// That changes the inline width in the same frame and makes the word/line jump.
-// Keep the current footprint only until Reader performs its next normal render.
+function wordSlotKey(word) {
+  if (!word?.classList?.contains('reader-word')) return '';
+  const paragraph = word.closest?.('.reader-paragraph');
+  const p = String(paragraph?.dataset?.p ?? '');
+  const surface = String(word.dataset?.word || word.textContent || '').trim();
+  if (!surface) return '';
+  let occurrence = 0;
+  if (paragraph) {
+    const words = Array.from(paragraph.querySelectorAll('.reader-word'));
+    for (const candidate of words) {
+      if (candidate === word) break;
+      if (String(candidate.dataset?.word || candidate.textContent || '').trim() === surface) occurrence++;
+    }
+  }
+  return `${p}|${surface}|${occurrence}`;
+}
+
+function slotGeometry(word) {
+  const wrap = word?.parentElement?.classList?.contains('rw-zh-gloss-wrap') ? word.parentElement : word;
+  let width = 0;
+  try { width = Number(wrap?.getBoundingClientRect?.().width || 0); } catch {}
+  if (!(width > 0)) {
+    try { width = Number(word?.getBoundingClientRect?.().width || 0); } catch {}
+  }
+  return { key: wordSlotKey(word), width, capturedAt: Date.now() };
+}
+
+function rememberTappedWord(word) {
+  const root = document.getElementById('reader-chapter-text');
+  if (!word || !root?.contains(word)) return;
+  const slot = slotGeometry(word);
+  if (slot.key) lastTappedWordSlot = slot;
+}
+
+function armKnownSlotFromLastTap() {
+  const slot = lastTappedWordSlot;
+  if (!slot?.key || Date.now() - Number(slot.capturedAt || 0) > 30000) return;
+  pendingKnownSlots.set(slot.key, { width: slot.width, expiresAt: Date.now() + PENDING_SLOT_TTL_MS });
+}
+
+function prunePendingSlots() {
+  const now = Date.now();
+  for (const [key, slot] of pendingKnownSlots.entries()) {
+    if (Number(slot?.expiresAt || 0) < now) pendingKnownSlots.delete(key);
+  }
+}
+
+function wrapKnownWithWidth(word, width) {
+  if (!word?.parentNode || stableKnownWrapperFor(word)) return false;
+  const stable = document.createElement('span');
+  stable.className = 'rw-zh-known-stable-wrap';
+  stable.dataset.zhKnownStable = '1';
+  if (Number(width) > 0) {
+    const px = `${Math.ceil(Number(width) * 100) / 100}px`;
+    stable.style.width = px;
+    stable.style.minWidth = px;
+    stable.style.maxWidth = px;
+  }
+  word.parentNode.insertBefore(stable, word);
+  stable.appendChild(word);
+  return true;
+}
+
+// Handles the in-place class change before a render when timing allows it.
 function freezeKnownWordInPlace(word) {
   if (!word?.classList?.contains('reader-word') || !word.classList.contains('rw-known')) return false;
   const glossWrap = word.parentElement?.classList?.contains('rw-zh-gloss-wrap') ? word.parentElement : null;
   if (!glossWrap || !glossWrap.parentNode) return false;
 
-  let width = 0;
-  try { width = Number(glossWrap.getBoundingClientRect?.().width || 0); } catch {}
-  if (!(width > 0)) {
-    try { width = Number(word.getBoundingClientRect?.().width || 0); } catch {}
-  }
+  const slot = slotGeometry(word);
+  if (slot.key) pendingKnownSlots.set(slot.key, { width: slot.width, expiresAt: Date.now() + PENDING_SLOT_TTL_MS });
 
   const stable = document.createElement('span');
   stable.className = 'rw-zh-known-stable-wrap';
   stable.dataset.zhKnownStable = '1';
-  if (width > 0) {
-    const px = `${Math.ceil(width * 100) / 100}px`;
+  if (slot.width > 0) {
+    const px = `${Math.ceil(slot.width * 100) / 100}px`;
     stable.style.width = px;
     stable.style.minWidth = px;
     stable.style.maxWidth = px;
   }
-
   glossWrap.parentNode.insertBefore(stable, glossWrap);
   stable.appendChild(word);
   glossWrap.remove();
   return true;
+}
+
+// readerMarkSelectedWordKnown() performs a synchronous full chapter render.
+// The capture-phase click handler below arms the old slot before that happens;
+// this function restores the same footprint to the fresh rw-known node.
+function restorePendingKnownSlot(word) {
+  if (!word?.classList?.contains('rw-known') || stableKnownWrapperFor(word)) return false;
+  prunePendingSlots();
+  const key = wordSlotKey(word);
+  const slot = key ? pendingKnownSlots.get(key) : null;
+  if (!slot) return false;
+  pendingKnownSlots.delete(key);
+  return wrapKnownWithWidth(word, slot.width);
 }
 
 function releaseKnownStableWrapper(word) {
@@ -76,12 +149,17 @@ function releaseKnownStableWrapper(word) {
 
 function syncWordState(word) {
   if (!word?.classList?.contains('reader-word')) return;
-  if (word.classList.contains('rw-known')) freezeKnownWordInPlace(word);
-  else releaseKnownStableWrapper(word);
+  if (word.classList.contains('rw-known')) {
+    if (freezeKnownWordInPlace(word)) return;
+    restorePendingKnownSlot(word);
+  } else {
+    releaseKnownStableWrapper(word);
+  }
 }
 
 function scan(root = document.getElementById('reader-chapter-text')) {
   if (!root) return;
+  prunePendingSlots();
   root.querySelectorAll('.rw-zh-gloss-wrap').forEach(syncWrapper);
   root.querySelectorAll('.reader-word').forEach(syncWordState);
 }
@@ -135,9 +213,8 @@ function injectStyles() {
       opacity: .94;
     }
 
-    /* The reference behaviour is "words I am actually working on", not every
-       token that merely lacks rw-known. Keep hints for looked/learning/familiar/
-       problem words. Untouched new and passive seen/faded tokens stay plain. */
+    /* Show annotations only for words that are actually in the user's working
+       set. Untouched new and passive seen/faded tokens stay plain. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-new),
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-seen),
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-faded) {
@@ -166,7 +243,7 @@ function injectStyles() {
     }
 
     /* Known-now wrapper: hints vanish immediately, footprint remains fixed so
-       the word cannot jump. A normal Reader re-render later removes this shell. */
+       the word cannot jump. A later normal Reader render removes this shell. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-known-stable-wrap {
       display: inline-grid;
       grid-template-rows: .58em 1.08em .54em;
@@ -195,8 +272,25 @@ function injectStyles() {
   document.head.appendChild(style);
 }
 
+function installCaptureHooks() {
+  if (document.documentElement?.dataset?.zhGlossReadableCapture === '1') return;
+  if (document.documentElement) document.documentElement.dataset.zhGlossReadableCapture = '1';
+  document.addEventListener('click', (event) => {
+    const target = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
+    const word = target?.closest?.('.reader-word');
+    if (word) {
+      rememberTappedWord(word);
+      return;
+    }
+    const button = target?.closest?.('button');
+    const onclick = String(button?.getAttribute?.('onclick') || '');
+    if (onclick.includes('readerMarkSelectedWordKnown')) armKnownSlotFromLastTap();
+  }, true);
+}
+
 function install() {
   injectStyles();
+  installCaptureHooks();
   const root = document.getElementById('reader-chapter-text');
   if (!root) {
     clearTimeout(retryTimer);
@@ -243,4 +337,4 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export { compactMeaning, freezeKnownWordInPlace };
+export { compactMeaning, wordSlotKey, freezeKnownWordInPlace, restorePendingKnownSlot };
