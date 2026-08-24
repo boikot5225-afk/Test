@@ -1,7 +1,7 @@
 import './toc-upgrade.js?v=1'; // retired no-op shim; kept for old cache/CI compatibility
 import './handler-bridge.js?v=1';
 import './zh-unknown-gloss.js?v=4';
-import './zh-unknown-gloss-readable.js?v=2';
+import './zh-unknown-gloss-readable.js?v=3';
 import { createReaderInteractions } from './interactions.js?v=2';
 
 function getRoot() {
