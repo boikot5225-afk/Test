@@ -1,4 +1,4 @@
-name: Build and verify Reader AI toc41
+name: Build and verify Reader AI toc42
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - tmp-recover-migaku-extension-20260825
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -22,18 +22,391 @@ jobs:
           ref: 51a0246ae2f9720f8bd3f0cb0c9d95aef4a979b7
           fetch-depth: 0
 
-      - name: Verify exact toc41 source
+      - name: Patch toc42 hot path and vocabulary UI
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = '51a0246ae2f9720f8bd3f0cb0c9d95aef4a979b7'
-          grep -q "versionCode 61" android/app/build.gradle
-          grep -q "versionName '77.42-toc41'" android/app/build.gradle
-          grep -q "isDocumentWideVocabSweep" js/reader/vocab-estimate-observer-pre.js
-          grep -q "reader-vocab-stability-style-v1" js/reader/vocab-estimate-stability-fix.js
-          grep -q "data-reader-vocab-synthetic-known" js/reader/vocab-estimate-stability-fix.js
-          grep -q "applyVocabularyAfterRender" js/reader/chapter-render.js
-          grep -q "vocab-estimate-stability-fix.js?v=1" js/reader/interactions-runtime.js
+
+          git show 3ac6d102fd38002eb7511afde5ef1f71077ad76f:js/reader/chapter-render.js > js/reader/chapter-render.js
+          git show 3ac6d102fd38002eb7511afde5ef1f71077ad76f:js/reader/interactions-runtime.js > /tmp/interactions-runtime.js
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/interactions-runtime.js')
+          t=p.read_text('utf-8')
+          anchor="import './zh-unknown-gloss-spacing.js?v=2';\n"
+          assert anchor in t
+          t=t.replace(anchor, anchor+"import './vocab-estimate.js?v=7';\n", 1)
+          Path('js/reader/interactions-runtime.js').write_text(t,'utf-8')
+          PY
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p=Path('js/reader/vocab-estimate.js')
+          t=p.read_text('utf-8')
+
+          old="""let frequencyPromise = null;
+let frequencyData = null;
+let assessment = null;
+let refreshScheduled = false;
+let observer = null;
+let glossObserver = null;
+let measureCanvas = null;
+"""
+          new="""let frequencyPromise = null;
+let frequencyData = null;
+let assessment = null;
+let renderObserver = null;
+let renderObserverRoot = null;
+let pendingWordNodes = new Set();
+let pendingBatchScheduled = false;
+let toolbarButton = null;
+"""
+          assert old in t
+          t=t.replace(old,new,1)
+
+          pat=r"""function measureContext\(\) \{.*?\n\}\n\nfunction clearSyntheticKnown\(el\) \{.*?\n\}\n\nfunction removeKnowledgeClasses\(el\) \{.*?\n\}\n"""
+          repl="""function manualKnowledgeMapSnapshot(store = wordStateStore()) {
+  const map = new Map();
+  for (const state of Object.values(store || {})) {
+    if (!state || canonicalLang(state.lang) !== 'zh') continue;
+    const explicit = manualKnowledge(state);
+    const word = normalizeWord(state.word, 'zh');
+    if (explicit && word) map.set(word, explicit);
+  }
+  return map;
+}
+
+function classificationForSnapshot(word, profile, manualMap) {
+  const normalized = normalizeWord(word, 'zh');
+  if (!normalized) return { value: '', source: '', index: null, rank: null };
+  const manual = manualMap?.get(normalized) || '';
+  const index = frequencyData?.rank?.get(normalized);
+  const rank = Number.isInteger(index) ? index + 1 : null;
+  if (manual) return { value: manual, source: 'manual', index, rank };
+  if (!profile) return { value: '', source: '', index, rank };
+  if (!frequencyData) return { value: '', source: 'pending', index: null, rank: null };
+  if (!Number.isInteger(index)) return { value: 'unknown', source: 'unranked', index: null, rank: null, ...profile };
+  return {
+    value: index < profile.conservativeKnownCount ? 'known' : 'unknown',
+    source: 'assessment',
+    index,
+    rank,
+    estimate: profile.estimate,
+    conservativeKnownCount: profile.conservativeKnownCount,
+  };
+}
+
+function removeKnowledgeClasses(el) {
+  el.classList.remove('rw-migaku-known', 'rw-migaku-unknown');
+  delete el.dataset.readerEstimatedKnowledge;
+  delete el.dataset.readerManualKnowledge;
+}
+"""
+          t2,n=re.subn(pat,repl,t,flags=re.S)
+          assert n==1, n
+          t=t2
+
+          pat=r"""function applyClassificationToElement\(el, classification\) \{.*?\n\}\n\nasync function applyEstimateToRenderedWords\(\) \{.*?\n\}\n\nfunction profileButtonText"""
+          repl="""function applyClassificationToElement(el, classification) {
+  removeKnowledgeClasses(el);
+  if (classification?.value === 'known') {
+    el.classList.add('rw-migaku-known');
+  } else if (classification?.value === 'unknown') {
+    el.classList.remove('rw-known');
+    el.classList.add('rw-migaku-unknown');
+  } else {
+    return;
+  }
+  if (classification.source === 'manual') el.dataset.readerManualKnowledge = classification.value;
+  else el.dataset.readerEstimatedKnowledge = classification.value;
+  const rankText = Number.isInteger(classification.rank) ? ` · частотность #${formatNumber(classification.rank)}` : '';
+  if (classification.source === 'manual') {
+    el.title = `${classification.value === 'known' ? 'Знаю' : 'Не знаю'} · вручную${rankText}`;
+  } else if (classification.source === 'assessment') {
+    el.title = `${classification.value === 'known' ? 'Known' : 'Unknown'} · оценка ≈ ${formatNumber(classification.estimate)}${rankText}`;
+  } else if (classification.source === 'unranked') {
+    el.title = 'Unknown · слова нет в частотном списке';
+  }
+}
+
+function applyClassificationBatch(elements) {
+  const list = Array.from(elements || []);
+  if (!list.length) return;
+  const profile = loadProfile();
+  const manualMap = manualKnowledgeMapSnapshot();
+  for (const el of list) {
+    if (!el?.classList?.contains('reader-word')) continue;
+    const lang = canonicalLang(el.dataset.lang || currentLang());
+    if (lang !== 'zh') {
+      removeKnowledgeClasses(el);
+      continue;
+    }
+    const word = el.dataset.word || el.textContent || '';
+    applyClassificationToElement(el, classificationForSnapshot(word, profile, manualMap));
+  }
+}
+
+async function applyEstimateToRenderedWords() {
+  const root = document.getElementById('reader-chapter-text');
+  if (!root) return;
+  const profile = loadProfile();
+  if (profile && !frequencyData) {
+    try { await loadFrequencyData(); }
+    catch (error) { console.warn('[reader vocab] frequency data unavailable', error?.message || error); }
+  }
+  applyClassificationBatch(root.querySelectorAll('.reader-word[data-word]'));
+  decorateWordPanel();
+  syncPanelKnowledge();
+  ensureVocabularyButton();
+}
+
+function profileButtonText"""
+          t2,n=re.subn(pat,repl,t,flags=re.S)
+          assert n==1, n
+          t=t2
+
+          old="block.querySelector('#reader-vocab-estimate-btn')?.addEventListener('click', () => openVocabularyEstimate());"
+          assert old in t
+          t=t.replace(old,"block.querySelector('#reader-vocab-estimate-btn')?.addEventListener('click', () => openVocabularyDashboard());",1)
+
+          marker="async function openVocabularyEstimate() {"
+          assert marker in t
+          dashboard=r"""function currentVocabularyStats() {
+  const root = document.getElementById('reader-chapter-text');
+  const unique = new Set();
+  root?.querySelectorAll('.reader-word[data-word]').forEach(el => {
+    if (canonicalLang(el.dataset.lang || currentLang()) !== 'zh') return;
+    const word = normalizeWord(el.dataset.word || el.textContent || '', 'zh');
+    if (word) unique.add(word);
+  });
+  const profile = loadProfile();
+  const manualMap = manualKnowledgeMapSnapshot();
+  let known = 0;
+  let unknown = 0;
+  let unclassified = 0;
+  for (const word of unique) {
+    const info = classificationForSnapshot(word, profile, manualMap);
+    if (info.value === 'known') known += 1;
+    else if (info.value === 'unknown') unknown += 1;
+    else unclassified += 1;
+  }
+  return { total: unique.size, known, unknown, unclassified };
+}
+
+async function openVocabularyDashboard() {
+  installStyles();
+  const modal = ensureModal();
+  modal.innerHTML = modalShell('<div class="rve-copy">Загружаю словарь…</div>', { title: 'Китайский словарь' });
+  bindModalChrome(modal);
+  try { await loadFrequencyData(); }
+  catch (error) {
+    modal.innerHTML = modalShell(`<div class="rve-copy">Не удалось загрузить частотный список: ${String(error?.message || error)}</div>`, { title: 'Китайский словарь' });
+    bindModalChrome(modal);
+    return;
+  }
+  const profile = loadProfile();
+  const stats = currentVocabularyStats();
+  const knownPct = stats.total ? Math.round(stats.known * 100 / stats.total) : 0;
+  const unknownPct = stats.total ? Math.round(stats.unknown * 100 / stats.total) : 0;
+  modal.innerHTML = modalShell(`
+    <div class="rve-dashboard">
+      <div class="rve-result-kicker">Measure my level</div>
+      <div class="rve-number">${profile ? `≈ ${formatNumber(profile.estimate)}` : '—'}</div>
+      <div class="rve-result-label">${profile ? 'оценка китайского словаря' : 'уровень ещё не измерен'}</div>
+      ${profile ? `<div class="rve-known-baseline"><b>${formatNumber(profile.conservativeKnownCount)}</b><span>автоматически Known</span></div>` : ''}
+      <div class="rve-stat-grid">
+        <div><b>${formatNumber(stats.total)}</b><span>уникальных слов<br>в текущей главе</span></div>
+        <div><b>${formatNumber(stats.known)}</b><span>Known · ${knownPct}%</span></div>
+        <div><b>${formatNumber(stats.unknown)}</b><span>Unknown · ${unknownPct}%</span></div>
+      </div>
+      ${stats.unclassified ? `<div class="rve-rule">${formatNumber(stats.unclassified)} слов пока без классификации.</div>` : ''}
+      <button class="rve-primary" data-rve-measure type="button">${profile ? 'Пройти тест заново' : 'Оценить мой уровень'}</button>
+      <button class="rve-secondary" data-rve-close type="button">Вернуться к чтению</button>
+    </div>`, { title: 'Китайский словарь' });
+  bindModalChrome(modal);
+  modal.querySelector('[data-rve-measure]')?.addEventListener('click', openVocabularyEstimate);
+  modal.querySelector('[data-rve-close]')?.addEventListener('click', closeVocabularyEstimate);
+}
+
+"""
+          t=t.replace(marker,dashboard+marker,1)
+          old="modal.querySelector('.rve-done')?.addEventListener('click', closeVocabularyEstimate);"
+          assert old in t
+          t=t.replace(old,"modal.querySelector('.rve-done')?.addEventListener('click', openVocabularyDashboard);",1)
+
+          pat=r"""    /\* Let the existing Chinese gloss layer follow Known / Unknown from the.*?\n    #\$\{MODAL_ID\}"""
+          stable_css=r"""    /* Known/Unknown must not own layout. Reuse the stable toc36 Chinese grid. */
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown) {
+      display:inline-grid !important;grid-template-rows:.58em 1.08em .54em !important;grid-template-columns:max-content !important;
+      align-items:center !important;justify-items:center !important;vertical-align:-.48em !important;line-height:1 !important;
+      margin:0 .055em !important;padding:0 .025em !important;position:relative !important;overflow:visible !important;
+    }
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown) > .reader-word {
+      grid-row:2 !important;grid-column:1 !important;align-self:center !important;justify-self:center !important;display:inline !important;
+      margin:0 !important;padding:0 1px !important;line-height:1.08 !important;
+    }
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown)::before,
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown)::after {
+      display:block !important;position:static !important;transform:none !important;grid-column:1 !important;justify-self:center !important;
+      width:max-content !important;min-width:100% !important;max-width:6.4em !important;margin:0 !important;padding:0 !important;
+      overflow:hidden !important;text-overflow:ellipsis !important;white-space:nowrap !important;text-align:center !important;pointer-events:none !important;line-height:1 !important;
+    }
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown)::before {
+      grid-row:1 !important;align-self:end !important;content:attr(data-zh-gloss-pinyin) !important;font-size:.51em !important;font-weight:500 !important;
+    }
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown)::after {
+      grid-row:3 !important;align-self:start !important;content:attr(data-zh-gloss-ru-readable) !important;font-size:.46em !important;font-weight:400 !important;
+    }
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-known)::before,
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-known)::after { content:'' !important;display:none !important; }
+
+    #${MODAL_ID}"""
+          t2,n=re.subn(pat,stable_css,t,flags=re.S)
+          assert n==1, n
+          t=t2
+
+          anchor="    #${MODAL_ID} .rve-known-baseline span { color:#d7cfe2;font-size:.8rem; }\n"
+          assert anchor in t
+          t=t.replace(anchor, anchor + """    #${MODAL_ID} .rve-dashboard { max-width:520px;margin:4vh auto 0;text-align:center; }
+    #${MODAL_ID} .rve-stat-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:24px 0 8px; }
+    #${MODAL_ID} .rve-stat-grid > div { min-height:92px;padding:13px 8px;border-radius:16px;background:rgba(255,255,255,.07);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px; }
+    #${MODAL_ID} .rve-stat-grid b { font-size:1.45rem;color:#19d0b0; }
+    #${MODAL_ID} .rve-stat-grid span { color:#c9bfd7;font-size:.72rem;line-height:1.3; }
+""",1)
+
+          pat=r"""function scheduleRefresh\(\) \{.*?\n\}\n\nexport function installVocabularyEstimate\(\) \{.*?\n\}\n"""
+          repl=r"""function queueWordNode(node) {
+  if (!(node instanceof Element)) return;
+  if (node.classList.contains('reader-word')) pendingWordNodes.add(node);
+  node.querySelectorAll?.('.reader-word').forEach(word => pendingWordNodes.add(word));
+}
+
+function flushPendingWordNodes() {
+  pendingBatchScheduled = false;
+  if (!pendingWordNodes.size) { ensureVocabularyButton(); decorateWordPanel(); return; }
+  const batch = Array.from(pendingWordNodes);
+  pendingWordNodes.clear();
+  applyClassificationBatch(batch);
+  ensureVocabularyButton();
+  decorateWordPanel();
+}
+
+function schedulePendingWordBatch() {
+  if (pendingBatchScheduled) return;
+  pendingBatchScheduled = true;
+  requestAnimationFrame(flushPendingWordNodes);
+}
+
+function installRenderObserver() {
+  if (typeof MutationObserver === 'undefined') return;
+  const root = document.getElementById('reader-chapter-text');
+  if (!root) { setTimeout(installRenderObserver, 250); return; }
+  if (renderObserver && renderObserverRoot === root) return;
+  renderObserver?.disconnect();
+  renderObserverRoot = root;
+  renderObserver = new MutationObserver(records => {
+    for (const record of records) for (const node of record.addedNodes || []) queueWordNode(node);
+    if (pendingWordNodes.size) schedulePendingWordBatch();
+  });
+  renderObserver.observe(root, { childList: true, subtree: true });
+  root.querySelectorAll('.reader-word').forEach(word => pendingWordNodes.add(word));
+  schedulePendingWordBatch();
+}
+
+function ensureVocabularyButton() {
+  const top = document.querySelector('#reader-reading-view .rd-top');
+  if (!top) return null;
+  let button = document.getElementById('reader-vocab-btn');
+  if (!button) {
+    button = document.createElement('button');
+    button.id = 'reader-vocab-btn';
+    button.type = 'button';
+    button.className = 'rd-icon rd-vocab-btn';
+    button.textContent = '词';
+    button.title = 'Словарь · Measure my level';
+    button.setAttribute('aria-label', 'Словарь и оценка уровня');
+    button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); openVocabularyDashboard(); });
+    const pinyin = document.getElementById('reader-pinyin-btn');
+    if (pinyin?.parentNode === top) top.insertBefore(button, pinyin); else top.appendChild(button);
+  }
+  toolbarButton = button;
+  button.style.display = currentLang() === 'zh' ? '' : 'none';
+  return button;
+}
+
+function warmFrequencyWhenUseful() {
+  if (!loadProfile()) return;
+  const run = () => loadFrequencyData().then(() => applyEstimateToRenderedWords()).catch(error => console.warn('[reader vocab] unable to warm Mandarin list', error?.message || error));
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 900 });
+  else setTimeout(run, 250);
+}
+
+function bootVocabularyUi() {
+  ensureVocabularyButton();
+  installRenderObserver();
+  decorateWordPanel();
+  warmFrequencyWhenUseful();
+}
+
+export function installVocabularyEstimate() {
+  if (globalThis.__readerVocabularyEstimateVersion === 7) return;
+  globalThis.__readerVocabularyEstimateVersion = 7;
+  installStyles();
+  globalThis.readerOpenVocabularyEstimate = openVocabularyDashboard;
+  globalThis.readerStartVocabularyEstimate = openVocabularyEstimate;
+  globalThis.readerCloseVocabularyEstimate = closeVocabularyEstimate;
+  globalThis.readerApplyVocabularyEstimate = applyEstimateToRenderedWords;
+  globalThis.readerMigakuMarkKnown = () => markCurrentWord(true);
+  globalThis.readerMigakuMarkUnknown = () => markCurrentWord(false);
+  globalThis.readerVocabularyEstimateProfile = loadProfile;
+  globalThis.readerVocabularyKnowledgeFor = (word, lang = 'zh') => classificationFor(word, lang);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootVocabularyUi, { once: true });
+  else bootVocabularyUi();
+  window.addEventListener('pageshow', bootVocabularyUi);
+}
+"""
+          t2,n=re.subn(pat,repl,t,flags=re.S)
+          assert n==1, n
+          t=t2
+
+          assert 'getBoundingClientRect' not in t
+          assert 'getComputedStyle' not in t
+          assert 'readerVocabSyntheticKnown' not in t
+          assert 'installGlossObserver' not in t
+          assert 'document.documentElement || document.body' not in t
+          p.write_text(t,'utf-8')
+          PY
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle')
+          t=p.read_text('utf-8')
+          assert 'versionCode 61' in t and "versionName '77.42-toc41'" in t
+          t=t.replace('versionCode 61','versionCode 62',1)
+          t=t.replace("versionName '77.42-toc41'","versionName '77.42-toc42'",1)
+          p.write_text(t,'utf-8')
+          PY
+
+          git rm -f js/reader/vocab-estimate-observer-pre.js js/reader/vocab-estimate-observer-post.js js/reader/vocab-estimate-stability-fix.js
+          node --check js/reader/vocab-estimate.js
+          node --check js/reader/chapter-render.js
+          node --check js/reader/interactions-runtime.js
+          git diff --check
+          grep -q "versionCode 62" android/app/build.gradle
+          grep -q "versionName '77.42-toc42'" android/app/build.gradle
+          grep -q "import './vocab-estimate.js?v=7';" js/reader/interactions-runtime.js
+          ! grep -q "vocab-estimate-observer" js/reader/interactions-runtime.js
+          ! grep -q "vocab-estimate-stability-fix" js/reader/interactions-runtime.js
+          ! grep -q "applyVocabularyAfterRender" js/reader/chapter-render.js
+          grep -q "reader-vocab-btn" js/reader/vocab-estimate.js
+          grep -q "openVocabularyDashboard" js/reader/vocab-estimate.js
+          grep -q "installRenderObserver" js/reader/vocab-estimate.js
+          ! grep -q "getBoundingClientRect" js/reader/vocab-estimate.js
+          ! grep -q "getComputedStyle" js/reader/vocab-estimate.js
+          ! grep -q "readerVocabSyntheticKnown" js/reader/vocab-estimate.js
           python3 - <<'PY'
           from pathlib import Path
           import gzip,hashlib
@@ -42,6 +415,19 @@ jobs:
           assert len(words)==39999 and len(set(words))==39999
           assert hashlib.sha256(plain).hexdigest()=='e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64'
           PY
+
+      - name: Commit toc42
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix(reader): remove vocabulary work from page turns and expose level UI'
+          FINAL_SHA="$(git rev-parse HEAD)"
+          echo "FINAL_SOURCE_SHA=$FINAL_SHA" | tee /tmp/source-sha.txt
+          git push origin HEAD:feature/77.42-epub-toc
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -63,20 +449,17 @@ jobs:
           printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
           echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
 
-      - name: Check JavaScript syntax
+      - name: Check all JavaScript syntax
         shell: bash
         run: |
           set -euo pipefail
-          node --check js/reader/vocab-estimate-observer-pre.js
-          node --check js/reader/vocab-estimate-stability-fix.js
-          node --check js/reader/chapter-render.js
-          node --check js/reader/interactions-runtime.js
+          while IFS= read -r -d '' file; do node --check "$file"; done < <(find js -type f -name '*.js' -print0)
 
       - name: Build debug APK
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Verify built APK
+      - name: Verify built APK deeply
         shell: bash
         run: |
           set -euo pipefail
@@ -87,45 +470,49 @@ jobs:
           apk=sys.argv[1]
           with zipfile.ZipFile(apk) as z:
               names=set(z.namelist())
-              required=[
-                'assets/www/js/reader/vocab-estimate-observer-pre.js',
-                'assets/www/js/reader/vocab-estimate-stability-fix.js',
-                'assets/www/js/reader/chapter-render.js',
-                'assets/www/js/reader/interactions-runtime.js',
-                'assets/www/data/zh_vocab_frequency.txt',
-              ]
+              required=['assets/www/js/reader/vocab-estimate.js','assets/www/js/reader/chapter-render.js','assets/www/js/reader/interactions-runtime.js','assets/www/data/zh_vocab_frequency.txt']
               for name in required: assert name in names, name
-              pre=z.read(required[0]).decode('utf-8')
-              fix=z.read(required[1]).decode('utf-8')
-              chapter=z.read(required[2]).decode('utf-8')
-              runtime=z.read(required[3]).decode('utf-8')
-              assert 'isDocumentWideVocabSweep' in pre
-              assert 'reader-vocab-stability-style-v1' in fix
-              assert 'data-reader-vocab-synthetic-known' in fix
-              assert 'applyVocabularyAfterRender' in chapter
-              assert "vocab-estimate-stability-fix.js?v=1" in runtime
-              plain=z.read(required[4])
+              for stale in ['assets/www/js/reader/vocab-estimate-observer-pre.js','assets/www/js/reader/vocab-estimate-observer-post.js','assets/www/js/reader/vocab-estimate-stability-fix.js']:
+                  assert stale not in names, stale
+              vocab=z.read(required[0]).decode('utf-8')
+              chapter=z.read(required[1]).decode('utf-8')
+              runtime=z.read(required[2]).decode('utf-8')
+              assert "import './vocab-estimate.js?v=7';" in runtime
+              assert 'vocab-estimate-observer' not in runtime
+              assert 'vocab-estimate-stability-fix' not in runtime
+              assert 'applyVocabularyAfterRender' not in chapter
+              assert 'reader-vocab-btn' in vocab
+              assert 'openVocabularyDashboard' in vocab
+              assert 'installRenderObserver' in vocab
+              assert 'getBoundingClientRect' not in vocab
+              assert 'getComputedStyle' not in vocab
+              assert 'readerVocabSyntheticKnown' not in vocab
+              assert 'document.documentElement || document.body' not in vocab
+              plain=z.read(required[3])
               assert hashlib.sha256(plain).hexdigest()=='e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64'
-              assert len(plain.decode('utf-8').splitlines())==39999
+              words=plain.decode('utf-8').splitlines()
+              assert len(words)==39999 and len(set(words))==39999
+              assert words[4768]=='天天' and words[4986]=='竭尽全力' and words[4996]=='据我所知' and words[4999]=='围绕'
           PY
           AAPT="$(find "${ANDROID_HOME}/build-tools" -type f -name aapt | sort -V | tail -1 || true)"
           if [[ -n "$AAPT" ]]; then
             "$AAPT" dump badging "$APK" | tee /tmp/aapt-badging.txt
-            grep -q "versionCode='61'" /tmp/aapt-badging.txt
-            grep -q "versionName='77.42-toc41-debug'" /tmp/aapt-badging.txt
+            grep -q "versionCode='62'" /tmp/aapt-badging.txt
+            grep -q "versionName='77.42-toc42-debug'" /tmp/aapt-badging.txt
           fi
           APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -1 || true)"
           if [[ -n "$APKSIGNER" ]]; then "$APKSIGNER" verify --print-certs "$APK" | tee /tmp/apksigner.txt; fi
-          cp "$APK" /tmp/Reader-AI-77.42-toc41-build61.apk
-          sha256sum /tmp/Reader-AI-77.42-toc41-build61.apk | tee /tmp/Reader-AI-77.42-toc41-build61.sha256
+          cp "$APK" /tmp/Reader-AI-77.42-toc42-build62.apk
+          sha256sum /tmp/Reader-AI-77.42-toc42-build62.apk | tee /tmp/Reader-AI-77.42-toc42-build62.sha256
 
-      - name: Upload verified toc41 APK
+      - name: Upload verified toc42 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-77.42-toc41-build61
+          name: Reader-AI-77.42-toc42-build62
           path: |
-            /tmp/Reader-AI-77.42-toc41-build61.apk
-            /tmp/Reader-AI-77.42-toc41-build61.sha256
+            /tmp/Reader-AI-77.42-toc42-build62.apk
+            /tmp/Reader-AI-77.42-toc42-build62.sha256
+            /tmp/source-sha.txt
             /tmp/aapt-badging.txt
             /tmp/apksigner.txt
           if-no-files-found: error
