@@ -7,7 +7,9 @@ const runtimePath = 'js/reader/interactions-runtime.js';
 const source = fs.readFileSync(modulePath, 'utf8');
 const runtime = fs.readFileSync(runtimePath, 'utf8');
 
-assert.match(runtime, /import '\.\/zh-unknown-gloss\.js\?v=1';/, 'Chinese gloss module is not loaded by reader runtime');
+// Cache-busting query versions are implementation details; require the module,
+// not the historical ?v=1 literal.
+assert.match(runtime, /import '\.\/zh-unknown-gloss\.js\?v=\d+';/, 'Chinese gloss module is not loaded by reader runtime');
 assert.match(source, /localStorage\.getItem\(MODE_KEY\) === 'unknown' \? 'unknown' : 'off'/, 'feature must default to off');
 assert.match(source, /if \(!enabled\(\)\) return;/, 'disabled mode must bail before touching reader DOM');
 assert.match(source, /classList\?\.contains\('rw-known'\)/, 'known-word guard must use the reader core status');
