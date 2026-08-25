@@ -13,83 +13,69 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect and decode payloads
+      - name: Recover exact Migaku zh frequency list from public DB
         shell: bash
         run: |
+          set -euo pipefail
+          mkdir -p recovery
+          curl -fL --retry 3 --connect-timeout 20 --max-time 300 \
+            'https://migaku-public-data.migaku.com/dicts/zh_CN/frequency.db.gz' \
+            -o recovery/frequency.db.gz
+          gzip -dc recovery/frequency.db.gz > recovery/frequency.db
           python3 - <<'PY'
           from pathlib import Path
-          import base64, gzip, hashlib, json, shutil
+          import hashlib, json, sqlite3
 
-          out = Path('recovery')
-          out.mkdir(exist_ok=True)
-          report = []
-
-          candidates = sorted(Path('data').glob('_inspect_*.txt'))
-          candidates += sorted(Path('data/zh_vocab_parts').glob('*.b64'))
-          candidates += sorted(Path('data/zh_vocab_b64').glob('*.b64'))
-
-          def gzip_name(raw):
-              try:
-                  if raw[:2] != b'\x1f\x8b': return ''
-                  flg = raw[3]
-                  p = 10
-                  if flg & 4:
-                      xlen = int.from_bytes(raw[p:p+2], 'little'); p += 2 + xlen
-                  if flg & 8:
-                      q = raw.index(b'\x00', p)
-                      return raw[p:q].decode('utf-8', 'replace')
-              except Exception:
-                  pass
-              return ''
-
-          for p in candidates:
-              # Preserve the exact Git blob bytes in the artifact so the caller can
-              # inspect payloads without the API response renderer truncating them.
-              shutil.copyfile(p, out / ('source_' + p.parent.name + '_' + p.name))
-              text = p.read_text('utf-8', errors='replace').strip()
-              row = {
-                  'path': str(p), 'text_len': len(text),
-                  'text_sha256': hashlib.sha256(text.encode()).hexdigest(),
-                  'ellipsis': 'ELLIPSIZATION' in text,
-                  'prefix': text[:80], 'suffix': text[-80:],
-              }
-              try:
-                  raw = base64.b64decode(text, validate=True)
-                  row.update(raw_len=len(raw), raw_sha256=hashlib.sha256(raw).hexdigest(), gzip_name=gzip_name(raw))
-                  raw_path = out / (p.name + '.raw')
-                  raw_path.write_bytes(raw)
-                  if raw[:2] == b'\x1f\x8b':
-                      dec = gzip.decompress(raw)
-                      dec_path = out / (p.name + '.gunzip')
-                      dec_path.write_bytes(dec)
-                      row.update(gunzip_len=len(dec), gunzip_sha256=hashlib.sha256(dec).hexdigest())
-                      try:
-                          s = dec.decode('utf-8')
-                          lines = s.splitlines()
-                          row['utf8'] = True
-                          row['lines'] = len(lines)
-                          row['first20'] = lines[:20]
-                          row['last20'] = lines[-20:]
-                      except Exception as e:
-                          row['utf8'] = False
-                          row['utf8_error'] = repr(e)
-              except Exception as e:
-                  row['decode_error'] = repr(e)
-              report.append(row)
-
-          p = Path('data/zh_vocab_frequency_0.txt')
-          if p.exists():
-              shutil.copyfile(p, out / p.name)
-              lines = p.read_text('utf-8', errors='replace').splitlines()
-              report.append({'path': str(p), 'lines': len(lines), 'first20': lines[:20], 'last20': lines[-20:]})
-
-          (out/'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), 'utf-8')
-          for r in report:
-              print(json.dumps(r, ensure_ascii=False))
+          db = Path('recovery/frequency.db')
+          con = sqlite3.connect(db)
+          rows = con.execute('''
+            SELECT term, frequency
+            FROM langFrequencyEntry
+            ORDER BY frequency ASC, id ASC
+          ''').fetchall()
+          con.close()
+          words = [str(term) for term, _ in rows]
+          freqs = [int(freq) for _, freq in rows]
+          exact = Path('data/zh_vocab_frequency_0.txt').read_text('utf-8').splitlines()
+          prefix = words[:len(exact)]
+          mismatches = [(i+1, a, b) for i, (a, b) in enumerate(zip(exact, prefix)) if a != b]
+          top = words[:39999]
+          dup_count = len(top) - len(set(top))
+          contiguous = all(freqs[i] <= freqs[i+1] for i in range(len(freqs)-1))
+          payload = json.dumps(top, ensure_ascii=False, separators=(',', ':'))
+          Path('recovery/zh_vocab_frequency.json').write_text(payload, 'utf-8')
+          report = {
+            'db_rows': len(rows),
+            'first5000_reference_count': len(exact),
+            'first5000_mismatch_count': len(mismatches),
+            'first_mismatches': mismatches[:20],
+            'top39999_count': len(top),
+            'top39999_unique': len(set(top)),
+            'top39999_duplicate_count': dup_count,
+            'frequency_nondecreasing': contiguous,
+            'first20': top[:20],
+            'rank4990_5005': top[4989:5005],
+            'last20': top[-20:],
+            'json_sha256': hashlib.sha256(payload.encode('utf-8')).hexdigest(),
+            'db_gz_sha256': hashlib.sha256(Path('recovery/frequency.db.gz').read_bytes()).hexdigest(),
+            'db_sha256': hashlib.sha256(db.read_bytes()).hexdigest(),
+          }
+          Path('recovery/public-db-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), 'utf-8')
+          print(json.dumps(report, ensure_ascii=False, indent=2))
+          if len(exact) != 5000:
+              raise SystemExit(f'reference list length is {len(exact)}, expected 5000')
+          if mismatches:
+              raise SystemExit(f'public DB differs from APK reference in {len(mismatches)} of first 5000 positions')
+          if len(top) != 39999:
+              raise SystemExit(f'top list length {len(top)}, expected 39999')
+          if dup_count:
+              raise SystemExit(f'top list contains {dup_count} duplicate terms')
           PY
       - name: Upload recovery output
         uses: actions/upload-artifact@v4
         with:
-          name: migaku-recovery
-          path: recovery/
+          name: migaku-public-frequency
+          path: |
+            recovery/public-db-report.json
+            recovery/zh_vocab_frequency.json
           if-no-files-found: error
