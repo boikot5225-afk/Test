@@ -13,132 +13,145 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download Migaku Chrome extension and find large word arrays
+      - name: Inspect Migaku language-data chunks
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p recovery/ext recovery/report recovery/candidates
+          mkdir -p recovery/ext recovery/report recovery/matches
           url='https://clients2.google.com/service/update2/crx?response=redirect&prodversion=131.0&acceptformat=crx2,crx3&x=id%3Dlkhiljgmbeecmljiogckofcalncmfnfo%26uc'
           curl -fL --retry 4 --connect-timeout 30 --max-time 600 "$url" -o recovery/migaku.crx
           python3 - <<'PY'
           from pathlib import Path
           import struct
           b=Path('recovery/migaku.crx').read_bytes()
-          if b[:4]!=b'Cr24': raise SystemExit('not CRX')
+          assert b[:4]==b'Cr24'
           ver=struct.unpack('<I',b[4:8])[0]
           if ver==2:
               a,c=struct.unpack('<II',b[8:16]); off=16+a+c
           elif ver==3:
               h=struct.unpack('<I',b[8:12])[0]; off=12+h
-          else: raise SystemExit(f'CRX version {ver}')
+          else: raise SystemExit(ver)
           Path('recovery/ext.zip').write_bytes(b[off:])
           print('crx',ver,'zip offset',off,'bytes',len(b)-off)
           PY
           unzip -q recovery/ext.zip -d recovery/ext
-          grep -RIlFa -- 'Measure my level' recovery/ext > recovery/report/measure-files.txt || true
+          find recovery/ext -type f -printf '%s %p\n' | sort -nr | head -600 > recovery/report/files.txt
           python3 - <<'PY'
           from pathlib import Path
-          import hashlib, json, re
+          import json, re, hashlib, shutil
 
-          files=[]
-          for line in Path('recovery/report/measure-files.txt').read_text('utf-8',errors='ignore').splitlines():
-              p=Path(line.strip())
-              if p.exists() and p.is_file(): files.append(p)
-          if not files:
-              files=[p for p in Path('recovery/ext').rglob('*.js') if p.stat().st_size>1_000_000]
+          root=Path('recovery/ext')
+          probes=[
+            ('zh_start','我","的","你'),
+            ('zh_start_sq',"我','的','你"),
+            ('zh_sentinel','竭尽全力'),
+            ('zh_sentinel2','据我所知'),
+            ('en_a','the","be","to","of'),
+            ('en_b','the","of","and","to'),
+            ('en_c','I","you","the","a'),
+            ('measure','Measure my level'),
+          ]
+          hits=[]
+          for p in root.rglob('*'):
+              if not p.is_file(): continue
+              try:size=p.stat().st_size
+              except:continue
+              if size>90_000_000: continue
+              try:text=p.read_text('utf-8',errors='ignore')
+              except:continue
+              matched=[]
+              contexts=[]
+              for label,probe in probes:
+                  pos=text.find(probe)
+                  if pos>=0:
+                      matched.append(label)
+                      contexts.append({'probe':label,'offset':pos,'context':text[max(0,pos-500):pos+1500]})
+              if matched:
+                  rec={'path':str(p),'size':size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'hits':matched,'contexts':contexts}
+                  hits.append(rec)
+                  if size<=25_000_000:
+                      shutil.copyfile(p,Path('recovery/matches')/str(p.relative_to(root)).replace('/','__'))
+          Path('recovery/report/probe-hits.json').write_text(json.dumps(hits,ensure_ascii=False,indent=2),'utf-8')
+          print(json.dumps(hits,ensure_ascii=False,indent=2))
 
-          def parse_js_string(text, i):
-              quote=text[i]
-              if quote not in "\"'": return None, i
-              i += 1; out=[]
-              while i < len(text):
-                  ch=text[i]
-                  if ch==quote:
-                      return ''.join(out), i+1
-                  if ch=='\\':
-                      i += 1
-                      if i>=len(text): return None, i
-                      esc=text[i]
+          # In every file that contains a Chinese frequency sentinel, discover large
+          # quoted-string arrays. The English list is expected to live in the same
+          # generated language-data bundle even if it uses a different variable name.
+          source_paths=[]
+          for r in hits:
+              if 'zh_sentinel' in r['hits'] or 'zh_sentinel2' in r['hits'] or 'zh_start' in r['hits'] or 'zh_start_sq' in r['hits']:
+                  source_paths.append(Path(r['path']))
+          if not source_paths:
+              source_paths=[p for p in root.rglob('*.js') if p.stat().st_size>1_000_000]
+
+          def read_string(text,i):
+              q=text[i]; i+=1; out=[]
+              while i<len(text):
+                  c=text[i]
+                  if c==q:return ''.join(out),i+1
+                  if c=='\\':
+                      i+=1
+                      if i>=len(text):return None,i
+                      e=text[i]
                       simple={'n':'\n','r':'\r','t':'\t','b':'\b','f':'\f','v':'\v','0':'\0','\\':'\\','\"':'\"',"'":"'"}
-                      if esc in simple: out.append(simple[esc]); i += 1; continue
-                      if esc=='u' and i+4 < len(text):
-                          raw=text[i+1:i+5]
-                          if re.fullmatch(r'[0-9a-fA-F]{4}',raw):
-                              out.append(chr(int(raw,16))); i += 5; continue
-                      if esc=='x' and i+2 < len(text):
-                          raw=text[i+1:i+3]
-                          if re.fullmatch(r'[0-9a-fA-F]{2}',raw):
-                              out.append(chr(int(raw,16))); i += 3; continue
-                      out.append(esc); i += 1; continue
-                  out.append(ch); i += 1
-              return None, i
+                      if e in simple:out.append(simple[e]);i+=1;continue
+                      if e=='u' and i+4<len(text) and re.fullmatch(r'[0-9A-Fa-f]{4}',text[i+1:i+5]):
+                          out.append(chr(int(text[i+1:i+5],16)));i+=5;continue
+                      if e=='x' and i+2<len(text) and re.fullmatch(r'[0-9A-Fa-f]{2}',text[i+1:i+3]):
+                          out.append(chr(int(text[i+1:i+3],16)));i+=3;continue
+                      out.append(e);i+=1;continue
+                  out.append(c);i+=1
+              return None,i
 
-          def try_array(text, start):
-              i=start+1; arr=[]
-              n=len(text)
-              while i<n and text[i].isspace(): i+=1
-              if i>=n or text[i] not in "\"'": return None, start+1
-              while i<n:
-                  while i<n and text[i].isspace(): i+=1
-                  if i<n and text[i]==']': return arr, i+1
-                  if i>=n or text[i] not in "\"'": return None, start+1
-                  s,i2=parse_js_string(text,i)
-                  if s is None: return None,start+1
-                  arr.append(s); i=i2
-                  while i<n and text[i].isspace(): i+=1
-                  if i<n and text[i]==',':
-                      i+=1; continue
-                  if i<n and text[i]==']': return arr,i+1
-                  return None,start+1
-              return None,start+1
+          def parse_array(text,j):
+              i=j+1
+              while i<len(text) and text[i].isspace():i+=1
+              if i>=len(text) or text[i] not in "\"'":return None,j+1
+              arr=[]
+              while i<len(text):
+                  while i<len(text) and text[i].isspace():i+=1
+                  if i<len(text) and text[i]==']':return arr,i+1
+                  if i>=len(text) or text[i] not in "\"'":return None,j+1
+                  s,i=read_string(text,i)
+                  if s is None:return None,j+1
+                  arr.append(s)
+                  while i<len(text) and text[i].isspace():i+=1
+                  if i<len(text) and text[i]==',':i+=1;continue
+                  if i<len(text) and text[i]==']':return arr,i+1
+                  return None,j+1
+              return None,j+1
 
-          reports=[]
-          candidate_no=0
-          for p in files:
-              text=p.read_text('utf-8',errors='ignore')
-              i=0
-              print('scan',p,'chars',len(text))
+          arrays=[]; saved=0
+          for p in source_paths:
+              text=p.read_text('utf-8',errors='ignore');i=0
+              print('ARRAY_SCAN',p,len(text))
               while True:
                   j=text.find('[',i)
-                  if j<0: break
-                  # fast reject: next non-space must be a quote
+                  if j<0:break
                   k=j+1
-                  while k<len(text) and text[k].isspace(): k+=1
-                  if k>=len(text) or text[k] not in "\"'":
-                      i=j+1; continue
-                  arr,end=try_array(text,j)
-                  if arr is None:
-                      i=j+1; continue
+                  while k<len(text) and text[k].isspace():k+=1
+                  if k>=len(text) or text[k] not in "\"'":i=j+1;continue
+                  arr,end=parse_array(text,j)
+                  if arr is None:i=j+1;continue
                   i=end
-                  if len(arr)<5000: continue
-                  ascii_words=sum(1 for s in arr if re.fullmatch(r"[A-Za-z][A-Za-z'’.-]*",s or ''))
-                  cjk_words=sum(1 for s in arr if re.search(r'[㐀-鿿]',s or ''))
-                  unique=len(set(arr))
-                  joined='\n'.join(arr)
-                  rec={
-                    'source':str(p),'offset':j,'length':len(arr),'unique':unique,
-                    'ascii_word_ratio':round(ascii_words/len(arr),5),
-                    'cjk_ratio':round(cjk_words/len(arr),5),
-                    'first40':arr[:40],'last40':arr[-40:],
-                    'sha256_lines':hashlib.sha256(joined.encode()).hexdigest(),
-                  }
-                  reports.append(rec)
-                  if rec['ascii_word_ratio']>0.70 and len(arr)>=10000:
-                      candidate_no += 1
-                      Path(f'recovery/candidates/en_candidate_{candidate_no}_{len(arr)}.json').write_text(json.dumps(arr,ensure_ascii=False,separators=(',',':')),'utf-8')
-                      Path(f'recovery/candidates/en_candidate_{candidate_no}_{len(arr)}.txt').write_text(joined,'utf-8')
-                      rec['saved_candidate']=candidate_no
-              
-          Path('recovery/report/large-arrays.json').write_text(json.dumps(reports,ensure_ascii=False,indent=2),'utf-8')
-          print(json.dumps(reports,ensure_ascii=False,indent=2))
-          if not any(r.get('ascii_word_ratio',0)>0.70 and r.get('length',0)>=10000 for r in reports):
-              raise SystemExit('no plausible English frequency array found')
+                  if len(arr)<1000:continue
+                  ascii_count=sum(bool(re.fullmatch(r"[A-Za-z][A-Za-z'’.-]*",s or '')) for s in arr)
+                  cjk_count=sum(bool(re.search(r'[㐀-鿿]',s or '')) for s in arr)
+                  rec={'path':str(p),'offset':j,'length':len(arr),'unique':len(set(arr)),'ascii_ratio':round(ascii_count/len(arr),5),'cjk_ratio':round(cjk_count/len(arr),5),'first30':arr[:30],'last30':arr[-30:],'sha256_lines':hashlib.sha256('\n'.join(arr).encode()).hexdigest()}
+                  arrays.append(rec)
+                  if len(arr)>=10000 and rec['ascii_ratio']>.55:
+                      saved+=1
+                      Path(f'recovery/matches/array_{saved}_{len(arr)}.json').write_text(json.dumps(arr,ensure_ascii=False,separators=(',',':')),'utf-8')
+                      rec['saved']=saved
+          Path('recovery/report/arrays.json').write_text(json.dumps(arrays,ensure_ascii=False,indent=2),'utf-8')
+          print('ARRAYS',json.dumps(arrays,ensure_ascii=False,indent=2))
           PY
-      - name: Upload recovered candidates
+      - name: Upload inspection
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: migaku-en-frequency-candidates
+          name: migaku-en-frequency-inspection
           path: |
             recovery/report/
-            recovery/candidates/
+            recovery/matches/
           if-no-files-found: error
