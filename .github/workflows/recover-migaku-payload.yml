@@ -13,81 +13,80 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Match exact APK prefix against Migaku official lists
+      - name: Download and inspect Migaku XAPK
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p recovery/db
-          base='https://migaku-public-data.migaku.com/dicts/zh_CN/frequency_lists'
-          curl -fL --retry 3 --connect-timeout 20 --max-time 180 "$base/Beijing%20Language%20and%20Culture%20University%20Corpus.db.gz" -o recovery/db/standard.db.gz
-          curl -fL --retry 3 --connect-timeout 20 --max-time 180 "$base/Jieba.db.gz" -o recovery/db/internet.db.gz
-          curl -fL --retry 3 --connect-timeout 20 --max-time 180 "$base/Loach.db.gz" -o recovery/db/tv_movies.db.gz
-          curl -fL --retry 3 --connect-timeout 20 --max-time 180 "$base/The%20Chairman%20Bao.db.gz" -o recovery/db/news.db.gz
+          mkdir -p recovery/xapk recovery/report
+          curl -fL --retry 4 --retry-delay 2 --connect-timeout 30 --max-time 1200 \
+            'https://d.apkpure.net/b/XAPK/com.migaku.android?version=latest' \
+            -o recovery/migaku.xapk
+          echo "XAPK bytes: $(stat -c%s recovery/migaku.xapk)"
+          sha256sum recovery/migaku.xapk | tee recovery/report/xapk.sha256
+          unzip -q recovery/migaku.xapk -d recovery/xapk
+          find recovery/xapk -maxdepth 2 -type f -printf '%s %p\n' | sort -nr | head -80 | tee recovery/report/xapk-files.txt
           python3 - <<'PY'
           from pathlib import Path
-          import gzip, hashlib, json, sqlite3
-
-          exact=Path('data/zh_vocab_frequency_0.txt').read_text('utf-8').splitlines()
-          assert len(exact)==5000
-          names={
-            'standard':'Standard / BLCU',
-            'internet':'Internet / Jieba',
-            'tv_movies':'TV & Movies / SUBTLEX-CH',
-            'news':"News / The Chairman's Bao",
-          }
-          report=[]
-          winner=None
-          for slug,name in names.items():
-              raw=Path(f'recovery/db/{slug}.db.gz').read_bytes()
-              dbbytes=gzip.decompress(raw)
-              dbp=Path(f'recovery/db/{slug}.db')
-              dbp.write_bytes(dbbytes)
-              con=sqlite3.connect(dbp)
-              tables=[r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")]
-              table='langFrequencyEntry' if 'langFrequencyEntry' in tables else next(t for t in tables if not t.startswith('sqlite_'))
-              cols=[r[1] for r in con.execute(f'PRAGMA table_info("{table}")')]
-              termcol='term' if 'term' in cols else cols[0]
-              freqcol='frequency' if 'frequency' in cols else None
-              idcol='id' if 'id' in cols else 'rowid'
-              order=f'"{freqcol}" ASC, "{idcol}" ASC' if freqcol else f'"{idcol}" ASC'
-              rows=con.execute(f'SELECT "{termcol}" FROM "{table}" ORDER BY {order}').fetchall()
-              con.close()
-              words=[str(r[0]) for r in rows]
-              prefix=words[:len(exact)]
-              mism=[(i+1,a,b) for i,(a,b) in enumerate(zip(exact,prefix)) if a!=b]
-              if len(prefix)<len(exact):
-                  mism.extend((i+1,exact[i],None) for i in range(len(prefix),len(exact)))
-              info={
-                'slug':slug,'name':name,'rows':len(words),'table':table,'columns':cols,
-                'mismatch_count_first5000':len(mism),'first_mismatches':mism[:12],
-                'first20':words[:20],'rank4990_5005':words[4989:5005],'last20':words[-20:],
-                'gz_sha256':hashlib.sha256(raw).hexdigest(),
-              }
-              report.append(info)
-              print(json.dumps(info,ensure_ascii=False,indent=2))
-              if not mism and len(words)>=39999:
-                  winner=(slug,name,words)
-
-          Path('recovery/match-report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),'utf-8')
-          if winner:
-              slug,name,words=winner
-              top=words[:39999]
-              payload=json.dumps(top,ensure_ascii=False,separators=(',',':'))
-              Path('recovery/zh_vocab_frequency.json').write_text(payload,'utf-8')
-              summary={'winner':name,'slug':slug,'source_rows':len(words),'count':len(top),'unique':len(set(top)),'first20':top[:20],'last20':top[-20:],'sha256':hashlib.sha256(payload.encode()).hexdigest()}
-              Path('recovery/winner.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),'utf-8')
-              print('WINNER',json.dumps(summary,ensure_ascii=False,indent=2))
-              assert len(top)==39999 and len(set(top))==39999
-          else:
-              Path('recovery/winner.json').write_text(json.dumps({'winner':None},indent=2),'utf-8')
-              print('NO EXACT MATCH')
+          import json
+          for p in [Path('recovery/xapk/manifest.json'),Path('recovery/xapk/manifest.json')]:
+              if p.exists():
+                  print(p.read_text('utf-8',errors='replace')[:10000])
+                  Path('recovery/report/manifest.json').write_bytes(p.read_bytes())
+                  break
           PY
-      - name: Upload match report
+
+          mkdir -p recovery/apks
+          i=0
+          while IFS= read -r apk; do
+            i=$((i+1))
+            d="recovery/apks/$i"
+            mkdir -p "$d"
+            unzip -q "$apk" -d "$d" || true
+            echo "$i $apk" >> recovery/report/apk-map.txt
+          done < <(find recovery/xapk -type f -name '*.apk' | sort)
+
+          echo '--- candidate frontend/data files ---' | tee recovery/report/candidates.txt
+          find recovery/apks -type f \( -name '*.js' -o -name '*.json' -o -name '*.txt' -o -name '*.db' -o -name '*.sqlite' -o -name '*.html' -o -name '*.gz' -o -name '*.bin' \) \
+            -printf '%s %p\n' | sort -nr | head -500 >> recovery/report/candidates.txt
+
+          # Search text/binary assets for several signatures from the exact assessment list.
+          for pat in '我.{0,30}的.{0,30}你.{0,30}了.{0,30}是' '竭尽全力' '据我所知' '围绕' 'Measure my level' 'measureMyLevel' 'vocabulary estimate'; do
+            echo "=== PATTERN: $pat ===" | tee -a recovery/report/grep.txt
+            grep -RIlEa --exclude='*.so' --exclude='*.dex' "$pat" recovery/apks 2>/dev/null | head -100 | tee -a recovery/report/grep.txt || true
+          done
+
+          # Copy modest-size matching files so they can be inspected outside logs.
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, shutil, hashlib, json
+          root=Path('recovery/apks')
+          out=Path('recovery/matches'); out.mkdir(exist_ok=True)
+          pats=[b'\xe6\x88\x91', '竭尽全力'.encode(), '据我所知'.encode(), b'Measure my level', b'measureMyLevel']
+          rows=[]
+          for p in root.rglob('*'):
+              if not p.is_file(): continue
+              try: size=p.stat().st_size
+              except: continue
+              if size>80_000_000: continue
+              try: data=p.read_bytes()
+              except: continue
+              hits=[x.decode('utf-8','replace') if isinstance(x,bytes) else str(x) for x in pats if x in data]
+              if not hits: continue
+              row={'path':str(p),'size':size,'sha256':hashlib.sha256(data).hexdigest(),'hits':hits}
+              rows.append(row)
+              if size<=20_000_000:
+                  name=(str(p.relative_to(root)).replace('/','__'))
+                  shutil.copyfile(p,out/name)
+          Path('recovery/report/matches.json').write_text(json.dumps(rows,ensure_ascii=False,indent=2),'utf-8')
+          print(json.dumps(rows[:100],ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload inspection output
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: migaku-frequency-match
+          name: migaku-xapk-inspection
           path: |
-            recovery/match-report.json
-            recovery/winner.json
-            recovery/zh_vocab_frequency.json
-          if-no-files-found: warn
+            recovery/report/
+            recovery/matches/
+          if-no-files-found: error
