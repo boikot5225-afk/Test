@@ -2,9 +2,10 @@ import './delete-fix.js?v=1';
 import './toc-registry.js?v=1';
 import './toc-navigation-fix.js?v=1';
 import './mobile-nav-stability.js?v=1';
-import './vocab-estimate-observer-pre.js?v=1';
+import './vocab-estimate-observer-pre.js?v=2';
 import './vocab-estimate.js?v=1';
-import './vocab-estimate-observer-post.js?v=1';
+import './vocab-estimate-observer-post.js?v=2';
+import './vocab-estimate-stability-fix.js?v=1';
 import { setTocVisibleBook } from './toc-runtime.js?v=3';
 import { createReaderChapterRenderer as createBaseRenderer } from './chapter-render-dialogue.js?v=8';
 
@@ -73,6 +74,14 @@ function repairUnexpectedChapterRollback(deps) {
   return true;
 }
 
+function applyVocabularyAfterRender() {
+  queueMicrotask(() => {
+    try {
+      Promise.resolve(globalThis.readerApplyVocabularyEstimate?.()).catch(() => {});
+    } catch {}
+  });
+}
+
 installWordTapRenderGuard();
 
 export function createReaderChapterRenderer(deps) {
@@ -97,6 +106,11 @@ export function createReaderChapterRenderer(deps) {
       try { setTocVisibleBook(deps.getCurrentBook?.()); } catch {}
       const result = base.render(...args);
       try { setTocVisibleBook(deps.getCurrentBook?.()); } catch {}
+
+      // One explicit classification pass per real chapter render replaces the
+      // old document-wide MutationObserver. Chinese gloss wrappers are free to
+      // update afterwards without causing another full vocabulary scan.
+      applyVocabularyAfterRender();
       return result;
     },
   };
