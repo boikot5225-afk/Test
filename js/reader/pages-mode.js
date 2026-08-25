@@ -192,6 +192,11 @@ export function createReaderPagesMode({
     try { globalThis.readerPrepareZhStableSlots?.(chapterText); } catch (error) {
       console.warn('[reader pages] stable Chinese slot preparation failed', error?.message || error);
     }
+    // English uses the same rule: reserve the translation lane before measuring
+    // page ranges. The helper is a no-op for every non-English book.
+    try { globalThis.readerPrepareEnStableSlots?.(chapterText); } catch (error) {
+      console.warn('[reader pages] stable English slot preparation failed', error?.message || error);
+    }
     if (!enabled) {
       scroller.classList.remove('rd-pages-mode');
       readingView?.classList.remove('rd-pages-active');
