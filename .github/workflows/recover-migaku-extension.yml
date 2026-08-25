@@ -1,4 +1,4 @@
-name: Recover Migaku extension asset
+name: Finalize Migaku Chinese vocabulary asset
 
 on:
   push:
@@ -6,65 +6,240 @@ on:
       - tmp-recover-migaku-extension-20260825
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  recover:
+  finalize:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Download and inspect Chrome extension
+        with:
+          ref: feature/77.42-epub-toc
+          fetch-depth: 0
+
+      - name: Verify target base
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p recovery/ext recovery/report recovery/matches
+          actual="$(git rev-parse HEAD)"
+          expected='cba076a7fcfb5d1a3dcd52f10ba106f52f5e8528'
+          echo "target HEAD: $actual"
+          test "$actual" = "$expected" || { echo "target branch moved; refusing to patch unexpected HEAD"; exit 1; }
+
+      - name: Extract the exact 39,999-word Migaku Mandarin list
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p recovery/ext
           url='https://clients2.google.com/service/update2/crx?response=redirect&prodversion=131.0&acceptformat=crx2,crx3&x=id%3Dlkhiljgmbeecmljiogckofcalncmfnfo%26uc'
-          curl -fL --retry 4 --connect-timeout 30 --max-time 600 "$url" -o recovery/migaku.crx
-          echo "CRX bytes: $(stat -c%s recovery/migaku.crx)"
-          sha256sum recovery/migaku.crx | tee recovery/report/crx.sha256
+          curl -fL --retry 4 --retry-delay 2 --connect-timeout 30 --max-time 600 "$url" -o recovery/migaku.crx
+          sha256sum recovery/migaku.crx
           python3 - <<'PY'
           from pathlib import Path
           import struct
-          p=Path('recovery/migaku.crx'); b=p.read_bytes()
-          if b[:4]!=b'Cr24': raise SystemExit('not CRX')
-          ver=struct.unpack('<I',b[4:8])[0]
-          if ver==2:
-              a,c=struct.unpack('<II',b[8:16]); off=16+a+c
-          elif ver==3:
-              h=struct.unpack('<I',b[8:12])[0]; off=12+h
-          else: raise SystemExit(f'CRX version {ver}')
-          Path('recovery/ext.zip').write_bytes(b[off:])
-          print('crx version',ver,'zip offset',off,'zip bytes',len(b)-off)
+          b=Path('recovery/migaku.crx').read_bytes()
+          if b[:4] != b'Cr24':
+              raise SystemExit('download is not a CRX file')
+          version=struct.unpack('<I', b[4:8])[0]
+          if version == 2:
+              pub_len, sig_len = struct.unpack('<II', b[8:16])
+              offset = 16 + pub_len + sig_len
+          elif version == 3:
+              header_len = struct.unpack('<I', b[8:12])[0]
+              offset = 12 + header_len
+          else:
+              raise SystemExit(f'unsupported CRX version {version}')
+          Path('recovery/ext.zip').write_bytes(b[offset:])
+          print('CRX version', version, 'ZIP offset', offset)
           PY
           unzip -q recovery/ext.zip -d recovery/ext
-          find recovery/ext -type f -printf '%s %p\n' | sort -nr | head -400 > recovery/report/files.txt
-          for pat in '竭尽全力' '据我所知' 'Measure my level' 'measureMyLevel' 'vocabulary estimate' '39999'; do
-            echo "=== $pat ===" >> recovery/report/grep.txt
-            grep -RIlFa -- "$pat" recovery/ext 2>/dev/null | head -100 >> recovery/report/grep.txt || true
-          done
+
           python3 - <<'PY'
           from pathlib import Path
-          import hashlib,json,shutil
-          root=Path('recovery/ext'); out=Path('recovery/matches')
-          pats=['竭尽全力'.encode(),'据我所知'.encode(),b'Measure my level',b'measureMyLevel',b'39999']
-          rows=[]
-          for p in root.rglob('*'):
-              if not p.is_file() or p.stat().st_size>80_000_000: continue
-              try:data=p.read_bytes()
-              except:continue
-              hits=[q.decode('utf-8','replace') for q in pats if q in data]
-              if not hits: continue
-              rows.append({'path':str(p.relative_to(root)),'size':len(data),'sha256':hashlib.sha256(data).hexdigest(),'hits':hits})
-              if len(data)<=25_000_000:
-                  shutil.copyfile(p,out/str(p.relative_to(root)).replace('/','__'))
-          Path('recovery/report/matches.json').write_text(json.dumps(rows,ensure_ascii=False,indent=2),'utf-8')
-          print(json.dumps(rows[:100],ensure_ascii=False,indent=2))
+          import gzip, hashlib, json
+
+          root = Path('recovery/ext')
+          candidates = []
+          signature = 'Fen=[["我","0"],["的","0"],["你","0"]'
+          for p in root.rglob('*.js'):
+              try:
+                  text = p.read_text('utf-8', errors='replace')
+              except OSError:
+                  continue
+              if signature in text and '竭尽全力' in text and '据我所知' in text:
+                  candidates.append((p, text))
+          if len(candidates) != 1:
+              raise SystemExit(f'expected exactly one Migaku Mandarin list bundle, found {len(candidates)}')
+
+          bundle_path, text = candidates[0]
+          marker = text.index('Fen=[')
+          start = marker + len('Fen=')
+          level = 0
+          in_string = False
+          escaped = False
+          end = None
+          for pos in range(start, len(text)):
+              ch = text[pos]
+              if in_string:
+                  if escaped:
+                      escaped = False
+                  elif ch == '\\':
+                      escaped = True
+                  elif ch == '"':
+                      in_string = False
+              else:
+                  if ch == '"':
+                      in_string = True
+                  elif ch == '[':
+                      level += 1
+                  elif ch == ']':
+                      level -= 1
+                      if level == 0:
+                          end = pos + 1
+                          break
+          if end is None:
+              raise SystemExit('could not find end of Fen array')
+
+          rows = json.loads(text[start:end])
+          if not all(isinstance(row, list) and row and isinstance(row[0], str) for row in rows):
+              raise SystemExit('unexpected Fen row shape')
+          words = [row[0].strip() for row in rows]
+          if len(words) != 39999:
+              raise SystemExit(f'Migaku list length {len(words)}, expected 39999')
+          if len(set(words)) != 39999:
+              raise SystemExit(f'Migaku list has {len(words)-len(set(words))} duplicate terms')
+
+          sentinels = {
+              1: '我', 2: '的', 3: '你', 7: '我们',
+              4769: '天天', 4987: '竭尽全力', 4997: '据我所知', 5000: '围绕',
+          }
+          for rank, expected in sentinels.items():
+              actual = words[rank - 1]
+              if actual != expected:
+                  raise SystemExit(f'sentinel #{rank}: {actual!r} != {expected!r}')
+
+          reference = Path('data/zh_vocab_frequency_0.txt')
+          if not reference.exists():
+              raise SystemExit('5000-word retained reference is missing')
+          ref_words = reference.read_text('utf-8').splitlines()
+          if len(ref_words) != 5000:
+              raise SystemExit(f'retained reference length {len(ref_words)}, expected 5000')
+          # One byte-level extraction artifact was already identified in toc39.
+          if ref_words[4768] == 't天天':
+              ref_words[4768] = '天天'
+          mismatches = [(i + 1, a, b) for i, (a, b) in enumerate(zip(ref_words, words[:5000])) if a != b]
+          if mismatches:
+              raise SystemExit(f'original extension differs from retained 5000-word fingerprint: {mismatches[:10]}')
+
+          payload = ('\n'.join(words) + '\n').encode('utf-8')
+          out = Path('data/zh_vocab_frequency.txt.gz')
+          with out.open('wb') as raw:
+              with gzip.GzipFile(filename='', mode='wb', fileobj=raw, compresslevel=9, mtime=0) as gz:
+                  gz.write(payload)
+
+          print('bundle:', bundle_path)
+          print('words:', len(words), 'unique:', len(set(words)))
+          print('first20:', words[:20])
+          print('4981-5000:', words[4980:5000])
+          print('plain sha256:', hashlib.sha256(payload).hexdigest())
+          print('gzip sha256:', hashlib.sha256(out.read_bytes()).hexdigest())
+          print('gzip bytes:', out.stat().st_size)
           PY
-      - name: Upload inspection
-        uses: actions/upload-artifact@v4
-        with:
-          name: migaku-extension-inspection
-          path: |
-            recovery/report/
-            recovery/matches/
-          if-no-files-found: error
+
+      - name: Patch Reader vocabulary layer and bump toc40
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          vocab = Path('js/reader/vocab-estimate.js')
+          text = vocab.read_text('utf-8')
+
+          replacements = [
+              ("const DATA_URL = 'data/zh_vocab_frequency.txt.gz';", "const DATA_URL = 'data/zh_vocab_frequency.txt.gz?v=40';"),
+              ("const STYLE_ID = 'reader-migaku-vocab-style-v2';", "const STYLE_ID = 'reader-migaku-vocab-style-v3';"),
+              (
+                  """function manualKnowledge(state) {\n  const explicit = String(state?.manualKnowledge || '').toLowerCase();\n  if (explicit === 'known' || explicit === 'unknown') return explicit;\n  // Compatibility with Reader AI states created before this two-state layer.\n  if (state?.known && state?.autoKnown === false) return 'known';\n  if (state?.saved || ['problem', 'hard', 'learning', 'familiar'].includes(String(state?.status || '').toLowerCase())) {\n    return 'unknown';\n  }\n  return '';\n}\n""",
+                  """function manualKnowledge(state) {\n  const explicit = String(state?.manualKnowledge || '').toLowerCase();\n  return explicit === 'known' || explicit === 'unknown' ? explicit : '';\n}\n""",
+              ),
+              (
+                  """      const data = buildFrequencyData(text.split(/\\r?\\n/).map(x => x.trim()).filter(Boolean));\n      if (data.words.length !== 39999) throw new Error(`frequency list length ${data.words.length}, expected 39999`);\n      frequencyData = data;\n""",
+                  """      const data = buildFrequencyData(text.split(/\\r?\\n/).map(x => x.trim()).filter(Boolean));\n      if (data.words.length !== 39999) throw new Error(`frequency list length ${data.words.length}, expected 39999`);\n      if (data.rank.size !== 39999) throw new Error(`frequency list has ${39999 - data.rank.size} duplicate terms`);\n      const sentinels = [[0, '我'], [1, '的'], [6, '我们'], [4768, '天天'], [4986, '竭尽全力'], [4996, '据我所知'], [4999, '围绕']];\n      for (const [index, expected] of sentinels) {\n        if (data.words[index] !== expected) throw new Error(`frequency list mismatch at #${index + 1}: ${data.words[index] || '∅'} != ${expected}`);\n      }\n      frequencyData = data;\n""",
+              ),
+              (
+                  "if (globalThis.__readerVocabularyEstimateVersion === 3) return;\n  globalThis.__readerVocabularyEstimateVersion = 3;",
+                  "if (globalThis.__readerVocabularyEstimateVersion === 4) return;\n  globalThis.__readerVocabularyEstimateVersion = 4;",
+              ),
+          ]
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'vocab-estimate patch anchor missing: {old[:100]!r}')
+              text = text.replace(old, new, 1)
+          vocab.write_text(text, 'utf-8')
+
+          runtime = Path('js/reader/interactions-runtime.js')
+          text = runtime.read_text('utf-8')
+          old = "import './zh-vocab-data-bridge.js?v=1';\nimport './vocab-estimate.js?v=3';"
+          new = "import './vocab-estimate.js?v=4';"
+          if old not in text:
+              raise SystemExit('interactions-runtime patch anchor missing')
+          runtime.write_text(text.replace(old, new, 1), 'utf-8')
+
+          gradle = Path('android/app/build.gradle')
+          text = gradle.read_text('utf-8')
+          if "versionCode 59" not in text or "versionName '77.42-toc39'" not in text:
+              raise SystemExit('unexpected Android version before toc40 bump')
+          text = text.replace('versionCode 59', 'versionCode 60', 1)
+          text = text.replace("versionName '77.42-toc39'", "versionName '77.42-toc40'", 1)
+          gradle.write_text(text, 'utf-8')
+          PY
+
+          rm -rf data/zh_vocab_b64
+          rm -f data/zh_vocab_frequency_0.txt data/zh_vocab_frequency_1.txt data/zh_vocab_frequency_2.txt data/zh_vocab_frequency_3.txt data/zh_vocab_frequency_4.txt data/zh_vocab_frequency_5.txt data/zh_vocab_frequency_6.txt data/zh_vocab_frequency_7.txt
+          rm -f js/reader/zh-vocab-data-bridge.js
+
+      - name: Validate toc40 source before commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check js/reader/vocab-estimate.js
+          node --check js/reader/interactions-runtime.js
+          python3 - <<'PY'
+          from pathlib import Path
+          import gzip, hashlib
+          data = gzip.decompress(Path('data/zh_vocab_frequency.txt.gz').read_bytes()).decode('utf-8').splitlines()
+          assert len(data) == 39999, len(data)
+          assert len(set(data)) == 39999
+          assert data[:20] == ['我','的','你','了','是','在','我们','这','个','他','不','一','好','会','吗','很','有','人','到','就']
+          assert data[4768] == '天天'
+          assert data[4986] == '竭尽全力'
+          assert data[4996] == '据我所知'
+          assert data[4999] == '围绕'
+          print('validated 39999 exact Migaku words')
+          print('plain sha256:', hashlib.sha256(('\n'.join(data)+'\n').encode()).hexdigest())
+          PY
+          test ! -e js/reader/zh-vocab-data-bridge.js
+          test ! -e data/zh_vocab_b64
+          ! grep -qF "zh-vocab-data-bridge.js" js/reader/interactions-runtime.js
+          grep -qF "import './vocab-estimate.js?v=4'" js/reader/interactions-runtime.js
+          grep -qF "versionCode 60" android/app/build.gradle
+          grep -qF "versionName '77.42-toc40'" android/app/build.gradle
+          git diff --check
+          git status --short
+          git diff --stat
+
+      - name: Commit toc40 to working branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf recovery
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix(reader): ship exact Migaku Mandarin frequency list'
+          final_sha="$(git rev-parse HEAD)"
+          echo "FINAL_SHA=$final_sha"
+          git push origin HEAD:feature/77.42-epub-toc
