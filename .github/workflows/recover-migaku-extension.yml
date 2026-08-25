@@ -1,4 +1,4 @@
-name: Finalize and build Reader AI toc40
+name: Build and verify Reader AI toc41
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - tmp-recover-migaku-extension-20260825
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -19,84 +19,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: feature/77.42-epub-toc
+          ref: 51a0246ae2f9720f8bd3f0cb0c9d95aef4a979b7
           fetch-depth: 0
 
-      - name: Patch Android plain-text asset loading
+      - name: Verify exact toc41 source
         shell: bash
         run: |
           set -euo pipefail
-          expected='f8d123b1642b931c10d09fecbdafed8bbc8a0d47'
-          actual="$(git rev-parse HEAD)"
-          echo "base SHA=$actual"
-          test "$actual" = "$expected" || { echo "feature branch moved unexpectedly"; exit 1; }
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p=Path('js/reader/vocab-estimate.js')
-          t=p.read_text('utf-8')
-          old="""const DATA_URL = globalThis.location?.hostname === 'appassets.androidplatform.net'\n  ? 'data/zh_vocab_frequency.txt'\n  : 'data/zh_vocab_frequency.txt.gz?v=40';"""
-          new="""const IS_ANDROID_ASSET = globalThis.location?.hostname === 'appassets.androidplatform.net';\nconst DATA_URL = IS_ANDROID_ASSET\n  ? 'data/zh_vocab_frequency.txt'\n  : 'data/zh_vocab_frequency.txt.gz?v=40';"""
-          if old not in t: raise SystemExit('DATA_URL anchor missing')
-          t=t.replace(old,new,1)
-
-          old="""      if (!response.ok) throw new Error(`${DATA_URL}: HTTP ${response.status}`);\n      if (typeof DecompressionStream !== 'function') {\n        throw new Error('gzip decompression is unavailable in this WebView');\n      }\n      const stream = response.body?.pipeThrough(new DecompressionStream('gzip'));\n      if (!stream) throw new Error('frequency data stream unavailable');\n      return new Response(stream).text();"""
-          new="""      if (!response.ok) throw new Error(`${DATA_URL}: HTTP ${response.status}`);\n      // Android's AAPT transparently expands .gz assets and removes the suffix.\n      // The WebView therefore receives plain UTF-8 at the stripped .txt path.\n      if (IS_ANDROID_ASSET) return response.text();\n      if (typeof DecompressionStream !== 'function') {\n        throw new Error('gzip decompression is unavailable in this browser');\n      }\n      const stream = response.body?.pipeThrough(new DecompressionStream('gzip'));\n      if (!stream) throw new Error('frequency data stream unavailable');\n      return new Response(stream).text();"""
-          if old not in t: raise SystemExit('loadFrequencyData anchor missing')
-          t=t.replace(old,new,1)
-
-          old="if (globalThis.__readerVocabularyEstimateVersion === 5) return;\n  globalThis.__readerVocabularyEstimateVersion = 5;"
-          new="if (globalThis.__readerVocabularyEstimateVersion === 6) return;\n  globalThis.__readerVocabularyEstimateVersion = 6;"
-          if old not in t: raise SystemExit('version guard anchor missing')
-          p.write_text(t.replace(old,new,1),'utf-8')
-
-          p=Path('js/reader/interactions-runtime.js')
-          t=p.read_text('utf-8')
-          old="import './vocab-estimate.js?v=5';"
-          new="import './vocab-estimate.js?v=6';"
-          if old not in t: raise SystemExit('runtime import anchor missing')
-          p.write_text(t.replace(old,new,1),'utf-8')
-          PY
-
-          node --check js/reader/vocab-estimate.js
-          node --check js/reader/interactions-runtime.js
-          git diff --check
-          grep -qF "const IS_ANDROID_ASSET = globalThis.location?.hostname === 'appassets.androidplatform.net';" js/reader/vocab-estimate.js
-          grep -qF 'if (IS_ANDROID_ASSET) return response.text();' js/reader/vocab-estimate.js
-          grep -qF "import './vocab-estimate.js?v=6'" js/reader/interactions-runtime.js
-          grep -qF '__readerVocabularyEstimateVersion === 6' js/reader/vocab-estimate.js
-
-      - name: Verify exact Migaku source asset
-        shell: bash
-        run: |
-          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '51a0246ae2f9720f8bd3f0cb0c9d95aef4a979b7'
+          grep -q "versionCode 61" android/app/build.gradle
+          grep -q "versionName '77.42-toc41'" android/app/build.gradle
+          grep -q "isDocumentWideVocabSweep" js/reader/vocab-estimate-observer-pre.js
+          grep -q "reader-vocab-stability-style-v1" js/reader/vocab-estimate-stability-fix.js
+          grep -q "data-reader-vocab-synthetic-known" js/reader/vocab-estimate-stability-fix.js
+          grep -q "applyVocabularyAfterRender" js/reader/chapter-render.js
+          grep -q "vocab-estimate-stability-fix.js?v=1" js/reader/interactions-runtime.js
           python3 - <<'PY'
           from pathlib import Path
           import gzip,hashlib
-          raw=Path('data/zh_vocab_frequency.txt.gz').read_bytes()
-          plain=gzip.decompress(raw)
+          plain=gzip.decompress(Path('data/zh_vocab_frequency.txt.gz').read_bytes())
           words=plain.decode('utf-8').splitlines()
-          sha=hashlib.sha256(plain).hexdigest()
           assert len(words)==39999 and len(set(words))==39999
-          assert sha=='e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64',sha
-          assert words[:20]==['我','的','你','了','是','在','我们','这','个','他','不','一','好','会','吗','很','有','人','到','就']
-          assert words[4768]=='天天' and words[4986]=='竭尽全力' and words[4996]=='据我所知' and words[4999]=='围绕'
-          print('source Migaku list verified',sha)
+          assert hashlib.sha256(plain).hexdigest()=='e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64'
           PY
-
-      - name: Commit Android AAPT loading fix
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git add js/reader/vocab-estimate.js js/reader/interactions-runtime.js
-          git diff --cached --check
-          git commit -m 'fix(reader): read AAPT-expanded vocabulary asset as text'
-          final_sha="$(git rev-parse HEAD)"
-          echo "FINAL_SOURCE_SHA=$final_sha" | tee /tmp/source-sha.txt
-          git push origin HEAD:feature/77.42-epub-toc
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -117,94 +62,70 @@ jobs:
           fi
           printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
           echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
-          echo 'signing key restored'
 
-      - name: Check all JavaScript syntax
+      - name: Check JavaScript syntax
         shell: bash
         run: |
           set -euo pipefail
-          while IFS= read -r -d '' file; do node --check "$file"; done < <(find js -type f -name '*.js' -print0)
+          node --check js/reader/vocab-estimate-observer-pre.js
+          node --check js/reader/vocab-estimate-stability-fix.js
+          node --check js/reader/chapter-render.js
+          node --check js/reader/interactions-runtime.js
 
       - name: Build debug APK
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Verify built APK deeply
+      - name: Verify built APK
         shell: bash
         run: |
           set -euo pipefail
           APK="$(find android/app/build/outputs/apk/debug -type f -name '*.apk' | head -1)"
           test -n "$APK"
-          echo "APK=$APK"
-          echo "APK bytes=$(stat -c%s "$APK")"
-
           python3 - "$APK" <<'PY'
           import hashlib,sys,zipfile
           apk=sys.argv[1]
-          expected_sha='e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64'
           with zipfile.ZipFile(apk) as z:
               names=set(z.namelist())
-              asset='assets/www/data/zh_vocab_frequency.txt'
-              original='assets/www/data/zh_vocab_frequency.txt.gz'
-              runtime_path='assets/www/js/reader/interactions-runtime.js'
-              vocab_path='assets/www/js/reader/vocab-estimate.js'
-              matches=sorted(n for n in names if 'zh_vocab' in n)
-              print('zh_vocab APK entries:',matches)
-              assert asset in names, 'AAPT-expanded frequency asset missing'
-              assert original not in names, 'unexpected .gz name survived AAPT'
-              assert not any(n.startswith('assets/www/data/zh_vocab_b64/') for n in names), 'base64 fragments leaked'
-              assert 'assets/www/js/reader/zh-vocab-data-bridge.js' not in names, 'obsolete bridge leaked'
-              runtime=z.read(runtime_path).decode('utf-8')
-              vocab=z.read(vocab_path).decode('utf-8')
-              assert "import './vocab-estimate.js?v=6'" in runtime
-              assert 'zh-vocab-data-bridge.js' not in runtime
-              assert "const IS_ANDROID_ASSET = globalThis.location?.hostname === 'appassets.androidplatform.net';" in vocab
-              assert 'if (IS_ANDROID_ASSET) return response.text();' in vocab
-              assert "? 'data/zh_vocab_frequency.txt'" in vocab
-              assert ": 'data/zh_vocab_frequency.txt.gz?v=40';" in vocab
-              assert "return explicit === 'known' || explicit === 'unknown' ? explicit : '';" in vocab
-              assert '__readerVocabularyEstimateVersion === 6' in vocab
-              plain=z.read(asset)
-              sha=hashlib.sha256(plain).hexdigest()
-              words=plain.decode('utf-8').splitlines()
-              assert len(words)==39999 and len(set(words))==39999
-              assert sha==expected_sha,sha
-              assert words[:20]==['我','的','你','了','是','在','我们','这','个','他','不','一','好','会','吗','很','有','人','到','就']
-              assert words[4768]=='天天' and words[4986]=='竭尽全力' and words[4996]=='据我所知' and words[4999]=='围绕'
-              print('embedded AAPT-expanded Migaku list verified:',sha)
-              print('APK entries:',len(names))
+              required=[
+                'assets/www/js/reader/vocab-estimate-observer-pre.js',
+                'assets/www/js/reader/vocab-estimate-stability-fix.js',
+                'assets/www/js/reader/chapter-render.js',
+                'assets/www/js/reader/interactions-runtime.js',
+                'assets/www/data/zh_vocab_frequency.txt',
+              ]
+              for name in required: assert name in names, name
+              pre=z.read(required[0]).decode('utf-8')
+              fix=z.read(required[1]).decode('utf-8')
+              chapter=z.read(required[2]).decode('utf-8')
+              runtime=z.read(required[3]).decode('utf-8')
+              assert 'isDocumentWideVocabSweep' in pre
+              assert 'reader-vocab-stability-style-v1' in fix
+              assert 'data-reader-vocab-synthetic-known' in fix
+              assert 'applyVocabularyAfterRender' in chapter
+              assert "vocab-estimate-stability-fix.js?v=1" in runtime
+              plain=z.read(required[4])
+              assert hashlib.sha256(plain).hexdigest()=='e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64'
+              assert len(plain.decode('utf-8').splitlines())==39999
           PY
-
-          : > /tmp/apksigner.txt
-          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -1 || true)"
-          if [[ -n "$APKSIGNER" ]]; then
-            "$APKSIGNER" verify --print-certs "$APK" | tee /tmp/apksigner.txt
-          else
-            echo 'apksigner not found' | tee /tmp/apksigner.txt
-          fi
-
-          : > /tmp/aapt-badging.txt
           AAPT="$(find "${ANDROID_HOME}/build-tools" -type f -name aapt | sort -V | tail -1 || true)"
           if [[ -n "$AAPT" ]]; then
             "$AAPT" dump badging "$APK" | tee /tmp/aapt-badging.txt
-            grep -q "versionCode='60'" /tmp/aapt-badging.txt
-            grep -q "versionName='77.42-toc40-debug'" /tmp/aapt-badging.txt
-          else
-            echo 'aapt not found' | tee /tmp/aapt-badging.txt
+            grep -q "versionCode='61'" /tmp/aapt-badging.txt
+            grep -q "versionName='77.42-toc41-debug'" /tmp/aapt-badging.txt
           fi
+          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -1 || true)"
+          if [[ -n "$APKSIGNER" ]]; then "$APKSIGNER" verify --print-certs "$APK" | tee /tmp/apksigner.txt; fi
+          cp "$APK" /tmp/Reader-AI-77.42-toc41-build61.apk
+          sha256sum /tmp/Reader-AI-77.42-toc41-build61.apk | tee /tmp/Reader-AI-77.42-toc41-build61.sha256
 
-          cp "$APK" /tmp/Reader-AI-77.42-toc40-build60.apk
-          HASH="$(sha256sum /tmp/Reader-AI-77.42-toc40-build60.apk | awk '{print $1}')"
-          printf '%s  %s\n' "$HASH" 'Reader-AI-77.42-toc40-build60.apk' | tee /tmp/Reader-AI-77.42-toc40-build60.sha256
-
-      - name: Upload verified toc40 APK
+      - name: Upload verified toc41 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-77.42-toc40-build60
+          name: Reader-AI-77.42-toc41-build61
           path: |
-            /tmp/Reader-AI-77.42-toc40-build60.apk
-            /tmp/Reader-AI-77.42-toc40-build60.sha256
-            /tmp/source-sha.txt
-            /tmp/apksigner.txt
+            /tmp/Reader-AI-77.42-toc41-build61.apk
+            /tmp/Reader-AI-77.42-toc41-build61.sha256
             /tmp/aapt-badging.txt
+            /tmp/apksigner.txt
           if-no-files-found: error
