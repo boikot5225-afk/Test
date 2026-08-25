@@ -1066,6 +1066,7 @@ function bootVocabularyUi() {
 }
 
 export function installVocabularyEstimate() {
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
   if (globalThis.__readerVocabularyEstimateVersion === 7) return;
   globalThis.__readerVocabularyEstimateVersion = 7;
   installStyles();

@@ -424,6 +424,7 @@ function scan() {
 }
 
 function installObservers() {
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function' || typeof MutationObserver === 'undefined') return;
   injectStyles();
   ensureControl();
   syncControl();
