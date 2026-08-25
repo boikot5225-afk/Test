@@ -11,7 +11,7 @@ const PENDING_SLOT_TTL_MS = 2500;
 function compactMeaning(value) {
   const raw = String(value || '').replace(/\s+/g, ' ').trim();
   if (!raw) return '';
-  if (raw === '…' || raw === '...') return '…';
+  if (raw === '…' || raw === '...') return '';
 
   let short = raw
     .split(/\s*(?:[;；]|[,，]|\/|\||·)\s*/)[0]
@@ -31,7 +31,7 @@ function compactMeaning(value) {
 function syncWrapper(wrap) {
   if (!wrap?.classList?.contains('rw-zh-gloss-wrap')) return;
   const raw = wrap.dataset.zhGlossRu || '';
-  wrap.dataset.zhGlossRuReadable = compactMeaning(raw) || (raw ? '…' : '');
+  wrap.dataset.zhGlossRuReadable = compactMeaning(raw) || '';
 }
 
 function stableKnownWrapperFor(word) {
@@ -148,13 +148,9 @@ function releaseKnownStableWrapper(word) {
 }
 
 function syncWordState(word) {
+  // toc44: word state must never dismantle or resize the Chinese annotation slot.
+  // Known/Unknown now changes only visibility; the wrapper remains in normal flow.
   if (!word?.classList?.contains('reader-word')) return;
-  if (word.classList.contains('rw-known')) {
-    if (freezeKnownWordInPlace(word)) return;
-    restorePendingKnownSlot(word);
-  } else {
-    releaseKnownStableWrapper(word);
-  }
 }
 
 function scan(root = document.getElementById('reader-chapter-text')) {
