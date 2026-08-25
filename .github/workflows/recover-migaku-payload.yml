@@ -13,69 +13,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Recover exact Migaku zh frequency list from public DB
+      - name: Inspect Migaku zh public frequency catalog
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p recovery
-          curl -fL --retry 3 --connect-timeout 20 --max-time 300 \
-            'https://migaku-public-data.migaku.com/dicts/zh_CN/frequency.db.gz' \
-            -o recovery/frequency.db.gz
-          gzip -dc recovery/frequency.db.gz > recovery/frequency.db
+          curl -fL --retry 3 --connect-timeout 20 --max-time 120 \
+            'https://migaku-public-data.migaku.com/dicts/index2.json' \
+            -o recovery/index2.json
           python3 - <<'PY'
           from pathlib import Path
-          import hashlib, json, sqlite3
-
-          db = Path('recovery/frequency.db')
-          con = sqlite3.connect(db)
-          rows = con.execute('''
-            SELECT term, frequency
-            FROM langFrequencyEntry
-            ORDER BY frequency ASC, id ASC
-          ''').fetchall()
-          con.close()
-          words = [str(term) for term, _ in rows]
-          freqs = [int(freq) for _, freq in rows]
-          exact = Path('data/zh_vocab_frequency_0.txt').read_text('utf-8').splitlines()
-          prefix = words[:len(exact)]
-          mismatches = [(i+1, a, b) for i, (a, b) in enumerate(zip(exact, prefix)) if a != b]
-          top = words[:39999]
-          dup_count = len(top) - len(set(top))
-          contiguous = all(freqs[i] <= freqs[i+1] for i in range(len(freqs)-1))
-          payload = json.dumps(top, ensure_ascii=False, separators=(',', ':'))
-          Path('recovery/zh_vocab_frequency.json').write_text(payload, 'utf-8')
-          report = {
-            'db_rows': len(rows),
-            'first5000_reference_count': len(exact),
-            'first5000_mismatch_count': len(mismatches),
-            'first_mismatches': mismatches[:20],
-            'top39999_count': len(top),
-            'top39999_unique': len(set(top)),
-            'top39999_duplicate_count': dup_count,
-            'frequency_nondecreasing': contiguous,
-            'first20': top[:20],
-            'rank4990_5005': top[4989:5005],
-            'last20': top[-20:],
-            'json_sha256': hashlib.sha256(payload.encode('utf-8')).hexdigest(),
-            'db_gz_sha256': hashlib.sha256(Path('recovery/frequency.db.gz').read_bytes()).hexdigest(),
-            'db_sha256': hashlib.sha256(db.read_bytes()).hexdigest(),
-          }
-          Path('recovery/public-db-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), 'utf-8')
-          print(json.dumps(report, ensure_ascii=False, indent=2))
-          if len(exact) != 5000:
-              raise SystemExit(f'reference list length is {len(exact)}, expected 5000')
-          if mismatches:
-              raise SystemExit(f'public DB differs from APK reference in {len(mismatches)} of first 5000 positions')
-          if len(top) != 39999:
-              raise SystemExit(f'top list length {len(top)}, expected 39999')
-          if dup_count:
-              raise SystemExit(f'top list contains {dup_count} duplicate terms')
+          import json
+          cat=json.loads(Path('recovery/index2.json').read_text('utf-8'))
+          zh=next(x for x in cat.get('languages',[]) if x.get('code')=='zh_CN')
+          out={k:zh.get(k) for k in ['code','name_en','frequency_url_db','frequency_lists','word_lists','vocabulary_lists'] if k in zh}
+          Path('recovery/zh_CN_catalog.json').write_text(json.dumps(out,ensure_ascii=False,indent=2),'utf-8')
+          print(json.dumps(out,ensure_ascii=False,indent=2))
           PY
-      - name: Upload recovery output
+      - name: Upload catalog
         uses: actions/upload-artifact@v4
         with:
-          name: migaku-public-frequency
-          path: |
-            recovery/public-db-report.json
-            recovery/zh_vocab_frequency.json
+          name: migaku-zh-catalog
+          path: recovery/zh_CN_catalog.json
           if-no-files-found: error
