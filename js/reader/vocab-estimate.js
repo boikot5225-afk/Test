@@ -22,10 +22,11 @@ const STEP2_COUNT = 42;
 let frequencyPromise = null;
 let frequencyData = null;
 let assessment = null;
-let refreshScheduled = false;
-let observer = null;
-let glossObserver = null;
-let measureCanvas = null;
+let renderObserver = null;
+let renderObserverRoot = null;
+let pendingWordNodes = new Set();
+let pendingBatchScheduled = false;
+let toolbarButton = null;
 
 function canonicalLang(value) {
   const lang = String(value || '').toLowerCase();
@@ -258,71 +259,48 @@ function classificationFor(word, lang = 'zh') {
   };
 }
 
-function measureContext() {
-  if (!measureCanvas) measureCanvas = document.createElement('canvas');
-  return measureCanvas.getContext?.('2d') || null;
-}
-
-function labelWidth(text, px, weight = 400) {
-  const value = String(text || '').trim();
-  if (!value) return 0;
-  const ctx = measureContext();
-  if (!ctx) return value.length * px * 0.56;
-  ctx.font = `${weight} ${px}px "IBM Plex Sans", system-ui, sans-serif`;
-  return Number(ctx.measureText(value)?.width || 0);
-}
-
-function syncGlossLayout(wordEl, classification) {
-  const wrap = wordEl?.parentElement?.classList?.contains('rw-zh-gloss-wrap') ? wordEl.parentElement : null;
-  if (!wrap) return;
-  if (classification?.value !== 'unknown') {
-    wrap.classList.remove('rw-migaku-gloss-active');
-    wrap.style.removeProperty('--rw-migaku-annotation-width');
-    return;
+function manualKnowledgeMapSnapshot(store = wordStateStore()) {
+  const map = new Map();
+  for (const state of Object.values(store || {})) {
+    if (!state || canonicalLang(state.lang) !== 'zh') continue;
+    const explicit = manualKnowledge(state);
+    const word = normalizeWord(state.word, 'zh');
+    if (explicit && word) map.set(word, explicit);
   }
-
-  let fontSize = 32;
-  try { fontSize = parseFloat(getComputedStyle(wordEl).fontSize) || fontSize; } catch {}
-  let wordWidth = 0;
-  try { wordWidth = Number(wordEl.getBoundingClientRect?.().width || 0); } catch {}
-  if (!(wordWidth > 0)) wordWidth = Math.max(1, String(wordEl.dataset?.word || wordEl.textContent || '').length) * fontSize;
-  const pinyin = String(wrap.dataset.zhGlossPinyin || '').trim();
-  const ru = String(wrap.dataset.zhGlossRuReadable || wrap.dataset.zhGlossRu || '').trim();
-  const desired = Math.min(
-    fontSize * 5.15,
-    Math.max(wordWidth + 4, labelWidth(pinyin, fontSize * 0.47, 500) + 8, labelWidth(ru, fontSize * 0.41, 400) + 8),
-  );
-  wrap.style.setProperty('--rw-migaku-annotation-width', `${Math.ceil(desired * 10) / 10}px`);
-  wrap.classList.add('rw-migaku-gloss-active');
+  return map;
 }
 
-function clearSyntheticKnown(el) {
-  if (el?.dataset?.readerVocabSyntheticKnown === '1') {
-    el.classList.remove('rw-known');
-    delete el.dataset.readerVocabSyntheticKnown;
-  }
+function classificationForSnapshot(word, profile, manualMap) {
+  const normalized = normalizeWord(word, 'zh');
+  if (!normalized) return { value: '', source: '', index: null, rank: null };
+  const manual = manualMap?.get(normalized) || '';
+  const index = frequencyData?.rank?.get(normalized);
+  const rank = Number.isInteger(index) ? index + 1 : null;
+  if (manual) return { value: manual, source: 'manual', index, rank };
+  if (!profile) return { value: '', source: '', index, rank };
+  if (!frequencyData) return { value: '', source: 'pending', index: null, rank: null };
+  if (!Number.isInteger(index)) return { value: 'unknown', source: 'unranked', index: null, rank: null, ...profile };
+  return {
+    value: index < profile.conservativeKnownCount ? 'known' : 'unknown',
+    source: 'assessment', index, rank,
+    estimate: profile.estimate,
+    conservativeKnownCount: profile.conservativeKnownCount,
+  };
 }
 
 function removeKnowledgeClasses(el) {
-  clearSyntheticKnown(el);
   el.classList.remove('rw-migaku-known', 'rw-migaku-unknown');
   delete el.dataset.readerEstimatedKnowledge;
   delete el.dataset.readerManualKnowledge;
-  const wrap = el.parentElement?.classList?.contains('rw-zh-gloss-wrap') ? el.parentElement : null;
-  wrap?.classList?.remove('rw-migaku-gloss-active');
 }
 
 function applyClassificationToElement(el, classification) {
   removeKnowledgeClasses(el);
   if (classification?.value === 'known') {
     el.classList.add('rw-migaku-known');
-    // Visual-only synthetic rw-known also tells the Chinese gloss data layer not
-    // to request/keep annotations for words the assessment already considers known.
-    if (!el.classList.contains('rw-known')) {
-      el.classList.add('rw-known');
-      el.dataset.readerVocabSyntheticKnown = '1';
-    }
   } else if (classification?.value === 'unknown') {
+    // Only explicit Unknown may clear an old legacy Known marker. Automatic
+    // Known never creates rw-known, so the stable Chinese gloss DOM is intact.
     el.classList.remove('rw-known');
     el.classList.add('rw-migaku-unknown');
   } else {
@@ -331,7 +309,6 @@ function applyClassificationToElement(el, classification) {
 
   if (classification.source === 'manual') el.dataset.readerManualKnowledge = classification.value;
   else el.dataset.readerEstimatedKnowledge = classification.value;
-  syncGlossLayout(el, classification);
 
   const rankText = Number.isInteger(classification.rank) ? ` · частотность #${formatNumber(classification.rank)}` : '';
   if (classification.source === 'manual') {
@@ -343,26 +320,35 @@ function applyClassificationToElement(el, classification) {
   }
 }
 
+function applyClassificationBatch(elements) {
+  const list = Array.from(elements || []);
+  if (!list.length) return;
+  const profile = loadProfile();
+  const manualMap = manualKnowledgeMapSnapshot();
+  for (const el of list) {
+    if (!el?.classList?.contains('reader-word')) continue;
+    const lang = canonicalLang(el.dataset.lang || currentLang());
+    if (lang !== 'zh') {
+      removeKnowledgeClasses(el);
+      continue;
+    }
+    const word = el.dataset.word || el.textContent || '';
+    applyClassificationToElement(el, classificationForSnapshot(word, profile, manualMap));
+  }
+}
+
 async function applyEstimateToRenderedWords() {
   const root = document.getElementById('reader-chapter-text');
   if (!root) return;
-  const words = [...root.querySelectorAll('.reader-word[data-word]')];
-  if (!words.length) { decorateWordPanel(); return; }
-  const hasZh = words.some(el => canonicalLang(el.dataset.lang || root.dataset.lang) === 'zh');
-  if (hasZh && !frequencyData) {
+  const profile = loadProfile();
+  if (profile && !frequencyData) {
     try { await loadFrequencyData(); }
-    catch (error) {
-      console.warn('[reader vocab] frequency data unavailable', error?.message || error);
-      return;
-    }
+    catch (error) { console.warn('[reader vocab] frequency data unavailable', error?.message || error); }
   }
-  for (const el of words) {
-    const lang = canonicalLang(el.dataset.lang || root.dataset.lang || currentLang());
-    const word = el.dataset.word || el.textContent || '';
-    applyClassificationToElement(el, classificationFor(word, lang));
-  }
+  applyClassificationBatch(root.querySelectorAll('.reader-word[data-word]'));
   decorateWordPanel();
   syncPanelKnowledge();
+  ensureVocabularyButton();
 }
 
 function profileButtonText() {
@@ -433,7 +419,7 @@ function decorateWordPanel() {
     actions.before(block);
     block.querySelector('#reader-migaku-known-btn')?.addEventListener('click', () => markCurrentWord(true));
     block.querySelector('#reader-migaku-unknown-btn')?.addEventListener('click', () => markCurrentWord(false));
-    block.querySelector('#reader-vocab-estimate-btn')?.addEventListener('click', () => openVocabularyEstimate());
+    block.querySelector('#reader-vocab-estimate-btn')?.addEventListener('click', () => openVocabularyDashboard());
   }
   syncPanelKnowledge();
 }
@@ -558,6 +544,64 @@ function modalShell(inner, { title = 'Оценка словарного запа
 function bindModalChrome(modal, { back = null } = {}) {
   modal.querySelector('.rve-close')?.addEventListener('click', closeVocabularyEstimate);
   if (back) modal.querySelector('.rve-back')?.addEventListener('click', back);
+}
+
+function currentVocabularyStats() {
+  const root = document.getElementById('reader-chapter-text');
+  const unique = new Set();
+  root?.querySelectorAll('.reader-word[data-word]').forEach(el => {
+    if (canonicalLang(el.dataset.lang || currentLang()) !== 'zh') return;
+    const word = normalizeWord(el.dataset.word || el.textContent || '', 'zh');
+    if (word) unique.add(word);
+  });
+  const profile = loadProfile();
+  const manualMap = manualKnowledgeMapSnapshot();
+  let known = 0;
+  let unknown = 0;
+  let unclassified = 0;
+  for (const word of unique) {
+    const info = classificationForSnapshot(word, profile, manualMap);
+    if (info.value === 'known') known += 1;
+    else if (info.value === 'unknown') unknown += 1;
+    else unclassified += 1;
+  }
+  return { total: unique.size, known, unknown, unclassified };
+}
+
+async function openVocabularyDashboard() {
+  installStyles();
+  const modal = ensureModal();
+  modal.innerHTML = modalShell('<div class="rve-copy">Загружаю словарь…</div>', { title: 'Китайский словарь' });
+  bindModalChrome(modal);
+  try { await loadFrequencyData(); }
+  catch (error) {
+    modal.innerHTML = modalShell(`<div class="rve-copy">Не удалось загрузить частотный список: ${String(error?.message || error)}</div>`, { title: 'Китайский словарь' });
+    bindModalChrome(modal);
+    return;
+  }
+
+  const profile = loadProfile();
+  const stats = currentVocabularyStats();
+  const knownPct = stats.total ? Math.round(stats.known * 100 / stats.total) : 0;
+  const unknownPct = stats.total ? Math.round(stats.unknown * 100 / stats.total) : 0;
+  modal.innerHTML = modalShell(`
+    <div class="rve-dashboard">
+      <div class="rve-result-kicker">Measure my level</div>
+      <div class="rve-number">${profile ? `≈ ${formatNumber(profile.estimate)}` : '—'}</div>
+      <div class="rve-result-label">${profile ? 'оценка китайского словаря' : 'уровень ещё не измерен'}</div>
+      ${profile ? `<div class="rve-known-baseline"><b>${formatNumber(profile.conservativeKnownCount)}</b><span>автоматически Known</span></div>` : ''}
+      <div class="rve-stat-grid">
+        <div><b>${formatNumber(stats.total)}</b><span>уникальных слов<br>в текущей главе</span></div>
+        <div><b>${formatNumber(stats.known)}</b><span>Known · ${knownPct}%</span></div>
+        <div><b>${formatNumber(stats.unknown)}</b><span>Unknown · ${unknownPct}%</span></div>
+      </div>
+      ${stats.unclassified ? `<div class="rve-rule">${formatNumber(stats.unclassified)} слов пока без классификации.</div>` : ''}
+      <button class="rve-primary" data-rve-measure type="button">${profile ? 'Пройти тест заново' : 'Оценить мой уровень'}</button>
+      <button class="rve-secondary" data-rve-close type="button">Вернуться к чтению</button>
+    </div>`, { title: 'Китайский словарь' });
+  bindModalChrome(modal);
+  modal.querySelector('[data-rve-measure]')?.addEventListener('click', openVocabularyEstimate);
+  modal.querySelector('[data-rve-close]')?.addEventListener('click', closeVocabularyEstimate);
 }
 
 async function openVocabularyEstimate() {
@@ -758,7 +802,7 @@ function renderAssessmentResult(profile) {
       <button class="rve-secondary" type="button">Пройти ещё раз</button>
     </div>`);
   bindModalChrome(modal);
-  modal.querySelector('.rve-done')?.addEventListener('click', closeVocabularyEstimate);
+  modal.querySelector('.rve-done')?.addEventListener('click', openVocabularyDashboard);
   modal.querySelector('.rve-secondary')?.addEventListener('click', () => startAssessment(frequencyData));
 }
 
@@ -811,36 +855,72 @@ function installStyles() {
     .rwp-migaku-source { min-height:1.2em;margin:7px 2px 0;font-size:.69rem;color:var(--text-muted);line-height:1.35; }
     .rwp-vocab-estimate-btn { width:100%;margin-top:7px;padding:8px 4px 2px;border:0;background:none;color:var(--accent);font-family:'IBM Plex Sans',sans-serif;font-size:.76rem;cursor:pointer;text-align:left; }
 
-    /* Let the existing Chinese gloss layer follow Known / Unknown from the
-       vocabulary estimate. Unknown receives the same baseline-safe annotation
-       geometry; Known stays plain even if the data layer had already wrapped it. */
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap.rw-migaku-gloss-active {
-      display:inline-block !important;position:relative !important;vertical-align:baseline !important;
-      width:var(--rw-migaku-annotation-width,auto) !important;min-width:var(--rw-migaku-annotation-width,0) !important;
-      max-width:var(--rw-migaku-annotation-width,none) !important;height:auto !important;margin:0 .035em !important;
-      padding:0 !important;line-height:1.12 !important;text-align:center !important;overflow:visible !important;
+    /* Known/Unknown does not own text geometry. The exact toc36 Chinese
+       annotation grid remains authoritative; these rules only decide visibility. */
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown) {
+      display:inline-grid !important;
+      grid-template-rows:.58em 1.08em .54em !important;
+      grid-template-columns:max-content !important;
+      align-items:center !important;
+      justify-items:center !important;
+      vertical-align:-.48em !important;
+      line-height:1 !important;
+      margin:0 .055em !important;
+      padding:0 .025em !important;
+      position:relative !important;
+      overflow:visible !important;
     }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap.rw-migaku-gloss-active > .reader-word {
-      display:inline-block !important;position:static !important;vertical-align:baseline !important;margin:0 !important;
-      padding:0 1px !important;line-height:1.12 !important;
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown) > .reader-word {
+      grid-row:2 !important;
+      grid-column:1 !important;
+      align-self:center !important;
+      justify-self:center !important;
+      display:inline !important;
+      margin:0 !important;
+      padding:0 1px !important;
+      line-height:1.08 !important;
     }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap.rw-migaku-gloss-active::before,
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap.rw-migaku-gloss-active::after {
-      display:block !important;position:absolute !important;left:50% !important;transform:translateX(-50%) !important;
-      width:calc(var(--rw-migaku-annotation-width,100%) - 2px) !important;max-width:calc(var(--rw-migaku-annotation-width,100%) - 2px) !important;
-      min-width:0 !important;height:auto !important;margin:0 !important;padding:0 !important;overflow:hidden !important;
-      text-overflow:ellipsis !important;white-space:nowrap !important;text-align:center !important;pointer-events:none !important;
-      font-family:'IBM Plex Sans',system-ui,sans-serif !important;line-height:1.05 !important;z-index:2 !important;
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown)::before,
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown)::after {
+      display:block !important;
+      position:static !important;
+      left:auto !important;
+      top:auto !important;
+      bottom:auto !important;
+      transform:none !important;
+      grid-column:1 !important;
+      justify-self:center !important;
+      width:max-content !important;
+      min-width:100% !important;
+      max-width:6.4em !important;
+      height:auto !important;
+      margin:0 !important;
+      padding:0 !important;
+      overflow:hidden !important;
+      text-overflow:ellipsis !important;
+      white-space:nowrap !important;
+      text-align:center !important;
+      pointer-events:none !important;
+      line-height:1 !important;
     }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap.rw-migaku-gloss-active::before {
-      content:attr(data-zh-gloss-pinyin) !important;bottom:calc(100% + .045em) !important;font-size:.47em !important;font-weight:500 !important;color:var(--text-muted) !important;
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown)::before {
+      grid-row:1 !important;
+      align-self:end !important;
+      content:attr(data-zh-gloss-pinyin) !important;
+      font-size:.51em !important;
+      font-weight:500 !important;
     }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap.rw-migaku-gloss-active::after {
-      content:attr(data-zh-gloss-ru-readable) !important;top:calc(100% + .045em) !important;font-size:.41em !important;font-weight:400 !important;color:var(--text-muted) !important;
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown)::after {
+      grid-row:3 !important;
+      align-self:start !important;
+      content:attr(data-zh-gloss-ru-readable) !important;
+      font-size:.46em !important;
+      font-weight:400 !important;
     }
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-known)::before,
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-known)::after {
-      content:'' !important;display:none !important;
+      content:'' !important;
+      display:none !important;
     }
 
     #${MODAL_ID} { position:fixed;inset:0;z-index:10040;display:flex;align-items:stretch;justify-content:center;background:#12002f;color:#fff; }
@@ -876,6 +956,11 @@ function installStyles() {
     #${MODAL_ID} .rve-known-baseline { display:flex;align-items:center;justify-content:center;gap:10px;margin:26px auto 8px;padding:14px;border-radius:16px;background:rgba(18,201,167,.10);max-width:330px; }
     #${MODAL_ID} .rve-known-baseline b { color:#12c9a7;font-size:1.55rem; }
     #${MODAL_ID} .rve-known-baseline span { color:#d7cfe2;font-size:.8rem; }
+    #${MODAL_ID} .rve-dashboard { max-width:520px;margin:4vh auto 0;text-align:center; }
+    #${MODAL_ID} .rve-stat-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:24px 0 8px; }
+    #${MODAL_ID} .rve-stat-grid > div { min-height:92px;padding:13px 8px;border-radius:16px;background:rgba(255,255,255,.07);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px; }
+    #${MODAL_ID} .rve-stat-grid b { font-size:1.45rem;color:#19d0b0; }
+    #${MODAL_ID} .rve-stat-grid span { color:#c9bfd7;font-size:.72rem;line-height:1.3; }
     @media(max-width:390px) {
       #${MODAL_ID} .rve-card { padding-left:16px;padding-right:16px; }
       #${MODAL_ID} .rve-word-grid { gap:12px 13px;min-height:390px; }
@@ -886,57 +971,107 @@ function installStyles() {
   document.head.appendChild(style);
 }
 
-function scheduleRefresh() {
-  if (refreshScheduled) return;
-  refreshScheduled = true;
-  requestAnimationFrame(() => {
-    refreshScheduled = false;
-    decorateWordPanel();
-    applyEstimateToRenderedWords().catch(() => {});
-  });
+function queueWordNode(node) {
+  if (!(node instanceof Element)) return;
+  if (node.classList.contains('reader-word')) pendingWordNodes.add(node);
+  node.querySelectorAll?.('.reader-word').forEach(word => pendingWordNodes.add(word));
 }
 
-function installObserver() {
-  if (observer || typeof MutationObserver === 'undefined') return;
-  observer = new MutationObserver(records => {
-    const meaningful = records.some(record => {
-      const target = record.target instanceof Element ? record.target : record.target?.parentElement;
-      if (!target) return true;
-      return !target.closest?.('.rwp-migaku-knowledge, #reader-vocab-estimate-modal');
-    });
-    if (meaningful) scheduleRefresh();
-  });
-  const root = document.documentElement || document.body;
-  if (root) observer.observe(root, { childList: true, subtree: true });
+function flushPendingWordNodes() {
+  pendingBatchScheduled = false;
+  if (pendingWordNodes.size) {
+    const batch = Array.from(pendingWordNodes);
+    pendingWordNodes.clear();
+    applyClassificationBatch(batch);
+  }
+  ensureVocabularyButton();
 }
 
-function installGlossObserver() {
-  if (glossObserver || typeof MutationObserver === 'undefined') return;
+function schedulePendingWordBatch() {
+  if (pendingBatchScheduled) return;
+  pendingBatchScheduled = true;
+  requestAnimationFrame(flushPendingWordNodes);
+}
+
+function installRenderObserver() {
+  if (typeof MutationObserver === 'undefined') return;
   const root = document.getElementById('reader-chapter-text');
-  if (!root) { setTimeout(installGlossObserver, 300); return; }
-  glossObserver = new MutationObserver(records => {
+  if (!root) { setTimeout(installRenderObserver, 250); return; }
+  if (renderObserver && renderObserverRoot === root) return;
+  renderObserver?.disconnect();
+  renderObserverRoot = root;
+  renderObserver = new MutationObserver(records => {
     for (const record of records) {
-      const wrap = record.target?.classList?.contains('rw-zh-gloss-wrap') ? record.target : null;
-      const word = wrap?.querySelector?.(':scope > .reader-word');
-      if (!word) continue;
-      syncGlossLayout(word, classificationFor(word.dataset.word || word.textContent || '', word.dataset.lang || 'zh'));
+      for (const node of record.addedNodes || []) queueWordNode(node);
     }
+    if (pendingWordNodes.size) schedulePendingWordBatch();
   });
-  glossObserver.observe(root, {
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['data-zh-gloss-pinyin', 'data-zh-gloss-ru', 'data-zh-gloss-ru-readable'],
-  });
+  renderObserver.observe(root, { childList: true, subtree: true });
+  root.querySelectorAll('.reader-word').forEach(word => pendingWordNodes.add(word));
+  schedulePendingWordBatch();
+}
+
+function ensureVocabularyButton() {
+  const top = document.querySelector('#reader-reading-view .rd-top');
+  if (!top) return null;
+  let button = document.getElementById('reader-vocab-btn');
+  if (!button) {
+    button = document.createElement('button');
+    button.id = 'reader-vocab-btn';
+    button.type = 'button';
+    button.className = 'rd-icon rd-vocab-btn';
+    button.textContent = '词';
+    button.title = 'Словарь · Measure my level';
+    button.setAttribute('aria-label', 'Словарь и оценка уровня');
+    button.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openVocabularyDashboard();
+    });
+    const pinyin = document.getElementById('reader-pinyin-btn');
+    if (pinyin?.parentNode === top) top.insertBefore(button, pinyin);
+    else top.appendChild(button);
+  }
+  toolbarButton = button;
+  button.style.display = currentLang() === 'zh' ? '' : 'none';
+  return button;
+}
+
+function installPanelHook() {
+  if (document.documentElement?.dataset?.readerVocabPanelHook === '1') return;
+  if (document.documentElement) document.documentElement.dataset.readerVocabPanelHook = '1';
+  document.addEventListener('click', event => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest?.('#reader-chapter-text .reader-word')) return;
+    queueMicrotask(() => { decorateWordPanel(); syncPanelKnowledge(); });
+    setTimeout(() => { decorateWordPanel(); syncPanelKnowledge(); }, 40);
+  }, true);
+}
+
+function warmFrequencyWhenUseful() {
+  if (!loadProfile()) return;
+  const run = () => loadFrequencyData()
+    .then(() => applyEstimateToRenderedWords())
+    .catch(error => console.warn('[reader vocab] unable to warm Mandarin list', error?.message || error));
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 900 });
+  else setTimeout(run, 250);
+}
+
+function bootVocabularyUi() {
+  ensureVocabularyButton();
+  installPanelHook();
+  installRenderObserver();
+  decorateWordPanel();
+  warmFrequencyWhenUseful();
 }
 
 export function installVocabularyEstimate() {
-  if (globalThis.__readerVocabularyEstimateVersion === 6) return;
-  globalThis.__readerVocabularyEstimateVersion = 6;
+  if (globalThis.__readerVocabularyEstimateVersion === 7) return;
+  globalThis.__readerVocabularyEstimateVersion = 7;
   installStyles();
-  installObserver();
-  installGlossObserver();
 
-  globalThis.readerOpenVocabularyEstimate = openVocabularyEstimate;
+  globalThis.readerOpenVocabularyEstimate = openVocabularyDashboard;
+  globalThis.readerStartVocabularyEstimate = openVocabularyEstimate;
   globalThis.readerCloseVocabularyEstimate = closeVocabularyEstimate;
   globalThis.readerApplyVocabularyEstimate = applyEstimateToRenderedWords;
   globalThis.readerMigakuMarkKnown = () => markCurrentWord(true);
@@ -944,11 +1079,12 @@ export function installVocabularyEstimate() {
   globalThis.readerVocabularyEstimateProfile = loadProfile;
   globalThis.readerVocabularyKnowledgeFor = (word, lang = 'zh') => classificationFor(word, lang);
 
-  loadFrequencyData().then(scheduleRefresh).catch(error => {
-    console.warn('[reader vocab] unable to preload Mandarin list', error?.message || error);
-  });
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', scheduleRefresh, { once: true });
-  else scheduleRefresh();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootVocabularyUi, { once: true });
+  } else {
+    bootVocabularyUi();
+  }
+  window.addEventListener('pageshow', bootVocabularyUi);
 }
 
 installVocabularyEstimate();
