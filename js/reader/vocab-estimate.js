@@ -9,8 +9,8 @@ import { wordStateIdbPut } from './word-state-idb-store.js?v=1';
 const PROFILE_BASE_KEY = 'an2_reader_vocab_estimate_v3';
 const WORD_STATE_BASE_KEY = 'an2_reader_word_state_v1';
 const OWNER_KEY = 'an2_reader_active_owner_v1';
-const DATA_URL = 'data/zh_vocab_frequency.txt.gz';
-const STYLE_ID = 'reader-migaku-vocab-style-v2';
+const DATA_URL = 'data/zh_vocab_frequency.txt.gz?v=40';
+const STYLE_ID = 'reader-migaku-vocab-style-v3';
 const MODAL_ID = 'reader-vocab-estimate-modal';
 const WORDS_PER_PAGE = 14;
 const STEP1_COUNT = 42;
@@ -145,13 +145,7 @@ function findWordState(word, lang = currentLang(), create = false) {
 
 function manualKnowledge(state) {
   const explicit = String(state?.manualKnowledge || '').toLowerCase();
-  if (explicit === 'known' || explicit === 'unknown') return explicit;
-  // Compatibility with Reader AI states created before this two-state layer.
-  if (state?.known && state?.autoKnown === false) return 'known';
-  if (state?.saved || ['problem', 'hard', 'learning', 'familiar'].includes(String(state?.status || '').toLowerCase())) {
-    return 'unknown';
-  }
-  return '';
+  return explicit === 'known' || explicit === 'unknown' ? explicit : '';
 }
 
 function showToast(message) {
@@ -197,6 +191,11 @@ async function loadFrequencyData() {
     .then(text => {
       const data = buildFrequencyData(text.split(/\r?\n/).map(x => x.trim()).filter(Boolean));
       if (data.words.length !== 39999) throw new Error(`frequency list length ${data.words.length}, expected 39999`);
+      if (data.rank.size !== 39999) throw new Error(`frequency list has ${39999 - data.rank.size} duplicate terms`);
+      const sentinels = [[0, '我'], [1, '的'], [6, '我们'], [4768, '天天'], [4986, '竭尽全力'], [4996, '据我所知'], [4999, '围绕']];
+      for (const [index, expected] of sentinels) {
+        if (data.words[index] !== expected) throw new Error(`frequency list mismatch at #${index + 1}: ${data.words[index] || '∅'} != ${expected}`);
+      }
       frequencyData = data;
       return data;
     })
@@ -925,8 +924,8 @@ function installGlossObserver() {
 }
 
 export function installVocabularyEstimate() {
-  if (globalThis.__readerVocabularyEstimateVersion === 3) return;
-  globalThis.__readerVocabularyEstimateVersion = 3;
+  if (globalThis.__readerVocabularyEstimateVersion === 4) return;
+  globalThis.__readerVocabularyEstimateVersion = 4;
   installStyles();
   installObserver();
   installGlossObserver();
