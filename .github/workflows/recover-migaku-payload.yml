@@ -13,26 +13,84 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect Migaku zh public frequency catalog
+      - name: Match Migaku APK list against official frequency lists
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p recovery
-          curl -fL --retry 3 --connect-timeout 20 --max-time 120 \
-            'https://migaku-public-data.migaku.com/dicts/index2.json' \
-            -o recovery/index2.json
           python3 - <<'PY'
           from pathlib import Path
-          import json
-          cat=json.loads(Path('recovery/index2.json').read_text('utf-8'))
-          zh=next(x for x in cat.get('languages',[]) if x.get('code')=='zh_CN')
-          out={k:zh.get(k) for k in ['code','name_en','frequency_url_db','frequency_lists','word_lists','vocabulary_lists'] if k in zh}
-          Path('recovery/zh_CN_catalog.json').write_text(json.dumps(out,ensure_ascii=False,indent=2),'utf-8')
-          print(json.dumps(out,ensure_ascii=False,indent=2))
+          import gzip, hashlib, json, sqlite3, urllib.request, urllib.parse
+
+          base='https://migaku-public-data.migaku.com/dicts'
+          catalog=json.load(urllib.request.urlopen(base+'/index2.json', timeout=60))
+          zh=next(x for x in catalog['languages'] if x.get('code')=='zh_CN')
+          exact=Path('data/zh_vocab_frequency_0.txt').read_text('utf-8').splitlines()
+          assert len(exact)==5000
+          report=[]
+          winner=None
+
+          for item in zh.get('frequency_lists',[]):
+              rel=item.get('url_db')
+              if not rel: continue
+              url=base + urllib.parse.quote(rel, safe='/')
+              name=item.get('name') or rel
+              print('Downloading', name, url)
+              raw=urllib.request.urlopen(url, timeout=180).read()
+              dbbytes=gzip.decompress(raw)
+              safe=''.join(c if c.isalnum() else '_' for c in name)
+              dbp=Path('recovery')/(safe+'.db')
+              dbp.write_bytes(dbbytes)
+              con=sqlite3.connect(dbp)
+              tables=[r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+              table='langFrequencyEntry' if 'langFrequencyEntry' in tables else tables[0]
+              cols=[r[1] for r in con.execute(f'PRAGMA table_info({table})')]
+              termcol='term' if 'term' in cols else cols[0]
+              freqcol='frequency' if 'frequency' in cols else None
+              idcol='id' if 'id' in cols else 'rowid'
+              order=f'{freqcol} ASC, {idcol} ASC' if freqcol else f'{idcol} ASC'
+              rows=con.execute(f'SELECT {termcol} FROM {table} ORDER BY {order}').fetchall()
+              con.close()
+              words=[str(r[0]) for r in rows]
+              mism=[(i+1,a,b) for i,(a,b) in enumerate(zip(exact,words[:5000])) if a!=b]
+              info={
+                  'name':name,'url_db':rel,'rows':len(words),'table':table,'columns':cols,
+                  'mismatch_count_first5000':len(mism),
+                  'first_mismatches':mism[:10],
+                  'first20':words[:20],
+                  'rank4990_5005':words[4989:5005],
+                  'last20':words[-20:],
+                  'gz_sha256':hashlib.sha256(raw).hexdigest(),
+              }
+              report.append(info)
+              print(json.dumps(info,ensure_ascii=False,indent=2))
+              if len(words)>=39999 and not mism:
+                  winner=(name,words)
+
+          Path('recovery/match-report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),'utf-8')
+          if not winner:
+              raise SystemExit('No official frequency list matches the exact 5000-word APK prefix')
+          name,words=winner
+          top=words[:39999]
+          payload=json.dumps(top,ensure_ascii=False,separators=(',',':'))
+          out=Path('recovery/zh_vocab_frequency.json')
+          out.write_text(payload,'utf-8')
+          summary={
+              'winner':name,'count':len(top),'unique':len(set(top)),
+              'first20':top[:20],'last20':top[-20:],
+              'sha256':hashlib.sha256(payload.encode()).hexdigest()
+          }
+          Path('recovery/winner.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),'utf-8')
+          print('WINNER',json.dumps(summary,ensure_ascii=False,indent=2))
+          assert len(top)==39999 and len(set(top))==39999
           PY
-      - name: Upload catalog
+      - name: Upload matched list
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: migaku-zh-catalog
-          path: recovery/zh_CN_catalog.json
-          if-no-files-found: error
+          name: migaku-frequency-match
+          path: |
+            recovery/match-report.json
+            recovery/winner.json
+            recovery/zh_vocab_frequency.json
+          if-no-files-found: warn
