@@ -22,11 +22,11 @@ jobs:
           ref: feature/77.42-epub-toc
           fetch-depth: 0
 
-      - name: Verify and patch Android gzip asset path
+      - name: Patch Android plain-text asset loading
         shell: bash
         run: |
           set -euo pipefail
-          expected='fa9b6270ce2c2325750b587b09d801e76ec150f1'
+          expected='f8d123b1642b931c10d09fecbdafed8bbc8a0d47'
           actual="$(git rev-parse HEAD)"
           echo "base SHA=$actual"
           test "$actual" = "$expected" || { echo "feature branch moved unexpectedly"; exit 1; }
@@ -36,19 +36,25 @@ jobs:
 
           p=Path('js/reader/vocab-estimate.js')
           t=p.read_text('utf-8')
-          old="const DATA_URL = 'data/zh_vocab_frequency.txt.gz?v=40';"
-          new="""const DATA_URL = globalThis.location?.hostname === 'appassets.androidplatform.net'\n  ? 'data/zh_vocab_frequency.txt'\n  : 'data/zh_vocab_frequency.txt.gz?v=40';"""
+          old="""const DATA_URL = globalThis.location?.hostname === 'appassets.androidplatform.net'\n  ? 'data/zh_vocab_frequency.txt'\n  : 'data/zh_vocab_frequency.txt.gz?v=40';"""
+          new="""const IS_ANDROID_ASSET = globalThis.location?.hostname === 'appassets.androidplatform.net';\nconst DATA_URL = IS_ANDROID_ASSET\n  ? 'data/zh_vocab_frequency.txt'\n  : 'data/zh_vocab_frequency.txt.gz?v=40';"""
           if old not in t: raise SystemExit('DATA_URL anchor missing')
           t=t.replace(old,new,1)
-          old="if (globalThis.__readerVocabularyEstimateVersion === 4) return;\n  globalThis.__readerVocabularyEstimateVersion = 4;"
-          new="if (globalThis.__readerVocabularyEstimateVersion === 5) return;\n  globalThis.__readerVocabularyEstimateVersion = 5;"
+
+          old="""      if (!response.ok) throw new Error(`${DATA_URL}: HTTP ${response.status}`);\n      if (typeof DecompressionStream !== 'function') {\n        throw new Error('gzip decompression is unavailable in this WebView');\n      }\n      const stream = response.body?.pipeThrough(new DecompressionStream('gzip'));\n      if (!stream) throw new Error('frequency data stream unavailable');\n      return new Response(stream).text();"""
+          new="""      if (!response.ok) throw new Error(`${DATA_URL}: HTTP ${response.status}`);\n      // Android's AAPT transparently expands .gz assets and removes the suffix.\n      // The WebView therefore receives plain UTF-8 at the stripped .txt path.\n      if (IS_ANDROID_ASSET) return response.text();\n      if (typeof DecompressionStream !== 'function') {\n        throw new Error('gzip decompression is unavailable in this browser');\n      }\n      const stream = response.body?.pipeThrough(new DecompressionStream('gzip'));\n      if (!stream) throw new Error('frequency data stream unavailable');\n      return new Response(stream).text();"""
+          if old not in t: raise SystemExit('loadFrequencyData anchor missing')
+          t=t.replace(old,new,1)
+
+          old="if (globalThis.__readerVocabularyEstimateVersion === 5) return;\n  globalThis.__readerVocabularyEstimateVersion = 5;"
+          new="if (globalThis.__readerVocabularyEstimateVersion === 6) return;\n  globalThis.__readerVocabularyEstimateVersion = 6;"
           if old not in t: raise SystemExit('version guard anchor missing')
           p.write_text(t.replace(old,new,1),'utf-8')
 
           p=Path('js/reader/interactions-runtime.js')
           t=p.read_text('utf-8')
-          old="import './vocab-estimate.js?v=4';"
-          new="import './vocab-estimate.js?v=5';"
+          old="import './vocab-estimate.js?v=5';"
+          new="import './vocab-estimate.js?v=6';"
           if old not in t: raise SystemExit('runtime import anchor missing')
           p.write_text(t.replace(old,new,1),'utf-8')
           PY
@@ -56,10 +62,10 @@ jobs:
           node --check js/reader/vocab-estimate.js
           node --check js/reader/interactions-runtime.js
           git diff --check
-          grep -qF "? 'data/zh_vocab_frequency.txt'" js/reader/vocab-estimate.js
-          grep -qF ": 'data/zh_vocab_frequency.txt.gz?v=40';" js/reader/vocab-estimate.js
-          grep -qF "import './vocab-estimate.js?v=5'" js/reader/interactions-runtime.js
-          grep -qF '__readerVocabularyEstimateVersion === 5' js/reader/vocab-estimate.js
+          grep -qF "const IS_ANDROID_ASSET = globalThis.location?.hostname === 'appassets.androidplatform.net';" js/reader/vocab-estimate.js
+          grep -qF 'if (IS_ANDROID_ASSET) return response.text();' js/reader/vocab-estimate.js
+          grep -qF "import './vocab-estimate.js?v=6'" js/reader/interactions-runtime.js
+          grep -qF '__readerVocabularyEstimateVersion === 6' js/reader/vocab-estimate.js
 
       - name: Verify exact Migaku source asset
         shell: bash
@@ -69,8 +75,9 @@ jobs:
           from pathlib import Path
           import gzip,hashlib
           raw=Path('data/zh_vocab_frequency.txt.gz').read_bytes()
-          words=gzip.decompress(raw).decode('utf-8').splitlines()
-          sha=hashlib.sha256(('\n'.join(words)+'\n').encode()).hexdigest()
+          plain=gzip.decompress(raw)
+          words=plain.decode('utf-8').splitlines()
+          sha=hashlib.sha256(plain).hexdigest()
           assert len(words)==39999 and len(set(words))==39999
           assert sha=='e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64',sha
           assert words[:20]==['我','的','你','了','是','在','我们','这','个','他','不','一','好','会','吗','很','有','人','到','就']
@@ -78,7 +85,7 @@ jobs:
           print('source Migaku list verified',sha)
           PY
 
-      - name: Commit Android asset-path fix
+      - name: Commit Android AAPT loading fix
         shell: bash
         run: |
           set -euo pipefail
@@ -86,7 +93,7 @@ jobs:
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git add js/reader/vocab-estimate.js js/reader/interactions-runtime.js
           git diff --cached --check
-          git commit -m 'fix(reader): load AAPT-stripped gzip asset on Android'
+          git commit -m 'fix(reader): read AAPT-expanded vocabulary asset as text'
           final_sha="$(git rev-parse HEAD)"
           echo "FINAL_SOURCE_SHA=$final_sha" | tee /tmp/source-sha.txt
           git push origin HEAD:feature/77.42-epub-toc
@@ -132,36 +139,39 @@ jobs:
           echo "APK bytes=$(stat -c%s "$APK")"
 
           python3 - "$APK" <<'PY'
-          import gzip,hashlib,sys,zipfile
+          import hashlib,sys,zipfile
           apk=sys.argv[1]
+          expected_sha='e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64'
           with zipfile.ZipFile(apk) as z:
               names=set(z.namelist())
-              stripped='assets/www/data/zh_vocab_frequency.txt'
+              asset='assets/www/data/zh_vocab_frequency.txt'
               original='assets/www/data/zh_vocab_frequency.txt.gz'
               runtime_path='assets/www/js/reader/interactions-runtime.js'
               vocab_path='assets/www/js/reader/vocab-estimate.js'
               matches=sorted(n for n in names if 'zh_vocab' in n)
               print('zh_vocab APK entries:',matches)
-              assert stripped in names, 'AAPT-stripped frequency asset missing'
+              assert asset in names, 'AAPT-expanded frequency asset missing'
               assert original not in names, 'unexpected .gz name survived AAPT'
               assert not any(n.startswith('assets/www/data/zh_vocab_b64/') for n in names), 'base64 fragments leaked'
               assert 'assets/www/js/reader/zh-vocab-data-bridge.js' not in names, 'obsolete bridge leaked'
               runtime=z.read(runtime_path).decode('utf-8')
               vocab=z.read(vocab_path).decode('utf-8')
-              assert "import './vocab-estimate.js?v=5'" in runtime
+              assert "import './vocab-estimate.js?v=6'" in runtime
               assert 'zh-vocab-data-bridge.js' not in runtime
-              assert "globalThis.location?.hostname === 'appassets.androidplatform.net'" in vocab
+              assert "const IS_ANDROID_ASSET = globalThis.location?.hostname === 'appassets.androidplatform.net';" in vocab
+              assert 'if (IS_ANDROID_ASSET) return response.text();' in vocab
               assert "? 'data/zh_vocab_frequency.txt'" in vocab
               assert ": 'data/zh_vocab_frequency.txt.gz?v=40';" in vocab
               assert "return explicit === 'known' || explicit === 'unknown' ? explicit : '';" in vocab
-              assert '__readerVocabularyEstimateVersion === 5' in vocab
-              raw=z.read(stripped)
-              words=gzip.decompress(raw).decode('utf-8').splitlines()
-              sha=hashlib.sha256(('\n'.join(words)+'\n').encode()).hexdigest()
+              assert '__readerVocabularyEstimateVersion === 6' in vocab
+              plain=z.read(asset)
+              sha=hashlib.sha256(plain).hexdigest()
+              words=plain.decode('utf-8').splitlines()
               assert len(words)==39999 and len(set(words))==39999
-              assert sha=='e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64',sha
+              assert sha==expected_sha,sha
+              assert words[:20]==['我','的','你','了','是','在','我们','这','个','他','不','一','好','会','吗','很','有','人','到','就']
               assert words[4768]=='天天' and words[4986]=='竭尽全力' and words[4996]=='据我所知' and words[4999]=='围绕'
-              print('embedded Migaku list verified:',sha)
+              print('embedded AAPT-expanded Migaku list verified:',sha)
               print('APK entries:',len(names))
           PY
 
