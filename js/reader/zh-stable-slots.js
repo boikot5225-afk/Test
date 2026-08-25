@@ -148,7 +148,7 @@ function installStyles() {
     }
 
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .reader-word)::after {
-      content:attr(data-zh-gloss-ru-readable) !important;
+      content:attr(data-zh-gloss-ru) !important;
       bottom:.015em !important;
       font-size:.46em !important;
       font-weight:400 !important;
@@ -164,8 +164,8 @@ function installStyles() {
 
     /* A loading placeholder is visually empty. Real ellipsis inside a genuine
        translation is untouched; only the exact placeholder values disappear. */
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap[data-zh-gloss-ru-readable="…"]::after,
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap[data-zh-gloss-ru-readable="..."]::after {
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap[data-zh-gloss-ru="…"]::after,
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap[data-zh-gloss-ru="..."]::after {
       content:'' !important;
     }
   `;
@@ -173,6 +173,7 @@ function installStyles() {
 }
 
 function installObserver() {
+  if (typeof MutationObserver === 'undefined') return;
   const root = document.getElementById('reader-chapter-text');
   if (!root) { setTimeout(installObserver, 250); return; }
   if (rootObserver && observedRoot === root) return;
@@ -197,6 +198,7 @@ function installObserver() {
 }
 
 function install() {
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
   installStyles();
   prepareStableSlots();
   installObserver();

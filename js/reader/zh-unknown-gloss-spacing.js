@@ -98,6 +98,7 @@ function injectSpacingStyle() {
 }
 
 function install() {
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
   injectSpacingStyle();
   installModeBridge();
 }
