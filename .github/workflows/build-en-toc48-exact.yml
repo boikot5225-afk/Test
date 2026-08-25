@@ -1,0 +1,161 @@
+name: Build English toc48 exact
+
+on:
+  push:
+    branches: [tmp-en-toc48-stage-20260825]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TARGET_SHA: bb5d21841cdc6eacac8018200cd7868d519d74aa
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: bb5d21841cdc6eacac8018200cd7868d519d74aa
+          fetch-depth: 0
+
+      - name: Prove exact source and one-commit ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test "$(git rev-parse HEAD^)" = "12cdec14faf49b2e38227d2f6a6717ae8058dc07"
+          test "$(git rev-list --count 12cdec14faf49b2e38227d2f6a6717ae8058dc07..HEAD)" = 1
+          git diff --quiet 12cdec14faf49b2e38227d2f6a6717ae8058dc07 -- \
+            js/reader/zh-unknown-gloss.js \
+            js/reader/zh-unknown-gloss-spacing.js \
+            js/reader/zh-stable-slots.js \
+            js/reader/chapter-render.js \
+            js/reader/chapter-render-next.js \
+            js/reader/chapter-render-stage1.js
+          echo "exact candidate: $(git rev-parse HEAD)"
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            echo 'ANDROID_KEYSTORE_BASE64 is missing'; exit 1
+          fi
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: English data and algorithm regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-reader-en-vocab-toc48.mjs
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          freq=Path('data/en_vocab_frequency.tsv').read_bytes()
+          lemma=Path('data/en_vocab_lemma.tsv').read_bytes()
+          assert hashlib.sha256(freq).hexdigest()=='f7099da374058488567674093dbe2317a0ccd07b968375fd55b5800e21558765'
+          assert hashlib.sha256(lemma).hexdigest()=='93fa9e88f809d7fb3eed54faf6ace1355cc789fc85298759d0f6cdd06b7e4881'
+          gradle=Path('android/app/build.gradle').read_text()
+          assert 'versionCode 68' in gradle
+          assert "versionName '77.42-toc48'" in gradle
+          print('English fingerprints and version OK')
+          PY
+
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do node --check "$file"; done < <(find js -type f -name '*.js' -print0)
+
+      - name: Check frozen Reader performance and TOC guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qF "root.addEventListener('click'" js/reader/interactions.js
+          ! grep -qF "root.querySelectorAll('.reader-word')" js/reader/interactions.js
+          grep -qF 'HOT PATH: once the state is in memory, load() must be O(1)' js/reader/word-state.js
+          grep -qF 'scheduleLocalCommit(550)' js/reader/library-store.js
+          grep -qF 'function waitForIdle()' js/reader/chapter-render-next.js
+          grep -qF 'parseNcxToc' js/reader/toc-upgrade.js
+          grep -qF 'parseNavToc' js/reader/toc-upgrade.js
+          grep -qF 'TOMBSTONES_BASE_KEY' js/reader/delete-fix.js
+          grep -qF "import './toc-upgrade.js?v=1'" js/reader/interactions-runtime.js
+          grep -qF "import './en-vocab-estimate.js?v=1'" js/reader/interactions-runtime.js
+          grep -qF "import './en-unknown-gloss.js?v=1'" js/reader/interactions-runtime.js
+          grep -qF 'readerPrepareEnStableSlots' js/reader/pages-mode.js
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Deep inspect built APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -n "$APK"
+          python3 - "$APK" <<'PY'
+          import sys, zipfile, hashlib, re
+          from pathlib import Path
+          apk=Path(sys.argv[1])
+          with zipfile.ZipFile(apk) as z:
+              names=set(z.namelist())
+              required=[
+                'assets/www/data/en_vocab_frequency.tsv',
+                'assets/www/data/en_vocab_lemma.tsv',
+                'assets/www/js/reader/en-vocab-estimate.js',
+                'assets/www/js/reader/en-unknown-gloss.js',
+                'assets/www/js/reader/interactions-runtime.js',
+                'assets/www/js/reader/pages-mode.js',
+                'assets/www/js/reader/vocab-estimate.js',
+                'assets/www/js/reader/zh-unknown-gloss.js',
+                'assets/www/js/reader/zh-stable-slots.js',
+                'assets/www/js/reader/chapter-render-next.js',
+              ]
+              missing=[x for x in required if x not in names]
+              if missing: raise SystemExit('missing APK assets: '+repr(missing))
+              freq=z.read('assets/www/data/en_vocab_frequency.tsv')
+              lemma=z.read('assets/www/data/en_vocab_lemma.tsv')
+              assert hashlib.sha256(freq).hexdigest()=='f7099da374058488567674093dbe2317a0ccd07b968375fd55b5800e21558765'
+              assert hashlib.sha256(lemma).hexdigest()=='93fa9e88f809d7fb3eed54faf6ace1355cc789fc85298759d0f6cdd06b7e4881'
+              rows=freq.decode().rstrip('\n').split('\n')
+              assert len(rows)==36566 and len({r.split('\t',1)[0] for r in rows})==36566
+              assert rows[0].startswith('I\t') and rows[1].startswith('be\t') and rows[17].startswith('go\t') and rows[-1].startswith('unbend\t')
+              lm=dict(line.split('\t',1) for line in lemma.decode().rstrip('\n').split('\n'))
+              for s,t in {'went':'go','gone':'go','going':'go','goes':'go','am':'be','is':'be','was':'be','were':'be','aimed':'aim','better':'good','best':'good'}.items(): assert lm[s]==t
+              runtime=z.read('assets/www/js/reader/interactions-runtime.js').decode()
+              assert "en-vocab-estimate.js?v=1" in runtime and "en-unknown-gloss.js?v=1" in runtime
+              pages=z.read('assets/www/js/reader/pages-mode.js').decode()
+              assert 'readerPrepareEnStableSlots' in pages
+              en=z.read('assets/www/js/reader/en-vocab-estimate.js').decode()
+              assert 'const STEP1_COUNT = 42' in en and 'const STEP2_COUNT = 42' in en and 'const WORDS_PER_PAGE = 14' in en
+              gloss=z.read('assets/www/js/reader/en-unknown-gloss.js').decode()
+              assert 'const PREFETCH_PAGE_COUNT = 2' in gloss and 'const MAX_CONCURRENT = 4' in gloss
+              assert "content:'…'" not in gloss
+              assert not any(n.startswith('assets/www/scripts/') for n in names)
+          print('APK English assets and wiring OK')
+          print('APK sha256', hashlib.sha256(apk.read_bytes()).hexdigest())
+          PY
+          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -name apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify --print-certs "$APK"
+
+      - name: Upload exact APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc48-build68
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
