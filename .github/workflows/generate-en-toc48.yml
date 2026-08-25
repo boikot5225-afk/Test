@@ -167,8 +167,8 @@ jobs:
           assert.match(enVocab,/STEP1_COUNT = 42/);
           assert.match(enVocab,/STEP2_COUNT = 42/);
           assert.match(enVocab,/WORDS_PER_PAGE = 14/);
-          assert.match(enVocab,/center \* \.35/);
-          assert.match(enVocab,/value \* 0\.6/);
+          assert.match(enVocab,/center\s*\*\s*\.35/);
+          assert.match(enVocab,/value\s*\*\s*0\.6/);
           assert.match(enVocab,/manualKnowledge/);
           assert.match(enVocab,/went:'go'/);
 
