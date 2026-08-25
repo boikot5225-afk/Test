@@ -1,0 +1,144 @@
+name: Recover Migaku English frequency
+
+on:
+  push:
+    branches:
+      - tmp-recover-migaku-en-frequency-20260825
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Migaku Chrome extension and find large word arrays
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p recovery/ext recovery/report recovery/candidates
+          url='https://clients2.google.com/service/update2/crx?response=redirect&prodversion=131.0&acceptformat=crx2,crx3&x=id%3Dlkhiljgmbeecmljiogckofcalncmfnfo%26uc'
+          curl -fL --retry 4 --connect-timeout 30 --max-time 600 "$url" -o recovery/migaku.crx
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          b=Path('recovery/migaku.crx').read_bytes()
+          if b[:4]!=b'Cr24': raise SystemExit('not CRX')
+          ver=struct.unpack('<I',b[4:8])[0]
+          if ver==2:
+              a,c=struct.unpack('<II',b[8:16]); off=16+a+c
+          elif ver==3:
+              h=struct.unpack('<I',b[8:12])[0]; off=12+h
+          else: raise SystemExit(f'CRX version {ver}')
+          Path('recovery/ext.zip').write_bytes(b[off:])
+          print('crx',ver,'zip offset',off,'bytes',len(b)-off)
+          PY
+          unzip -q recovery/ext.zip -d recovery/ext
+          grep -RIlFa -- 'Measure my level' recovery/ext > recovery/report/measure-files.txt || true
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, re
+
+          files=[]
+          for line in Path('recovery/report/measure-files.txt').read_text('utf-8',errors='ignore').splitlines():
+              p=Path(line.strip())
+              if p.exists() and p.is_file(): files.append(p)
+          if not files:
+              files=[p for p in Path('recovery/ext').rglob('*.js') if p.stat().st_size>1_000_000]
+
+          def parse_js_string(text, i):
+              quote=text[i]
+              if quote not in "\"'": return None, i
+              i += 1; out=[]
+              while i < len(text):
+                  ch=text[i]
+                  if ch==quote:
+                      return ''.join(out), i+1
+                  if ch=='\\':
+                      i += 1
+                      if i>=len(text): return None, i
+                      esc=text[i]
+                      simple={'n':'\n','r':'\r','t':'\t','b':'\b','f':'\f','v':'\v','0':'\0','\\':'\\','\"':'\"',"'":"'"}
+                      if esc in simple: out.append(simple[esc]); i += 1; continue
+                      if esc=='u' and i+4 < len(text):
+                          raw=text[i+1:i+5]
+                          if re.fullmatch(r'[0-9a-fA-F]{4}',raw):
+                              out.append(chr(int(raw,16))); i += 5; continue
+                      if esc=='x' and i+2 < len(text):
+                          raw=text[i+1:i+3]
+                          if re.fullmatch(r'[0-9a-fA-F]{2}',raw):
+                              out.append(chr(int(raw,16))); i += 3; continue
+                      out.append(esc); i += 1; continue
+                  out.append(ch); i += 1
+              return None, i
+
+          def try_array(text, start):
+              i=start+1; arr=[]
+              n=len(text)
+              while i<n and text[i].isspace(): i+=1
+              if i>=n or text[i] not in "\"'": return None, start+1
+              while i<n:
+                  while i<n and text[i].isspace(): i+=1
+                  if i<n and text[i]==']': return arr, i+1
+                  if i>=n or text[i] not in "\"'": return None, start+1
+                  s,i2=parse_js_string(text,i)
+                  if s is None: return None,start+1
+                  arr.append(s); i=i2
+                  while i<n and text[i].isspace(): i+=1
+                  if i<n and text[i]==',':
+                      i+=1; continue
+                  if i<n and text[i]==']': return arr,i+1
+                  return None,start+1
+              return None,start+1
+
+          reports=[]
+          candidate_no=0
+          for p in files:
+              text=p.read_text('utf-8',errors='ignore')
+              i=0
+              print('scan',p,'chars',len(text))
+              while True:
+                  j=text.find('[',i)
+                  if j<0: break
+                  # fast reject: next non-space must be a quote
+                  k=j+1
+                  while k<len(text) and text[k].isspace(): k+=1
+                  if k>=len(text) or text[k] not in "\"'":
+                      i=j+1; continue
+                  arr,end=try_array(text,j)
+                  if arr is None:
+                      i=j+1; continue
+                  i=end
+                  if len(arr)<5000: continue
+                  ascii_words=sum(1 for s in arr if re.fullmatch(r"[A-Za-z][A-Za-z'’.-]*",s or ''))
+                  cjk_words=sum(1 for s in arr if re.search(r'[㐀-鿿]',s or ''))
+                  unique=len(set(arr))
+                  joined='\n'.join(arr)
+                  rec={
+                    'source':str(p),'offset':j,'length':len(arr),'unique':unique,
+                    'ascii_word_ratio':round(ascii_words/len(arr),5),
+                    'cjk_ratio':round(cjk_words/len(arr),5),
+                    'first40':arr[:40],'last40':arr[-40:],
+                    'sha256_lines':hashlib.sha256(joined.encode()).hexdigest(),
+                  }
+                  reports.append(rec)
+                  if rec['ascii_word_ratio']>0.70 and len(arr)>=10000:
+                      candidate_no += 1
+                      Path(f'recovery/candidates/en_candidate_{candidate_no}_{len(arr)}.json').write_text(json.dumps(arr,ensure_ascii=False,separators=(',',':')),'utf-8')
+                      Path(f'recovery/candidates/en_candidate_{candidate_no}_{len(arr)}.txt').write_text(joined,'utf-8')
+                      rec['saved_candidate']=candidate_no
+              
+          Path('recovery/report/large-arrays.json').write_text(json.dumps(reports,ensure_ascii=False,indent=2),'utf-8')
+          print(json.dumps(reports,ensure_ascii=False,indent=2))
+          if not any(r.get('ascii_word_ratio',0)>0.70 and r.get('length',0)>=10000 for r in reports):
+              raise SystemExit('no plausible English frequency array found')
+          PY
+      - name: Upload recovered candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: migaku-en-frequency-candidates
+          path: |
+            recovery/report/
+            recovery/candidates/
+          if-no-files-found: error
