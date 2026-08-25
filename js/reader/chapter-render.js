@@ -2,7 +2,9 @@ import './delete-fix.js?v=1';
 import './toc-registry.js?v=1';
 import './toc-navigation-fix.js?v=1';
 import './mobile-nav-stability.js?v=1';
+import './vocab-estimate-observer-pre.js?v=1';
 import './vocab-estimate.js?v=1';
+import './vocab-estimate-observer-post.js?v=1';
 import { setTocVisibleBook } from './toc-runtime.js?v=3';
 import { createReaderChapterRenderer as createBaseRenderer } from './chapter-render-dialogue.js?v=8';
 
