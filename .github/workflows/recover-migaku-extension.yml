@@ -1,0 +1,70 @@
+name: Recover Migaku extension asset
+
+on:
+  push:
+    branches:
+      - tmp-recover-migaku-extension-20260825
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and inspect Chrome extension
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p recovery/ext recovery/report recovery/matches
+          url='https://clients2.google.com/service/update2/crx?response=redirect&prodversion=131.0&acceptformat=crx2,crx3&x=id%3Dlkhiljgmbeecmljiogckofcalncmfnfo%26uc'
+          curl -fL --retry 4 --connect-timeout 30 --max-time 600 "$url" -o recovery/migaku.crx
+          echo "CRX bytes: $(stat -c%s recovery/migaku.crx)"
+          sha256sum recovery/migaku.crx | tee recovery/report/crx.sha256
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          p=Path('recovery/migaku.crx'); b=p.read_bytes()
+          if b[:4]!=b'Cr24': raise SystemExit('not CRX')
+          ver=struct.unpack('<I',b[4:8])[0]
+          if ver==2:
+              a,c=struct.unpack('<II',b[8:16]); off=16+a+c
+          elif ver==3:
+              h=struct.unpack('<I',b[8:12])[0]; off=12+h
+          else: raise SystemExit(f'CRX version {ver}')
+          Path('recovery/ext.zip').write_bytes(b[off:])
+          print('crx version',ver,'zip offset',off,'zip bytes',len(b)-off)
+          PY
+          unzip -q recovery/ext.zip -d recovery/ext
+          find recovery/ext -type f -printf '%s %p\n' | sort -nr | head -400 > recovery/report/files.txt
+          for pat in '竭尽全力' '据我所知' 'Measure my level' 'measureMyLevel' 'vocabulary estimate' '39999'; do
+            echo "=== $pat ===" >> recovery/report/grep.txt
+            grep -RIlFa -- "$pat" recovery/ext 2>/dev/null | head -100 >> recovery/report/grep.txt || true
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,shutil
+          root=Path('recovery/ext'); out=Path('recovery/matches')
+          pats=['竭尽全力'.encode(),'据我所知'.encode(),b'Measure my level',b'measureMyLevel',b'39999']
+          rows=[]
+          for p in root.rglob('*'):
+              if not p.is_file() or p.stat().st_size>80_000_000: continue
+              try:data=p.read_bytes()
+              except:continue
+              hits=[q.decode('utf-8','replace') for q in pats if q in data]
+              if not hits: continue
+              rows.append({'path':str(p.relative_to(root)),'size':len(data),'sha256':hashlib.sha256(data).hexdigest(),'hits':hits})
+              if len(data)<=25_000_000:
+                  shutil.copyfile(p,out/str(p.relative_to(root)).replace('/','__'))
+          Path('recovery/report/matches.json').write_text(json.dumps(rows,ensure_ascii=False,indent=2),'utf-8')
+          print(json.dumps(rows[:100],ensure_ascii=False,indent=2))
+          PY
+      - name: Upload inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: migaku-extension-inspection
+          path: |
+            recovery/report/
+            recovery/matches/
+          if-no-files-found: error
