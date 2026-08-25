@@ -26,8 +26,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 57
-        versionName '77.42-toc37'
+        versionCode 58
+        versionName '77.42-toc38'
     }
 
     buildFeatures {
@@ -76,59 +76,11 @@ dependencies {
     implementation 'androidx.webkit:webkit:1.12.1'
 }
 
-// Migaku-style vocabulary estimation needs a real frequency rank, not a fake
-// HSK-level shortcut. Keep the large upstream dataset out of the repository and
-// generate a tiny [word, rank] index into build/ from a pinned MIT-licensed
-// source. Because the commit is pinned, an upstream update cannot silently
-// change somebody's estimated vocabulary between Reader AI builds.
-def zhFrequencySourceCommit = '7ac65bf1a6387d35f1ade478906172a19311c7f9'
-def zhFrequencySourceUrl = "https://raw.githubusercontent.com/drkameleon/complete-hsk-vocabulary/${zhFrequencySourceCommit}/complete.min.json"
-def generatedReaderDataDir = layout.buildDirectory.dir('generated/readerData')
-def generatedZhFrequencyFile = generatedReaderDataDir.map { it.file('zh_vocab_frequency.json') }
+// Migaku-style vocabulary estimation uses a bundled Mandarin rank list copied
+// from the language frontend in the user's reference APK. It is shipped as a
+// compact gzip text asset and unpacked by the WebView at runtime.
 
-tasks.register('prepareZhVocabularyFrequency') {
-    outputs.file(generatedZhFrequencyFile)
-    doLast {
-        def output = generatedZhFrequencyFile.get().asFile
-        output.parentFile.mkdirs()
-
-        def connection = new URI(zhFrequencySourceUrl).toURL().openConnection()
-        connection.connectTimeout = 20000
-        connection.readTimeout = 90000
-        connection.setRequestProperty('User-Agent', 'ReaderAI-Android-build')
-
-        def payload
-        connection.inputStream.withCloseable { stream ->
-            payload = new groovy.json.JsonSlurper().parseText(stream.getText('UTF-8'))
-        }
-        def rows = payload instanceof List ? payload : (payload?.words instanceof List ? payload.words : [])
-        def byWord = [:]
-        rows.each { row ->
-            if (!(row instanceof Map)) return
-            def word = (row.s ?: row.simplified ?: '').toString().trim()
-            def rankRaw = row.q != null ? row.q : row.frequency
-            if (!word || !(rankRaw instanceof Number)) return
-            int rank = rankRaw.intValue()
-            if (rank <= 0) return
-            if (!byWord.containsKey(word) || rank < (byWord[word] as int)) byWord[word] = rank
-        }
-
-        def entries = byWord.collect { word, rank -> [word, rank] }
-            .sort { a, b -> (a[1] as int) <=> (b[1] as int) }
-        if (entries.size() < 5000) {
-            throw new GradleException("Chinese frequency index is unexpectedly small: ${entries.size()} entries")
-        }
-
-        def slim = [
-            version: 1,
-            source: "drkameleon/complete-hsk-vocabulary@${zhFrequencySourceCommit}",
-            license: 'MIT',
-            entries: entries,
-        ]
-        output.setText(groovy.json.JsonOutput.toJson(slim), 'UTF-8')
-        logger.lifecycle("Reader AI Chinese frequency index: ${entries.size()} words -> ${output}")
-    }
-}
+def bundledMigakuZhFrequency = file("${rootProject.projectDir.parentFile}/data/zh_vocab_frequency_migaku.txt.gz")
 
 /**
  * Copies the web app (repository root) into the APK's assets/www.
@@ -139,8 +91,6 @@ tasks.register('prepareZhVocabularyFrequency') {
  * the repository but never reach the APK.
  */
 tasks.register('syncWebAssets', Sync) {
-    dependsOn 'prepareZhVocabularyFrequency'
-
     from(rootProject.projectDir.parentFile) {
         // Not part of the web app at all.
         exclude '.git/**'
@@ -174,9 +124,6 @@ tasks.register('syncWebAssets', Sync) {
         // the ./app.js imports in js/ resolve to js/app.js. Anchored to the
         // root, since a bare 'app.js' pattern would also match js/app.js.
         exclude { it.relativePath.toString() == 'app.js' }
-    }
-    from(generatedReaderDataDir) {
-        into 'data'
     }
     into layout.buildDirectory.dir('generated/webAssets/www')
 }
