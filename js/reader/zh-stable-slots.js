@@ -1,7 +1,7 @@
-// Fixed Chinese annotation geometry for toc44.
+// Fixed Chinese annotation geometry for toc45.
 // Every Chinese token reserves the same three-row slot BEFORE page measurement.
 // Hint content is painted out-of-flow; Known/Unknown changes pixels, never geometry.
-const STYLE_ID = 'reader-zh-stable-slots-v1';
+const STYLE_ID = 'reader-zh-stable-slots-v2';
 let rootObserver = null;
 let observedRoot = null;
 
@@ -47,6 +47,15 @@ function ensureWordSlot(word) {
   if (!('zhGlossRu' in wrap.dataset)) wrap.dataset.zhGlossRu = '';
   if (!('zhGlossRuReadable' in wrap.dataset)) wrap.dataset.zhGlossRuReadable = '';
   normalizePlaceholder(wrap);
+
+  const rawWord = String(word.dataset.word || word.textContent || '');
+  const hanziCount = Math.max(1, Array.from(rawWord).filter(ch => /[㐀-鿿]/.test(ch)).length);
+  const slotWidthEm = hanziCount <= 1 ? 1.38
+    : hanziCount === 2 ? 2.12
+    : hanziCount === 3 ? 3.02
+    : hanziCount === 4 ? 3.95
+    : Math.min(6.2, hanziCount * .98);
+  wrap.style.setProperty('--rw-zh-slot-width', `${slotWidthEm}em`);
   return wrap;
 }
 
@@ -80,18 +89,18 @@ function installStyles() {
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .reader-word) {
       display:inline-grid !important;
       grid-template-rows:.58em 1.08em .54em !important;
-      grid-template-columns:max-content !important;
+      grid-template-columns:minmax(0,var(--rw-zh-slot-width,1.38em)) !important;
       align-items:center !important;
       justify-items:center !important;
       vertical-align:-.48em !important;
       line-height:1 !important;
-      margin:0 .055em !important;
+      margin:0 .075em !important;
       padding:0 .025em !important;
       position:relative !important;
       overflow:visible !important;
-      width:auto !important;
-      min-width:0 !important;
-      max-width:none !important;
+      width:var(--rw-zh-slot-width,1.38em) !important;
+      min-width:var(--rw-zh-slot-width,1.38em) !important;
+      max-width:var(--rw-zh-slot-width,1.38em) !important;
       height:auto !important;
       box-sizing:border-box !important;
     }
@@ -121,11 +130,12 @@ function installStyles() {
       position:absolute !important;
       left:50% !important;
       transform:translateX(-50%) !important;
-      width:max-content !important;
+      width:calc(100% - .10em) !important;
       min-width:0 !important;
-      max-width:6.4em !important;
+      max-width:calc(100% - .10em) !important;
       margin:0 !important;
-      padding:0 !important;
+      padding:0 .05em !important;
+      box-sizing:border-box !important;
       overflow:hidden !important;
       text-overflow:ellipsis !important;
       white-space:nowrap !important;
