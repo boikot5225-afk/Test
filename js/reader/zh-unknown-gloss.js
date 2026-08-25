@@ -5,9 +5,12 @@ import { normalizeImportKey } from '../utils.js';
 const MODE_KEY = 'an2_reader_zh_unknown_gloss_mode_v1';
 const CACHE_BASE_KEY = 'an2_reader_zh_unknown_gloss_cache_v1';
 const READER_APP_URL = '../reader-app.js?v=77.31';
-const MAX_CACHE = 1200;
-const MAX_CONCURRENT = 2;
-const MAX_ENRICH_VISIBLE = 12;
+const MAX_CACHE = 2600;
+const MAX_CONCURRENT = 4;
+const MAX_ENRICH_CURRENT_PAGE = 28;
+const MAX_ENRICH_PREFETCH = 56;
+const PREFETCH_PAGE_COUNT = 2;
+const MAX_QUEUE = 96;
 const RETRY_AFTER_MS = 5 * 60 * 1000;
 
 let appPromise = null;
@@ -19,6 +22,7 @@ const queue = [];
 const queuedKeys = new Set();
 const failedAt = new Map();
 const paragraphSourceText = new WeakMap();
+const liveWrappersByKey = new Map();
 
 function scopedKey(base) {
   try { return globalThis.an2ReaderStorageKey?.(base) || base; }
@@ -111,6 +115,17 @@ function wrapperFor(el) {
   return parent?.classList?.contains('rw-zh-gloss-wrap') ? parent : null;
 }
 
+function registerLiveWrapper(key, wrap) {
+  if (!key || !wrap) return;
+  let set = liveWrappersByKey.get(key);
+  if (!set) {
+    set = new Set();
+    liveWrappersByKey.set(key, set);
+  }
+  set.add(wrap);
+  wrap.dataset.zhGlossKey = key;
+}
+
 function unwrapWord(el) {
   const wrap = wrapperFor(el);
   if (!wrap || !wrap.parentNode) return false;
@@ -166,20 +181,22 @@ function ensureWrapper(el, hint = {}) {
 
 function updateVisibleWord(word, context, data = {}) {
   if (!enabled()) return;
-  const root = document.getElementById('reader-chapter-text');
-  if (!root) return;
   const expectedKey = cacheKey(word, context);
-  root.querySelectorAll('.reader-word[data-lang="zh"]').forEach((el) => {
-    if (String(el.dataset.word || '') !== word) return;
-    if (cacheKey(word, getParagraphContext(el)) !== expectedKey) return;
-    const wrap = wrapperFor(el);
-    if (!wrap) return;
-    const pinyin = pinyinReading(data);
-    const ru = compactRussian(russianMeaning(data));
+  const wraps = liveWrappersByKey.get(expectedKey);
+  if (!wraps?.size) return;
+  const pinyin = pinyinReading(data);
+  const ru = compactRussian(russianMeaning(data));
+  for (const wrap of [...wraps]) {
+    if (!wrap?.isConnected) {
+      wraps.delete(wrap);
+      continue;
+    }
     if (pinyin) wrap.dataset.zhGlossPinyin = pinyin;
     if (ru) wrap.dataset.zhGlossRu = ru;
-  });
+  }
+  if (!wraps.size) liveWrappersByKey.delete(expectedKey);
 }
+
 
 async function callReaderWord(word, context, fallbackPinyin = '') {
   // Use toc27's already-tested readerAI/Firebase/auth path. No second auth stack.
@@ -198,7 +215,7 @@ async function callReaderWord(word, context, fallbackPinyin = '') {
   };
 }
 
-function enqueueEnrichment(word, context, fallbackPinyin = '', lexicalEntry = null) {
+function enqueueEnrichment(word, context, fallbackPinyin = '', lexicalEntry = null, priority = 1) {
   if (!enabled() || !word || !context) return;
   const key = cacheKey(word, context);
   const own = loadOwnCache()[key];
@@ -207,10 +224,16 @@ function enqueueEnrichment(word, context, fallbackPinyin = '', lexicalEntry = nu
   if (queuedKeys.has(key)) return;
   const failed = Number(failedAt.get(key) || 0);
   if (failed && Date.now() - failed < RETRY_AFTER_MS) return;
+  if (queue.length >= MAX_QUEUE && priority > 0) return;
+
   queuedKeys.add(key);
-  queue.push({ key, word, context, fallbackPinyin });
+  const job = { key, word, context, fallbackPinyin, priority };
+  const insertAt = queue.findIndex((item) => Number(item.priority || 0) > priority);
+  if (insertAt === -1) queue.push(job);
+  else queue.splice(insertAt, 0, job);
   pumpQueue();
 }
+
 
 function pumpQueue() {
   while (enabled() && activeWorkers < MAX_CONCURRENT && queue.length) {
@@ -400,28 +423,56 @@ function scan() {
 
   const ownCache = loadOwnCache();
   const lexicalCache = readJson(scopedKey('an2_reader_lexical_cache_v1'));
-  let queuedVisible = 0;
-  const words = Array.from(root.querySelectorAll('.reader-word[data-lang="zh"]'));
+  const pages = Array.from(root.querySelectorAll(':scope > .rd-page'));
+  let currentPageIndex = pages.findIndex((page) =>
+    page.classList.contains('rd-page-current') || page.classList.contains('rd-page-show'));
+  if (currentPageIndex < 0) currentPageIndex = 0;
 
-  for (const el of words) {
-    if (!isChineseWordElement(el)) continue;
-    const word = String(el.dataset.word || '').trim();
-    const context = getParagraphContext(el);
-    const existingRt = String(el.querySelector('rt')?.textContent || '').trim();
-    const lexicalEntry = existingLexical(word, lexicalCache);
-    const hint = bestCachedHint(word, context, existingRt, ownCache, lexicalCache);
-    const wrap = ensureWrapper(el, hint);
-    if (!wrap) continue;
+  const pageMode = pages.length > 0;
+  const scopes = pageMode
+    ? pages.slice(currentPageIndex, currentPageIndex + PREFETCH_PAGE_COUNT + 1)
+    : [root];
 
-    if (hint.pinyin) wrap.dataset.zhGlossPinyin = hint.pinyin;
-    if (hint.ru) wrap.dataset.zhGlossRu = compactRussian(hint.fullRu || hint.ru);
+  let queuedCurrent = 0;
+  let queuedPrefetch = 0;
 
-    if (!hint.ru && queuedVisible < MAX_ENRICH_VISIBLE && isVisibleWord(el)) {
-      queuedVisible++;
-      enqueueEnrichment(word, context, hint.pinyin || existingRt, lexicalEntry);
+  for (let scopeIndex = 0; scopeIndex < scopes.length; scopeIndex++) {
+    const scope = scopes[scopeIndex];
+    const words = Array.from(scope.querySelectorAll('.reader-word[data-lang="zh"]'));
+    for (const el of words) {
+      if (!isChineseWordElement(el)) continue;
+      const word = String(el.dataset.word || '').trim();
+      const context = getParagraphContext(el);
+      const key = cacheKey(word, context);
+      const existingRt = String(el.querySelector('rt')?.textContent || '').trim();
+      const lexicalEntry = existingLexical(word, lexicalCache);
+      const hint = bestCachedHint(word, context, existingRt, ownCache, lexicalCache);
+      const wrap = ensureWrapper(el, hint);
+      if (!wrap) continue;
+      registerLiveWrapper(key, wrap);
+
+      if (hint.pinyin) wrap.dataset.zhGlossPinyin = hint.pinyin;
+      if (hint.ru) wrap.dataset.zhGlossRu = compactRussian(hint.fullRu || hint.ru);
+      if (hint.ru) continue;
+
+      if (pageMode) {
+        if (scopeIndex === 0) {
+          if (queuedCurrent >= MAX_ENRICH_CURRENT_PAGE) continue;
+          queuedCurrent++;
+          enqueueEnrichment(word, context, hint.pinyin || existingRt, lexicalEntry, 0);
+        } else {
+          if (queuedPrefetch >= MAX_ENRICH_PREFETCH) continue;
+          queuedPrefetch++;
+          enqueueEnrichment(word, context, hint.pinyin || existingRt, lexicalEntry, scopeIndex);
+        }
+      } else if (queuedCurrent < MAX_ENRICH_CURRENT_PAGE && isVisibleWord(el)) {
+        queuedCurrent++;
+        enqueueEnrichment(word, context, hint.pinyin || existingRt, lexicalEntry, 0);
+      }
     }
   }
 }
+
 
 function installObservers() {
   if (typeof document === 'undefined' || typeof document.createElement !== 'function' || typeof MutationObserver === 'undefined') return;
