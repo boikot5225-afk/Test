@@ -41,21 +41,22 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import gzip,hashlib
-          p=Path('data/zh_vocab_frequency.txt.gz')
-          words=gzip.decompress(p.read_bytes()).decode('utf-8').splitlines()
-          plain=('\n'.join(words)+'\n').encode('utf-8')
-          sha=hashlib.sha256(plain).hexdigest()
-          assert len(words)==39999, len(words)
-          assert len(set(words))==39999
-          assert sha=='e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64',sha
-          assert words[:20]==['我','的','你','了','是','在','我们','这','个','他','不','一','好','会','吗','很','有','人','到','就']
-          assert words[4768]=='天天'
-          assert words[4986]=='竭尽全力'
-          assert words[4996]=='据我所知'
-          assert words[4999]=='围绕'
-          print('Migaku list OK:',len(words),'words, SHA-256',sha)
-          print('gzip SHA-256',hashlib.sha256(p.read_bytes()).hexdigest())
+          import gzip, hashlib
+          p = Path('data/zh_vocab_frequency.txt.gz')
+          raw = p.read_bytes()
+          words = gzip.decompress(raw).decode('utf-8').splitlines()
+          plain = ('\n'.join(words) + '\n').encode('utf-8')
+          sha = hashlib.sha256(plain).hexdigest()
+          assert len(words) == 39999, len(words)
+          assert len(set(words)) == 39999
+          assert sha == 'e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64', sha
+          assert words[:20] == ['我','的','你','了','是','在','我们','这','个','他','不','一','好','会','吗','很','有','人','到','就']
+          assert words[4768] == '天天'
+          assert words[4986] == '竭尽全力'
+          assert words[4996] == '据我所知'
+          assert words[4999] == '围绕'
+          print('Migaku list OK:', len(words), 'words, SHA-256', sha)
+          print('gzip SHA-256', hashlib.sha256(raw).hexdigest())
           PY
 
       - name: Setup Java 17
@@ -93,36 +94,70 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          APK="$(find android/app/build/outputs/apk/debug -type f -name '*.apk' | head -1)"
           test -n "$APK"
           echo "APK=$APK"
           echo "APK bytes=$(stat -c%s "$APK")"
-          sha256sum "$APK" | tee /tmp/apk.sha256
-          unzip -l "$APK" | grep -qF 'assets/www/data/zh_vocab_frequency.txt.gz'
-          if unzip -l "$APK" | grep -qF 'assets/www/data/zh_vocab_b64/'; then echo 'base64 fragments leaked into APK'; exit 1; fi
-          if unzip -l "$APK" | grep -qF 'assets/www/js/reader/zh-vocab-data-bridge.js'; then echo 'obsolete bridge leaked into APK'; exit 1; fi
-          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF "import './vocab-estimate.js?v=4'"
-          if unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF 'zh-vocab-data-bridge.js'; then echo 'bridge import leaked'; exit 1; fi
-          unzip -p "$APK" assets/www/js/reader/vocab-estimate.js | grep -qF "const DATA_URL = 'data/zh_vocab_frequency.txt.gz?v=40';"
-          unzip -p "$APK" assets/www/js/reader/vocab-estimate.js | grep -qF 'return explicit ==='
-          unzip -p "$APK" assets/www/js/reader/vocab-estimate.js | grep -qF '__readerVocabularyEstimateVersion === 4'
-          unzip -p "$APK" assets/www/android/app/build.gradle >/dev/null 2>&1 || true
-          TMP="$(mktemp)"
-          unzip -p "$APK" assets/www/data/zh_vocab_frequency.txt.gz > "$TMP"
-          python3 - "$TMP" <<'PY'
-          import gzip,hashlib,sys
-          p=sys.argv[1]
-          raw=open(p,'rb').read(); words=gzip.decompress(raw).decode().splitlines()
-          sha=hashlib.sha256(('\n'.join(words)+'\n').encode()).hexdigest()
-          assert len(words)==39999 and len(set(words))==39999
-          assert sha=='e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64'
-          assert words[4768]=='天天' and words[4986]=='竭尽全力' and words[4996]=='据我所知' and words[4999]=='围绕'
-          print('APK embedded Migaku list verified:',sha)
+          sha256sum "$APK" | tee /tmp/Reader-AI-77.42-toc40-build60.sha256
+
+          python3 - "$APK" <<'PY'
+          import gzip, hashlib, sys, zipfile
+          apk = sys.argv[1]
+          expected_list_sha = 'e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64'
+          with zipfile.ZipFile(apk) as z:
+              names = set(z.namelist())
+              asset = 'assets/www/data/zh_vocab_frequency.txt.gz'
+              runtime_path = 'assets/www/js/reader/interactions-runtime.js'
+              vocab_path = 'assets/www/js/reader/vocab-estimate.js'
+              assert asset in names, 'frequency asset missing from APK'
+              assert runtime_path in names, 'interactions runtime missing from APK'
+              assert vocab_path in names, 'vocab-estimate missing from APK'
+              assert not any(n.startswith('assets/www/data/zh_vocab_b64/') for n in names), 'base64 fragments leaked into APK'
+              assert 'assets/www/js/reader/zh-vocab-data-bridge.js' not in names, 'obsolete vocab bridge leaked into APK'
+
+              runtime = z.read(runtime_path).decode('utf-8')
+              vocab = z.read(vocab_path).decode('utf-8')
+              assert "import './vocab-estimate.js?v=4'" in runtime
+              assert 'zh-vocab-data-bridge.js' not in runtime
+              assert "const DATA_URL = 'data/zh_vocab_frequency.txt.gz?v=40';" in vocab
+              assert "return explicit === 'known' || explicit === 'unknown' ? explicit : '';" in vocab
+              assert '__readerVocabularyEstimateVersion === 4' in vocab
+
+              raw = z.read(asset)
+              words = gzip.decompress(raw).decode('utf-8').splitlines()
+              plain = ('\n'.join(words) + '\n').encode('utf-8')
+              sha = hashlib.sha256(plain).hexdigest()
+              assert len(words) == 39999, len(words)
+              assert len(set(words)) == 39999
+              assert sha == expected_list_sha, sha
+              assert words[:20] == ['我','的','你','了','是','在','我们','这','个','他','不','一','好','会','吗','很','有','人','到','就']
+              assert words[4768] == '天天'
+              assert words[4986] == '竭尽全力'
+              assert words[4996] == '据我所知'
+              assert words[4999] == '围绕'
+              print('APK embedded Migaku list verified:', sha)
+              print('APK entries:', len(names))
           PY
-          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -name apksigner | sort -V | tail -1)"
-          if [[ -n "$APKSIGNER" ]]; then "$APKSIGNER" verify --print-certs "$APK" | tee /tmp/apksigner.txt; fi
+
+          : > /tmp/apksigner.txt
+          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -1 || true)"
+          if [[ -n "$APKSIGNER" ]]; then
+            "$APKSIGNER" verify --print-certs "$APK" | tee /tmp/apksigner.txt
+          else
+            echo 'apksigner not found' | tee /tmp/apksigner.txt
+          fi
+
+          AAPT="$(find "${ANDROID_HOME}/build-tools" -type f -name aapt | sort -V | tail -1 || true)"
+          : > /tmp/aapt-badging.txt
+          if [[ -n "$AAPT" ]]; then
+            "$AAPT" dump badging "$APK" | tee /tmp/aapt-badging.txt
+            grep -q "versionCode='60'" /tmp/aapt-badging.txt
+            grep -q "versionName='77.42-toc40-debug'" /tmp/aapt-badging.txt
+          else
+            echo 'aapt not found' | tee /tmp/aapt-badging.txt
+          fi
+
           cp "$APK" /tmp/Reader-AI-77.42-toc40-build60.apk
-          cp /tmp/apk.sha256 /tmp/Reader-AI-77.42-toc40-build60.sha256
 
       - name: Upload verified toc40 APK
         uses: actions/upload-artifact@v4
@@ -132,4 +167,5 @@ jobs:
             /tmp/Reader-AI-77.42-toc40-build60.apk
             /tmp/Reader-AI-77.42-toc40-build60.sha256
             /tmp/apksigner.txt
+            /tmp/aapt-badging.txt
           if-no-files-found: error
