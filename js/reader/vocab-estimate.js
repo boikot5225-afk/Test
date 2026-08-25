@@ -9,7 +9,9 @@ import { wordStateIdbPut } from './word-state-idb-store.js?v=1';
 const PROFILE_BASE_KEY = 'an2_reader_vocab_estimate_v3';
 const WORD_STATE_BASE_KEY = 'an2_reader_word_state_v1';
 const OWNER_KEY = 'an2_reader_active_owner_v1';
-const DATA_URL = 'data/zh_vocab_frequency.txt.gz?v=40';
+const DATA_URL = globalThis.location?.hostname === 'appassets.androidplatform.net'
+  ? 'data/zh_vocab_frequency.txt'
+  : 'data/zh_vocab_frequency.txt.gz?v=40';
 const STYLE_ID = 'reader-migaku-vocab-style-v3';
 const MODAL_ID = 'reader-vocab-estimate-modal';
 const WORDS_PER_PAGE = 14;
@@ -924,8 +926,8 @@ function installGlossObserver() {
 }
 
 export function installVocabularyEstimate() {
-  if (globalThis.__readerVocabularyEstimateVersion === 4) return;
-  globalThis.__readerVocabularyEstimateVersion = 4;
+  if (globalThis.__readerVocabularyEstimateVersion === 5) return;
+  globalThis.__readerVocabularyEstimateVersion = 5;
   installStyles();
   installObserver();
   installGlossObserver();

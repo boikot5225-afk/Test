@@ -4,7 +4,7 @@ import './zh-unknown-gloss.js?v=4';
 import './zh-unknown-gloss-readable.js?v=3';
 import './zh-unknown-gloss-baseline.js?v=1';
 import './zh-unknown-gloss-spacing.js?v=2';
-import './vocab-estimate.js?v=4';
+import './vocab-estimate.js?v=5';
 import { createReaderInteractions } from './interactions.js?v=2';
 
 function getRoot() {
