@@ -40,8 +40,8 @@ jobs:
           set -euo pipefail
           grep -q "versionCode 65" android/app/build.gradle
           grep -q "versionName '77.42-toc45'" android/app/build.gradle
-          grep -qF "import './zh-stable-slots.js?v=2';" js/reader/interactions-runtime.js
-          grep -q "--rw-zh-slot-width" js/reader/zh-stable-slots.js
+          grep -qF "import './zh-stable-slots.js?v=3';" js/reader/interactions-runtime.js
+          grep -q -- "--rw-zh-slot-width" js/reader/zh-stable-slots.js
           grep -q "width:calc(100% - .10em)" js/reader/zh-stable-slots.js
           grep -q "max-width:calc(100% - .10em)" js/reader/zh-stable-slots.js
           ! grep -q "width:max-content !important" js/reader/zh-stable-slots.js
