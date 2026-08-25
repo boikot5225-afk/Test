@@ -18,7 +18,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import base64, gzip, hashlib, json, re, struct
+          import base64, gzip, hashlib, json, shutil
 
           out = Path('recovery')
           out.mkdir(exist_ok=True)
@@ -43,11 +43,15 @@ jobs:
               return ''
 
           for p in candidates:
+              # Preserve the exact Git blob bytes in the artifact so the caller can
+              # inspect payloads without the API response renderer truncating them.
+              shutil.copyfile(p, out / ('source_' + p.parent.name + '_' + p.name))
               text = p.read_text('utf-8', errors='replace').strip()
               row = {
                   'path': str(p), 'text_len': len(text),
                   'text_sha256': hashlib.sha256(text.encode()).hexdigest(),
                   'ellipsis': 'ELLIPSIZATION' in text,
+                  'prefix': text[:80], 'suffix': text[-80:],
               }
               try:
                   raw = base64.b64decode(text, validate=True)
@@ -73,9 +77,9 @@ jobs:
                   row['decode_error'] = repr(e)
               report.append(row)
 
-          # Inspect the original visible frequency chunk too.
           p = Path('data/zh_vocab_frequency_0.txt')
           if p.exists():
+              shutil.copyfile(p, out / p.name)
               lines = p.read_text('utf-8', errors='replace').splitlines()
               report.append({'path': str(p), 'lines': len(lines), 'first20': lines[:20], 'last20': lines[-20:]})
 
