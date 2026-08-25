@@ -1,0 +1,75 @@
+name: Stage Reader AI toc47 prefetch
+
+on:
+  push:
+    branches:
+      - tmp-toc47-prefetch-20260825
+
+permissions:
+  contents: write
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 644c9b5ccaffa0f20a2f1a7a1b8be5b2884ca242
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply toc47 prefetch patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '644c9b5ccaffa0f20a2f1a7a1b8be5b2884ca242'
+          git fetch origin tmp-toc47-prefetch-20260825
+          git show 'origin/tmp-toc47-prefetch-20260825:.github/toc47/patch.py' > /tmp/toc47_patch.py
+          python3 /tmp/toc47_patch.py
+          node --check js/reader/zh-unknown-gloss.js
+          node --check js/reader/interactions-runtime.js
+          git diff --check
+
+      - name: Verify prefetch architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'const MAX_CONCURRENT = 4;' js/reader/zh-unknown-gloss.js
+          grep -q 'const PREFETCH_PAGE_COUNT = 2;' js/reader/zh-unknown-gloss.js
+          grep -q 'const MAX_QUEUE = 96;' js/reader/zh-unknown-gloss.js
+          grep -q "querySelectorAll(':scope > .rd-page')" js/reader/zh-unknown-gloss.js
+          grep -q 'liveWrappersByKey' js/reader/zh-unknown-gloss.js
+          grep -q 'registerLiveWrapper(key, wrap)' js/reader/zh-unknown-gloss.js
+          grep -q "import './zh-unknown-gloss.js?v=5';" js/reader/interactions-runtime.js
+          grep -q 'versionCode 67' android/app/build.gradle
+          grep -q "versionName '77.42-toc47'" android/app/build.gradle
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('js/reader/zh-unknown-gloss.js').read_text('utf-8')
+          update=s[s.index('function updateVisibleWord('):s.index('async function callReaderWord')]
+          assert "querySelectorAll('.reader-word" not in update
+          scan=s[s.index('function scan() {'):s.index('function installObservers()')]
+          assert 'PREFETCH_PAGE_COUNT + 1' in scan
+          assert 'enqueueEnrichment(word, context, hint.pinyin || existingRt, lexicalEntry, 0)' in scan
+          assert 'enqueueEnrichment(word, context, hint.pinyin || existingRt, lexicalEntry, scopeIndex)' in scan
+          assert scan.count('isVisibleWord(el)') == 1, 'layout visibility check must remain scroll fallback only'
+          PY
+          node scripts/check-reader-paragraph-help-render.mjs
+          node scripts/check-reader-paragraph-help-runtime.mjs
+          node scripts/check-reader-paragraph-tap-selection.mjs
+          node scripts/check-reader-zh-unknown-gloss.mjs
+
+      - name: Commit staged toc47 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add android/app/build.gradle js/reader/zh-unknown-gloss.js js/reader/interactions-runtime.js
+          git diff --cached --check
+          git commit -m 'perf(reader): prefetch Chinese hints ahead of page turns'
+          git push --force origin HEAD:refs/heads/tmp-toc47-ready-20260825
