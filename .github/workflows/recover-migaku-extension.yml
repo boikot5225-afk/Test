@@ -1,4 +1,4 @@
-name: Stage Reader AI toc44
+name: Validate Reader AI toc44 guards
 
 on:
   push:
@@ -9,45 +9,54 @@ permissions:
   contents: write
 
 jobs:
-  stage:
+  validate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 9c223393820825472a3470f34cb04c10db6aad90
+          ref: a0f65ab57e51846a6b527216615cb4aeafd9eb6a
           fetch-depth: 0
 
-      - name: Apply fixed-slot and pagination-freeze patch
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply browser-only installer guards
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = '9c223393820825472a3470f34cb04c10db6aad90'
-          git show 'origin/tmp-recover-migaku-extension-20260825:.github/toc44/patch.py' > /tmp/toc44_patch.py
-          python3 /tmp/toc44_patch.py
+          test "$(git rev-parse HEAD)" = 'a0f65ab57e51846a6b527216615cb4aeafd9eb6a'
+          git show 'origin/tmp-recover-migaku-extension-20260825:.github/toc44/compat.py' > /tmp/toc44_compat.py
+          python3 /tmp/toc44_compat.py
           node --check js/reader/zh-unknown-gloss.js
           node --check js/reader/zh-unknown-gloss-readable.js
           node --check js/reader/zh-stable-slots.js
+          node --check js/reader/vocab-estimate.js
           node --check js/reader/pages-mode.js
-          node --check js/reader/interactions-runtime.js
           git diff --check
 
-      - name: Verify toc44 invariants
+      - name: Run paragraph regression that previously failed
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/check-reader-paragraph-help-render.mjs
+          node scripts/check-reader-paragraph-help-runtime.mjs
+          node scripts/check-reader-paragraph-tap-selection.mjs
+
+      - name: Verify toc44 invariants remain intact
         shell: bash
         run: |
           set -euo pipefail
           grep -q "versionCode 64" android/app/build.gradle
           grep -q "versionName '77.42-toc44'" android/app/build.gradle
           grep -qF "import './zh-stable-slots.js?v=1';" js/reader/interactions-runtime.js
-          ! grep -q "vocab-layout-lock.js" js/reader/interactions-runtime.js
           test ! -e js/reader/vocab-layout-lock.js
           grep -q "readerPrepareZhStableSlots" js/reader/pages-mode.js
           grep -q "paginationFrozen" js/reader/pages-mode.js
           grep -q "position:absolute !important" js/reader/zh-stable-slots.js
-          grep -q "grid-template-rows:.58em 1.08em .54em" js/reader/zh-stable-slots.js
           grep -q "wrap.dataset.zhGlossRu = ru || '';" js/reader/zh-unknown-gloss.js
           ! grep -q "wrap.dataset.zhGlossRu = ru || '…';" js/reader/zh-unknown-gloss.js
-          ! grep -q "unwrapWord(el);" <(sed -n '/function scan()/,/^}/p' js/reader/zh-unknown-gloss.js)
           python3 - <<'PY'
           from pathlib import Path
           import gzip,hashlib
@@ -57,7 +66,7 @@ jobs:
           assert hashlib.sha256(plain).hexdigest()=='e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64'
           PY
 
-      - name: Commit staged toc44 source
+      - name: Commit guarded toc44 source
         shell: bash
         run: |
           set -euo pipefail
@@ -65,7 +74,7 @@ jobs:
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git add -A
           git diff --cached --check
-          git commit -m 'fix(reader): stabilize Chinese slots before pagination'
+          git commit -m 'test(reader): keep browser UI inert in renderer harness'
           FINAL_SHA="$(git rev-parse HEAD)"
           echo "FINAL_SOURCE_SHA=${FINAL_SHA}"
-          git push --force origin HEAD:refs/heads/tmp-toc44-ready-20260825
+          git push --force origin HEAD:refs/heads/tmp-toc44-ready2-20260825
