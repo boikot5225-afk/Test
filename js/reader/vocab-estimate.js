@@ -9,7 +9,8 @@ import { wordStateIdbPut } from './word-state-idb-store.js?v=1';
 const PROFILE_BASE_KEY = 'an2_reader_vocab_estimate_v3';
 const WORD_STATE_BASE_KEY = 'an2_reader_word_state_v1';
 const OWNER_KEY = 'an2_reader_active_owner_v1';
-const DATA_URL = globalThis.location?.hostname === 'appassets.androidplatform.net'
+const IS_ANDROID_ASSET = globalThis.location?.hostname === 'appassets.androidplatform.net';
+const DATA_URL = IS_ANDROID_ASSET
   ? 'data/zh_vocab_frequency.txt'
   : 'data/zh_vocab_frequency.txt.gz?v=40';
 const STYLE_ID = 'reader-migaku-vocab-style-v3';
@@ -183,8 +184,11 @@ async function loadFrequencyData() {
   frequencyPromise = fetch(new URL(DATA_URL, document.baseURI), { cache: 'force-cache' })
     .then(async response => {
       if (!response.ok) throw new Error(`${DATA_URL}: HTTP ${response.status}`);
+      // Android's AAPT transparently expands .gz assets and removes the suffix.
+      // The WebView therefore receives plain UTF-8 at the stripped .txt path.
+      if (IS_ANDROID_ASSET) return response.text();
       if (typeof DecompressionStream !== 'function') {
-        throw new Error('gzip decompression is unavailable in this WebView');
+        throw new Error('gzip decompression is unavailable in this browser');
       }
       const stream = response.body?.pipeThrough(new DecompressionStream('gzip'));
       if (!stream) throw new Error('frequency data stream unavailable');
@@ -926,8 +930,8 @@ function installGlossObserver() {
 }
 
 export function installVocabularyEstimate() {
-  if (globalThis.__readerVocabularyEstimateVersion === 5) return;
-  globalThis.__readerVocabularyEstimateVersion = 5;
+  if (globalThis.__readerVocabularyEstimateVersion === 6) return;
+  globalThis.__readerVocabularyEstimateVersion = 6;
   installStyles();
   installObserver();
   installGlossObserver();
