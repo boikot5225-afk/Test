@@ -1,0 +1,223 @@
+name: Generate English toc48 candidate
+
+on:
+  push:
+    branches: [tmp-en-toc48-stage-20260825]
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stable/77.42-toc47-build67
+          fetch-depth: 0
+
+      - name: Load staged English modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin tmp-en-toc48-stage-20260825
+          git show origin/tmp-en-toc48-stage-20260825:.stage/en-vocab-estimate.js > js/reader/en-vocab-estimate.js
+          git show origin/tmp-en-toc48-stage-20260825:.stage/en-unknown-gloss.js > js/reader/en-unknown-gloss.js
+
+      - name: Build exact compact Migaku English assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/migaku-en/ext data
+          url='https://clients2.google.com/service/update2/crx?response=redirect&prodversion=131.0&acceptformat=crx2,crx3&x=id%3Dlkhiljgmbeecmljiogckofcalncmfnfo%26uc'
+          curl -fL --retry 4 --connect-timeout 30 --max-time 600 "$url" -o /tmp/migaku-en/migaku.crx
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          b=Path('/tmp/migaku-en/migaku.crx').read_bytes(); assert b[:4]==b'Cr24'
+          ver=struct.unpack('<I',b[4:8])[0]
+          if ver==2:
+              a,c=struct.unpack('<II',b[8:16]); off=16+a+c
+          else:
+              h=struct.unpack('<I',b[8:12])[0]; off=12+h
+          Path('/tmp/migaku-en/ext.zip').write_bytes(b[off:])
+          PY
+          unzip -q /tmp/migaku-en/ext.zip -d /tmp/migaku-en/ext
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, hashlib
+
+          root=Path('/tmp/migaku-en/ext')
+          hen=None
+          for p in (root/'assets').glob('*.js'):
+              if p.stat().st_size < 1_000_000: continue
+              text=p.read_text('utf-8',errors='ignore')
+              marker='const hen=[['
+              pos=text.find(marker)
+              if pos<0: continue
+              start=pos+len('const hen=')
+              i=start; depth=0; quote=None; esc=False; end=None
+              while i<len(text):
+                  ch=text[i]
+                  if quote:
+                      if esc: esc=False
+                      elif ch=='\\': esc=True
+                      elif ch==quote: quote=None
+                  else:
+                      if ch in "\"'": quote=ch
+                      elif ch=='[': depth+=1
+                      elif ch==']':
+                          depth-=1
+                          if depth==0: end=i+1; break
+                  i+=1
+              hen=json.loads(text[start:end]); break
+          if not hen or len(hen)!=36566 or len({x[0] for x in hen})!=36566:
+              raise SystemExit('invalid Migaku English hen list')
+          rank={word:i for i,(word,pos) in enumerate(hen)}
+          freq=''.join(f'{word}\t{pos}\n' for word,pos in hen)
+          Path('data/en_vocab_frequency.tsv').write_text(freq,'utf-8')
+
+          expanded=json.loads((root/'core/en.json').read_text('utf-8'))
+          candidates={}
+          for surface, entries in expanded.items():
+              if not isinstance(entries,list): continue
+              s=surface.casefold().replace('’',"'").strip()
+              if not s: continue
+              for entry in entries:
+                  if not isinstance(entry,list) or not entry: continue
+                  term=str(entry[0]).strip()
+                  if term in rank: candidates.setdefault(s,set()).add(term)
+          chosen={}
+          for surface,terms in candidates.items():
+              lemma=min(terms,key=lambda x:rank[x])
+              if surface != lemma.casefold().replace('’',"'"): chosen[surface]=lemma
+          lemma=''.join(f'{surface}\t{chosen[surface]}\n' for surface in sorted(chosen))
+          Path('data/en_vocab_lemma.tsv').write_text(lemma,'utf-8')
+
+          sentinels={0:'I',1:'be',2:'you',3:'the',4:'to',17:'go',99:'win',999:'complete',4999:'microwave',9999:'uno',19999:'commonality',29999:'bannister',36565:'unbend'}
+          for i,w in sentinels.items():
+              if hen[i][0]!=w: raise SystemExit(f'frequency sentinel {i}: {hen[i][0]} != {w}')
+          probes={'went':'go','gone':'go','going':'go','goes':'go','am':'be','is':'be','was':'be','were':'be','aimed':'aim','better':'good','best':'good'}
+          for surface,target in probes.items():
+              if chosen.get(surface)!=target: raise SystemExit(f'lemma sentinel {surface}: {chosen.get(surface)} != {target}')
+          freq_sha=hashlib.sha256(freq.encode()).hexdigest()
+          lemma_sha=hashlib.sha256(lemma.encode()).hexdigest()
+          if freq_sha!='f7099da374058488567674093dbe2317a0ccd07b968375fd55b5800e21558765':
+              raise SystemExit('frequency fingerprint changed')
+          if lemma_sha!='93fa9e88f809d7fb3eed54faf6ace1355cc789fc85298759d0f6cdd06b7e4881':
+              raise SystemExit('lemma fingerprint changed')
+          if hashlib.sha256((root/'core/en.db').read_bytes()).hexdigest()!='76577a088ac87ade8395192368888f363373035729a19e6bae335853e135a167':
+              raise SystemExit('Migaku core/en.db fingerprint changed')
+          print('English assets OK:',len(hen),'lemmas;',len(chosen),'surface mappings')
+          PY
+
+      - name: Integrate English layer without changing Chinese rendering
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def patch(path, old, new, count=1):
+              p=Path(path); text=p.read_text('utf-8')
+              actual=text.count(old)
+              if actual != count:
+                  raise SystemExit(f'{path}: expected {count} occurrences, got {actual}: {old[:80]!r}')
+              p.write_text(text.replace(old,new,count),'utf-8')
+
+          patch('js/reader/interactions-runtime.js',
+                "import './vocab-estimate.js?v=7';\n",
+                "import './vocab-estimate.js?v=7';\nimport './en-vocab-estimate.js?v=1';\nimport './en-unknown-gloss.js?v=1';\n")
+
+          patch('js/reader/pages-mode.js',
+                "    try { globalThis.readerPrepareZhStableSlots?.(chapterText); } catch (error) {\n      console.warn('[reader pages] stable Chinese slot preparation failed', error?.message || error);\n    }\n",
+                "    try { globalThis.readerPrepareZhStableSlots?.(chapterText); } catch (error) {\n      console.warn('[reader pages] stable Chinese slot preparation failed', error?.message || error);\n    }\n    // English uses the same rule: reserve the translation lane before measuring\n    // page ranges. The helper is a no-op for every non-English book.\n    try { globalThis.readerPrepareEnStableSlots?.(chapterText); } catch (error) {\n      console.warn('[reader pages] stable English slot preparation failed', error?.message || error);\n    }\n")
+
+          # Prevent the older Chinese panel decorator from racing the new English one.
+          patch('js/reader/vocab-estimate.js',
+                "function syncPanelKnowledge() {\n  const panel = document.getElementById('reader-word-panel');",
+                "function syncPanelKnowledge() {\n  if (currentLang() !== 'zh') return;\n  const panel = document.getElementById('reader-word-panel');")
+          patch('js/reader/vocab-estimate.js',
+                "function decorateWordPanel() {\n  const panel = document.getElementById('reader-word-panel');",
+                "function decorateWordPanel() {\n  if (currentLang() !== 'zh') return;\n  const panel = document.getElementById('reader-word-panel');")
+          patch('js/reader/vocab-estimate.js',
+                "  document.addEventListener('click', event => {\n    const target = event.target instanceof Element ? event.target : null;\n    if (!target?.closest?.('#reader-chapter-text .reader-word')) return;",
+                "  document.addEventListener('click', event => {\n    if (currentLang() !== 'zh') return;\n    const target = event.target instanceof Element ? event.target : null;\n    if (!target?.closest?.('#reader-chapter-text .reader-word')) return;")
+
+          patch('android/app/build.gradle', '        versionCode 67\n', '        versionCode 68\n')
+          patch('android/app/build.gradle', "        versionName '77.42-toc47'\n", "        versionName '77.42-toc48'\n")
+          PY
+
+      - name: Add English regression test
+        shell: bash
+        run: |
+          mkdir -p scripts
+          cat > scripts/test-reader-en-vocab-toc48.mjs <<'EOF'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+
+          const freq = fs.readFileSync('data/en_vocab_frequency.tsv','utf8').trimEnd().split(/\r?\n/).map(x=>x.split('\t'));
+          const lemma = new Map(fs.readFileSync('data/en_vocab_lemma.tsv','utf8').trimEnd().split(/\r?\n/).map(x=>{const i=x.indexOf('\t');return [x.slice(0,i),x.slice(i+1)];}));
+          assert.equal(freq.length,36566);
+          assert.equal(new Set(freq.map(x=>x[0])).size,36566);
+          for (const [i,w] of [[0,'I'],[1,'be'],[17,'go'],[999,'complete'],[4999,'microwave'],[36565,'unbend']]) assert.equal(freq[i][0],w);
+          for (const [s,t] of Object.entries({went:'go',gone:'go',going:'go',goes:'go',am:'be',is:'be',was:'be',were:'be',aimed:'aim',better:'good',best:'good'})) assert.equal(lemma.get(s),t);
+
+          const enVocab=fs.readFileSync('js/reader/en-vocab-estimate.js','utf8');
+          assert.match(enVocab,/STEP1_COUNT = 42/);
+          assert.match(enVocab,/STEP2_COUNT = 42/);
+          assert.match(enVocab,/WORDS_PER_PAGE = 14/);
+          assert.match(enVocab,/center \* \.35/);
+          assert.match(enVocab,/value \* 0\.6/);
+          assert.match(enVocab,/manualKnowledge/);
+          assert.match(enVocab,/went:'go'/);
+
+          const gloss=fs.readFileSync('js/reader/en-unknown-gloss.js','utf8');
+          assert.match(gloss,/PREFETCH_PAGE_COUNT = 2/);
+          assert.match(gloss,/MAX_CONCURRENT = 4/);
+          assert.match(gloss,/readerPrepareEnStableSlots/);
+          assert.match(gloss,/rw-migaku-unknown/);
+          assert.ok(!gloss.includes("content:'…'"));
+
+          const runtime=fs.readFileSync('js/reader/interactions-runtime.js','utf8');
+          assert.match(runtime,/en-vocab-estimate\.js\?v=1/);
+          assert.match(runtime,/en-unknown-gloss\.js\?v=1/);
+          const pages=fs.readFileSync('js/reader/pages-mode.js','utf8');
+          assert.match(pages,/readerPrepareEnStableSlots/);
+          const zh=fs.readFileSync('js/reader/vocab-estimate.js','utf8');
+          assert.match(zh,/function decorateWordPanel\(\) \{\n  if \(currentLang\(\) !== 'zh'\) return;/);
+          console.log('English vocabulary toc48 regression checks passed');
+          EOF
+          node scripts/test-reader-en-vocab-toc48.mjs
+          node --check js/reader/en-vocab-estimate.js
+          node --check js/reader/en-unknown-gloss.js
+          node --check js/reader/interactions-runtime.js
+          node --check js/reader/pages-mode.js
+          node --check js/reader/vocab-estimate.js
+
+      - name: Verify frozen Chinese renderer was not touched
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --quiet stable/77.42-toc47-build67 -- \
+            js/reader/zh-unknown-gloss.js \
+            js/reader/zh-unknown-gloss-spacing.js \
+            js/reader/zh-stable-slots.js \
+            js/reader/chapter-render.js \
+            js/reader/chapter-render-next.js \
+            js/reader/chapter-render-stage1.js
+          printf '%s\n' "$(git diff --name-only stable/77.42-toc47-build67 | sort)"
+
+      - name: Commit one candidate from frozen toc47
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Reader AI Builder'
+          git config user.email 'reader-ai-builder@users.noreply.github.com'
+          git add android/app/build.gradle data/en_vocab_frequency.tsv data/en_vocab_lemma.tsv \
+            js/reader/en-vocab-estimate.js js/reader/en-unknown-gloss.js \
+            js/reader/interactions-runtime.js js/reader/pages-mode.js js/reader/vocab-estimate.js \
+            scripts/test-reader-en-vocab-toc48.mjs
+          git commit -m 'feat(reader): add Migaku-style English vocabulary assessment'
+          git push origin HEAD:refs/heads/candidate/en-toc48-build68 --force
+          git rev-parse HEAD
