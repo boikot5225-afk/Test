@@ -359,6 +359,7 @@ function profileButtonText() {
 }
 
 function syncPanelKnowledge() {
+  if (currentLang() !== 'zh') return;
   const panel = document.getElementById('reader-word-panel');
   if (!panel) return;
   const yes = panel.querySelector('#reader-migaku-known-btn');
@@ -391,6 +392,7 @@ function syncPanelKnowledge() {
 }
 
 function decorateWordPanel() {
+  if (currentLang() !== 'zh') return;
   const panel = document.getElementById('reader-word-panel');
   if (!panel) return;
   const actions = panel.querySelector('.reader-word-actions');
@@ -1041,6 +1043,7 @@ function installPanelHook() {
   if (document.documentElement?.dataset?.readerVocabPanelHook === '1') return;
   if (document.documentElement) document.documentElement.dataset.readerVocabPanelHook = '1';
   document.addEventListener('click', event => {
+    if (currentLang() !== 'zh') return;
     const target = event.target instanceof Element ? event.target : null;
     if (!target?.closest?.('#reader-chapter-text .reader-word')) return;
     queueMicrotask(() => { decorateWordPanel(); syncPanelKnowledge(); });
