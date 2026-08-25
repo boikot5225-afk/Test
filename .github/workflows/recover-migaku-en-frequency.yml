@@ -13,11 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect exact Migaku English data
+      - name: Build compact exact English assets
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p recovery/ext recovery/report
+          mkdir -p recovery/ext recovery/report recovery/assets
           url='https://clients2.google.com/service/update2/crx?response=redirect&prodversion=131.0&acceptformat=crx2,crx3&x=id%3Dlkhiljgmbeecmljiogckofcalncmfnfo%26uc'
           curl -fL --retry 4 --connect-timeout 30 --max-time 600 "$url" -o recovery/migaku.crx
           python3 - <<'PY'
@@ -34,49 +34,11 @@ jobs:
           unzip -q recovery/ext.zip -d recovery/ext
           python3 - <<'PY'
           from pathlib import Path
-          import json, hashlib, sqlite3, re
+          import json, hashlib, collections
 
           root=Path('recovery/ext')
-          report={}
-          for rel in ['core/en.json','core/en.db.json','core/en.db']:
-              p=root/rel
-              report[rel]={'size':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
-
-          # Describe JSON formats without shipping the huge source files.
-          for rel in ['core/en.json','core/en.db.json']:
-              p=root/rel
-              obj=json.loads(p.read_text('utf-8'))
-              info=report[rel]
-              info['top_type']=type(obj).__name__
-              if isinstance(obj,dict):
-                  info['keys']=list(obj.keys())[:40]
-                  for k,v in list(obj.items())[:8]:
-                      info.setdefault('value_types',{})[k]=type(v).__name__
-                      if isinstance(v,list):
-                          info.setdefault('list_lengths',{})[k]=len(v)
-                          info.setdefault('samples',{})[k]=v[:3]
-                      elif isinstance(v,dict):
-                          info.setdefault('dict_lengths',{})[k]=len(v)
-                          info.setdefault('samples',{})[k]=list(v.items())[:3]
-                      else:
-                          info.setdefault('samples',{})[k]=v
-              elif isinstance(obj,list):
-                  info['length']=len(obj)
-                  info['sample']=obj[:5]
-
-          # SQLite schema/counts, to compare with the user-provided en.db.
-          con=sqlite3.connect(root/'core/en.db')
-          tables=[r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
-          report['core/en.db']['tables']={}
-          for t in tables:
-              cols=[r[1] for r in con.execute(f'PRAGMA table_info("{t}")')]
-              count=con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
-              sample=con.execute(f'SELECT * FROM "{t}" LIMIT 3').fetchall()
-              report['core/en.db']['tables'][t]={'columns':cols,'count':count,'sample':sample}
-          con.close()
-
-          # Recover exact English assessment list (hen) from app-router.
-          candidates=[]
+          # Exact English assessment list used by Migaku.
+          hen=None; source=None
           for p in (root/'assets').glob('*.js'):
               if p.stat().st_size<1_000_000: continue
               text=p.read_text('utf-8',errors='ignore')
@@ -84,7 +46,6 @@ jobs:
               pos=text.find(marker)
               if pos<0: continue
               start=pos+len('const hen=')
-              # Balanced bracket scanner aware of quoted strings.
               i=start; depth=0; quote=None; esc=False; end=None
               while i<len(text):
                   ch=text[i]
@@ -97,21 +58,82 @@ jobs:
                       elif ch=='[': depth+=1
                       elif ch==']':
                           depth-=1
-                          if depth==0:
-                              end=i+1; break
+                          if depth==0: end=i+1; break
                   i+=1
-              arr=json.loads(text[start:end])
-              candidates.append({'path':str(p.relative_to(root)),'count':len(arr),'unique':len({x[0] for x in arr}),'first20':arr[:20],'last20':arr[-20:],'sha256_json':hashlib.sha256(json.dumps(arr,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()})
-              Path('recovery/report/en_frequency.json').write_text(json.dumps(arr,ensure_ascii=False,separators=(',',':')),'utf-8')
-          report['hen_candidates']=candidates
-          Path('recovery/report/en-core-report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),'utf-8')
+              hen=json.loads(text[start:end]); source=str(p.relative_to(root)); break
+          if not hen or len(hen)!=36566 or len({x[0] for x in hen})!=36566:
+              raise SystemExit('invalid hen list')
+          rank={word:i for i,(word,pos) in enumerate(hen)}
+          rank_fold={}
+          for word,i in rank.items():
+              k=word.casefold().replace('’',"'")
+              rank_fold.setdefault(k,[]).append((i,word))
+
+          # Compact frequency file retains exact display form and Migaku POS.
+          freq=''.join(f'{word}\t{pos}\n' for word,pos in hen)
+          Path('recovery/assets/en_vocab_frequency.tsv').write_text(freq,'utf-8')
+
+          # core/en.json is Migaku's expanded surface dictionary. Keep only forms
+          # whose dictionary term belongs to the 36,566 assessment lemmas, then
+          # resolve ambiguous forms to the most frequent candidate lemma.
+          expanded=json.loads((root/'core/en.json').read_text('utf-8'))
+          candidates={}
+          relevant_rows=0
+          for surface, entries in expanded.items():
+              if not isinstance(entries,list): continue
+              s=surface.casefold().replace('’',"'").strip()
+              if not s: continue
+              for entry in entries:
+                  if not isinstance(entry,list) or not entry: continue
+                  term=str(entry[0]).strip()
+                  if term not in rank: continue
+                  relevant_rows+=1
+                  candidates.setdefault(s,set()).add(term)
+          chosen={}
+          ambiguous=0
+          for surface,terms in candidates.items():
+              if len(terms)>1: ambiguous+=1
+              lemma=min(terms,key=lambda x: rank[x])
+              # Identity mappings are unnecessary; frequency lookup already catches them.
+              if surface != lemma.casefold().replace('’',"'"):
+                  chosen[surface]=lemma
+          lemma=''.join(f'{surface}\t{chosen[surface]}\n' for surface in sorted(chosen))
+          Path('recovery/assets/en_vocab_lemma.tsv').write_text(lemma,'utf-8')
+
+          sentinels={0:'I',1:'be',2:'you',3:'the',4:'to',17:'go',99:'win',999:'complete',4999:'microwave',9999:'uno',19999:'commonality',29999:'bannister',36565:'unbend'}
+          for i,w in sentinels.items():
+              if hen[i][0]!=w: raise SystemExit(f'frequency sentinel {i}: {hen[i][0]} != {w}')
+          probes=['went','gone','going','goes','am','is','was','were','been','being','armed','aimed','better','best','us','me','mine','myself']
+          probe_map={p:chosen.get(p.casefold(), p if p in rank else '') for p in probes}
+          report={
+            'source_bundle':source,
+            'frequency_count':len(hen),
+            'frequency_unique':len({x[0] for x in hen}),
+            'frequency_first20':hen[:20],
+            'frequency_last20':hen[-20:],
+            'frequency_sha256':hashlib.sha256(freq.encode()).hexdigest(),
+            'expanded_source_sha256':hashlib.sha256((root/'core/en.json').read_bytes()).hexdigest(),
+            'core_en_db_sha256':hashlib.sha256((root/'core/en.db').read_bytes()).hexdigest(),
+            'relevant_expanded_rows':relevant_rows,
+            'surface_candidates':len(candidates),
+            'ambiguous_surfaces':ambiguous,
+            'lemma_mapping_count':len(chosen),
+            'lemma_sha256':hashlib.sha256(lemma.encode()).hexdigest(),
+            'probe_map':probe_map,
+          }
+          Path('recovery/report/en-assets-report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),'utf-8')
           print(json.dumps(report,ensure_ascii=False,indent=2))
-          if not candidates or candidates[0]['count']!=36566 or candidates[0]['unique']!=36566:
-              raise SystemExit('English assessment list validation failed')
+          if report['core_en_db_sha256']!='76577a088ac87ade8395192368888f363373035729a19e6bae335853e135a167':
+              raise SystemExit('core/en.db no longer matches supplied Migaku DB fingerprint')
+          if len(chosen)<60000 or len(chosen)>70000:
+              raise SystemExit(f'unexpected lemma map size {len(chosen)}')
           PY
-      - name: Upload report
+      - name: Upload compact assets
         uses: actions/upload-artifact@v4
         with:
-          name: migaku-en-core-report
-          path: recovery/report/
+          name: migaku-en-compact-assets
+          path: |
+            recovery/report/en-assets-report.json
+            recovery/assets/en_vocab_frequency.tsv
+            recovery/assets/en_vocab_lemma.tsv
           if-no-files-found: error
