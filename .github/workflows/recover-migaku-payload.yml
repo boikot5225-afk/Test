@@ -1,0 +1,91 @@
+name: Recover Migaku payload
+
+on:
+  push:
+    branches:
+      - tmp-recover-migaku-20260825
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect and decode payloads
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, gzip, hashlib, json, re, struct
+
+          out = Path('recovery')
+          out.mkdir(exist_ok=True)
+          report = []
+
+          candidates = sorted(Path('data').glob('_inspect_*.txt'))
+          candidates += sorted(Path('data/zh_vocab_parts').glob('*.b64'))
+          candidates += sorted(Path('data/zh_vocab_b64').glob('*.b64'))
+
+          def gzip_name(raw):
+              try:
+                  if raw[:2] != b'\x1f\x8b': return ''
+                  flg = raw[3]
+                  p = 10
+                  if flg & 4:
+                      xlen = int.from_bytes(raw[p:p+2], 'little'); p += 2 + xlen
+                  if flg & 8:
+                      q = raw.index(b'\x00', p)
+                      return raw[p:q].decode('utf-8', 'replace')
+              except Exception:
+                  pass
+              return ''
+
+          for p in candidates:
+              text = p.read_text('utf-8', errors='replace').strip()
+              row = {
+                  'path': str(p), 'text_len': len(text),
+                  'text_sha256': hashlib.sha256(text.encode()).hexdigest(),
+                  'ellipsis': 'ELLIPSIZATION' in text,
+              }
+              try:
+                  raw = base64.b64decode(text, validate=True)
+                  row.update(raw_len=len(raw), raw_sha256=hashlib.sha256(raw).hexdigest(), gzip_name=gzip_name(raw))
+                  raw_path = out / (p.name + '.raw')
+                  raw_path.write_bytes(raw)
+                  if raw[:2] == b'\x1f\x8b':
+                      dec = gzip.decompress(raw)
+                      dec_path = out / (p.name + '.gunzip')
+                      dec_path.write_bytes(dec)
+                      row.update(gunzip_len=len(dec), gunzip_sha256=hashlib.sha256(dec).hexdigest())
+                      try:
+                          s = dec.decode('utf-8')
+                          lines = s.splitlines()
+                          row['utf8'] = True
+                          row['lines'] = len(lines)
+                          row['first20'] = lines[:20]
+                          row['last20'] = lines[-20:]
+                      except Exception as e:
+                          row['utf8'] = False
+                          row['utf8_error'] = repr(e)
+              except Exception as e:
+                  row['decode_error'] = repr(e)
+              report.append(row)
+
+          # Inspect the original visible frequency chunk too.
+          p = Path('data/zh_vocab_frequency_0.txt')
+          if p.exists():
+              lines = p.read_text('utf-8', errors='replace').splitlines()
+              report.append({'path': str(p), 'lines': len(lines), 'first20': lines[:20], 'last20': lines[-20:]})
+
+          (out/'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), 'utf-8')
+          for r in report:
+              print(json.dumps(r, ensure_ascii=False))
+          PY
+      - name: Upload recovery output
+        uses: actions/upload-artifact@v4
+        with:
+          name: migaku-recovery
+          path: recovery/
+          if-no-files-found: error
