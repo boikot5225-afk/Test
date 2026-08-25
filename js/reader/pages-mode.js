@@ -63,6 +63,10 @@ export function createReaderPagesMode({
   let resizeTimer = null;
   let lastMeasuredWidth = 0;
   let lastMeasuredHeight = 0;
+  // After a real chapter measurement, hint/data changes and Android system-bar
+  // height noise must not reshuffle paragraph boundaries. Explicit full renders
+  // and real width changes still invalidate the freeze.
+  let paginationFrozen = false;
   // Every full chapter/pagination rebuild invalidates callbacks captured by an
   // older page-turn animation. Android WebView can finish transitionend/timeout
   // after a TOC jump has already replaced the entire chapter DOM; without a
@@ -183,12 +187,18 @@ export function createReaderPagesMode({
     scroller.dataset.rdPageAnimation = animation;
 
     unwrap(chapterText);
+    // Chinese annotation slots must exist before getBoundingClientRect() is ever
+    // used for page grouping. Later hint text is out-of-flow and cannot resize it.
+    try { globalThis.readerPrepareZhStableSlots?.(chapterText); } catch (error) {
+      console.warn('[reader pages] stable Chinese slot preparation failed', error?.message || error);
+    }
     if (!enabled) {
       scroller.classList.remove('rd-pages-mode');
       readingView?.classList.remove('rd-pages-active');
       pages = [];
       currentPageIndex = 0;
       animating = false;
+      paginationFrozen = false;
       return;
     }
 
@@ -206,6 +216,7 @@ export function createReaderPagesMode({
     scroller.classList.add('rd-pages-mode');
     readingView?.classList.add('rd-pages-active');
     animating = false;
+    paginationFrozen = true;
     showPageInstant(pageIndexForParagraph(getActiveParagraphIndex()));
   }
 
@@ -225,6 +236,7 @@ export function createReaderPagesMode({
     const cachedDisconnected = pages.some((page) => !page?.el?.isConnected || page.el.parentElement !== chapterText);
     const currentConnected = pages[currentPageIndex]?.el?.isConnected;
     if (!pages.length || livePages.length !== pages.length || cachedDisconnected || !currentConnected) {
+      paginationFrozen = false;
       rebuild();
     }
 
@@ -268,8 +280,11 @@ export function createReaderPagesMode({
 
   function syncAfterRender({ full = false, queryOnly = false } = {}) {
     if (queryOnly) return enabled;
-    if (full) rebuild();
-    else resync();
+    if (full) {
+      // A real chapter/font/layout render is allowed to establish a new frozen map.
+      paginationFrozen = false;
+      rebuild();
+    } else resync();
     return enabled;
   }
 
@@ -387,10 +402,17 @@ export function createReaderPagesMode({
       const dw = Math.abs(scroller.clientWidth - lastMeasuredWidth);
       const dh = Math.abs(scroller.clientHeight - lastMeasuredHeight);
       if (lastMeasuredWidth && lastMeasuredHeight && dw < 8 && dh < 24) return;
+      // Android WebView frequently changes only viewport height when system/reader
+      // chrome settles. Keep the already measured page boundaries in that case.
+      if (paginationFrozen && lastMeasuredWidth && dw < 8) {
+        lastMeasuredHeight = scroller.clientHeight;
+        return;
+      }
       if (animating) {
         handleResize();
         return;
       }
+      paginationFrozen = false;
       rebuild();
     }, 240);
   }

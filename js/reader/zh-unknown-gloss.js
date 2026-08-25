@@ -143,7 +143,7 @@ function bestCachedHint(word, context, existingPinyin = '', ownCache = null, lex
 }
 
 function ensureWrapper(el, hint = {}) {
-  if (!isChineseWordElement(el) || isKnownElement(el)) return null;
+  if (!isChineseWordElement(el)) return null;
   const word = String(el.dataset.word || '').trim();
   if (!word) return null;
 
@@ -160,7 +160,7 @@ function ensureWrapper(el, hint = {}) {
   const pinyin = hint.pinyin || existingRt || '';
   const ru = compactRussian(hint.fullRu || hint.ru || '');
   wrap.dataset.zhGlossPinyin = pinyin || '';
-  wrap.dataset.zhGlossRu = ru || '…';
+  wrap.dataset.zhGlossRu = ru || '';
   return wrap;
 }
 
@@ -405,11 +405,6 @@ function scan() {
 
   for (const el of words) {
     if (!isChineseWordElement(el)) continue;
-    if (isKnownElement(el)) {
-      unwrapWord(el);
-      continue;
-    }
-
     const word = String(el.dataset.word || '').trim();
     const context = getParagraphContext(el);
     const existingRt = String(el.querySelector('rt')?.textContent || '').trim();
