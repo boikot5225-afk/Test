@@ -28,8 +28,8 @@ p.write_text(s,'utf-8')
 
 p=Path('js/reader/interactions-runtime.js')
 s=p.read_text('utf-8')
-assert "import './zh-stable-slots.js?v=1';" in s
-s=s.replace("import './zh-stable-slots.js?v=1';","import './zh-stable-slots.js?v=2';",1)
+assert "import './zh-stable-slots.js?v=2';" in s
+s=s.replace("import './zh-stable-slots.js?v=2';","import './zh-stable-slots.js?v=3';",1)
 p.write_text(s,'utf-8')
 
 p=Path('android/app/build.gradle')
