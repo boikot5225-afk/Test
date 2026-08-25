@@ -76,12 +76,6 @@ dependencies {
     implementation 'androidx.webkit:webkit:1.12.1'
 }
 
-// Migaku-style vocabulary estimation uses a bundled Mandarin rank list copied
-// from the language frontend in the user's reference APK. It is shipped as a
-// compact gzip text asset and unpacked by the WebView at runtime.
-
-def bundledMigakuZhFrequency = file("${rootProject.projectDir.parentFile}/data/zh_vocab_frequency_migaku.txt.gz")
-
 /**
  * Copies the web app (repository root) into the APK's assets/www.
  *
