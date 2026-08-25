@@ -1,0 +1,29 @@
+name: Inspect English reader
+
+on:
+  push:
+    branches: [tmp-en-toc48-stage-20260825]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect English inline word rendering
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p inspection
+          {
+            echo '=== reader-word CSS ==='
+            grep -RInE --include='*.css' --include='*.js' 'reader-word|rw-(new|seen|faded|learning|known|problem)|translation' css js | head -1500 || true
+            echo '=== lexical/global bridges ==='
+            grep -RInE --include='*.js' 'readerGetCachedLexical|readerPutCachedLexical|readerAI\(|readerLexical|an2Reader' js/reader-app.js js/reader | head -1000 || true
+          } > inspection/report.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: en-reader-inspection
+          path: inspection/report.txt
