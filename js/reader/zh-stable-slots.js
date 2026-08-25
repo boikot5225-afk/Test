@@ -1,7 +1,8 @@
-// Fixed Chinese annotation geometry for toc45.
+// Fixed Chinese annotation geometry for toc46.
 // Every Chinese token reserves the same three-row slot BEFORE page measurement.
-// Hint content is painted out-of-flow; Known/Unknown changes pixels, never geometry.
-const STYLE_ID = 'reader-zh-stable-slots-v2';
+// The slot width is the Hanzi's natural width; hints are painted out-of-flow.
+// Known/Unknown therefore changes pixels, never text geometry or pagination.
+const STYLE_ID = 'reader-zh-stable-slots-v3';
 let rootObserver = null;
 let observedRoot = null;
 
@@ -42,20 +43,15 @@ function ensureWordSlot(word) {
     wrap.classList.add('rw-zh-fixed-slot');
   }
 
+  // toc45 stored a guessed numeric width here. Remove it defensively so an
+  // already-live DOM can recover without waiting for a full chapter rebuild.
+  wrap.style.removeProperty('--rw-zh-slot-width');
+
   const rt = String(word.querySelector?.('rt')?.textContent || '').trim();
   if (!wrap.dataset.zhGlossPinyin && rt) wrap.dataset.zhGlossPinyin = rt;
   if (!('zhGlossRu' in wrap.dataset)) wrap.dataset.zhGlossRu = '';
   if (!('zhGlossRuReadable' in wrap.dataset)) wrap.dataset.zhGlossRuReadable = '';
   normalizePlaceholder(wrap);
-
-  const rawWord = String(word.dataset.word || word.textContent || '');
-  const hanziCount = Math.max(1, Array.from(rawWord).filter(ch => /[㐀-鿿]/.test(ch)).length);
-  const slotWidthEm = hanziCount <= 1 ? 1.38
-    : hanziCount === 2 ? 2.12
-    : hanziCount === 3 ? 3.02
-    : hanziCount === 4 ? 3.95
-    : Math.min(6.2, hanziCount * .98);
-  wrap.style.setProperty('--rw-zh-slot-width', `${slotWidthEm}em`);
   return wrap;
 }
 
@@ -79,32 +75,34 @@ function installStyles() {
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
-    /* One line metric for the whole Chinese page. */
+    /* One immutable vertical metric for the whole Chinese page. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-paragraph-text {
       line-height:2.18 !important;
     }
 
-    /* :has(> .reader-word) intentionally matches the specificity of the old
-       rw-new/rw-seen/rw-faded collapse rules, but loads later and wins. */
+    /* The column width comes ONLY from the Hanzi itself. Pinyin/Russian are
+       absolutely positioned and cannot participate in intrinsic sizing. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .reader-word) {
       display:inline-grid !important;
       grid-template-rows:.58em 1.08em .54em !important;
-      grid-template-columns:minmax(0,var(--rw-zh-slot-width,1.38em)) !important;
+      grid-template-columns:max-content !important;
       align-items:center !important;
       justify-items:center !important;
       vertical-align:-.48em !important;
       line-height:1 !important;
-      margin:0 .075em !important;
+      margin:0 .055em !important;
       padding:0 .025em !important;
       position:relative !important;
       overflow:visible !important;
-      width:var(--rw-zh-slot-width,1.38em) !important;
-      min-width:var(--rw-zh-slot-width,1.38em) !important;
-      max-width:var(--rw-zh-slot-width,1.38em) !important;
+      width:auto !important;
+      min-width:0 !important;
+      max-width:none !important;
       height:auto !important;
       box-sizing:border-box !important;
     }
 
+    /* Never allow WebView to split a lexical token into vertical Hanzi. This
+       was the toc45 regression: a guessed width was a few pixels too narrow. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .reader-word) > .reader-word {
       grid-row:2 !important;
       grid-column:1 !important;
@@ -116,14 +114,18 @@ function installStyles() {
       margin:0 !important;
       padding:0 1px !important;
       line-height:1.08 !important;
+      white-space:nowrap !important;
+      word-break:keep-all !important;
+      overflow-wrap:normal !important;
     }
 
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .reader-word) > .reader-word rt {
       display:none !important;
     }
 
-    /* Pinyin/Russian are absolutely painted around the Hanzi-sized column.
-       They therefore cannot widen a token when data arrives later. */
+    /* Hints are clipped to their own Hanzi footprint. They never widen the
+       token and never paint across a neighbouring word. No mystery ellipsis:
+       an absent loading value is blank, and a long hint is simply clipped. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .reader-word)::before,
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .reader-word)::after {
       display:block !important;
@@ -137,7 +139,7 @@ function installStyles() {
       padding:0 .05em !important;
       box-sizing:border-box !important;
       overflow:hidden !important;
-      text-overflow:ellipsis !important;
+      text-overflow:clip !important;
       white-space:nowrap !important;
       text-align:center !important;
       pointer-events:none !important;
@@ -172,8 +174,7 @@ function installStyles() {
       visibility:hidden !important;
     }
 
-    /* A loading placeholder is visually empty. Real ellipsis inside a genuine
-       translation is untouched; only the exact placeholder values disappear. */
+    /* Loading placeholders are visually empty. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap[data-zh-gloss-ru="…"]::after,
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap[data-zh-gloss-ru="..."]::after {
       content:'' !important;
