@@ -1,4 +1,4 @@
-name: Validate Reader AI toc44 guards
+name: Stage Reader AI toc45
 
 on:
   push:
@@ -9,54 +9,50 @@ permissions:
   contents: write
 
 jobs:
-  validate:
+  stage:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: a0f65ab57e51846a6b527216615cb4aeafd9eb6a
+          ref: 1aad5765a021bbdccac4333b008bd4be18a3c831
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Apply browser-only installer guards
+      - name: Apply toc45 fixed label geometry
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 'a0f65ab57e51846a6b527216615cb4aeafd9eb6a'
-          git show 'origin/tmp-recover-migaku-extension-20260825:.github/toc44/compat.py' > /tmp/toc44_compat.py
-          python3 /tmp/toc44_compat.py
-          node --check js/reader/zh-unknown-gloss.js
-          node --check js/reader/zh-unknown-gloss-readable.js
+          test "$(git rev-parse HEAD)" = '1aad5765a021bbdccac4333b008bd4be18a3c831'
+          git show 'origin/tmp-recover-migaku-extension-20260825:.github/toc45/patch.py' > /tmp/toc45_patch.py
+          python3 /tmp/toc45_patch.py
           node --check js/reader/zh-stable-slots.js
-          node --check js/reader/vocab-estimate.js
+          node --check js/reader/interactions-runtime.js
           node --check js/reader/pages-mode.js
           git diff --check
 
-      - name: Run paragraph regression that previously failed
+      - name: Verify toc45 geometry invariants
         shell: bash
         run: |
           set -euo pipefail
+          grep -q "versionCode 65" android/app/build.gradle
+          grep -q "versionName '77.42-toc45'" android/app/build.gradle
+          grep -qF "import './zh-stable-slots.js?v=2';" js/reader/interactions-runtime.js
+          grep -q "--rw-zh-slot-width" js/reader/zh-stable-slots.js
+          grep -q "width:calc(100% - .10em)" js/reader/zh-stable-slots.js
+          grep -q "max-width:calc(100% - .10em)" js/reader/zh-stable-slots.js
+          ! grep -q "width:max-content !important" js/reader/zh-stable-slots.js
+          grep -q "readerPrepareZhStableSlots" js/reader/pages-mode.js
+          grep -q "paginationFrozen" js/reader/pages-mode.js
+          grep -q "wrap.dataset.zhGlossRu = ru || '';" js/reader/zh-unknown-gloss.js
+          ! grep -q "wrap.dataset.zhGlossRu = ru || '…';" js/reader/zh-unknown-gloss.js
           node scripts/check-reader-paragraph-help-render.mjs
           node scripts/check-reader-paragraph-help-runtime.mjs
           node scripts/check-reader-paragraph-tap-selection.mjs
-
-      - name: Verify toc44 invariants remain intact
-        shell: bash
-        run: |
-          set -euo pipefail
-          grep -q "versionCode 64" android/app/build.gradle
-          grep -q "versionName '77.42-toc44'" android/app/build.gradle
-          grep -qF "import './zh-stable-slots.js?v=1';" js/reader/interactions-runtime.js
-          test ! -e js/reader/vocab-layout-lock.js
-          grep -q "readerPrepareZhStableSlots" js/reader/pages-mode.js
-          grep -q "paginationFrozen" js/reader/pages-mode.js
-          grep -q "position:absolute !important" js/reader/zh-stable-slots.js
-          grep -q "wrap.dataset.zhGlossRu = ru || '';" js/reader/zh-unknown-gloss.js
-          ! grep -q "wrap.dataset.zhGlossRu = ru || '…';" js/reader/zh-unknown-gloss.js
+          node scripts/check-reader-zh-unknown-gloss.mjs
           python3 - <<'PY'
           from pathlib import Path
           import gzip,hashlib
@@ -66,7 +62,7 @@ jobs:
           assert hashlib.sha256(plain).hexdigest()=='e656865c38735d4a314d13e91a02a5ba6589361ecceaf93a52f20a9cba70fd64'
           PY
 
-      - name: Commit guarded toc44 source
+      - name: Commit staged toc45 source
         shell: bash
         run: |
           set -euo pipefail
@@ -74,7 +70,7 @@ jobs:
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git add -A
           git diff --cached --check
-          git commit -m 'test(reader): keep browser UI inert in renderer harness'
+          git commit -m 'fix(reader): constrain Chinese hints to stable slots'
           FINAL_SHA="$(git rev-parse HEAD)"
           echo "FINAL_SOURCE_SHA=${FINAL_SHA}"
-          git push --force origin HEAD:refs/heads/tmp-toc44-ready2-20260825
+          git push --force origin HEAD:refs/heads/tmp-toc45-ready-20260825
