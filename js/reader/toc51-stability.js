@@ -1,4 +1,4 @@
-// toc51 — device-only stability fixes confirmed by the 2026-08-27 A54 recording.
+// toc51/toc52 — device-only stability fixes confirmed by the 2026-08-27 A54 recordings.
 //
 // Keep this layer deliberately isolated from vocabulary state/segmentation. It
 // only fixes geometry/compositing after the normal EN Unknown and pages-mode
@@ -69,11 +69,13 @@ function installToc51Stability() {
     html body #reader-reading-view.rd-en-unknown-gloss[data-reader-lang="en"] .rw-en-gloss-wrap[data-en-gloss="1"]::after {
       position:absolute !important;
       left:0 !important;
-      top:1.04em !important;
-      width:100% !important;
+      right:0 !important;
+      top:auto !important;
+      bottom:0 !important;
+      width:auto !important;
       min-width:0 !important;
       max-width:100% !important;
-      height:.52em !important;
+      height:auto !important;
       overflow:hidden !important;
       white-space:nowrap !important;
       text-align:center !important;
