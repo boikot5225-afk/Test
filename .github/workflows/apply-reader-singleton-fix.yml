@@ -6,7 +6,6 @@ on:
       - feature/77.42-epub-toc
     paths:
       - '.github/workflows/apply-reader-singleton-fix.yml'
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -18,95 +17,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: feature/77.42-epub-toc
-      - name: Remove duplicate Reader module instances
+      - name: Apply Chinese render stability patch
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          CANONICAL = '?v=77.31'
-
-          # All executable imports of reader-app must use exactly the same URL.
-          targets = [Path('js/app.js'), Path('js/dict-render.js')]
-          targets += list(Path('js/reader').rglob('*.js'))
-          changed = []
-          for path in targets:
-              text = path.read_text(encoding='utf-8')
-              fixed = re.sub(r'(reader-app\.js)(?:\?[^\'"`\s)]+)?', r'\1' + CANONICAL, text)
-              if fixed != text:
-                  path.write_text(fixed, encoding='utf-8')
-                  changed.append(str(path))
-
-          # Defensive runtime bridge: even if a future module accidentally
-          # overwrites window handlers, navigation is rebound to the canonical
-          # reader-app exports that TOC uses.
-          bridge = Path('js/reader/handler-bridge.js')
-          text = bridge.read_text(encoding='utf-8')
-          marker = "function syncUpgradedHandlers() {\n"
-          if 'CANONICAL_READER_HANDLER_NAMES' not in text:
-              insert = r'''const CANONICAL_READER_HANDLER_NAMES = [
-            'readerOpenBook', 'readerBackToLibrary',
-            'readerNextParagraph', 'readerPrevParagraph',
-            'readerNextChapter', 'readerPrevChapter',
-            'readerSelectParagraph', 'readerGoToChapter',
-            'renderReaderChapter',
-          ];
-
-          function syncCanonicalReaderHandlers() {
-            return appModule().then(app => {
-              for (const name of CANONICAL_READER_HANDLER_NAMES) {
-                const fn = app?.[name];
-                if (typeof fn !== 'function') continue;
-                window[name] = fn;
-                window[`__real_${name}`] = fn;
-              }
-              globalThis.__readerCanonicalModuleUrl = READER_APP_URL;
-              globalThis.__readerCanonicalHandlersBound = true;
-              return app;
-            });
-          }
-
-          '''
-              if marker not in text:
-                  raise SystemExit('handler-bridge sync marker not found')
-              text = text.replace(marker, insert + marker, 1)
-
-          old = "function syncUpgradedHandlers() {\n  installTocBridge();"
-          new = "function syncUpgradedHandlers() {\n  syncCanonicalReaderHandlers().catch(error => console.warn('[reader handlers] canonical navigation bind failed', error));\n  installTocBridge();"
-          if old in text:
-              text = text.replace(old, new, 1)
-          elif new not in text:
-              raise SystemExit('handler-bridge sync body not found')
-          bridge.write_text(text, encoding='utf-8')
-          if str(bridge) not in changed:
-              changed.append(str(bridge))
-
-          gradle = Path('android/app/build.gradle')
-          g = gradle.read_text(encoding='utf-8')
-          g2 = re.sub(r'versionCode\s+42\b', 'versionCode 43', g, count=1)
-          g2 = g2.replace("versionName '77.42-toc22'", "versionName '77.42-toc23'", 1)
-          if g2 == g:
-              if 'versionCode 43' not in g or "versionName '77.42-toc23'" not in g:
-                  raise SystemExit('build.gradle toc22 version markers not found')
-          else:
-              gradle.write_text(g2, encoding='utf-8')
-              changed.append(str(gradle))
-
-          print('patched files:')
-          for name in changed:
-              print(' -', name)
-          PY
-
-          node scripts/check-reader-module-singleton.mjs
-
+          python3 .github/scripts/patch-zh-stability.py
+          node --check js/reader-app.js
+          node --check js/reader/chapter-render-next.js
+          node --check js/reader/vocab-estimate.js
+          node --check js/reader/zh-stable-slots.js
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git add js android/app/build.gradle
-          if git diff --cached --quiet; then
-            echo 'source already patched'
-            exit 0
-          fi
-          git commit -m 'fix(reader): enforce one navigation module instance'
+          git add js/reader-app.js js/reader/chapter-render-next.js js/reader/vocab-estimate.js js/reader/zh-stable-slots.js
+          git commit -m 'fix(reader): keep Chinese late data off live DOM [skip ci]'
           git push origin HEAD:feature/77.42-epub-toc
