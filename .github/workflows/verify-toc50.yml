@@ -1,0 +1,41 @@
+name: Verify toc50 reader regressions
+
+on:
+  push:
+    branches:
+      - tmp-verify-toc50-20260827
+
+permissions:
+  contents: read
+
+jobs:
+  reader-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-epub-toc
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check toolbar module import safety
+        run: node --check js/reader/toolbar-scroll.js
+      - name: Check same-active paragraph translation guard
+        run: node scripts/check-reader-paragraph-help-render.mjs
+      - name: Exercise same-active paragraph translation runtime
+        run: node scripts/check-reader-paragraph-help-runtime.mjs
+      - name: Check paragraph tap selection
+        run: node scripts/check-reader-paragraph-tap-selection.mjs
+      - name: Check optional Chinese unknown-word gloss mode
+        run: node scripts/check-reader-zh-unknown-gloss.mjs
+      - name: Check toc50 page bootstrap source guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qF "const pagesActive = syncPagesMode?.({ queryOnly: true }) === true;" js/reader/chapter-render-next.js
+          grep -qF "const useLazyShells = !pagesActive && paragraphs.length > PRIORITY_WINDOW * 2;" js/reader/chapter-render-next.js
+          grep -qF "requestAnimationFrame(() => { if (!stale()) render(); });" js/reader/chapter-render-next.js
+          if grep -qF "Temporary one-paragraph pages are used while shells are empty." js/reader/chapter-render-next.js; then
+            echo 'old background repagination path returned'; exit 1
+          fi
