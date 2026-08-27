@@ -1,0 +1,116 @@
+name: Fix page bootstrap toc50
+
+on:
+  push:
+    branches:
+      - tmp-fix-page-bootstrap-20260827
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-epub-toc
+          fetch-depth: 0
+
+      - name: Patch stable page-mode bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              text = p.read_text('utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, got {count}')
+              p.write_text(text.replace(old, new, 1), 'utf-8')
+
+          p = Path('js/reader/chapter-render-next.js')
+          text = p.read_text('utf-8')
+
+          old = """        const PRIORITY_WINDOW = 8;\n        const isCjk = ['zh', 'ja'].includes(canonicalLang(activeReaderLang));\n        const CHUNK_SIZE = isCjk ? 2 : 6;\n        if (paragraphs.length <= PRIORITY_WINDOW * 2) {\n"""
+          new = """        const PRIORITY_WINDOW = 8;\n        const isCjk = ['zh', 'ja'].includes(canonicalLang(activeReaderLang));\n        const CHUNK_SIZE = isCjk ? 2 : 6;\n        // Page mode must never expose the lazy empty paragraph shells. They were\n        // previously turned into temporary one-paragraph pages, then regrouped\n        // after idle back-fill; on Android that produced giant blank pages and a\n        // second pagination rebuild racing the page-turn animation. In pages\n        // mode materialize the chapter DOM before the one real measurement.\n        // Scroll mode keeps the old lazy first-paint optimization unchanged.\n        const pagesActive = syncPagesMode?.({ queryOnly: true }) === true;\n        const useLazyShells = !pagesActive && paragraphs.length > PRIORITY_WINDOW * 2;\n        if (!useLazyShells) {\n"""
+          if text.count(old) != 1:
+              raise SystemExit('chapter render bootstrap block did not match exactly')
+          text = text.replace(old, new, 1)
+
+          old_loop = """            for (let i = 0; i < pending.length; i += CHUNK_SIZE) {\n              await waitForIdle();\n              if (stale()) return;\n              for (const index of pending.slice(i, i + CHUNK_SIZE)) {\n"""
+          new_loop = """            for (let i = 0; i < pending.length; i += CHUNK_SIZE) {\n              await waitForIdle();\n              if (stale()) return;\n              // If the user switches from scroll to pages while idle back-fill\n              // is still running, abort the shell path immediately and rerender\n              // through the page-mode branch above. Do not let temporary pages\n              // live long enough to be turned or later repaginate in place.\n              if (syncPagesMode?.({ queryOnly: true }) === true) {\n                requestAnimationFrame(() => { if (!stale()) render(); });\n                return;\n              }\n              for (const index of pending.slice(i, i + CHUNK_SIZE)) {\n"""
+          if text.count(old_loop) != 1:
+              raise SystemExit('idle back-fill loop did not match exactly')
+          text = text.replace(old_loop, new_loop, 1)
+
+          pattern = re.compile(r"\n\s*// Temporary one-paragraph pages are used while shells are empty\.\n\s*// Once the chapter is real DOM, repaginate exactly once with actual\n\s*// heights\. Scroll mode returns false here and does no extra work\.\n\s*if \(syncPagesMode\?\.\(\{ queryOnly: true \}\) === true\) \{\n\s*await waitForIdle\(\);\n\s*if \(!stale\(\)\) syncPagesMode\?\.\(\{ full: true \}\);\n\s*\}\n")
+          text, n = pattern.subn('\n', text, count=1)
+          if n != 1:
+              raise SystemExit(f'old background repagination block: expected 1 match, got {n}')
+          p.write_text(text, 'utf-8')
+
+          replace_once('js/reader-app.js',
+              "import { createReaderChapterRenderer } from './reader/chapter-render.js?v=10';",
+              "import { createReaderChapterRenderer } from './reader/chapter-render.js?v=11';",
+              'reader-app cache bust')
+          replace_once('js/reader/chapter-render.js',
+              "import { createReaderChapterRenderer as createBaseRenderer } from './chapter-render-dialogue.js?v=8';",
+              "import { createReaderChapterRenderer as createBaseRenderer } from './chapter-render-dialogue.js?v=9';",
+              'chapter-render cache bust')
+          replace_once('js/reader/chapter-render-dialogue.js',
+              "import { createReaderChapterRenderer as createStage1Renderer } from './chapter-render-stage1.js?v=10';",
+              "import { createReaderChapterRenderer as createStage1Renderer } from './chapter-render-stage1.js?v=11';",
+              'dialogue cache bust')
+          replace_once('js/reader/chapter-render-stage1.js',
+              "import { createReaderChapterRenderer as createBaseRenderer } from './chapter-render-next.js?v=12';",
+              "import { createReaderChapterRenderer as createBaseRenderer } from './chapter-render-next.js?v=13';",
+              'stage1 cache bust')
+
+          replace_once('android/app/build.gradle', 'versionCode 69', 'versionCode 70', 'versionCode')
+          replace_once('android/app/build.gradle', "versionName '77.42-toc49'", "versionName '77.42-toc50'", 'versionName')
+
+          # Structural regression guards for the exact bug seen in the recording.
+          final = Path('js/reader/chapter-render-next.js').read_text('utf-8')
+          required = [
+              "const pagesActive = syncPagesMode?.({ queryOnly: true }) === true;",
+              "const useLazyShells = !pagesActive && paragraphs.length > PRIORITY_WINDOW * 2;",
+              "if (!useLazyShells)",
+              "requestAnimationFrame(() => { if (!stale()) render(); });",
+          ]
+          for needle in required:
+              if needle not in final:
+                  raise SystemExit(f'missing page bootstrap guard: {needle}')
+          if 'Temporary one-paragraph pages are used while shells are empty.' in final:
+              raise SystemExit('old background repagination path still present')
+          print('page bootstrap patch OK')
+          PY
+
+      - name: Syntax and regression checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check js/reader/chapter-render-next.js
+          node --check js/reader/chapter-render-stage1.js
+          node --check js/reader/chapter-render-dialogue.js
+          node --check js/reader/chapter-render.js
+          node --check js/reader-app.js
+          grep -qF "const PRIORITY_WINDOW = 8" js/reader/chapter-render-next.js
+          grep -qF "const useLazyShells = !pagesActive" js/reader/chapter-render-next.js
+          grep -qF "versionCode 70" android/app/build.gradle
+          grep -qF "versionName '77.42-toc50'" android/app/build.gradle
+
+      - name: Commit candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Reader AI Builder'
+          git config user.email 'reader-ai-builder@users.noreply.github.com'
+          git add js/reader/chapter-render-next.js js/reader-app.js js/reader/chapter-render.js js/reader/chapter-render-dialogue.js js/reader/chapter-render-stage1.js android/app/build.gradle
+          git commit -m 'fix(reader): stabilize lazy chapter pagination'
+          git push --force origin HEAD:refs/heads/candidate/toc50-build70-page-bootstrap
+          echo "candidate_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
