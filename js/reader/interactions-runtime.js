@@ -5,6 +5,7 @@ import './zh-unknown-gloss-spacing.js?v=2';
 import './vocab-estimate.js?v=7';
 import './en-vocab-estimate.js?v=1';
 import './en-unknown-gloss.js?v=1';
+import './toc51-stability.js?v=1';
 import './toolbar-scroll.js?v=1';
 import './zh-stable-slots.js?v=4';
 import { createReaderInteractions } from './interactions.js?v=2';
