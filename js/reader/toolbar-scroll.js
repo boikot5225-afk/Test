@@ -4,8 +4,20 @@
 // horizontal scroller instead of clipping the rightmost controls (e.g. Pinyin).
 const STYLE_ID = 'rd-toolbar-horizontal-scroll-style';
 
+function canInstallToolbarScrollStyle() {
+  return typeof document !== 'undefined'
+    && typeof document.getElementById === 'function'
+    && typeof document.createElement === 'function'
+    && !!document.head
+    && typeof document.head.appendChild === 'function';
+}
+
 function installToolbarScrollStyle() {
-  if (document.getElementById(STYLE_ID)) return;
+  // Reader runtime tests intentionally use a tiny document stub. The toolbar
+  // enhancement is browser-only and must be a no-op there instead of making an
+  // unrelated paragraph-render regression test fail during module import.
+  if (!canInstallToolbarScrollStyle()) return false;
+  if (document.getElementById(STYLE_ID)) return true;
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
@@ -32,12 +44,15 @@ function installToolbarScrollStyle() {
     }
   `;
   document.head.appendChild(style);
+  return true;
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', installToolbarScrollStyle, { once: true });
-} else {
-  installToolbarScrollStyle();
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', installToolbarScrollStyle, { once: true });
+  } else {
+    installToolbarScrollStyle();
+  }
 }
 
 export { installToolbarScrollStyle };
