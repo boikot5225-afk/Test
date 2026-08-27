@@ -30,3 +30,4 @@ jobs:
           git add js/reader-app.js js/reader/chapter-render-next.js js/reader/vocab-estimate.js js/reader/zh-stable-slots.js
           git commit -m 'fix(reader): keep Chinese late data off live DOM [skip ci]'
           git push origin HEAD:feature/77.42-epub-toc
+# retrigger after removing invalid v1 workflow
