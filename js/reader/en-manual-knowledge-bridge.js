@@ -12,8 +12,8 @@ import { wordStateIdbPut } from './word-state-idb-store.js?v=1';
 // vocabulary/ruby pipeline is never touched.
 const WORD_STATE_BASE_KEY = 'an2_reader_word_state_v1';
 const WRAP_MARK = '__readerEnManualKnowledgeAuthorityV2';
-const CORE_VISUAL_CLASSES = [
-  'rw-new', 'rw-seen', 'rw-faded', 'rw-saved', 'rw-known', 'rw-looked',
+const CORE_CONFLICT_CLASSES = [
+  'rw-new', 'rw-seen', 'rw-faded', 'rw-saved', 'rw-looked',
   'rw-learning', 'rw-familiar', 'rw-problem',
 ];
 
@@ -238,8 +238,9 @@ function repairRenderedManualKnowledge() {
     // English manual Known/Unknown is the final visual authority. Remove stale
     // surface-form Reader colours (especially rw-problem) before applying the
     // lemma decision. Keep rw-sel because it is transient text selection, not a
-    // knowledge status.
-    for (const cls of CORE_VISUAL_CLASSES) {
+    // knowledge status. This is idempotent: an already-correct rw-known is not
+    // removed/re-added, otherwise our class MutationObserver would wake itself.
+    for (const cls of CORE_CONFLICT_CLASSES) {
       if (el.classList.contains(cls)) el.classList.remove(cls);
     }
     if (decision === 'known') {
@@ -247,6 +248,7 @@ function repairRenderedManualKnowledge() {
       if (!el.classList.contains('rw-known')) el.classList.add('rw-known');
       if (!el.classList.contains('rw-migaku-known')) el.classList.add('rw-migaku-known');
     } else {
+      if (el.classList.contains('rw-known')) el.classList.remove('rw-known');
       if (el.classList.contains('rw-migaku-known')) el.classList.remove('rw-migaku-known');
       if (!el.classList.contains('rw-migaku-unknown')) el.classList.add('rw-migaku-unknown');
     }
