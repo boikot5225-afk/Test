@@ -1,0 +1,185 @@
+from pathlib import Path
+
+
+def replace_once(path, old, new, label):
+    p = Path(path)
+    text = p.read_text(encoding='utf-8')
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f'{label}: expected exactly 1 match, got {count}')
+    p.write_text(text.replace(old, new, 1), encoding='utf-8')
+    print('patched', label)
+
+
+# 1) Mandarin vocabulary layer must be language-scoped, like the English layer.
+replace_once(
+    'js/reader/vocab-estimate.js',
+    "async function applyEstimateToRenderedWords() {\n  const root = document.getElementById('reader-chapter-text');",
+    "async function applyEstimateToRenderedWords() {\n  if (currentLang() !== 'zh') return;\n  const root = document.getElementById('reader-chapter-text');",
+    'zh vocab apply language guard',
+)
+
+replace_once(
+    'js/reader/vocab-estimate.js',
+    "function flushPendingWordNodes() {\n  pendingBatchScheduled = false;\n  if (pendingWordNodes.size) {\n    const batch = Array.from(pendingWordNodes);\n    pendingWordNodes.clear();\n    applyClassificationBatch(batch);\n  }\n  ensureVocabularyButton();\n}",
+    "function flushPendingWordNodes() {\n  pendingBatchScheduled = false;\n  if (pendingWordNodes.size && currentLang() === 'zh') {\n    const batch = Array.from(pendingWordNodes);\n    pendingWordNodes.clear();\n    applyClassificationBatch(batch);\n  } else {\n    pendingWordNodes.clear();\n  }\n  ensureVocabularyButton();\n}",
+    'zh vocab pending batch guard',
+)
+
+replace_once(
+    'js/reader/vocab-estimate.js',
+    "  renderObserver = new MutationObserver(records => {\n    for (const record of records) {\n      for (const node of record.addedNodes || []) queueWordNode(node);\n    }\n    if (pendingWordNodes.size) schedulePendingWordBatch();\n  });\n  renderObserver.observe(root, { childList: true, subtree: true });\n  root.querySelectorAll('.reader-word').forEach(word => pendingWordNodes.add(word));\n  schedulePendingWordBatch();",
+    "  renderObserver = new MutationObserver(records => {\n    if (currentLang() !== 'zh') return;\n    for (const record of records) {\n      for (const node of record.addedNodes || []) queueWordNode(node);\n    }\n    if (pendingWordNodes.size) schedulePendingWordBatch();\n  });\n  renderObserver.observe(root, { childList: true, subtree: true });\n  if (currentLang() === 'zh') {\n    root.querySelectorAll('.reader-word').forEach(word => pendingWordNodes.add(word));\n    schedulePendingWordBatch();\n  }",
+    'zh vocab render observer guard',
+)
+
+replace_once(
+    'js/reader/vocab-estimate.js',
+    "  const run = () => loadFrequencyData()\n    .then(() => applyEstimateToRenderedWords())\n    .catch(error => console.warn('[reader vocab] unable to warm Mandarin list', error?.message || error));",
+    "  const run = () => loadFrequencyData()\n    .then(() => { if (currentLang() === 'zh') return applyEstimateToRenderedWords(); })\n    .catch(error => console.warn('[reader vocab] unable to warm Mandarin list', error?.message || error));",
+    'zh vocab warmup language guard',
+)
+
+
+# 2) Late Chinese dictionary/segmenter data enriches cache only, never live DOM.
+app_path = Path('js/reader-app.js')
+app = app_path.read_text(encoding='utf-8')
+trigger = "readerEnsureZhCoreJsonLoaded({ rerender: true })"
+trigger_count = app.count(trigger)
+if trigger_count != 2:
+    raise SystemExit(f'zh core rerender triggers: expected 2, got {trigger_count}')
+app = app.replace(trigger, "readerEnsureZhCoreJsonLoaded({ rerender: false })")
+
+old_remote = """        saveReaderZhSegmentCache();
+        try { if (readerCurrentLang() === 'zh') renderReaderChapterInPlace(); } catch {}
+"""
+new_remote = """        saveReaderZhSegmentCache();
+        // English-v2 stability rule: late lexical/network data enriches the
+        // cache only. Replacing the live chapter changes token geometry and
+        // causes visible flashes/page jumps. The cached segmentation is picked
+        // up on the next natural chapter render instead.
+        try {
+          window.dispatchEvent(new CustomEvent('reader:zh-segmentation-ready', { detail: { key } }));
+        } catch {}
+"""
+if app.count(old_remote) != 1:
+    raise SystemExit(f'zh remote live rerender block: expected 1, got {app.count(old_remote)}')
+app = app.replace(old_remote, new_remote, 1)
+
+old_refresh = """    if (readerIsCjkLang(lang)) {
+      const reading = readerInlineReadingForWord(word, lang);
+      span.classList.toggle('rw-pinyin-on', !!reading);
+      span.innerHTML = reading ? readerRubyHtml(word, reading, lang) : readerEscape(word);
+    }
+"""
+new_refresh = """    if (readerIsCjkLang(lang)) {
+      const reading = String(readerInlineReadingForWord(word, lang) || '').trim();
+      const hasRuby = !!span.querySelector('ruby');
+      const currentReading = String(span.querySelector('rt')?.textContent || '').trim();
+      const hadReadingClass = span.classList.contains('rw-pinyin-on');
+      const wantsReading = !!reading;
+      const structureChanged = hadReadingClass !== wantsReading
+        || hasRuby !== wantsReading
+        || (wantsReading && currentReading !== reading);
+      span.classList.toggle('rw-pinyin-on', wantsReading);
+      // Do not rewrite identical CJK token DOM. Cloud/status refreshes happen
+      // after paint; an unconditional innerHTML assignment made the whole
+      // Chinese line visibly blink even when pinyin had not changed.
+      if (structureChanged) {
+        span.innerHTML = wantsReading ? readerRubyHtml(word, reading, lang) : readerEscape(word);
+      }
+    }
+"""
+if app.count(old_refresh) != 1:
+    raise SystemExit(f'CJK refresh block: expected 1, got {app.count(old_refresh)}')
+app = app.replace(old_refresh, new_refresh, 1)
+app_path.write_text(app, encoding='utf-8')
+print('patched reader-app late Chinese rerenders and idempotent ruby refresh')
+
+
+# 3) Bundled Chinese core completion must not full-render current chapter.
+replace_once(
+    'js/reader/chapter-render-next.js',
+    """      .finally(() => {
+        if (isZh) zhCoreWarmPromise = null;
+        else jaCoreWarmPromise = null;
+        const current = getCurrentBook?.();
+        if (!current) return;
+        const scroller = document.querySelector('#reader-reading-view .rd-scroll');
+        const savedScrollTop = scroller ? scroller.scrollTop : 0;
+        requestAnimationFrame(() => {
+          render();
+          if (scroller) scroller.scrollTop = savedScrollTop;
+        });
+      });
+""",
+    """      .finally(() => {
+        if (isZh) zhCoreWarmPromise = null;
+        else jaCoreWarmPromise = null;
+        const current = getCurrentBook?.();
+        if (!current) return;
+
+        if (isZh) {
+          // Keep the already-painted Chinese chapter immutable, exactly like
+          // English unknown-gloss v2: late data may improve the NEXT natural
+          // render, but must never replace live reading geometry. Mark this DOM
+          // as an accepted snapshot so paragraph navigation does not force a
+          // delayed full rerender merely because the core became available.
+          const chapterText = document.getElementById('reader-chapter-text');
+          if (chapterText && canonicalLang(getBookLang(current)) === 'zh') {
+            chapterText.dataset.renderedZhCore = String(!!isZhCoreLoaded?.());
+          }
+          try { window.dispatchEvent(new CustomEvent('reader:zh-core-ready')); } catch {}
+          return;
+        }
+
+        const scroller = document.querySelector('#reader-reading-view .rd-scroll');
+        const savedScrollTop = scroller ? scroller.scrollTop : 0;
+        requestAnimationFrame(() => {
+          render();
+          if (scroller) scroller.scrollTop = savedScrollTop;
+        });
+      });
+""",
+    'zh core warmup snapshot pin',
+)
+
+
+# 4) Reserve Chinese annotation slots immediately but keep hint pixels blank
+# until the Migaku classifier has positively confirmed Unknown.
+slots_path = Path('js/reader/zh-stable-slots.js')
+slots = slots_path.read_text(encoding='utf-8')
+old_vis = "      visibility:visible !important;\n      transition:none !important;"
+if slots.count(old_vis) != 1:
+    raise SystemExit(f'zh slot default visibility: expected 1, got {slots.count(old_vis)}')
+slots = slots.replace(old_vis, "      visibility:hidden !important;\n      transition:none !important;", 1)
+anchor = """    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang=\"zh\"] .rw-zh-gloss-wrap:has(> .reader-word)::after {
+      content:attr(data-zh-gloss-ru) !important;
+      bottom:.015em !important;
+      font-size:.46em !important;
+      font-weight:400 !important;
+    }
+
+    /* Known keeps the exact same slot, but its hint pixels are invisible. */
+"""
+replacement = """    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang=\"zh\"] .rw-zh-gloss-wrap:has(> .reader-word)::after {
+      content:attr(data-zh-gloss-ru) !important;
+      bottom:.015em !important;
+      font-size:.46em !important;
+      font-weight:400 !important;
+    }
+
+    /* Pending classification is blank but already occupies its final slot.
+       Only confirmed Unknown reveals hint pixels; no Known-to-blank flash. */
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang=\"zh\"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown)::before,
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang=\"zh\"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown)::after {
+      visibility:visible !important;
+    }
+
+    /* Known keeps the exact same slot, but its hint pixels are invisible. */
+"""
+if slots.count(anchor) != 1:
+    raise SystemExit(f'zh slot unknown visibility anchor: expected 1, got {slots.count(anchor)}')
+slots = slots.replace(anchor, replacement, 1)
+slots_path.write_text(slots, encoding='utf-8')
+print('patched Chinese stable slot pending visibility')
