@@ -911,7 +911,7 @@ function readerBuildChineseWordSet() {
   if (readerChineseWordSetCache) return readerChineseWordSetCache;
   // Dynamic/user words only. The full CC-CEDICT map can be 120k+ entries,
   // so we do NOT copy it into a Set on every paragraph render.
-  if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: true });
+  if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: false });
   const dict = new Set([...Object.keys(READER_ZH_CORE_LEXICON), ...Object.keys(READER_ZH_READING_LEXICON)]);
   const lex = loadReaderLexicalCache();
   Object.keys(lex || {}).forEach(k => {
@@ -994,7 +994,13 @@ function readerScheduleChineseSegmentation(text) {
         const c = loadReaderZhSegmentCache();
         c[key] = { words: picked, t: Date.now(), source: picked === words ? 'segment-text' : 'local-dict-preferred' };
         saveReaderZhSegmentCache();
-        try { if (readerCurrentLang() === 'zh') renderReaderChapterInPlace(); } catch {}
+        // English-v2 stability rule: late lexical/network data enriches the
+        // cache only. Replacing the live chapter changes token geometry and
+        // causes visible flashes/page jumps. The cached segmentation is picked
+        // up on the next natural chapter render instead.
+        try {
+          window.dispatchEvent(new CustomEvent('reader:zh-segmentation-ready', { detail: { key } }));
+        } catch {}
       }
     })
     .catch(e => {
@@ -1148,9 +1154,21 @@ function readerRefreshParagraphWordClasses(index = null) {
     // words lose it immediately instead of keeping a stale ruby element until the
     // whole chapter is rendered again.
     if (readerIsCjkLang(lang)) {
-      const reading = readerInlineReadingForWord(word, lang);
-      span.classList.toggle('rw-pinyin-on', !!reading);
-      span.innerHTML = reading ? readerRubyHtml(word, reading, lang) : readerEscape(word);
+      const reading = String(readerInlineReadingForWord(word, lang) || '').trim();
+      const hasRuby = !!span.querySelector('ruby');
+      const currentReading = String(span.querySelector('rt')?.textContent || '').trim();
+      const hadReadingClass = span.classList.contains('rw-pinyin-on');
+      const wantsReading = !!reading;
+      const structureChanged = hadReadingClass !== wantsReading
+        || hasRuby !== wantsReading
+        || (wantsReading && currentReading !== reading);
+      span.classList.toggle('rw-pinyin-on', wantsReading);
+      // Do not rewrite identical CJK token DOM. Cloud/status refreshes happen
+      // after paint; an unconditional innerHTML assignment made the whole
+      // Chinese line visibly blink even when pinyin had not changed.
+      if (structureChanged) {
+        span.innerHTML = wantsReading ? readerRubyHtml(word, reading, lang) : readerEscape(word);
+      }
     }
   });
 }
@@ -1434,7 +1452,7 @@ function readerNormalizeWord(word, lang = null) {
 function readerTokenizeChineseParagraph(text) {
   const s = String(text || '');
   if (!s) return [];
-  if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: true });
+  if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: false });
   const key = readerTextHash(s);
   const cached = loadReaderZhSegmentCache()[key];
   const local = readerSegmentChineseLocal(s);

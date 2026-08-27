@@ -147,7 +147,7 @@ function installStyles() {
       font-family:'IBM Plex Sans',system-ui,sans-serif !important;
       color:var(--text-muted) !important;
       z-index:1 !important;
-      visibility:visible !important;
+      visibility:hidden !important;
       transition:none !important;
     }
 
@@ -164,6 +164,13 @@ function installStyles() {
       bottom:.015em !important;
       font-size:.46em !important;
       font-weight:400 !important;
+    }
+
+    /* Pending classification is blank but already occupies its final slot.
+       Only confirmed Unknown reveals hint pixels; no Known-to-blank flash. */
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown)::before,
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-migaku-unknown)::after {
+      visibility:visible !important;
     }
 
     /* Known keeps the exact same slot, but its hint pixels are invisible. */

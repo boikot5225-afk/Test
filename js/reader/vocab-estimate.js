@@ -338,6 +338,7 @@ function applyClassificationBatch(elements) {
 }
 
 async function applyEstimateToRenderedWords() {
+  if (currentLang() !== 'zh') return;
   const root = document.getElementById('reader-chapter-text');
   if (!root) return;
   const profile = loadProfile();
@@ -981,10 +982,12 @@ function queueWordNode(node) {
 
 function flushPendingWordNodes() {
   pendingBatchScheduled = false;
-  if (pendingWordNodes.size) {
+  if (pendingWordNodes.size && currentLang() === 'zh') {
     const batch = Array.from(pendingWordNodes);
     pendingWordNodes.clear();
     applyClassificationBatch(batch);
+  } else {
+    pendingWordNodes.clear();
   }
   ensureVocabularyButton();
 }
@@ -1003,14 +1006,17 @@ function installRenderObserver() {
   renderObserver?.disconnect();
   renderObserverRoot = root;
   renderObserver = new MutationObserver(records => {
+    if (currentLang() !== 'zh') return;
     for (const record of records) {
       for (const node of record.addedNodes || []) queueWordNode(node);
     }
     if (pendingWordNodes.size) schedulePendingWordBatch();
   });
   renderObserver.observe(root, { childList: true, subtree: true });
-  root.querySelectorAll('.reader-word').forEach(word => pendingWordNodes.add(word));
-  schedulePendingWordBatch();
+  if (currentLang() === 'zh') {
+    root.querySelectorAll('.reader-word').forEach(word => pendingWordNodes.add(word));
+    schedulePendingWordBatch();
+  }
 }
 
 function ensureVocabularyButton() {
@@ -1054,7 +1060,7 @@ function installPanelHook() {
 function warmFrequencyWhenUseful() {
   if (!loadProfile()) return;
   const run = () => loadFrequencyData()
-    .then(() => applyEstimateToRenderedWords())
+    .then(() => { if (currentLang() === 'zh') return applyEstimateToRenderedWords(); })
     .catch(error => console.warn('[reader vocab] unable to warm Mandarin list', error?.message || error));
   if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 900 });
   else setTimeout(run, 250);

@@ -58,6 +58,21 @@ export function createReaderChapterRenderer({
         else jaCoreWarmPromise = null;
         const current = getCurrentBook?.();
         if (!current) return;
+
+        if (isZh) {
+          // Keep the already-painted Chinese chapter immutable, exactly like
+          // English unknown-gloss v2: late data may improve the NEXT natural
+          // render, but must never replace live reading geometry. Mark this DOM
+          // as an accepted snapshot so paragraph navigation does not force a
+          // delayed full rerender merely because the core became available.
+          const chapterText = document.getElementById('reader-chapter-text');
+          if (chapterText && canonicalLang(getBookLang(current)) === 'zh') {
+            chapterText.dataset.renderedZhCore = String(!!isZhCoreLoaded?.());
+          }
+          try { window.dispatchEvent(new CustomEvent('reader:zh-core-ready')); } catch {}
+          return;
+        }
+
         const scroller = document.querySelector('#reader-reading-view .rd-scroll');
         const savedScrollTop = scroller ? scroller.scrollTop : 0;
         requestAnimationFrame(() => {
