@@ -129,12 +129,14 @@ function installStyles() {
   style.id = STYLE_ID;
   style.textContent = `
     /* Last writer wins: render only sticky, non-empty values. Old Chinese scans
-       may still write data-zh-gloss-ru=""; that must not erase visible pixels. */
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap::before {
+       may still write data-zh-gloss-ru=""; that must not erase visible pixels.
+       :has(> .reader-word)+data-zh-gloss intentionally makes these selectors
+       more specific than the legacy zh-stable-slots !important rules. */
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap[data-zh-gloss="1"]:has(> .reader-word)::before {
       content:attr(data-zh-gloss-sticky-pinyin) !important;
       transition:none !important;
     }
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap::after {
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap[data-zh-gloss="1"]:has(> .reader-word)::after {
       content:attr(data-zh-gloss-sticky-ru) !important;
       transition:none !important;
     }
@@ -159,8 +161,9 @@ function installStyles() {
       visibility:hidden !important;
     }
 
-    /* Keep the legacy top 拼 control authoritative. */
-    #reader-reading-view.rd-zh-unknown-gloss.rd-zh-gloss-pinyin-off[data-reader-lang="zh"] .rw-zh-gloss-wrap::before {
+    /* Keep the legacy top 拼 control authoritative. Match the stronger sticky
+       content selector so turning pinyin off can never be overridden below. */
+    #reader-reading-view.rd-zh-unknown-gloss.rd-zh-gloss-pinyin-off[data-reader-lang="zh"] .rw-zh-gloss-wrap[data-zh-gloss="1"]:has(> .reader-word)::before {
       content:'' !important;
       display:none !important;
     }
