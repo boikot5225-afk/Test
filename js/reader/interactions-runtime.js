@@ -9,7 +9,7 @@ import './en-unknown-gloss-v2.js?v=1';
 import './toc51-stability.js?v=2';
 import './toolbar-scroll.js?v=1';
 import './zh-stable-slots.js?v=4';
-import './zh-gloss-stability-v2.js?v=1';
+import './zh-gloss-stability-v2.js?v=2';
 import { createReaderInteractions } from './interactions.js?v=2';
 
 function getRoot() {
