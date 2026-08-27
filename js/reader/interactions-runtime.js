@@ -4,6 +4,7 @@ import './zh-unknown-gloss.js?v=5';
 import './zh-unknown-gloss-spacing.js?v=2';
 import './vocab-estimate.js?v=7';
 import './en-vocab-estimate.js?v=1';
+import './en-manual-knowledge-bridge.js?v=1';
 import './en-unknown-gloss-v2.js?v=1';
 import './toc51-stability.js?v=2';
 import './toolbar-scroll.js?v=1';
