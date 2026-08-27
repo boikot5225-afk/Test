@@ -1,6 +1,6 @@
 import './toc-upgrade.js?v=1'; // retired no-op shim; kept for old cache/CI compatibility
 import './handler-bridge.js?v=1';
-import './zh-unknown-gloss.js?v=5';
+import './zh-unknown-gloss-v2.js?v=1';
 import './zh-unknown-gloss-spacing.js?v=2';
 import './vocab-estimate.js?v=7';
 import './en-vocab-estimate.js?v=1';
