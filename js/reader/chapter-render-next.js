@@ -233,7 +233,15 @@ export function createReaderChapterRenderer({
         const PRIORITY_WINDOW = 8;
         const isCjk = ['zh', 'ja'].includes(canonicalLang(activeReaderLang));
         const CHUNK_SIZE = isCjk ? 2 : 6;
-        if (paragraphs.length <= PRIORITY_WINDOW * 2) {
+        // Page mode must never expose the lazy empty paragraph shells. They were
+        // previously turned into temporary one-paragraph pages, then regrouped
+        // after idle back-fill; on Android that produced giant blank pages and a
+        // second pagination rebuild racing the page-turn animation. In pages
+        // mode materialize the chapter DOM before the one real measurement.
+        // Scroll mode keeps the old lazy first-paint optimization unchanged.
+        const pagesActive = syncPagesMode?.({ queryOnly: true }) === true;
+        const useLazyShells = !pagesActive && paragraphs.length > PRIORITY_WINDOW * 2;
+        if (!useLazyShells) {
           chapterText.innerHTML = paragraphs.map(paragraphHtml).join('');
           finalizeChapterDom();
         } else {
@@ -254,6 +262,14 @@ export function createReaderChapterRenderer({
             for (let i = 0; i < pending.length; i += CHUNK_SIZE) {
               await waitForIdle();
               if (stale()) return;
+              // If the user switches from scroll to pages while idle back-fill
+              // is still running, abort the shell path immediately and rerender
+              // through the page-mode branch above. Do not let temporary pages
+              // live long enough to be turned or later repaginate in place.
+              if (syncPagesMode?.({ queryOnly: true }) === true) {
+                requestAnimationFrame(() => { if (!stale()) render(); });
+                return;
+              }
               for (const index of pending.slice(i, i + CHUNK_SIZE)) {
                 if (stale()) return;
                 const shell = chapterText.querySelector(`.reader-paragraph[data-p="${index}"][data-reader-pending="1"]`);
@@ -263,14 +279,6 @@ export function createReaderChapterRenderer({
                 const currentActive = Number(chapterText.dataset.activeParagraph);
                 shell.classList.toggle('active', index === currentActive);
               }
-            }
-
-            // Temporary one-paragraph pages are used while shells are empty.
-            // Once the chapter is real DOM, repaginate exactly once with actual
-            // heights. Scroll mode returns false here and does no extra work.
-            if (syncPagesMode?.({ queryOnly: true }) === true) {
-              await waitForIdle();
-              if (!stale()) syncPagesMode?.({ full: true });
             }
           })();
         }

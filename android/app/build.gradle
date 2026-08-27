@@ -26,8 +26,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 69
-        versionName '77.42-toc49'
+        versionCode 70
+        versionName '77.42-toc50'
     }
 
     buildFeatures {
