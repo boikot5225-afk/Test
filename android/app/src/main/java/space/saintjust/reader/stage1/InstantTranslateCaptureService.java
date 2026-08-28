@@ -23,14 +23,14 @@ import java.util.Set;
 /**
  * Reads only Instant Translate while a Reader request is armed.
  *
- * toc68 also keeps a frozen snapshot of Reader AI in a TYPE_ACCESSIBILITY_OVERLAY
- * while Instant Translate does its work underneath. The overlay is visual only:
- * it is not focusable/touchable and the translation is still read from the real
- * Instant Translate accessibility window.
+ * A frozen Reader snapshot hides the external translator. Paragraph capture keeps
+ * strict long-text heuristics; word capture uses a separate mode so short Russian
+ * answers such as "ключ" or "улика" are accepted without weakening paragraph safety.
  */
 public final class InstantTranslateCaptureService extends AccessibilityService {
     private static volatile boolean armed = false;
     private static volatile String sourceText = "";
+    private static volatile String captureMode = "paragraph";
     private static volatile long armedAtMs = 0L;
     private static volatile String stableCandidate = "";
     private static volatile int stableHits = 0;
@@ -62,8 +62,9 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         }
     };
 
-    static void arm(String source) {
+    static void arm(String source, String mode) {
         sourceText = source == null ? "" : source.trim();
+        captureMode = "word".equals(mode) ? "word" : "paragraph";
         armedAtMs = System.currentTimeMillis();
         stableCandidate = "";
         stableHits = 0;
@@ -76,6 +77,7 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
     static void disarm() {
         armed = false;
         sourceText = "";
+        captureMode = "paragraph";
         armedAtMs = 0L;
         stableCandidate = "";
         stableHits = 0;
@@ -291,6 +293,8 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
     }
 
     private boolean sourceContextMatches(List<String> texts, String source) {
+        if ("word".equals(captureMode)) return sourceWordMatches(texts, source);
+
         String sourceCjk = cjkOnly(source);
         StringBuilder all = new StringBuilder();
         for (String text : texts) all.append(cjkOnly(text));
@@ -320,6 +324,25 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         return joined.toString().contains(normalizedSource);
     }
 
+    private boolean sourceWordMatches(List<String> texts, String source) {
+        String sourceCjk = cjkOnly(source);
+        if (!sourceCjk.isEmpty()) {
+            for (String text : texts) {
+                String candidate = cjkOnly(text);
+                if (!candidate.isEmpty() && candidate.contains(sourceCjk)) return true;
+            }
+            return false;
+        }
+
+        String normalizedSource = normalizeLoose(source);
+        if (normalizedSource.isEmpty()) return false;
+        for (String text : texts) {
+            String normalized = normalizeLoose(text);
+            if (normalized.equals(normalizedSource)) return true;
+        }
+        return false;
+    }
+
     private boolean hasRussianTargetLabel(List<String> texts) {
         for (String text : texts) {
             String lower = text.toLowerCase(Locale.ROOT);
@@ -329,6 +352,17 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
                     || lower.contains(" russian")) return true;
         }
         return false;
+    }
+
+    private int russianTargetIndex(List<String> texts) {
+        for (int i = 0; i < texts.size(); i++) {
+            String lower = texts.get(i).toLowerCase(Locale.ROOT);
+            if (lower.equals("русский") || lower.startsWith("русский ")
+                    || lower.contains(" русский")
+                    || lower.equals("russian") || lower.startsWith("russian ")
+                    || lower.contains(" russian")) return i;
+        }
+        return -1;
     }
 
     private String findVisibleError(List<String> texts) {
@@ -349,20 +383,33 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         String best = "";
         int bestScore = Integer.MIN_VALUE;
         int sourceMeaningful = Math.max(countCjk(source), countLetters(source));
-        int minLength = sourceMeaningful <= 16
-                ? 8
-                : Math.min(46, Math.max(14, sourceMeaningful / 3));
+        boolean wordMode = "word".equals(captureMode);
+        int minLength = wordMode
+                ? 2
+                : (sourceMeaningful <= 16 ? 8 : Math.min(46, Math.max(14, sourceMeaningful / 3)));
+        int targetIndex = wordMode ? russianTargetIndex(texts) : -1;
 
-        for (String text : texts) {
+        for (int i = 0; i < texts.size(); i++) {
+            String text = texts.get(i);
             if (text == null) continue;
             String candidate = normalizeSpace(text);
             if (candidate.isEmpty() || candidate.equals(source)) continue;
-            if (!isTranslationCandidate(candidate, minLength, sourceMeaningful)) continue;
+            if (!isTranslationCandidate(candidate, minLength, sourceMeaningful, wordMode)) continue;
 
             int cyrillic = countCyrillic(candidate);
             int words = countWords(candidate);
-            int score = cyrillic * 8 + Math.min(candidate.length(), 700) + Math.min(words * 5, 80);
-            if (candidate.length() >= Math.max(28, minLength * 2)) score += 70;
+            int score;
+            if (wordMode) {
+                score = cyrillic * 5 + Math.min(words * 8, 40);
+                if (targetIndex >= 0) {
+                    int distance = Math.abs(i - targetIndex);
+                    score += Math.max(0, 90 - distance * 10);
+                }
+                if (candidate.length() <= 80) score += 20;
+            } else {
+                score = cyrillic * 8 + Math.min(candidate.length(), 700) + Math.min(words * 5, 80);
+                if (candidate.length() >= Math.max(28, minLength * 2)) score += 70;
+            }
 
             if (score > bestScore) {
                 bestScore = score;
@@ -372,7 +419,8 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         return best;
     }
 
-    private boolean isTranslationCandidate(String candidate, int minLength, int sourceMeaningful) {
+    private boolean isTranslationCandidate(
+            String candidate, int minLength, int sourceMeaningful, boolean wordMode) {
         String lower = candidate.toLowerCase(Locale.ROOT);
         if (isKnownUiText(lower)) return false;
         if (candidate.length() < minLength) return false;
@@ -380,9 +428,14 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
 
         int cyrillic = countCyrillic(candidate);
         int letters = countLetters(candidate);
-        if (cyrillic < Math.max(6, minLength / 2)) return false;
-        if (letters > 0 && cyrillic * 100 < letters * 52) return false;
-        if (sourceMeaningful > 20 && countWords(candidate) < 4) return false;
+        if (wordMode) {
+            if (cyrillic < 2) return false;
+            if (letters > 0 && cyrillic * 100 < letters * 50) return false;
+        } else {
+            if (cyrillic < Math.max(6, minLength / 2)) return false;
+            if (letters > 0 && cyrillic * 100 < letters * 52) return false;
+            if (sourceMeaningful > 20 && countWords(candidate) < 4) return false;
+        }
 
         return !lower.contains("не удалось")
                 && !lower.contains("ошибка перевода")
@@ -400,6 +453,11 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
                 || s.equals("исходный текст")
                 || s.equals("переведенный текст")
                 || s.equals("переведённый текст")
+                || s.equals("словарь")
+                || s.equals("подробнее")
+                || s.equals("избранное")
+                || s.equals("перевести")
+                || s.equals("обратный перевод")
                 || s.startsWith("китайский")
                 || s.startsWith("русский")
                 || s.startsWith("chinese")
@@ -407,6 +465,8 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
                 || s.startsWith("скопировать")
                 || s.startsWith("поделиться")
                 || s.startsWith("озвучить")
+                || s.startsWith("вставить")
+                || s.startsWith("очистить")
                 || s.startsWith("настройки")
                 || s.startsWith("история")
                 || s.startsWith("закрыть");
