@@ -61,5 +61,18 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".InstantTranslateCaptureService"
+            android:exported="false"
+            android:label="Reader AI — Instant Translate"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/instant_translate_accessibility_service" />
+        </service>
     </application>
 </manifest>
