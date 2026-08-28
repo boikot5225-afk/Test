@@ -5,11 +5,13 @@
   if (!nativeBridge || typeof nativeBridge.translate !== 'function') return;
 
   const originalFetch = window.fetch.bind(window);
+  const originalAlert = typeof window.alert === 'function' ? window.alert.bind(window) : null;
   const pending = new Map();
   let sequence = 0;
   let manualTranslateUntil = 0;
+  let manualTranslateMode = '';
 
-  function showInstantNotice(message, error = false, timeoutMs = 4200) {
+  function showInstantError(message, timeoutMs = 6500) {
     try {
       let el = document.getElementById('reader-instant-translate-status');
       if (!el) {
@@ -29,37 +31,82 @@
           textAlign: 'center',
           pointerEvents: 'none',
           transition: 'opacity .18s ease',
+          background: '#5b1d1d',
+          color: '#fff',
         });
         document.documentElement.appendChild(el);
       }
-      el.textContent = String(message || '');
-      el.style.background = error ? '#5b1d1d' : '#173d2a';
-      el.style.color = '#fff';
+      el.textContent = String(message || 'Instant Translate не сработал');
       el.style.opacity = '1';
       clearTimeout(el.__readerInstantTimer);
       el.__readerInstantTimer = setTimeout(() => { el.style.opacity = '0'; }, timeoutMs);
     } catch (_) {}
   }
 
-  function markManualParagraphTranslation(event) {
+  // The legacy Reader function still has DeepSeek-specific presentation strings.
+  // Keep its storage/rendering logic untouched, but make the visible UI describe
+  // the provider that is actually being used on Android.
+  function neutralizeLegacyTranslationUi(mode = '') {
+    try {
+      const toast = document.getElementById('toast');
+      if (toast && /DeepSeek\s+переводит\s+абзац/i.test(String(toast.textContent || ''))) {
+        toast.textContent = '⏳ Перевожу через Instant Translate…';
+      }
+      if (mode === 'selection') {
+        const ru = document.getElementById('reader-sel-ru');
+        if (ru && /DeepSeek\s+переводит/i.test(String(ru.textContent || ''))) {
+          ru.textContent = '⏳ Instant Translate переводит…';
+        }
+      }
+    } catch (_) {}
+  }
+
+  function revealActiveParagraphTranslation(attempt = 0) {
+    try {
+      const details = document.querySelector(
+        '#reader-chapter-text .reader-paragraph.active .reader-translation-block'
+      );
+      if (details) {
+        details.open = true;
+        const label = details.querySelector('summary span');
+        if (label) label.textContent = 'скрыть';
+        return;
+      }
+    } catch (_) {}
+    if (attempt < 12) setTimeout(() => revealActiveParagraphTranslation(attempt + 1), 90);
+  }
+
+  function markManualTranslation(event) {
     const target = event?.target;
     if (!target?.closest) return;
 
     const paragraphButton = target.closest('.reader-action-btn[data-reader-action="translate"]');
+    const selectionButton = target.closest('#reader-sel-btn');
     const moreMenuButton = target.closest('#reader-more-sheet .rd-menu');
     const isMoreMenuTranslate = !!moreMenuButton
       && /перевод\s+абзаца/i.test(String(moreMenuButton.textContent || ''));
 
-    if (paragraphButton || isMoreMenuTranslate) {
-      // The readerAI fetch is started synchronously from the click handler. A few
-      // seconds of grace covers WebView scheduling without allowing the reader's
-      // 800 ms background prefetch to become a second external popup later.
+    if (paragraphButton || isMoreMenuTranslate || selectionButton) {
       manualTranslateUntil = Date.now() + 5000;
+      manualTranslateMode = selectionButton ? 'selection' : 'paragraph';
+      // Reader's handler writes its old provider label immediately after this
+      // capture-phase listener. Relabel on the next task without changing core JS.
+      setTimeout(() => neutralizeLegacyTranslationUi(manualTranslateMode), 0);
+      setTimeout(() => neutralizeLegacyTranslationUi(manualTranslateMode), 80);
     }
   }
 
-  // Capture phase is important: the Reader's delegated handlers stop propagation.
-  document.addEventListener('click', markManualParagraphTranslation, true);
+  document.addEventListener('click', markManualTranslation, true);
+
+  if (originalAlert) {
+    window.alert = function readerInstantTranslateAlert(message) {
+      let text = String(message ?? '');
+      if (/DeepSeek\s+не\s+сработал\s+для\s+перевода\s+абзаца/i.test(text)) {
+        text = text.replace(/DeepSeek/gi, 'Instant Translate');
+      }
+      return originalAlert(text);
+    };
+  }
 
   window.__readerInstantTranslateResolve = (requestId, ok, payloadJson) => {
     const entry = pending.get(String(requestId || ''));
@@ -138,16 +185,17 @@
       return originalFetch(input, init);
     }
 
-    // reader-app.js silently prefetches/auto-translates paragraphs through the
-    // exact same readerAI task. Launching another Android app for those requests
-    // made the old bridge race itself and overwrite the user's real request.
-    // Only a click on an explicit "Перевод абзаца" action is allowed through.
+    // reader-app.js also uses translate_paragraph for silent prefetch. An external
+    // app must never be launched by that background work; only a real user action
+    // armed in the capture-phase click listener is allowed through.
     if (Date.now() > manualTranslateUntil) {
       return blockedBackgroundTranslationResponse();
     }
+    const requestMode = manualTranslateMode || 'paragraph';
     manualTranslateUntil = 0;
+    manualTranslateMode = '';
+    neutralizeLegacyTranslationUi(requestMode);
 
-    showInstantNotice('Перевожу через Instant Translate…', false, 2500);
     try {
       const translated = await nativeTranslate({
         text: String(payload.text || ''),
@@ -156,7 +204,14 @@
       });
       const ru = String(translated?.ru || '').trim();
       if (!ru) throw new Error('Instant Translate вернул пустой текст');
-      showInstantNotice('Перевод получен', false, 1800);
+
+      // Reader's own success toast remains the single success indication. For a
+      // paragraph, reveal the freshly rendered <details> block automatically so
+      // the result is immediately visible instead of sitting behind "показать".
+      if (requestMode === 'paragraph') {
+        setTimeout(() => revealActiveParagraphTranslation(0), 80);
+      }
+
       return new Response(JSON.stringify({ result: { ru, provider: 'instant_translate_installed_app' } }), {
         status: 200,
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -164,7 +219,7 @@
     } catch (error) {
       const reason = String(error?.message || error || 'неизвестная ошибка').slice(0, 220);
       console.warn('[Instant Translate]', error?.code || '', reason);
-      showInstantNotice(reason, true, 6500);
+      showInstantError(reason);
       return new Response(JSON.stringify({
         error: { message: reason, code: error?.code || 'instant_translate' },
       }), {
@@ -175,5 +230,5 @@
   };
 
   window.__readerInstantTranslateBridgeInstalled = true;
-  console.info('[Instant Translate] stable installed-app bridge active');
+  console.info('[Instant Translate] installed-app bridge active');
 })();
