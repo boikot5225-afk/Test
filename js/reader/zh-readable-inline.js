@@ -503,7 +503,7 @@ function bindObserver() {
 }
 
 function install() {
-  if (typeof document === 'undefined') return;
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
   installStyle();
   bindObserver();
   schedule(0);
