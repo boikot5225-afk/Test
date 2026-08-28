@@ -20,19 +20,18 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Small in-process ML Kit bridge used only for English Unknown-word glosses.
+ * In-process ML Kit EN→RU bridge used only for English Unknown-word glosses.
  *
- * The EN→RU model is downloaded by ML Kit once and then stays on the device,
- * so inline glosses do not open Instant Translate and do not touch DeepSeek.
- * The web layer persists the useful results; this class keeps only a session
- * cache and deliberately translates one item after another to avoid hammering
- * the A54 with parallel native inference.
+ * The model is downloaded once by ML Kit and then reused locally. A completed
+ * word is streamed back to the page immediately instead of waiting for the
+ * whole batch, which also makes the UI resilient to page-mode DOM rebuilds.
  */
 public final class OfflineTranslateBridge {
     private final Activity activity;
     private final WeakReference<WebView> webViewRef;
     private final Map<String, String> sessionCache = new ConcurrentHashMap<>();
     private final Translator translator;
+    private volatile boolean modelReady = false;
     private volatile boolean closed = false;
 
     OfflineTranslateBridge(Activity activity, WebView webView) {
@@ -69,11 +68,19 @@ public final class OfflineTranslateBridge {
             return;
         }
 
-        DownloadConditions conditions = new DownloadConditions.Builder().build();
         activity.runOnUiThread(() -> {
             if (closed) return;
+            if (modelReady) {
+                translateNext(requestId, words, 0, new JSONObject());
+                return;
+            }
+
+            DownloadConditions conditions = new DownloadConditions.Builder().build();
             translator.downloadModelIfNeeded(conditions)
-                    .addOnSuccessListener(ignored -> translateNext(requestId, words, 0, new JSONObject()))
+                    .addOnSuccessListener(ignored -> {
+                        modelReady = true;
+                        translateNext(requestId, words, 0, new JSONObject());
+                    })
                     .addOnFailureListener(error -> sendFailure(
                             requestId,
                             "Не удалось скачать EN→RU офлайн-модель: " + safeMessage(error)));
@@ -87,10 +94,11 @@ public final class OfflineTranslateBridge {
             return;
         }
 
-        String word = words.get(index);
-        String cached = sessionCache.get(word);
+        final String word = words.get(index);
+        final String cached = sessionCache.get(word);
         if (cached != null && !cached.isEmpty()) {
             try { out.put(word, cached); } catch (Exception ignored) {}
+            sendProgress(requestId, word, cached);
             translateNext(requestId, words, index + 1, out);
             return;
         }
@@ -101,6 +109,7 @@ public final class OfflineTranslateBridge {
                     if (!translated.isEmpty()) {
                         sessionCache.put(word, translated);
                         try { out.put(word, translated); } catch (Exception ignored) {}
+                        sendProgress(requestId, word, translated);
                     }
                     translateNext(requestId, words, index + 1, out);
                 })
@@ -108,6 +117,14 @@ public final class OfflineTranslateBridge {
                     // One odd token must not discard every other useful gloss.
                     translateNext(requestId, words, index + 1, out);
                 });
+    }
+
+    private void sendProgress(String requestId, String sourceWord, String translated) {
+        String script = "window.__readerOfflineTranslateProgress&&window.__readerOfflineTranslateProgress("
+                + JSONObject.quote(requestId == null ? "" : requestId) + ","
+                + JSONObject.quote(sourceWord == null ? "" : sourceWord) + ","
+                + JSONObject.quote(translated == null ? "" : translated) + ");";
+        sendScript(script);
     }
 
     private void sendSuccess(String requestId, JSONObject translations) {
@@ -130,12 +147,16 @@ public final class OfflineTranslateBridge {
     }
 
     private void sendToPage(String requestId, boolean ok, JSONObject payload) {
-        WebView webView = webViewRef.get();
-        if (closed || webView == null) return;
         String script = "window.__readerOfflineTranslateResolve&&window.__readerOfflineTranslateResolve("
                 + JSONObject.quote(requestId == null ? "" : requestId) + ","
                 + (ok ? "true" : "false") + ","
                 + JSONObject.quote(payload == null ? "{}" : payload.toString()) + ");";
+        sendScript(script);
+    }
+
+    private void sendScript(String script) {
+        WebView webView = webViewRef.get();
+        if (closed || webView == null) return;
         activity.runOnUiThread(() -> {
             WebView current = webViewRef.get();
             if (!closed && current != null) {
@@ -153,6 +174,7 @@ public final class OfflineTranslateBridge {
 
     void shutdown() {
         closed = true;
+        modelReady = false;
         sessionCache.clear();
         try { translator.close(); } catch (Exception ignored) {}
     }
