@@ -4,8 +4,11 @@ import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.provider.Settings;
 import android.text.TextUtils;
+import android.view.View;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 import android.widget.Toast;
@@ -16,14 +19,13 @@ import org.json.JSONObject;
 import java.lang.ref.WeakReference;
 
 /**
- * Compatibility bridge that delegates translation to the user's actually
- * installed Instant Translate app. No copied OAuth client, Firebase token,
- * RevenueCat entitlement or premium backend call is used here.
+ * Compatibility bridge that delegates translation to the user's installed
+ * Instant Translate app. No copied OAuth/Firebase/RevenueCat state is used.
  *
- * The paragraph is handed to Instant Translate through its exported Android
- * PROCESS_TEXT popup. A narrowly-scoped AccessibilityService, enabled by the
- * user once in Android settings, reads the visible translated text from that
- * popup and returns it to Reader AI.
+ * toc68 takes a short-lived bitmap snapshot of Reader immediately before the
+ * PROCESS_TEXT activity is launched. The enabled AccessibilityService displays
+ * that snapshot as a non-interactive accessibility overlay, so Instant Translate
+ * can render and translate underneath without visibly replacing Reader AI.
  */
 final class InstantTranslateBridge {
     static final String TARGET_PACKAGE = "com.spaceship.screen.textcopy";
@@ -87,6 +89,14 @@ final class InstantTranslateBridge {
             pendingRequestId = safeId;
             pendingSourceText = text;
             pendingStartedAtMs = System.currentTimeMillis();
+
+            // Draw the current Reader frame synchronously before another package
+            // gets a chance to paint. If the overlay cannot be created we simply
+            // fall back to toc67's visible external-window behaviour.
+            Bitmap readerSnapshot = captureReaderSnapshot();
+            if (readerSnapshot != null) {
+                InstantTranslateCaptureService.showReaderCover(readerSnapshot);
+            }
             InstantTranslateCaptureService.arm(text);
 
             try {
@@ -98,10 +108,26 @@ final class InstantTranslateBridge {
                 activity.startActivity(intent);
             } catch (Exception error) {
                 clearPending();
+                InstantTranslateCaptureService.hideReaderCover();
                 deliverFailure(safeId, "instant_launch_failed",
                         "Не удалось открыть установленный Instant Translate: " + readable(error));
             }
         });
+    }
+
+    private Bitmap captureReaderSnapshot() {
+        try {
+            View root = activity.getWindow().getDecorView();
+            int width = root.getWidth();
+            int height = root.getHeight();
+            if (width < 2 || height < 2) return null;
+            Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            root.draw(canvas);
+            return bitmap;
+        } catch (Throwable error) {
+            return null;
+        }
     }
 
     @JavascriptInterface
@@ -119,7 +145,7 @@ final class InstantTranslateBridge {
         clearStalePendingIfNeeded();
         JSONObject out = new JSONObject();
         try {
-            out.put("mode", "installed_app");
+            out.put("mode", "installed_app_hidden");
             out.put("accessibilityEnabled", isCaptureServiceEnabled(activity));
             out.put("pending", !pendingRequestId.isEmpty());
         } catch (JSONException ignored) {}
@@ -165,6 +191,7 @@ final class InstantTranslateBridge {
         if (pendingStartedAtMs <= 0L
                 || System.currentTimeMillis() - pendingStartedAtMs > STALE_PENDING_MS) {
             clearPending();
+            InstantTranslateCaptureService.hideReaderCover();
         }
     }
 
@@ -230,5 +257,6 @@ final class InstantTranslateBridge {
     void shutdown() {
         if (activeBridge.get() == this) activeBridge = new WeakReference<>(null);
         clearPending();
+        InstantTranslateCaptureService.hideReaderCover();
     }
 }
