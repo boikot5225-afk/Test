@@ -82,10 +82,33 @@
     return text;
   }
 
+  function unwrapGrammarObject(value) {
+    let current = value;
+    for (let i = 0; i < 4; i++) {
+      if (!current || typeof current !== 'object' || Array.isArray(current)) break;
+      if (Array.isArray(current.parts) || Array.isArray(current.whys) || current.summary) break;
+      const nested = current.data || current.result || current.analysis;
+      if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+        current = nested;
+        continue;
+      }
+      const textish = current.text || current.answer || current.content;
+      if (typeof textish === 'string' && textish.trim()) {
+        try {
+          current = JSON.parse(stripCodeFence(textish));
+          continue;
+        } catch (_) {}
+      }
+      break;
+    }
+    return current;
+  }
+
   function normalizeGrammarResponse(raw) {
     const original = String(raw || '').trim();
     let parsed = null;
     try { parsed = JSON.parse(stripCodeFence(original)); } catch (_) {}
+    parsed = unwrapGrammarObject(parsed);
 
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return { parts: [], whys: [], summary: original || 'Instant AI вернул пустой разбор.' };
@@ -95,8 +118,8 @@
       text: String(p?.text || p?.zh || p?.ja || p?.en || p?.fr || '').trim(),
       pinyin: String(p?.pinyin || '').trim(),
       reading: String(p?.reading || '').trim(),
-      what: String(p?.what || p?.meaning || '').trim(),
-      why: String(p?.why || p?.grammar || '').trim(),
+      what: String(p?.what || p?.meaning || p?.role || '').trim(),
+      why: String(p?.why || p?.grammar || p?.note || '').trim(),
     })).filter(p => p.text || p.what || p.why) : [];
 
     const whys = Array.isArray(parsed.whys) ? parsed.whys.slice(0, 4).map(w => ({
@@ -104,11 +127,121 @@
       a: String(w?.a || w?.answer || '').trim(),
     })).filter(w => w.q || w.a) : [];
 
-    const summary = String(parsed.summary || parsed.explanation || '').trim();
+    const summary = String(parsed.summary || parsed.explanation || parsed.ru || parsed.answer || '').trim();
     if (!parts.length && !whys.length && !summary) {
-      return { parts: [], whys: [], summary: original };
+      return { parts: [], whys: [], summary: original || 'Instant AI вернул ответ без текста.' };
     }
     return { parts, whys, summary };
+  }
+
+  function setSummaryLabel(details) {
+    try {
+      const label = details?.querySelector?.('summary span');
+      if (label) label.textContent = 'скрыть';
+    } catch (_) {}
+  }
+
+  function appendVisibleFallback(active, analysis) {
+    if (!active || active.querySelector('.reader-sentence-analysis')) return false;
+    try {
+      const details = document.createElement('details');
+      details.className = 'reader-help-block reader-sentence-analysis ra2-block reader-instant-chat-fallback';
+      details.open = true;
+      const summaryEl = document.createElement('summary');
+      summaryEl.append(document.createTextNode('🧩 разбор '));
+      const state = document.createElement('span');
+      state.textContent = 'скрыть';
+      summaryEl.appendChild(state);
+      details.appendChild(summaryEl);
+
+      const body = document.createElement('div');
+      body.className = 'reader-help-body';
+      for (const part of (analysis.parts || []).slice(0, 8)) {
+        const row = document.createElement('div');
+        row.className = 'ra2-part';
+        const title = document.createElement('div');
+        title.className = 'ra2-fr';
+        title.textContent = String(part.text || '');
+        row.appendChild(title);
+        const reading = String(part.pinyin || part.reading || '').trim();
+        if (reading) {
+          const r = document.createElement('div');
+          r.className = 'ra2-pinyin';
+          r.textContent = reading;
+          row.appendChild(r);
+        }
+        const what = String(part.what || '').trim();
+        const why = String(part.why || '').trim();
+        if (what || why) {
+          const b = document.createElement('div');
+          b.className = 'ra2-body';
+          if (what) {
+            const w = document.createElement('div');
+            w.className = 'ra2-what';
+            w.textContent = what;
+            b.appendChild(w);
+          }
+          if (why) {
+            const w = document.createElement('div');
+            w.className = 'ra2-why';
+            w.textContent = why;
+            b.appendChild(w);
+          }
+          row.appendChild(b);
+        }
+        body.appendChild(row);
+      }
+      for (const why of (analysis.whys || []).slice(0, 4)) {
+        const card = document.createElement('div');
+        card.className = 'ra2-why-card';
+        const q = document.createElement('div');
+        q.className = 'ra2-why-q';
+        q.textContent = String(why.q || '');
+        const a = document.createElement('div');
+        a.className = 'ra2-why-a';
+        a.textContent = String(why.a || '');
+        card.append(q, a);
+        body.appendChild(card);
+      }
+      if (analysis.summary) {
+        const summary = document.createElement('div');
+        summary.className = 'ra2-summary';
+        summary.textContent = String(analysis.summary);
+        body.appendChild(summary);
+      }
+      details.appendChild(body);
+      const text = active.querySelector('.reader-paragraph-text');
+      if (text?.parentNode) text.insertAdjacentElement('afterend', details);
+      else active.appendChild(details);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function revealGrammarAnalysis(analysis, attempt = 0) {
+    try {
+      const active = document.querySelector('#reader-chapter-text .reader-paragraph.active');
+      const details = active?.querySelector?.('.reader-sentence-analysis');
+      if (details) {
+        details.open = true;
+        setSummaryLabel(details);
+        try { details.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (_) {}
+        return;
+      }
+      // Reader normally re-renders immediately after its callable resolves.
+      // If that render produced no block, do one final visible fallback instead
+      // of showing a green success toast over an empty page.
+      if (attempt >= 20) {
+        if (appendVisibleFallback(active, analysis)) {
+          try {
+            active?.querySelector?.('.reader-sentence-analysis')?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+          } catch (_) {}
+        }
+        return;
+      }
+    } catch (_) {}
+    setTimeout(() => revealGrammarAnalysis(analysis, attempt + 1), 90);
   }
 
   window.__readerInstantChatResolve = (requestId, ok, payloadJson) => {
@@ -180,7 +313,13 @@
       if (!raw) throw new Error('Instant AI Chat вернул пустой ответ');
       const analysis = normalizeGrammarResponse(raw);
       analysis.provider = 'instant_translate_chat_ui';
-      return new Response(JSON.stringify({ result: analysis }), {
+      window.__readerInstantLastGrammarAnalysis = analysis;
+      setTimeout(() => revealGrammarAnalysis(analysis, 0), 120);
+
+      // Current Firebase Functions SDK accepts `data`; older callable clients
+      // also accept `result`. Return both so Reader receives the normalized
+      // object regardless of which compat path the bundled SDK is using.
+      return new Response(JSON.stringify({ data: analysis, result: analysis }), {
         status: 200,
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
       });
