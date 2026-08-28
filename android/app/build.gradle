@@ -26,8 +26,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 95
-        versionName '77.42-toc75'
+        versionCode 96
+        versionName '77.42-toc76'
     }
 
     buildFeatures {
@@ -64,7 +64,6 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    // The web app is the repository root; syncWebAssets stages a copy of it here.
     sourceSets {
         main {
             assets.srcDirs += [layout.buildDirectory.dir('generated/webAssets').get().asFile]
@@ -76,34 +75,18 @@ dependencies {
     implementation 'androidx.webkit:webkit:1.12.1'
 }
 
-/**
- * Copies the web app (repository root) into the APK's assets/www.
- *
- * The repository root is the single source of truth — the same tree is what
- * Firebase Hosting serves. Only the parts that a phone actually runs are
- * staged here; server-side code, build tooling and the dev preview pages stay in
- * the repository but never reach the APK.
- */
 tasks.register('syncWebAssets', Sync) {
     from(rootProject.projectDir.parentFile) {
-        // Not part of the web app at all.
         exclude '.git/**'
         exclude '.github/**'
         exclude 'android/**'
         exclude '**/node_modules/**'
         exclude '**/.DS_Store'
-
-        // Server side: Cloud Functions, Supabase edge functions, DB rules,
-        // and the self-hosted TTS container.
         exclude 'functions/**'
         exclude 'supabase/**'
         exclude 'firebase/**'
         exclude 'selfhost/**'
         exclude 'firebase.json'
-
-        // Developer tooling and scratch pages — reachable only by typing the
-        // path by hand, so they are dead weight on a phone. Drop a line from
-        // this list to ship one of them again.
         exclude 'scripts/**'
         exclude 'make_zh_dict.js'
         exclude 'design-preview.html'
@@ -113,10 +96,6 @@ tasks.register('syncWebAssets', Sync) {
         exclude 'tts-test.html'
         exclude 'FIREBASE_*.txt'
         exclude 'SUPABASE_*.txt'
-
-        // Legacy duplicate of js/app.js, ~430 KB and referenced by nothing:
-        // the ./app.js imports in js/ resolve to js/app.js. Anchored to the
-        // root, since a bare 'app.js' pattern would also match js/app.js.
         exclude { it.relativePath.toString() == 'app.js' }
     }
     into layout.buildDirectory.dir('generated/webAssets/www')
