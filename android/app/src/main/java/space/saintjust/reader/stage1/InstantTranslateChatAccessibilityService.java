@@ -24,36 +24,38 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Drives the installed Instant Translate Chat UI for Reader's grammar action.
+ * Drives Instant Translate Premium Chat for Reader's grammar action.
  *
- * toc73 hardens navigation after the toc72 field-message diagnostic:
- * - a zero-score accessibility node can no longer masquerade as the Chat button;
- * - Compose text fields are detected through ACTION_SET_TEXT and chat placeholders;
- * - the initial screen only skips Chat navigation for a strongly chat-looking input;
- * - failures include a compact summary of the Instant Translate screen that was seen.
- *
- * The full-screen Reader snapshot intentionally consumes touches. Accessibility
- * actions are therefore allowed to target nodes obscured by our own overlay; a
- * node does not have to report isVisibleToUser() to be a valid target.
+ * toc74 fixes the failure seen in the toc73 recording:
+ * - Send candidates must either have send semantics or be a tight clickable
+ *   button at the right edge of the composer;
+ * - a successful ACTION_CLICK is not trusted by itself: Reader confirms that
+ *   the prompt actually left the composer before waiting for an AI response;
+ * - failed sends are retried briefly and then fail fast instead of pretending
+ *   a request was sent for another 30 seconds;
+ * - return navigation presses Back only while an Instant Translate window is
+ *   actually present, so it can no longer overshoot Reader into the launcher.
  */
 public final class InstantTranslateChatAccessibilityService extends AccessibilityService {
     private static final int STAGE_FIND_CHAT = 1;
     private static final int STAGE_FIND_INPUT = 2;
     private static final int STAGE_SEND = 3;
-    private static final int STAGE_WAIT_RESPONSE = 4;
+    private static final int STAGE_CONFIRM_SEND = 4;
+    private static final int STAGE_WAIT_RESPONSE = 5;
 
     private static final int MIN_CHAT_SCORE = 90;
     private static final int MIN_INPUT_SCORE = 120;
     private static final int MIN_STRONG_CHAT_INPUT_SCORE = 180;
-    private static final int MIN_SEND_SCORE = 90;
+    private static final int MIN_SEND_SCORE = 160;
 
     private static final long OVERALL_TIMEOUT_MS = 45_000L;
     private static final long FIND_CHAT_TIMEOUT_MS = 8_000L;
     private static final long FIND_INPUT_TIMEOUT_MS = 9_000L;
-    private static final long SEND_TIMEOUT_MS = 7_000L;
+    private static final long SEND_TIMEOUT_MS = 8_000L;
+    private static final long CONFIRM_SEND_TIMEOUT_MS = 3_000L;
     private static final long RESPONSE_TIMEOUT_MS = 32_000L;
     private static final long RESPONSE_STABLE_MS = 700L;
-    private static final long COVER_HIDE_MS = 900L;
+    private static final long SEND_CONFIRM_DELAY_MS = 650L;
 
     private static volatile boolean armed = false;
     private static volatile String promptText = "";
@@ -61,6 +63,8 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
     private static volatile int stage = STAGE_FIND_CHAT;
     private static volatile long stageStartedAtMs = 0L;
     private static volatile long sentAtMs = 0L;
+    private static volatile long sendAttemptAtMs = 0L;
+    private static volatile int sendAttemptCount = 0;
     private static volatile String stableCandidate = "";
     private static volatile int stableHits = 0;
     private static volatile long stableSinceMs = 0L;
@@ -92,6 +96,8 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
         stage = STAGE_FIND_CHAT;
         stageStartedAtMs = System.currentTimeMillis();
         sentAtMs = 0L;
+        sendAttemptAtMs = 0L;
+        sendAttemptCount = 0;
         stableCandidate = "";
         stableHits = 0;
         stableSinceMs = 0L;
@@ -110,6 +116,8 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
         stage = STAGE_FIND_CHAT;
         stageStartedAtMs = 0L;
         sentAtMs = 0L;
+        sendAttemptAtMs = 0L;
+        sendAttemptCount = 0;
         stableCandidate = "";
         stableHits = 0;
         stableSinceMs = 0L;
@@ -235,6 +243,7 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
         if (stage == STAGE_FIND_CHAT) limit = FIND_CHAT_TIMEOUT_MS;
         else if (stage == STAGE_FIND_INPUT) limit = FIND_INPUT_TIMEOUT_MS;
         else if (stage == STAGE_SEND) limit = SEND_TIMEOUT_MS;
+        else if (stage == STAGE_CONFIRM_SEND) limit = CONFIRM_SEND_TIMEOUT_MS;
         else limit = RESPONSE_TIMEOUT_MS;
         if (age <= limit) return false;
 
@@ -251,7 +260,15 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
         if (value == STAGE_FIND_CHAT) return "поиск Chat";
         if (value == STAGE_FIND_INPUT) return "поле сообщения";
         if (value == STAGE_SEND) return "отправка запроса";
+        if (value == STAGE_CONFIRM_SEND) return "проверка отправки";
         return "ожидание ответа";
+    }
+
+    private void failNow(String message) {
+        String summary = lastScreenSummary;
+        disarm();
+        InstantTranslateChatBridge.onChatCaptureFailed(failureMessage(message, summary));
+        finishExternalInternal();
     }
 
     private void stepNow() {
@@ -266,8 +283,6 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
             lastScreenSummary = summarizeScreen(root);
 
             if (stage == STAGE_FIND_CHAT) {
-                // Only skip navigation when this already looks like the Chat
-                // composer. A generic translation input on Home is not enough.
                 AccessibilityNodeInfo existingChatInput = findStrongChatEditable(root);
                 if (existingChatInput != null) {
                     try { existingChatInput.recycle(); } catch (Exception ignored) {}
@@ -293,9 +308,6 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
             if (stage == STAGE_FIND_INPUT) {
                 AccessibilityNodeInfo input = findBestEditable(root);
                 if (input == null) {
-                    // If Instant Translate returned to Home or the first click was
-                    // swallowed, retry only a real Chat candidate, never an
-                    // arbitrary accessibility node.
                     AccessibilityNodeInfo chat = findBestChatNode(root);
                     if (chat != null) {
                         clickNodeOrAncestor(chat);
@@ -308,8 +320,9 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
                 boolean set = setNodeText(input, promptText);
                 try { input.recycle(); } catch (Exception ignored) {}
                 if (set) {
+                    sendAttemptCount = 0;
                     enterStage(STAGE_SEND);
-                    scheduleStep(300L);
+                    scheduleStep(320L);
                 } else {
                     scheduleStep(340L);
                 }
@@ -319,34 +332,67 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
             if (stage == STAGE_SEND) {
                 AccessibilityNodeInfo input = findBestEditable(root);
                 AccessibilityNodeInfo send = findBestSendNode(root, input);
-                boolean sent = false;
+                boolean attempted = false;
+
                 if (send != null) {
-                    sent = clickNodeOrAncestor(send);
+                    attempted = clickNodeOrAncestor(send);
                     try { send.recycle(); } catch (Exception ignored) {}
                 }
-                if (!sent && input != null && Build.VERSION.SDK_INT >= 30) {
+
+                if (!attempted && input != null && Build.VERSION.SDK_INT >= 30) {
                     try {
-                        sent = input.performAction(
+                        attempted = input.performAction(
                                 AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
                     } catch (Exception ignored) {}
                 }
+
                 if (input != null) {
                     try { input.recycle(); } catch (Exception ignored) {}
                 }
 
-                if (sent) {
-                    enterStage(STAGE_WAIT_RESPONSE);
-                    sentAtMs = System.currentTimeMillis();
-                    resetStable();
-                    scheduleStep(760L);
+                if (attempted) {
+                    sendAttemptCount++;
+                    sendAttemptAtMs = System.currentTimeMillis();
+                    enterStage(STAGE_CONFIRM_SEND);
+                    scheduleStep(SEND_CONFIRM_DELAY_MS);
                 } else {
                     scheduleStep(340L);
                 }
                 return;
             }
 
+            if (stage == STAGE_CONFIRM_SEND) {
+                long sinceAttempt = System.currentTimeMillis() - sendAttemptAtMs;
+                if (sinceAttempt < SEND_CONFIRM_DELAY_MS) {
+                    scheduleStep(SEND_CONFIRM_DELAY_MS - sinceAttempt + 60L);
+                    return;
+                }
+
+                if (!promptStillInComposer(root)) {
+                    enterStage(STAGE_WAIT_RESPONSE);
+                    sentAtMs = System.currentTimeMillis();
+                    resetStable();
+                    scheduleStep(650L);
+                    return;
+                }
+
+                if (sinceAttempt < 1_350L) {
+                    scheduleStep(420L);
+                    return;
+                }
+
+                if (sendAttemptCount >= 2) {
+                    failNow("Instant AI: кнопка Send не отправила запрос");
+                    return;
+                }
+
+                enterStage(STAGE_SEND);
+                scheduleStep(180L);
+                return;
+            }
+
             if (stage == STAGE_WAIT_RESPONSE) {
-                if (System.currentTimeMillis() - sentAtMs < 700L) {
+                if (System.currentTimeMillis() - sentAtMs < 650L) {
                     scheduleStep(320L);
                     return;
                 }
@@ -418,6 +464,28 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
         if (pkg != null && InstantTranslateChatBridge.TARGET_PACKAGE.contentEquals(pkg)) return root;
         try { root.recycle(); } catch (Exception ignored) {}
         return null;
+    }
+
+    private boolean isTargetWindowPresent() {
+        try {
+            List<AccessibilityWindowInfo> windows = getWindows();
+            if (windows != null) {
+                for (AccessibilityWindowInfo window : windows) {
+                    if (window == null) continue;
+                    AccessibilityNodeInfo root = null;
+                    try {
+                        root = window.getRoot();
+                        CharSequence pkg = root == null ? null : root.getPackageName();
+                        if (pkg != null && InstantTranslateChatBridge.TARGET_PACKAGE.contentEquals(pkg)) {
+                            if (root != null) try { root.recycle(); } catch (Exception ignored) {}
+                            return true;
+                        }
+                    } catch (Exception ignored) {}
+                    if (root != null) try { root.recycle(); } catch (Exception ignored) {}
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
     }
 
     private AccessibilityNodeInfo findBestChatNode(AccessibilityNodeInfo root) {
@@ -506,8 +574,6 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
             if (chatHint) score += 180;
             if (node.isFocusable()) score += 30;
             if (node.isVisibleToUser()) score += 15;
-            // Chat composers normally live low on the screen. This is only a
-            // tie-breaker; it is never enough to create a candidate by itself.
             score += Math.max(0, Math.min(90, r.top / 20));
             if (score > best.score) best.replace(node, score);
         }
@@ -535,22 +601,38 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
         String id = nodeId(node).toLowerCase(Locale.ROOT);
         String all = text + " " + desc + " " + id;
 
-        int score = 0;
-        if (id.contains("send")) score += 190;
-        if (all.contains("send") || all.contains("отправ")) score += 160;
-        if (all.contains("paperplane") || all.contains("paper_plane")
-                || all.contains("arrowup") || all.contains("arrow_up")) score += 120;
-        if (node.isClickable()) score += 35;
-        if (node.isVisibleToUser()) score += 10;
+        boolean explicit = id.contains("send") || id.contains("submit")
+                || all.contains("send") || all.contains("отправ")
+                || all.contains("submit")
+                || all.contains("paperplane") || all.contains("paper_plane")
+                || all.contains("arrowup") || all.contains("arrow_up")
+                || text.equals("↑") || desc.equals("↑")
+                || text.equals("⬆") || desc.equals("⬆");
+        boolean clickable = node.isClickable() || hasAction(node, AccessibilityNodeInfo.ACTION_CLICK);
 
         Rect r = new Rect();
         node.getBoundsInScreen(r);
-        if (!inputRect.isEmpty()) {
-            int cy = (r.top + r.bottom) / 2;
-            int inputCy = (inputRect.top + inputRect.bottom) / 2;
-            if (Math.abs(cy - inputCy) < 180 && r.left >= inputRect.centerX()) score += 85;
+        boolean tightGeometry = false;
+        if (clickable && !inputRect.isEmpty() && !r.isEmpty()) {
+            int width = r.width();
+            int height = r.height();
+            boolean buttonSized = width >= 24 && width <= 180 && height >= 24 && height <= 180;
+            boolean sameRow = r.centerY() >= inputRect.top - 90
+                    && r.centerY() <= inputRect.bottom + 90;
+            int edgeSlack = Math.max(150, inputRect.width() / 4);
+            boolean atRightEdge = r.centerX() >= inputRect.centerX()
+                    && r.right >= inputRect.right - edgeSlack;
+            tightGeometry = buttonSized && sameRow && atRightEdge;
         }
-        if (score > 0 && score > best.score) best.replace(node, score);
+
+        if (explicit || tightGeometry) {
+            int score = 0;
+            if (explicit) score += 260;
+            if (tightGeometry) score += 210;
+            if (clickable) score += 55;
+            if (node.isVisibleToUser()) score += 10;
+            if (score > best.score) best.replace(node, score);
+        }
 
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i);
@@ -558,6 +640,29 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
             try { scanForSend(child, inputRect, best); }
             finally { try { child.recycle(); } catch (Exception ignored) {} }
         }
+    }
+
+    private boolean promptStillInComposer(AccessibilityNodeInfo root) {
+        AccessibilityNodeInfo input = findBestEditable(root);
+        if (input == null) return false;
+        String value;
+        try {
+            value = nodeText(input);
+            if (value.isEmpty()) value = nodeDesc(input);
+        } finally {
+            try { input.recycle(); } catch (Exception ignored) {}
+        }
+
+        String current = normalizeLoose(value);
+        String prompt = normalizeLoose(promptText);
+        if (current.isEmpty() || prompt.isEmpty()) return false;
+        if (current.equals(prompt)) return true;
+        if (current.length() >= 40 && prompt.contains(current)) return true;
+        if (prompt.length() >= 40) {
+            String prefix = prompt.substring(0, Math.min(80, prompt.length()));
+            return current.contains(prefix);
+        }
+        return false;
     }
 
     private boolean setNodeText(AccessibilityNodeInfo node, String text) {
@@ -772,9 +877,21 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
 
     private void finishExternalInternal() {
         MAIN.removeCallbacks(stepRunnable);
-        MAIN.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 90L);
-        MAIN.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 390L);
-        MAIN.postDelayed(this::hideCoverInternal, COVER_HIDE_MS);
+        MAIN.postDelayed(() -> backUntilReader(0), 80L);
+        MAIN.postDelayed(this::hideCoverInternal, 1_800L);
+    }
+
+    private void backUntilReader(int attempt) {
+        if (!isTargetWindowPresent()) {
+            hideCoverInternal();
+            return;
+        }
+        if (attempt >= 3) {
+            hideCoverInternal();
+            return;
+        }
+        try { performGlobalAction(GLOBAL_ACTION_BACK); } catch (Exception ignored) {}
+        MAIN.postDelayed(() -> backUntilReader(attempt + 1), 420L);
     }
 
     private static final class Candidate {
