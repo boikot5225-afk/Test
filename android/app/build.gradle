@@ -22,6 +22,7 @@ def repoRoot = rootProject.projectDir.parentFile
 def wikdictRawFile = layout.buildDirectory.file('wikdict/en-ru.sqlite3')
 def wikdictAssetDir = layout.buildDirectory.dir('generated/wikdictAssets')
 def wikdictCoreFile = layout.buildDirectory.file('generated/wikdictAssets/wikdict/en_ru_core.sqlite3')
+def wikdictCoreJsonFile = layout.buildDirectory.file('generated/wikdictAssets/wikdict/en_ru_core.json')
 def wikdictUrl = 'https://download.wikdict.com/dictionaries/sqlite/2_2026-06/en-ru.sqlite3'
 
 android {
@@ -32,8 +33,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 99
-        versionName '77.42-toc79'
+        versionCode 100
+        versionName '77.42-toc80'
     }
 
     buildFeatures {
@@ -114,13 +115,17 @@ tasks.register('prepareEnRuWikDict') {
     inputs.file(new File(repoRoot, 'data/en_vocab_frequency.tsv'))
     inputs.file(new File(repoRoot, 'data/en_vocab_lemma.tsv'))
     inputs.file(new File(repoRoot, 'scripts/build_en_ru_wikdict_core.py'))
+    inputs.file(new File(repoRoot, 'scripts/export_en_ru_wikdict_json.py'))
     outputs.file(wikdictCoreFile)
+    outputs.file(wikdictCoreJsonFile)
 
     doLast {
         File raw = wikdictRawFile.get().asFile
         File output = wikdictCoreFile.get().asFile
+        File jsonOutput = wikdictCoreJsonFile.get().asFile
         raw.parentFile.mkdirs()
         output.parentFile.mkdirs()
+        jsonOutput.parentFile.mkdirs()
 
         if (!raw.exists() || raw.length() < 5_000_000L) {
             logger.lifecycle("Downloading WikDict EN-RU source…")
@@ -141,6 +146,13 @@ tasks.register('prepareEnRuWikDict') {
                     new File(repoRoot, 'data/en_vocab_frequency.tsv').absolutePath,
                     new File(repoRoot, 'data/en_vocab_lemma.tsv').absolutePath,
                     output.absolutePath
+        }
+
+        exec {
+            commandLine 'python3',
+                    new File(repoRoot, 'scripts/export_en_ru_wikdict_json.py').absolutePath,
+                    output.absolutePath,
+                    jsonOutput.absolutePath
         }
     }
 }
