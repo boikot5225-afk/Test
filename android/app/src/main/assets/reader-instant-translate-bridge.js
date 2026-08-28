@@ -7,6 +7,7 @@
   const originalFetch = window.fetch.bind(window);
   const pending = new Map();
   let sequence = 0;
+  let manualTranslateUntil = 0;
 
   function showInstantNotice(message, error = false, timeoutMs = 4200) {
     try {
@@ -40,6 +41,26 @@
     } catch (_) {}
   }
 
+  function markManualParagraphTranslation(event) {
+    const target = event?.target;
+    if (!target?.closest) return;
+
+    const paragraphButton = target.closest('.reader-action-btn[data-reader-action="translate"]');
+    const moreMenuButton = target.closest('#reader-more-sheet .rd-menu');
+    const isMoreMenuTranslate = !!moreMenuButton
+      && /перевод\s+абзаца/i.test(String(moreMenuButton.textContent || ''));
+
+    if (paragraphButton || isMoreMenuTranslate) {
+      // The readerAI fetch is started synchronously from the click handler. A few
+      // seconds of grace covers WebView scheduling without allowing the reader's
+      // 800 ms background prefetch to become a second external popup later.
+      manualTranslateUntil = Date.now() + 5000;
+    }
+  }
+
+  // Capture phase is important: the Reader's delegated handlers stop propagation.
+  document.addEventListener('click', markManualParagraphTranslation, true);
+
   window.__readerInstantTranslateResolve = (requestId, ok, payloadJson) => {
     const entry = pending.get(String(requestId || ''));
     if (!entry) return;
@@ -62,12 +83,34 @@
     }
   }
 
+  function blockedBackgroundTranslationResponse() {
+    return new Response(JSON.stringify({
+      error: {
+        message: 'Фоновый перевод отключён для внешнего Instant Translate',
+        code: 'instant_translate_background_skipped',
+      },
+    }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    });
+  }
+
   function nativeTranslate(payload) {
     return new Promise((resolve, reject) => {
+      if (pending.size) {
+        reject(Object.assign(new Error('Предыдущий перевод ещё выполняется'), {
+          code: 'instant_translate_busy',
+        }));
+        return;
+      }
+
       const requestId = `it-${Date.now().toString(36)}-${(++sequence).toString(36)}`;
       const timer = setTimeout(() => {
         pending.delete(requestId);
-        reject(Object.assign(new Error('тайм-аут Instant Translate'), { code: 'instant_translate_timeout' }));
+        try { nativeBridge.cancel?.(requestId); } catch (_) {}
+        reject(Object.assign(new Error('Instant Translate не вернул результат за 65 секунд'), {
+          code: 'instant_translate_timeout',
+        }));
       }, 65000);
       pending.set(requestId, { resolve, reject, timer });
       try {
@@ -75,6 +118,7 @@
       } catch (error) {
         clearTimeout(timer);
         pending.delete(requestId);
+        try { nativeBridge.cancel?.(requestId); } catch (_) {}
         reject(error);
       }
     });
@@ -94,7 +138,16 @@
       return originalFetch(input, init);
     }
 
-    showInstantNotice('Открываю Instant Translate…', false, 2500);
+    // reader-app.js silently prefetches/auto-translates paragraphs through the
+    // exact same readerAI task. Launching another Android app for those requests
+    // made the old bridge race itself and overwrite the user's real request.
+    // Only a click on an explicit "Перевод абзаца" action is allowed through.
+    if (Date.now() > manualTranslateUntil) {
+      return blockedBackgroundTranslationResponse();
+    }
+    manualTranslateUntil = 0;
+
+    showInstantNotice('Перевожу через Instant Translate…', false, 2500);
     try {
       const translated = await nativeTranslate({
         text: String(payload.text || ''),
@@ -103,7 +156,7 @@
       });
       const ru = String(translated?.ru || '').trim();
       if (!ru) throw new Error('Instant Translate вернул пустой текст');
-      showInstantNotice('Instant Translate: перевод получен', false, 2200);
+      showInstantNotice('Перевод получен', false, 1800);
       return new Response(JSON.stringify({ result: { ru, provider: 'instant_translate_installed_app' } }), {
         status: 200,
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -111,13 +164,9 @@
     } catch (error) {
       const reason = String(error?.message || error || 'неизвестная ошибка').slice(0, 220);
       console.warn('[Instant Translate]', error?.code || '', reason);
-      showInstantNotice(`Instant Translate: ${reason}`, true, 8000);
-
-      // Deliberately DO NOT call the old Reader/DeepSeek backend here. toc65 is
-      // a clean compatibility test: either the installed Instant Translate app
-      // returns the paragraph, or the translation request fails visibly.
+      showInstantNotice(reason, true, 6500);
       return new Response(JSON.stringify({
-        error: { message: `Instant Translate: ${reason}`, code: error?.code || 'instant_translate' }
+        error: { message: reason, code: error?.code || 'instant_translate' },
       }), {
         status: 503,
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -126,6 +175,5 @@
   };
 
   window.__readerInstantTranslateBridgeInstalled = true;
-  showInstantNotice('Instant Translate: мост активен', false, 3500);
-  console.info('[Instant Translate] installed-app bridge active');
+  console.info('[Instant Translate] stable installed-app bridge active');
 })();
