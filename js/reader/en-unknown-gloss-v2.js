@@ -211,27 +211,27 @@ function ensureWrapper(el, ru = '') {
   return wrap;
 }
 
-function rememberTranslation(sourceWord, ru) {
+function rememberTranslation(sourceWord, ru, provider = 'wikdict_en_ru_offline') {
   const translation = compactRussian(ru);
   const key = normalizedKey(sourceWord);
   if (!key || !translation) return false;
   const cache = ownCache();
-  cache[key] = { ru: translation, t: Date.now(), provider: 'wikdict_en_ru_offline' };
+  cache[key] = { ru: translation, t: Date.now(), provider };
   saveOwnCache(cache);
   return true;
 }
 
-function applyTranslationToDom(sourceWord, ru) {
+function applyTranslationToDom(sourceWord, ru, aliases = []) {
   const translation = compactRussian(ru);
-  const sourceKey = normalizedKey(sourceWord);
+  const sourceKeys = new Set([sourceWord, ...aliases].map(normalizedKey).filter(Boolean));
   const root = document.getElementById('reader-chapter-text');
-  if (!translation || !sourceKey || !root || currentLang() !== 'en') return 0;
+  if (!translation || !sourceKeys.size || !root || currentLang() !== 'en') return 0;
   let count = 0;
   for (const el of root.querySelectorAll('.reader-word[data-word]')) {
     if (!isEnglishWord(el) || knowledge(el) === 'known') continue;
     const surface = String(el.dataset.word || el.textContent || '').trim();
     const lemma = lemmaFor(surface);
-    if (normalizedKey(surface) !== sourceKey && normalizedKey(lemma) !== sourceKey) continue;
+    if (!sourceKeys.has(normalizedKey(surface)) && !sourceKeys.has(normalizedKey(lemma))) continue;
     const wrap = ensureWrapper(el, translation);
     if (!wrap) continue;
     setWrapperTranslation(wrap, surface, translation);
@@ -239,6 +239,21 @@ function applyTranslationToDom(sourceWord, ru) {
     count++;
   }
   return count;
+}
+
+function applyInstantTranslation(event) {
+  const detail = event?.detail || {};
+  const lang = String(detail.lang || '').trim().toLowerCase();
+  if (lang !== 'en') return;
+  const surface = String(detail.surface || '').trim();
+  const lemma = String(detail.lemma || '').trim();
+  const ru = String(detail.ru || '').trim();
+  if (!surface || !compactRussian(ru)) return;
+  rememberTranslation(surface, ru, 'instant_translate_installed_app');
+  if (lemma && normalizedKey(lemma) !== normalizedKey(surface)) {
+    rememberTranslation(lemma, ru, 'instant_translate_installed_app');
+  }
+  applyTranslationToDom(surface, ru, lemma ? [lemma] : []);
 }
 
 async function loadDictionary() {
@@ -474,6 +489,7 @@ if (shouldInstall) {
   window.addEventListener('pageshow', () => { boot(); scheduleScan(25); });
   window.addEventListener('reader:en-vocab-ready', () => scheduleScan(0));
   window.addEventListener('an2:languagechange', () => scheduleScan(0));
+  window.addEventListener('reader-instant-word-translation', applyInstantTranslation);
 }
 
 export { mode, enabled, compactRussian, legacyCacheKey as cacheKey, prepareStableSlots };

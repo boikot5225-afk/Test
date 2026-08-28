@@ -11,13 +11,13 @@ import android.webkit.WebView;
  */
 public final class InstantTranslateActivity extends MainActivity {
     private static final String BRIDGE_SCRIPT =
-            "https://appassets.androidplatform.net/assets/reader-instant-translate-bridge.js?v=83";
+            "https://appassets.androidplatform.net/assets/reader-instant-translate-bridge.js?v=84";
     private static final String WORD_SAFE_SCRIPT =
-            "https://appassets.androidplatform.net/assets/reader-instant-word-safe.js?v=83";
+            "https://appassets.androidplatform.net/assets/reader-instant-word-safe.js?v=84";
     private static final String CHAT_SCRIPT =
             "https://appassets.androidplatform.net/assets/reader-instant-chat-bridge.js";
     private static final String EN_GLOSS_SCRIPT =
-            "https://appassets.androidplatform.net/assets/www/js/reader/en-unknown-gloss-v2.js?v=5";
+            "https://appassets.androidplatform.net/assets/www/js/reader/en-unknown-gloss-v2.js?v=6";
 
     private WebView readerWebView;
     private InstantTranslateBridge instantTranslateBridge;
@@ -62,19 +62,19 @@ public final class InstantTranslateActivity extends MainActivity {
                 + "if(!document||!document.head)return 'wait';"
                 + "if(location.hostname!=='appassets.androidplatform.net')return 'wait';"
                 + "if(location.pathname.indexOf('/assets/www/')!==0)return 'wait';"
-                + "if(!window.__readerEnGlossLoaderAdded){"
-                + " window.__readerEnGlossLoaderAdded=true;"
+                + "if(!window.__readerEnGlossLoaderAddedV84){"
+                + " window.__readerEnGlossLoaderAddedV84=true;"
                 + " var e=document.createElement('script');e.type='module';e.src='" + EN_GLOSS_SCRIPT + "';"
-                + " e.onerror=function(){window.__readerEnGlossLoaderAdded=false;console.warn('English Unknown gloss module failed to load');};"
+                + " e.onerror=function(){window.__readerEnGlossLoaderAddedV84=false;console.warn('English Unknown gloss module failed to load');};"
                 + " document.head.appendChild(e);"
                 + "}"
-                + "if(window.__readerInstantTranslateLoaderAddedV83)return 'ok';"
-                + "window.__readerInstantTranslateLoaderAddedV83=true;"
+                + "if(window.__readerInstantTranslateLoaderAddedV84)return 'ok';"
+                + "window.__readerInstantTranslateLoaderAddedV84=true;"
                 + "var g=document.createElement('script');g.src='" + WORD_SAFE_SCRIPT + "';g.async=false;"
                 + "g.onerror=function(){console.warn('Instant word safety guard failed to load');};"
                 + "document.head.appendChild(g);"
                 + "var s=document.createElement('script');s.src='" + BRIDGE_SCRIPT + "';s.async=false;"
-                + "s.onerror=function(){window.__readerInstantTranslateLoaderAddedV83=false;};"
+                + "s.onerror=function(){window.__readerInstantTranslateLoaderAddedV84=false;};"
                 + "s.onload=function(){"
                 + " if(window.__readerInstantChatLoaderAdded)return;"
                 + " window.__readerInstantChatLoaderAdded=true;"

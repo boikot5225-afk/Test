@@ -79,6 +79,10 @@
     return String(document.getElementById('reader-word-title')?.textContent || '').trim();
   }
 
+  function currentWordLemma() {
+    return String(document.querySelector('#reader-word-panel #reader-word-lemma')?.value || '').trim();
+  }
+
   function currentWordLang() {
     const panel = document.getElementById('reader-word-panel');
     const view = document.getElementById('reader-reading-view');
@@ -102,12 +106,14 @@
     return String(item?.ru || '').trim();
   }
 
-  function rememberWordTranslation(surface, lang, ru) {
+  function rememberWordTranslation(surface, lang, ru, lemma = '') {
     const translation = String(ru || '').trim();
     if (!translation) return;
     try {
       const cache = loadWordCache();
-      cache[wordKey(surface, lang)] = { ru: translation, t: Date.now() };
+      const saved = { ru: translation, t: Date.now() };
+      cache[wordKey(surface, lang)] = saved;
+      if (String(lemma || '').trim()) cache[wordKey(lemma, lang)] = saved;
       const entries = Object.entries(cache);
       if (entries.length > WORD_CACHE_LIMIT) {
         entries.sort((a, b) => Number(b[1]?.t || 0) - Number(a[1]?.t || 0))
@@ -162,10 +168,17 @@
     } catch (_) {}
   }
 
-  function applyWordTranslation(surface, lang, ru) {
+  function applyWordTranslation(surface, lang, ru, lemma = '') {
     const translation = String(ru || '').trim();
     if (!translation) return false;
-    rememberWordTranslation(surface, lang, translation);
+    const cleanLemma = String(lemma || currentWordLemma() || surface || '').trim();
+    rememberWordTranslation(surface, lang, translation, cleanLemma);
+
+    try {
+      window.dispatchEvent(new CustomEvent('reader-instant-word-translation', {
+        detail: { surface: String(surface || '').trim(), lemma: cleanLemma, lang, ru: translation },
+      }));
+    } catch (_) {}
 
     if (currentWordSurface() !== String(surface || '').trim()) return false;
     const panel = document.getElementById('reader-word-panel');
@@ -200,20 +213,23 @@
 
   function currentEnglishPlaceholder(payload = {}) {
     const panel = document.getElementById('reader-word-panel');
-    const surface = currentWordSurface() || String(payload.word || payload.surface || '').trim();
-    const inputRu = String(panel?.querySelector('#reader-word-ru')?.value || '').trim();
-    const cardRu = String(panel?.querySelector('.reader-analysis-ru')?.textContent || '').trim();
+    const requestedSurface = String(payload.word || payload.surface || '').trim();
+    const panelSurface = currentWordSurface();
+    const surface = requestedSurface || panelSurface;
+    const samePanelWord = !!panel && panelSurface === surface;
+    const inputRu = samePanelWord ? String(panel.querySelector('#reader-word-ru')?.value || '').trim() : '';
+    const cardRu = samePanelWord ? String(panel.querySelector('.reader-analysis-ru')?.textContent || '').trim() : '';
     const cached = cachedWordTranslation(surface, 'en');
     const ru = containsCyrillic(inputRu) ? inputRu
       : containsCyrillic(cardRu) ? cardRu
         : containsCyrillic(cached) ? cached : '';
     return {
-      pos: String(panel?.querySelector('#reader-word-pos')?.value || 'other'),
-      lemma: String(panel?.querySelector('#reader-word-lemma')?.value || surface || '').trim(),
+      pos: String((samePanelWord ? panel.querySelector('#reader-word-pos')?.value : '') || 'other'),
+      lemma: String((samePanelWord ? panel.querySelector('#reader-word-lemma')?.value : '') || payload.lemma || surface || '').trim(),
       word: surface,
       surface,
       ru,
-      level: String(panel?.querySelector('#reader-word-level')?.value || 'A2'),
+      level: String((samePanelWord ? panel.querySelector('#reader-word-level')?.value : '') || 'A2'),
       form_note: '',
       note: '',
       _source: 'instant_manual_only',
@@ -223,13 +239,14 @@
   async function translateWord(surface, lang, { force = false, silent = true } = {}) {
     const cleanSurface = String(surface || '').trim();
     const cleanLang = String(lang || currentWordLang() || '').trim().toLowerCase();
+    const cleanLemma = currentWordSurface() === cleanSurface ? currentWordLemma() : cleanSurface;
     if (!usableWordSurface(cleanSurface)) return;
     const key = wordKey(cleanSurface, cleanLang);
 
     if (!force) {
       const cached = cachedWordTranslation(cleanSurface, cleanLang);
       if (cached) {
-        applyWordTranslation(cleanSurface, cleanLang, cached);
+        applyWordTranslation(cleanSurface, cleanLang, cached, cleanLemma);
         return;
       }
       if (!currentWordCardMissingRussian(cleanSurface)) return;
@@ -251,7 +268,7 @@
       });
       const ru = String(translated?.ru || '').trim();
       if (!ru) throw new Error('Instant Translate вернул пустой перевод слова');
-      applyWordTranslation(cleanSurface, cleanLang, ru);
+      applyWordTranslation(cleanSurface, cleanLang, ru, cleanLemma);
     } catch (error) {
       if (currentWordSurface() === cleanSurface && ruEl?.isConnected) {
         ruEl.textContent = previous || '—';
@@ -267,6 +284,7 @@
   function scheduleWordFallback(detail = {}) {
     const generation = ++wordAnalysisGeneration;
     const surface = String(detail.surface || '').trim();
+    const lemma = String(detail.lemma || surface).trim();
     const lang = String(detail.lang || currentWordLang() || '').trim().toLowerCase();
     if (!usableWordSurface(surface)) return;
 
@@ -274,7 +292,7 @@
       if (generation !== wordAnalysisGeneration || currentWordSurface() !== surface) return;
       refreshWordInstantUi();
       const cached = cachedWordTranslation(surface, lang);
-      if (cached) applyWordTranslation(surface, lang, cached);
+      if (cached) applyWordTranslation(surface, lang, cached, lemma);
       // Important: no automatic external app launch here. Missing translations
       // are filled only after an explicit ↻ Instant tap.
     }, 80);

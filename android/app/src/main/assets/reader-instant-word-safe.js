@@ -10,8 +10,9 @@
   }
 
   function currentLang() {
+    const panel = document.getElementById('reader-word-panel');
     const view = document.getElementById('reader-reading-view');
-    return String(view?.dataset?.readerLang || view?.lang || '').trim().toLowerCase();
+    return String(panel?.dataset?.lang || view?.dataset?.readerLang || view?.lang || '').trim().toLowerCase();
   }
 
   function wordKey(surface, lang) {
@@ -59,14 +60,10 @@
     if (input) input.value = ru;
   }
 
-  // toc69 listened to this event and immediately launched the external
-  // translator whenever a card lacked Russian. That made a plain word tap capable
-  // of covering Reader with a frozen screenshot for the whole native timeout.
-  // Capture the event at the target first and deliberately stop that automatic
-  // handler. Cached Instant results are still restored locally; a NEW external
-  // translation now happens only when the user explicitly presses ↻ Instant.
+  // Restore cached Instant results without consuming Reader's shared metadata
+  // event. The translation bridge itself owns the manual-only rule; swallowing
+  // this event would also disable unrelated Known/Unknown candidate listeners.
   document.addEventListener('reader-word-analysis-ready', event => {
-    event.stopImmediatePropagation();
     const detail = event?.detail || {};
     const surface = String(detail.surface || currentSurface() || '').trim();
     const lang = String(detail.lang || currentLang() || '').trim().toLowerCase();
