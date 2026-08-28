@@ -1,72 +1,91 @@
 import { normalizeImportKey } from '../utils.js';
 
-// English Unknown glosses v3.
-// Goals: (1) a resolved gloss never disappears during transient classifier DOM
-// passes; (2) page N+1/N+2 prefetch cannot be starved by a huge paragraph on N;
-// (3) late native translation text never changes pagination geometry;
-// (4) missing glosses never call DeepSeek or open another Android app.
+// English Unknown glosses v4.
+// The visual layer stays independent from the frozen Chinese renderer.
+// Missing EN glosses are translated in-process by ML Kit EN→RU; native progress
+// is applied straight back to the current DOM so a page rebuild cannot swallow
+// a translation that finished a moment later.
 const MODE_KEY = 'an2_reader_en_unknown_gloss_mode_v1';
-const CACHE_BASE_KEY = 'an2_reader_en_unknown_gloss_cache_v1';
-const READER_APP_URL = '../reader-app.js?v=77.31';
+const LEGACY_CACHE_BASE_KEY = 'an2_reader_en_unknown_gloss_cache_v1';
+const LEMMA_CACHE_BASE_KEY = 'an2_reader_en_unknown_gloss_lemma_cache_v1';
 const INSTANT_WORD_CACHE_KEY = 'an2_instant_translate_word_cache_v1';
-const MAX_CACHE = 2600;
-const MAX_CONCURRENT = 1;
-const MAX_CURRENT = 28;
-const MAX_PREFETCH = 56;
+const MAX_LEMMA_CACHE = 6000;
+const MAX_BATCH = 24;
+const NATIVE_TIMEOUT_MS = 90 * 1000;
+const RETRY_AFTER_MS = 45 * 1000;
 const PREFETCH_PAGES = 2;
-const HEAD_CURRENT = 4;
-const HEAD_NEXT = 8;
-const MAX_QUEUE = 96;
-const RETRY_AFTER_MS = 90 * 1000;
-const NATIVE_TIMEOUT_MS = 55 * 1000;
 
-let appPromise = null;
 let scanTimer = null;
 let rootObserver = null;
 let rootObserved = null;
 let viewObserver = null;
 let viewObserved = null;
-let activeWorkers = 0;
 let nativeSequence = 0;
-const queue = [];
-const queuedKeys = new Set();
-const failedAt = new Map();
-const paragraphSourceText = new WeakMap();
-const liveWrappersByKey = new Map();
+let batchInFlight = false;
+let retryAfter = 0;
 const nativePending = new Map();
+const paragraphSourceText = new WeakMap();
 
 function scopedKey(base) {
   try { return globalThis.an2ReaderStorageKey?.(base) || base; }
   catch { return base; }
 }
+
 function currentLang() {
-  const lang = String(document.getElementById('reader-reading-view')?.dataset?.readerLang || '').toLowerCase();
-  return lang.startsWith('en') ? 'en' : lang;
+  const raw = String(
+    document.getElementById('reader-reading-view')?.dataset?.readerLang
+    || document.getElementById('reader-chapter-text')?.dataset?.lang
+    || '',
+  ).trim().toLowerCase();
+  return raw === 'english' || raw === 'en' || raw.startsWith('en-') ? 'en' : raw;
 }
+
 function mode() {
-  try {
-    const stored = localStorage.getItem(MODE_KEY);
-    // Before v3 the missing key behaved as OFF even though the feature was
-    // intended to mirror Chinese Unknown assistance. Keep an explicit user OFF,
-    // but make a fresh install / untouched profile useful immediately.
-    return stored === 'off' ? 'off' : 'unknown';
-  } catch { return 'unknown'; }
+  try { return localStorage.getItem(MODE_KEY) === 'off' ? 'off' : 'unknown'; }
+  catch { return 'unknown'; }
 }
 function enabled() { return mode() === 'unknown'; }
-function canonicalApp() {
-  if (!appPromise) appPromise = import(READER_APP_URL);
-  return appPromise;
-}
+
 function readJson(key) {
-  try { return JSON.parse(localStorage.getItem(key) || '{}') || {}; }
-  catch { return {}; }
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch { return {}; }
 }
 function writeJson(key, value) {
-  try { localStorage.setItem(key, JSON.stringify(value)); return true; }
+  try { localStorage.setItem(key, JSON.stringify(value || {})); return true; }
   catch { return false; }
 }
+
 function normalizeSurface(word) {
   return String(word || '').replace(/[’‘]/g, "'").trim().toLocaleLowerCase('en-US');
+}
+function normalizedKey(word) {
+  return normalizeImportKey(normalizeSurface(word));
+}
+function containsCyrillic(value) {
+  return /[\u0400-\u052f]/.test(String(value || ''));
+}
+function compactRussian(value) {
+  const full = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!full || !containsCyrillic(full)) return '';
+  const first = full.split(/\s*[;；]\s*|\s*\/\s*/).filter(Boolean)[0] || full;
+  if (first.length <= 30) return first;
+  const words = first.split(/\s+/).filter(Boolean);
+  let out = '';
+  for (const word of words) {
+    const next = out ? `${out} ${word}` : word;
+    if (next.length > 30) break;
+    out = next;
+  }
+  return out || first.slice(0, 30).trim();
+}
+function glossFontSize(surface, ru) {
+  const sourceLength = Math.max(2, Array.from(String(surface || '')).length);
+  const ruLength = Math.max(1, Array.from(String(ru || '')).length);
+  const ratio = ruLength / sourceLength;
+  const em = Math.max(0.27, Math.min(0.46, 0.47 / Math.sqrt(Math.max(1, ratio))));
+  return `${em.toFixed(3)}em`;
 }
 function textHash(text) {
   const s = String(text || '');
@@ -77,82 +96,34 @@ function textHash(text) {
   }
   return (h >>> 0).toString(36);
 }
-function cacheKey(word, context) {
+function legacyCacheKey(word, context) {
   const cleanContext = String(context || '').replace(/\s+/g, ' ').trim().slice(0, 240);
-  return `${normalizeImportKey(normalizeSurface(word))}|${textHash(cleanContext)}`;
+  return `${normalizedKey(word)}|${textHash(cleanContext)}`;
 }
-function russianMeaning(data = {}) {
+
+function lemmaCache() { return readJson(scopedKey(LEMMA_CACHE_BASE_KEY)); }
+function saveLemmaCache(cache) {
+  let entries = Object.entries(cache || {});
+  if (entries.length > MAX_LEMMA_CACHE) {
+    entries.sort((a, b) => Number(b[1]?.t || 0) - Number(a[1]?.t || 0));
+    entries = entries.slice(0, MAX_LEMMA_CACHE);
+  }
+  writeJson(scopedKey(LEMMA_CACHE_BASE_KEY), Object.fromEntries(entries));
+}
+function legacyCache() { return readJson(scopedKey(LEGACY_CACHE_BASE_KEY)); }
+function lexicalCache() { return readJson(scopedKey('an2_reader_lexical_cache_v1')); }
+function instantWordCache() { return readJson(INSTANT_WORD_CACHE_KEY); }
+
+function russianMeaning(data) {
   if (typeof data === 'string') return data.trim();
   const value = data && typeof data === 'object' ? data : {};
   return String(value.ru || value.translation_ru || value.russian || value.meaning_ru || value.meaning || '').trim();
 }
-function compactRussian(value) {
-  const full = String(value || '').replace(/\s+/g, ' ').trim();
-  if (!full) return '';
-  const first = full.split(/\s*[;；]\s*|\s*\/\s*/).filter(Boolean)[0] || full;
-  if (first.length <= 28) return first;
-  const words = first.split(/\s+/).filter(Boolean);
-  let out = '';
-  for (const word of words) {
-    const next = out ? `${out} ${word}` : word;
-    if (next.length > 28) break;
-    out = next;
-  }
-  return out || first.slice(0, 28).trim();
-}
-function glossFontSize(surface, ru) {
-  const a = Math.max(2, Array.from(String(surface || '')).length);
-  const b = Math.max(1, Array.from(String(ru || '')).length);
-  const ratio = b / a;
-  const em = Math.max(0.27, Math.min(0.46, 0.47 / Math.sqrt(Math.max(1, ratio))));
-  return `${em.toFixed(3)}em`;
-}
-function ownCache() { return readJson(scopedKey(CACHE_BASE_KEY)); }
-function saveOwnCache(cache) {
-  let entries = Object.entries(cache || {});
-  if (entries.length > MAX_CACHE) {
-    entries.sort((a, b) => Number(b[1]?.t || 0) - Number(a[1]?.t || 0));
-    entries = entries.slice(0, MAX_CACHE);
-    cache = Object.fromEntries(entries);
-  }
-  writeJson(scopedKey(CACHE_BASE_KEY), cache || {});
-}
-function lexicalCache() { return readJson(scopedKey('an2_reader_lexical_cache_v1')); }
-function instantWordCache() { return readJson(INSTANT_WORD_CACHE_KEY); }
 function lemmaFor(word) {
-  try { return String(globalThis.readerEnglishLemmaFor?.(word) || normalizeSurface(word)).trim(); }
-  catch { return normalizeSurface(word); }
-}
-function lexicalEntry(word, lemma = '', source = null) {
-  const cache = source || lexicalCache();
-  const surface = normalizeImportKey(normalizeSurface(word));
-  const canonical = normalizeImportKey(normalizeSurface(lemma));
-  return cache[`en:${surface}`] || (canonical ? cache[`en:${canonical}`] : null) || null;
-}
-function instantEntry(word, lemma = '', source = null) {
-  const cache = source || instantWordCache();
-  const surface = normalizeSurface(word);
-  const canonical = normalizeSurface(lemma);
-  return cache[`en:${surface}`] || (canonical ? cache[`en:${canonical}`] : null) || null;
-}
-function bestHint(word, context, lemma, own, lexical, instant) {
-  const direct = own?.[cacheKey(word, context)] || null;
-  return compactRussian(
-    russianMeaning(direct)
-    || russianMeaning(instantEntry(word, lemma, instant))
-    || russianMeaning(lexicalEntry(word, lemma, lexical))
-  );
-}
-function isEnglishWord(el) {
-  return !!el?.classList?.contains('reader-word')
-    && el.dataset?.lang === 'en'
-    && /[A-Za-z]/.test(String(el.dataset?.word || ''));
-}
-function knowledge(el) {
-  // Missing both classes is transient/pending, never an instruction to erase.
-  if (el?.classList?.contains('rw-migaku-unknown')) return 'unknown';
-  if (el?.classList?.contains('rw-migaku-known')) return 'known';
-  return '';
+  try {
+    const value = globalThis.readerEnglishLemmaFor?.(word);
+    return normalizeSurface(value || word);
+  } catch { return normalizeSurface(word); }
 }
 function paragraphContext(el) {
   const paragraph = el?.closest?.('.reader-paragraph');
@@ -163,6 +134,42 @@ function paragraphContext(el) {
   paragraphSourceText.set(paragraph, source);
   return source;
 }
+function lexicalEntry(word, lemma, cache) {
+  const source = cache || lexicalCache();
+  const surfaceKey = normalizedKey(word);
+  const lemmaKey = normalizedKey(lemma);
+  return source[`en:${surfaceKey}`] || source[`en:${lemmaKey}`] || null;
+}
+function instantEntry(word, lemma, cache) {
+  const source = cache || instantWordCache();
+  const surface = normalizeSurface(word);
+  const canonical = normalizeSurface(lemma);
+  return source[`en:${surface}`] || source[`en:${canonical}`] || null;
+}
+function bestHint(word, context, lemma, caches = {}) {
+  const canonical = normalizedKey(lemma || word);
+  const byLemma = caches.lemmas?.[canonical];
+  const byInstant = instantEntry(word, lemma, caches.instant);
+  const byLexical = lexicalEntry(word, lemma, caches.lexical);
+  const byContext = caches.legacy?.[legacyCacheKey(word, context)];
+  return compactRussian(
+    russianMeaning(byLemma)
+    || russianMeaning(byInstant)
+    || russianMeaning(byLexical)
+    || russianMeaning(byContext),
+  );
+}
+
+function isEnglishWord(el) {
+  if (!el?.classList?.contains('reader-word')) return false;
+  const text = String(el.dataset?.word || el.textContent || '');
+  return /[A-Za-z]/.test(text);
+}
+function knowledge(el) {
+  if (el?.classList?.contains('rw-migaku-unknown')) return 'unknown';
+  if (el?.classList?.contains('rw-migaku-known')) return 'known';
+  return '';
+}
 function wrapperFor(el) {
   return el?.parentElement?.classList?.contains('rw-en-gloss-wrap') ? el.parentElement : null;
 }
@@ -170,12 +177,11 @@ function syncVisibility(el, wrap) {
   const state = knowledge(el);
   if (state === 'unknown') wrap.dataset.enGlossVisible = '1';
   else if (state === 'known') wrap.dataset.enGlossVisible = '0';
-  // pending => sticky; keep the last confirmed state.
   return state;
 }
 function ensureWrapper(el, ru = '') {
   if (!isEnglishWord(el)) return null;
-  const word = String(el.dataset.word || '').trim();
+  const word = String(el.dataset.word || el.textContent || '').trim();
   if (!word) return null;
   let wrap = wrapperFor(el);
   if (!wrap) {
@@ -185,23 +191,47 @@ function ensureWrapper(el, ru = '') {
     el.parentNode?.insertBefore(wrap, el);
     wrap.appendChild(el);
   }
-  const compact = compactRussian(ru);
-  if (compact) {
-    wrap.dataset.enGlossRu = compact;
-    wrap.dataset.enGlossStickyRu = compact;
-    wrap.style.setProperty('--en-gloss-font', glossFontSize(word, compact));
-  } else if (!Object.prototype.hasOwnProperty.call(wrap.dataset, 'enGlossRu')) {
-    wrap.dataset.enGlossRu = '';
-    wrap.style.setProperty('--en-gloss-font', glossFontSize(word, ''));
-  }
+  setWrapperTranslation(wrap, word, ru);
   syncVisibility(el, wrap);
   return wrap;
 }
-function registerWrapper(key, wrap) {
-  if (!key || !wrap) return;
-  let set = liveWrappersByKey.get(key);
-  if (!set) { set = new Set(); liveWrappersByKey.set(key, set); }
-  set.add(wrap);
+function setWrapperTranslation(wrap, word, value) {
+  if (!wrap) return;
+  const ru = compactRussian(value);
+  if (!ru) return;
+  wrap.dataset.enGlossRu = ru;
+  wrap.dataset.enGlossStickyRu = ru;
+  wrap.style.setProperty('--en-gloss-font', glossFontSize(word, ru));
+}
+
+function rememberNativeTranslation(sourceWord, ru) {
+  const translation = compactRussian(ru);
+  const key = normalizedKey(sourceWord);
+  if (!key || !translation) return false;
+  const cache = lemmaCache();
+  cache[key] = { ru: translation, t: Date.now(), provider: 'mlkit_offline_en_ru' };
+  saveLemmaCache(cache);
+  return true;
+}
+
+function applyTranslationToDom(sourceWord, ru) {
+  const translation = compactRussian(ru);
+  const sourceKey = normalizedKey(sourceWord);
+  const root = document.getElementById('reader-chapter-text');
+  if (!translation || !sourceKey || !root || currentLang() !== 'en') return 0;
+  let count = 0;
+  for (const el of root.querySelectorAll('.reader-word[data-word]')) {
+    if (!isEnglishWord(el) || knowledge(el) === 'known') continue;
+    const surface = String(el.dataset.word || el.textContent || '').trim();
+    const lemma = lemmaFor(surface);
+    if (normalizedKey(surface) !== sourceKey && normalizedKey(lemma) !== sourceKey) continue;
+    const wrap = ensureWrapper(el, translation);
+    if (!wrap) continue;
+    setWrapperTranslation(wrap, surface, translation);
+    if (knowledge(el) === 'unknown') wrap.dataset.enGlossVisible = '1';
+    count++;
+  }
+  return count;
 }
 
 function nativeTranslate(words) {
@@ -211,12 +241,12 @@ function nativeTranslate(words) {
       reject(new Error('ReaderOfflineTranslate unavailable'));
       return;
     }
-    const clean = [...new Set((words || []).map(normalizeSurface).filter(Boolean))].slice(0, 4);
+    const clean = [...new Set((words || []).map(normalizeSurface).filter(Boolean))].slice(0, MAX_BATCH);
     if (!clean.length) { resolve({}); return; }
     const requestId = `enru-${Date.now().toString(36)}-${(++nativeSequence).toString(36)}`;
     const timer = setTimeout(() => {
       nativePending.delete(requestId);
-      reject(new Error('EN→RU offline model timeout'));
+      reject(new Error('EN→RU offline translator timeout'));
     }, NATIVE_TIMEOUT_MS);
     nativePending.set(requestId, { resolve, reject, timer });
     try {
@@ -230,111 +260,72 @@ function nativeTranslate(words) {
 }
 
 if (typeof window !== 'undefined') {
-  window.__readerOfflineTranslateResolve = (requestId, ok, payloadJson) => {
+  // Native sends each completed word immediately. This is intentionally outside
+  // the install guard: a restored WebView must always have a live callback.
+  window.__readerOfflineTranslateProgress = (requestId, sourceWord, translated) => {
     const pending = nativePending.get(String(requestId || ''));
     if (!pending) return;
-    nativePending.delete(String(requestId || ''));
+    const ru = compactRussian(translated);
+    if (!ru) return;
+    rememberNativeTranslation(sourceWord, ru);
+    applyTranslationToDom(sourceWord, ru);
+  };
+
+  window.__readerOfflineTranslateResolve = (requestId, ok, payloadJson) => {
+    const id = String(requestId || '');
+    const pending = nativePending.get(id);
+    if (!pending) return;
+    nativePending.delete(id);
     clearTimeout(pending.timer);
     let payload = {};
     try { payload = JSON.parse(String(payloadJson || '{}')) || {}; } catch {}
-    if (ok) pending.resolve(payload.translations && typeof payload.translations === 'object' ? payload.translations : {});
-    else pending.reject(new Error(String(payload.message || 'EN→RU offline translation failed')));
+    if (ok) {
+      const translations = payload.translations && typeof payload.translations === 'object'
+        ? payload.translations : {};
+      for (const [sourceWord, value] of Object.entries(translations)) {
+        const ru = compactRussian(value);
+        if (!ru) continue;
+        rememberNativeTranslation(sourceWord, ru);
+        applyTranslationToDom(sourceWord, ru);
+      }
+      pending.resolve(translations);
+    } else {
+      pending.reject(new Error(String(payload.message || 'EN→RU offline translation failed')));
+    }
   };
 }
 
-async function callReaderWord(word, context, lemma) {
-  // Context stays in the cache key so a manually corrected meaning can remain
-  // context-specific, but the fast inline fallback itself is an offline lexical
-  // translation. Prefer the lemma (went→go) and keep the surface as fallback.
-  const surface = normalizeSurface(word);
-  const canonical = normalizeSurface(lemma || surface);
-  const translations = await nativeTranslate(canonical === surface ? [surface] : [canonical, surface]);
-  return compactRussian(translations[canonical] || translations[surface] || '');
-}
-function updateLive(key, word, ru) {
-  const wraps = liveWrappersByKey.get(key);
-  if (!wraps?.size) return;
-  for (const wrap of [...wraps]) {
-    if (!wrap?.isConnected) { wraps.delete(wrap); continue; }
-    const el = wrap.querySelector?.(':scope > .reader-word');
-    const state = syncVisibility(el, wrap);
-    if (ru) {
-      wrap.dataset.enGlossRu = ru;
-      wrap.dataset.enGlossStickyRu = ru;
-      wrap.style.setProperty('--en-gloss-font', glossFontSize(word, ru));
-      if (state !== 'known') wrap.dataset.enGlossVisible = '1';
-    }
-  }
-  if (!wraps.size) liveWrappersByKey.delete(key);
-}
-function enqueue(job, priority) {
-  if (!enabled() || !job?.word || !job?.context) return;
-  const key = job.key || cacheKey(job.word, job.context);
-  const cached = ownCache()[key];
-  if (russianMeaning(cached) || russianMeaning(job.instant) || russianMeaning(job.lexical)) return;
-  if (queuedKeys.has(key)) return;
-  const failed = Number(failedAt.get(key) || 0);
-  if (failed && Date.now() - failed < RETRY_AFTER_MS) return;
-  if (queue.length >= MAX_QUEUE && priority > 0) return;
-  queuedKeys.add(key);
-  const item = { ...job, key, priority };
-  const at = queue.findIndex(other => Number(other.priority || 0) > priority);
-  if (at < 0) queue.push(item); else queue.splice(at, 0, item);
-  pump();
-}
-function pump() {
-  while (enabled() && activeWorkers < MAX_CONCURRENT && queue.length) {
-    const job = queue.shift();
-    activeWorkers++;
-    (async () => {
-      try {
-        const ru = await callReaderWord(job.word, job.context, job.lemma);
-        if (ru) {
-          const cache = ownCache();
-          cache[job.key] = { ru, t: Date.now(), provider: 'mlkit_offline_en_ru' };
-          saveOwnCache(cache);
-          updateLive(job.key, job.word, ru);
-        }
-      } catch (error) {
-        failedAt.set(job.key, Date.now());
-        console.warn('[en unknown gloss v3] offline enrichment failed:', job.word, error?.message || error);
-      } finally {
-        queuedKeys.delete(job.key);
-        activeWorkers--;
-        pump();
-      }
-    })();
-  }
-}
-
 function injectStyles() {
-  if (document.getElementById('rd-en-unknown-gloss-style-v2')) return;
+  const old = document.getElementById('rd-en-unknown-gloss-style-v2');
+  if (old) old.remove();
+  if (document.getElementById('rd-en-unknown-gloss-style-v4')) return;
   const style = document.createElement('style');
-  style.id = 'rd-en-unknown-gloss-style-v2';
+  style.id = 'rd-en-unknown-gloss-style-v4';
   style.textContent = `
-    #reader-reading-view.rd-en-unknown-gloss[data-reader-lang="en"] .reader-paragraph-text{line-height:1.86!important}
-    #reader-reading-view.rd-en-unknown-gloss[data-reader-lang="en"] .rw-en-gloss-wrap{
+    #reader-reading-view.rd-en-unknown-gloss .reader-paragraph-text{line-height:1.86!important}
+    #reader-reading-view.rd-en-unknown-gloss .rw-en-gloss-wrap{
       display:inline-block!important;vertical-align:-.34em!important;line-height:1!important;
       margin:0 .025em!important;padding:0 0 .52em!important;position:relative!important;
       overflow:visible!important;white-space:nowrap!important
     }
-    #reader-reading-view.rd-en-unknown-gloss[data-reader-lang="en"] .rw-en-gloss-wrap>.reader-word{
+    #reader-reading-view.rd-en-unknown-gloss .rw-en-gloss-wrap>.reader-word{
       display:inline!important;margin:0!important;padding:0 1px!important;line-height:1.04!important;
       white-space:nowrap!important;word-break:keep-all!important;overflow-wrap:normal!important
     }
-    #reader-reading-view.rd-en-unknown-gloss[data-reader-lang="en"] .rw-en-gloss-wrap::after{
+    #reader-reading-view.rd-en-unknown-gloss .rw-en-gloss-wrap::after{
       position:absolute!important;left:0!important;right:0!important;bottom:0!important;top:auto!important;
       width:100%!important;min-width:0!important;max-width:100%!important;height:.52em!important;
-      overflow:hidden!important;white-space:nowrap!important;text-align:center!important;pointer-events:none!important;
+      overflow:visible!important;white-space:nowrap!important;text-align:center!important;pointer-events:none!important;
       font-family:'IBM Plex Sans',sans-serif!important;font-size:var(--en-gloss-font,.38em)!important;
       font-weight:400!important;line-height:1!important;color:var(--text-muted)!important;content:''
     }
-    #reader-reading-view.rd-en-unknown-gloss[data-reader-lang="en"] .rw-en-gloss-wrap[data-en-gloss-visible="1"]::after{
+    #reader-reading-view.rd-en-unknown-gloss .rw-en-gloss-wrap[data-en-gloss-visible="1"]::after{
       content:attr(data-en-gloss-sticky-ru)!important
     }
   `;
   document.head.appendChild(style);
 }
+
 function ensureControl() {
   const panel = document.getElementById('rd-display-panel');
   if (!panel) return null;
@@ -345,7 +336,9 @@ function ensureControl() {
     row.className = 'rd-dp-row';
     row.style.display = 'none';
     row.innerHTML = `<span class="rd-dp-label">English · Unknown words</span><div class="rd-dp-pills"><button type="button" class="rd-dp-pill rd-en-gloss-mode" data-mode="off">Обычный текст</button><button type="button" class="rd-dp-pill rd-en-gloss-mode" data-mode="unknown">Русский под Unknown</button></div>`;
-    row.querySelectorAll('.rd-en-gloss-mode').forEach(button => button.addEventListener('click', () => setMode(button.dataset.mode)));
+    row.querySelectorAll('.rd-en-gloss-mode').forEach(button => {
+      button.addEventListener('click', () => setMode(button.dataset.mode));
+    });
     panel.appendChild(row);
   }
   return row;
@@ -353,155 +346,156 @@ function ensureControl() {
 function syncControl() {
   const row = ensureControl();
   const view = document.getElementById('reader-reading-view');
-  if (!row || !view) return;
+  if (!view) return;
   const isEn = currentLang() === 'en';
-  row.style.display = isEn ? 'flex' : 'none';
-  row.querySelectorAll('.rd-en-gloss-mode').forEach(button => button.classList.toggle('rd-dp-active', button.dataset.mode === mode()));
+  if (row) {
+    row.style.display = isEn ? 'flex' : 'none';
+    row.querySelectorAll('.rd-en-gloss-mode').forEach(button => {
+      button.classList.toggle('rd-dp-active', button.dataset.mode === mode());
+    });
+  }
   view.classList.toggle('rd-en-unknown-gloss', isEn && enabled());
 }
-async function setMode(next) {
-  try { localStorage.setItem(MODE_KEY, next === 'unknown' ? 'unknown' : 'off'); } catch {}
+function setMode(next) {
+  try { localStorage.setItem(MODE_KEY, next === 'off' ? 'off' : 'unknown'); } catch {}
   syncControl();
-  try { (await canonicalApp()).renderReaderChapter?.(); }
-  catch (error) { console.warn('[en unknown gloss v3] refresh skipped:', error?.message || error); }
-  scheduleScan(30);
+  scheduleScan(0);
+}
+
+function cachesSnapshot() {
+  return {
+    lemmas: lemmaCache(),
+    legacy: legacyCache(),
+    lexical: lexicalCache(),
+    instant: instantWordCache(),
+  };
 }
 
 function prepareStableSlots(root = document.getElementById('reader-chapter-text')) {
-  injectStyles(); syncControl();
+  injectStyles();
+  syncControl();
   if (!enabled() || currentLang() !== 'en' || !root) return 0;
-  const own = ownCache();
-  const lexical = lexicalCache();
-  const instant = instantWordCache();
+  const caches = cachesSnapshot();
   let count = 0;
-  root.querySelectorAll('.reader-word[data-lang="en"][data-word]').forEach(el => {
-    const word = String(el.dataset.word || '').trim();
-    if (!word) return;
-    const ru = bestHint(word, paragraphContext(el), lemmaFor(word), own, lexical, instant);
-    if (ensureWrapper(el, ru)) count++;
-  });
+  for (const el of root.querySelectorAll('.reader-word[data-word]')) {
+    if (!isEnglishWord(el)) continue;
+    const word = String(el.dataset.word || el.textContent || '').trim();
+    const lemma = lemmaFor(word);
+    const ru = bestHint(word, paragraphContext(el), lemma, caches);
+    const wrap = ensureWrapper(el, ru);
+    if (!wrap) continue;
+    if (ru && knowledge(el) === 'unknown') wrap.dataset.enGlossVisible = '1';
+    count++;
+  }
   return count;
 }
+
 function isVisibleWord(el) {
   try {
     const r = el.getBoundingClientRect();
     const h = Math.max(document.documentElement?.clientHeight || 0, window.innerHeight || 0);
-    return r.width > 0 && r.height > 0 && r.bottom >= 0 && r.top <= h;
+    return r.width > 0 && r.height > 0 && r.bottom >= -80 && r.top <= h + 80;
   } catch { return true; }
 }
-function enqueueSlice(items, start, end, priority) {
-  for (const job of items.slice(start, end)) enqueue(job, priority);
+function priorityScopes(root) {
+  const pages = Array.from(root.querySelectorAll(':scope > .rd-page'));
+  if (!pages.length) return [{ root, visibleOnly:true }];
+  let current = pages.findIndex(page => page.classList.contains('rd-page-current'));
+  if (current < 0) current = pages.findIndex(page => page.classList.contains('rd-page-show'));
+  if (current < 0) current = 0;
+  return pages.slice(current, current + PREFETCH_PAGES + 1).map(page => ({ root:page, visibleOnly:false }));
 }
+
+async function translateMissing(tokens) {
+  if (batchInFlight || !tokens.length || Date.now() < retryAfter) return;
+  batchInFlight = true;
+  try {
+    await nativeTranslate(tokens.slice(0, MAX_BATCH));
+    retryAfter = 0;
+  } catch (error) {
+    retryAfter = Date.now() + RETRY_AFTER_MS;
+    console.warn('[en unknown gloss v4] offline translation failed:', error?.message || error);
+  } finally {
+    batchInFlight = false;
+    scheduleScan(20);
+  }
+}
+
 function scan() {
   syncControl();
   if (!enabled() || currentLang() !== 'en') return;
-  pump();
   const root = document.getElementById('reader-chapter-text');
   if (!root) return;
   prepareStableSlots(root);
 
-  const own = ownCache();
-  const lexical = lexicalCache();
-  const instant = instantWordCache();
-  const pages = Array.from(root.querySelectorAll(':scope > .rd-page'));
-  let current = pages.findIndex(page => page.classList.contains('rd-page-current'));
-  if (current < 0) current = pages.findIndex(page => page.classList.contains('rd-page-show'));
-  if (current < 0) current = 0;
-  const pageMode = pages.length > 0;
-  const scopes = pageMode ? pages.slice(current, current + PREFETCH_PAGES + 1) : [root];
-  const pending = scopes.map(() => []);
-
-  for (let si = 0; si < scopes.length; si++) {
-    const words = scopes[si].querySelectorAll('.reader-word[data-lang="en"][data-word]');
-    for (const el of words) {
+  const caches = cachesSnapshot();
+  const missing = [];
+  const seen = new Set();
+  for (const scope of priorityScopes(root)) {
+    for (const el of scope.root.querySelectorAll('.reader-word[data-word]')) {
       if (!isEnglishWord(el)) continue;
-      const word = String(el.dataset.word || '').trim();
-      const lemma = lemmaFor(word);
-      const context = paragraphContext(el);
-      const key = cacheKey(word, context);
-      const lexicalHit = lexicalEntry(word, lemma, lexical);
-      const instantHit = instantEntry(word, lemma, instant);
-      const ru = bestHint(word, context, lemma, own, lexical, instant);
-      const wrap = ensureWrapper(el, ru);
-      if (!wrap) continue;
-      registerWrapper(key, wrap);
-      const state = syncVisibility(el, wrap);
-      if (state === 'known') continue;
+      const state = knowledge(el);
       if (state !== 'unknown') continue;
+      if (scope.visibleOnly && !isVisibleWord(el)) continue;
+      const word = String(el.dataset.word || el.textContent || '').trim();
+      const lemma = lemmaFor(word);
+      const ru = bestHint(word, paragraphContext(el), lemma, caches);
+      const wrap = ensureWrapper(el, ru);
       if (ru) {
-        wrap.dataset.enGlossRu = ru;
-        wrap.dataset.enGlossStickyRu = ru;
-        wrap.dataset.enGlossVisible = '1';
-        wrap.style.setProperty('--en-gloss-font', glossFontSize(word, ru));
+        if (wrap) wrap.dataset.enGlossVisible = '1';
         continue;
       }
-      if (!pageMode && !isVisibleWord(el)) continue;
-      pending[si].push({ key, word, lemma, context, lexical: lexicalHit, instant: instantHit });
+      const token = normalizeSurface(lemma || word);
+      if (!token || seen.has(token)) continue;
+      seen.add(token);
+      missing.push(token);
+      if (missing.length >= MAX_BATCH) break;
     }
+    if (missing.length >= MAX_BATCH) break;
   }
-
-  if (!pageMode) {
-    enqueueSlice(pending[0] || [], 0, MAX_CURRENT, 0);
-    return;
-  }
-
-  const here = pending[0] || [];
-  // Start one local current-page job, then queue the top of N+1/N+2 before the
-  // rest of a giant paragraph. Native ML Kit is serial on purpose: unlike the
-  // old DeepSeek path it is fast after model warm-up and cannot flood the A54.
-  enqueueSlice(here, 0, Math.min(HEAD_CURRENT, here.length), 0);
-  let prefetched = 0;
-  for (let si = 1; si < pending.length; si++) {
-    const list = pending[si] || [];
-    const take = Math.min(HEAD_NEXT, list.length, MAX_PREFETCH - prefetched);
-    enqueueSlice(list, 0, take, si);
-    prefetched += take;
-  }
-  enqueueSlice(here, Math.min(HEAD_CURRENT, here.length), Math.min(MAX_CURRENT, here.length), PREFETCH_PAGES + 1);
-  for (let si = 1; si < pending.length && prefetched < MAX_PREFETCH; si++) {
-    const list = pending[si] || [];
-    const start = Math.min(HEAD_NEXT, list.length);
-    const take = Math.min(list.length - start, MAX_PREFETCH - prefetched);
-    enqueueSlice(list, start, start + take, PREFETCH_PAGES + 1 + si);
-    prefetched += take;
-  }
+  if (missing.length) void translateMissing(missing);
 }
-function scheduleScan(delay = 0) {
+
+function scheduleScan(delay = 40) {
   clearTimeout(scanTimer);
-  scanTimer = setTimeout(scan, delay);
+  scanTimer = setTimeout(scan, Math.max(0, Number(delay) || 0));
 }
-function scanNow() { clearTimeout(scanTimer); scan(); }
+function scanNow() { scheduleScan(0); }
+
 function bindObservers() {
   if (typeof MutationObserver === 'undefined') return;
   const root = document.getElementById('reader-chapter-text');
   if (root && root !== rootObserved) {
     rootObserver?.disconnect();
     rootObserved = root;
-    rootObserver = new MutationObserver(records => {
-      const urgent = records.some(record => {
-        const target = record.target instanceof Element ? record.target : null;
-        if (record.type === 'attributes' && target?.classList?.contains('rd-page')) return true;
-        return Array.from(record.addedNodes || []).some(node => node instanceof Element && (node.classList.contains('rd-page') || node.querySelector?.('.rd-page')));
-      });
-      if (urgent) queueMicrotask(scanNow); else scheduleScan(25);
+    rootObserver = new MutationObserver(() => scheduleScan(55));
+    rootObserver.observe(root, {
+      childList:true,
+      subtree:true,
+      attributes:true,
+      attributeFilter:['class','data-lang','data-word'],
     });
-    rootObserver.observe(root, { childList:true, subtree:true, attributes:true, attributeFilter:['class'] });
   }
   const view = document.getElementById('reader-reading-view');
   if (view && view !== viewObserved) {
     viewObserver?.disconnect();
     viewObserved = view;
-    viewObserver = new MutationObserver(() => { syncControl(); scheduleScan(25); });
-    viewObserver.observe(view, { attributes:true, attributeFilter:['data-reader-lang','style','class'] });
+    viewObserver = new MutationObserver(() => { syncControl(); scheduleScan(40); });
+    viewObserver.observe(view, { attributes:true, attributeFilter:['data-reader-lang','class'] });
   }
 }
+
 function boot() {
-  injectStyles(); ensureControl(); syncControl(); bindObservers(); scheduleScan(0);
+  injectStyles();
+  ensureControl();
+  syncControl();
+  bindObservers();
+  scheduleScan(0);
 }
 
-const shouldInstall = typeof window !== 'undefined' && !window.__readerEnUnknownGlossV3Installed;
+const shouldInstall = typeof window !== 'undefined' && !window.__readerEnUnknownGlossV4Installed;
 if (shouldInstall) {
-  window.__readerEnUnknownGlossV3Installed = true;
+  window.__readerEnUnknownGlossV4Installed = true;
   window.readerSetEnUnknownGlossMode = setMode;
   window.readerGetEnUnknownGlossMode = mode;
   window.readerPrepareEnStableSlots = prepareStableSlots;
@@ -509,7 +503,8 @@ if (shouldInstall) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once:true });
   else boot();
   window.addEventListener('pageshow', () => { boot(); scheduleScan(30); });
-  window.addEventListener('reader:en-vocab-ready', () => scheduleScan(10));
+  window.addEventListener('reader:en-vocab-ready', () => scheduleScan(0));
+  window.addEventListener('an2:languagechange', () => scheduleScan(0));
 }
 
-export { mode, enabled, compactRussian, cacheKey, prepareStableSlots };
+export { mode, enabled, compactRussian, legacyCacheKey as cacheKey, prepareStableSlots };
