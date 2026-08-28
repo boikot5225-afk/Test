@@ -48,8 +48,8 @@
     let payload = {};
     try { payload = JSON.parse(String(payloadJson || '{}')); } catch (_) {}
     if (ok) entry.resolve(payload);
-    else entry.reject(Object.assign(new Error(payload.message || 'Instant Translate AI failed'), {
-      code: payload.code || 'instant_ai',
+    else entry.reject(Object.assign(new Error(payload.message || 'Instant Translate не сработал'), {
+      code: payload.code || 'instant_translate',
     }));
   };
 
@@ -67,8 +67,8 @@
       const requestId = `it-${Date.now().toString(36)}-${(++sequence).toString(36)}`;
       const timer = setTimeout(() => {
         pending.delete(requestId);
-        reject(Object.assign(new Error('тайм-аут Instant Translate AI'), { code: 'instant_ai_timeout' }));
-      }, 45000);
+        reject(Object.assign(new Error('тайм-аут Instant Translate'), { code: 'instant_translate_timeout' }));
+      }, 65000);
       pending.set(requestId, { resolve, reject, timer });
       try {
         nativeBridge.translate(requestId, JSON.stringify(payload));
@@ -94,7 +94,7 @@
       return originalFetch(input, init);
     }
 
-    showInstantNotice('Instant Translate AI: выполняю перевод…', false, 2500);
+    showInstantNotice('Открываю Instant Translate…', false, 2500);
     try {
       const translated = await nativeTranslate({
         text: String(payload.text || ''),
@@ -102,21 +102,30 @@
         targetLang: String(payload.targetLang || 'ru'),
       });
       const ru = String(translated?.ru || '').trim();
-      if (!ru) throw new Error('Instant Translate AI вернул пустой текст');
-      showInstantNotice('Instant Translate AI: перевод получен', false, 2200);
-      return new Response(JSON.stringify({ result: { ru, provider: 'instant_translate_ai' } }), {
+      if (!ru) throw new Error('Instant Translate вернул пустой текст');
+      showInstantNotice('Instant Translate: перевод получен', false, 2200);
+      return new Response(JSON.stringify({ result: { ru, provider: 'instant_translate_installed_app' } }), {
         status: 200,
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
       });
     } catch (error) {
-      const reason = String(error?.message || error || 'неизвестная ошибка').slice(0, 180);
-      console.warn('[Instant Translate AI] fallback to DeepSeek:', error?.code || '', reason);
-      showInstantNotice(`Instant Translate не сработал: ${reason}. Fallback → DeepSeek`, true, 7000);
-      return originalFetch(input, init);
+      const reason = String(error?.message || error || 'неизвестная ошибка').slice(0, 220);
+      console.warn('[Instant Translate]', error?.code || '', reason);
+      showInstantNotice(`Instant Translate: ${reason}`, true, 8000);
+
+      // Deliberately DO NOT call the old Reader/DeepSeek backend here. toc65 is
+      // a clean compatibility test: either the installed Instant Translate app
+      // returns the paragraph, or the translation request fails visibly.
+      return new Response(JSON.stringify({
+        error: { message: `Instant Translate: ${reason}`, code: error?.code || 'instant_translate' }
+      }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      });
     }
   };
 
   window.__readerInstantTranslateBridgeInstalled = true;
-  showInstantNotice('Instant Translate AI: мост активен. Нажми перевод абзаца.', false, 5000);
-  console.info('[Instant Translate AI] native translation interceptor installed');
+  showInstantNotice('Instant Translate: мост активен', false, 3500);
+  console.info('[Instant Translate] installed-app bridge active');
 })();
