@@ -1,3 +1,4 @@
+// toc90 regression: native pinyin only + compact contextual Russian gloss.
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
