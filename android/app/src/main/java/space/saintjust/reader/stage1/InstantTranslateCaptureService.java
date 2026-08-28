@@ -41,7 +41,8 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final long MIN_CAPTURE_AGE_MS = 850L;
     private static final long STABLE_WINDOW_MS = 420L;
-    private static final long NATIVE_TIMEOUT_MS = 35_000L;
+    private static final long PARAGRAPH_TIMEOUT_MS = 35_000L;
+    private static final long WORD_TIMEOUT_MS = 8_000L;
     private static final long COVER_HIDE_AFTER_BACK_MS = 850L;
 
     private WindowManager windowManager;
@@ -51,9 +52,11 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
     private static final Runnable ARM_TIMEOUT = () -> {
         if (!armed) return;
         InstantTranslateCaptureService service = activeService.get();
+        boolean wordMode = "word".equals(captureMode);
         disarm();
-        InstantTranslateBridge.onTranslationCaptureFailed(
-                "Instant Translate не показал готовый перевод за 35 секунд");
+        InstantTranslateBridge.onTranslationCaptureFailed(wordMode
+                ? "Instant Translate не вернул перевод слова за 8 секунд"
+                : "Instant Translate не показал готовый перевод за 35 секунд");
         if (service != null) {
             MAIN.postDelayed(() -> service.performGlobalAction(GLOBAL_ACTION_BACK), 120L);
             MAIN.postDelayed(service::hideCoverInternal, COVER_HIDE_AFTER_BACK_MS);
@@ -71,7 +74,8 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         stableSinceMs = 0L;
         armed = true;
         MAIN.removeCallbacks(ARM_TIMEOUT);
-        MAIN.postDelayed(ARM_TIMEOUT, NATIVE_TIMEOUT_MS);
+        MAIN.postDelayed(ARM_TIMEOUT,
+                "word".equals(captureMode) ? WORD_TIMEOUT_MS : PARAGRAPH_TIMEOUT_MS);
     }
 
     static void disarm() {
