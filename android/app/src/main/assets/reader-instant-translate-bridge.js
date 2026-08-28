@@ -43,22 +43,32 @@
     } catch (_) {}
   }
 
-  // The legacy Reader function still has DeepSeek-specific presentation strings.
-  // Keep its storage/rendering logic untouched, but make the visible UI describe
-  // the provider that is actually being used on Android.
-  function neutralizeLegacyTranslationUi(mode = '') {
+  function hideLegacyTranslationToast() {
     try {
       const toast = document.getElementById('toast');
-      if (toast && /DeepSeek\s+переводит\s+абзац/i.test(String(toast.textContent || ''))) {
-        toast.textContent = '⏳ Перевожу через Instant Translate…';
+      if (!toast) return;
+      const text = String(toast.textContent || '');
+      if (/DeepSeek\s+переводит\s+абзац/i.test(text)
+          || /Перевод\s+добавлен\s+под\s+абзацем/i.test(text)) {
+        toast.style.display = 'none';
       }
+    } catch (_) {}
+  }
+
+  function neutralizeLegacyTranslationUi(mode = '') {
+    hideLegacyTranslationToast();
+    try {
       if (mode === 'selection') {
         const ru = document.getElementById('reader-sel-ru');
         if (ru && /DeepSeek\s+переводит/i.test(String(ru.textContent || ''))) {
-          ru.textContent = '⏳ Instant Translate переводит…';
+          ru.textContent = '…';
         }
       }
     } catch (_) {}
+  }
+
+  function suppressLegacySuccessToast() {
+    [0, 60, 140, 260, 500].forEach(delay => setTimeout(hideLegacyTranslationToast, delay));
   }
 
   function revealActiveParagraphTranslation(attempt = 0) {
@@ -89,8 +99,6 @@
     if (paragraphButton || isMoreMenuTranslate || selectionButton) {
       manualTranslateUntil = Date.now() + 5000;
       manualTranslateMode = selectionButton ? 'selection' : 'paragraph';
-      // Reader's handler writes its old provider label immediately after this
-      // capture-phase listener. Relabel on the next task without changing core JS.
       setTimeout(() => neutralizeLegacyTranslationUi(manualTranslateMode), 0);
       setTimeout(() => neutralizeLegacyTranslationUi(manualTranslateMode), 80);
     }
@@ -185,9 +193,6 @@
       return originalFetch(input, init);
     }
 
-    // reader-app.js also uses translate_paragraph for silent prefetch. An external
-    // app must never be launched by that background work; only a real user action
-    // armed in the capture-phase click listener is allowed through.
     if (Date.now() > manualTranslateUntil) {
       return blockedBackgroundTranslationResponse();
     }
@@ -205,11 +210,9 @@
       const ru = String(translated?.ru || '').trim();
       if (!ru) throw new Error('Instant Translate вернул пустой текст');
 
-      // Reader's own success toast remains the single success indication. For a
-      // paragraph, reveal the freshly rendered <details> block automatically so
-      // the result is immediately visible instead of sitting behind "показать".
       if (requestMode === 'paragraph') {
         setTimeout(() => revealActiveParagraphTranslation(0), 80);
+        suppressLegacySuccessToast();
       }
 
       return new Response(JSON.stringify({ result: { ru, provider: 'instant_translate_installed_app' } }), {
@@ -230,5 +233,5 @@
   };
 
   window.__readerInstantTranslateBridgeInstalled = true;
-  console.info('[Instant Translate] installed-app bridge active');
+  console.info('[Instant Translate] hidden installed-app bridge active');
 })();
