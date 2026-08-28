@@ -17,7 +17,7 @@ public final class InstantTranslateActivity extends MainActivity {
     private static final String CHAT_SCRIPT =
             "https://appassets.androidplatform.net/assets/reader-instant-chat-bridge.js";
     private static final String EN_GLOSS_SCRIPT =
-            "https://appassets.androidplatform.net/assets/www/js/reader/en-unknown-gloss-v2.js?v=4";
+            "https://appassets.androidplatform.net/assets/www/js/reader/en-unknown-gloss-v2.js?v=5";
 
     private WebView readerWebView;
     private InstantTranslateBridge instantTranslateBridge;
@@ -36,9 +36,8 @@ public final class InstantTranslateActivity extends MainActivity {
         instantTranslateChatBridge = new InstantTranslateChatBridge(this, readerWebView);
         readerWebView.addJavascriptInterface(instantTranslateChatBridge, "ReaderInstantChat");
 
-        // Separate from the external-app bridge above: this one runs ML Kit in
-        // Reader's own process and is used only for unobtrusive EN→RU Unknown
-        // glosses. No Accessibility window or screen cover is involved.
+        // Separate from the external-app bridges above: English Unknown glosses
+        // use the bundled WikDict EN→RU core inside Reader's own process.
         offlineTranslateBridge = new OfflineTranslateBridge(this, readerWebView);
         readerWebView.addJavascriptInterface(offlineTranslateBridge, "ReaderOfflineTranslate");
 
