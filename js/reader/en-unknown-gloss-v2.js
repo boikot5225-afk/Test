@@ -1,27 +1,26 @@
 import { normalizeImportKey } from '../utils.js';
 
-// English Unknown glosses v5.
+// English Unknown glosses v6.
 // Chinese rendering stays untouched. English Unknown words get a real DOM
-// child below the word, backed by the bundled WikDict EN→RU core.
-const MODE_KEY = 'an2_reader_en_unknown_gloss_mode_v1';
+// child below the word. v6 reads bundled WikDict JSON directly in WebView,
+// bypassing the Android JavascriptInterface callback path entirely.
+const MODE_KEY = 'an2_reader_en_unknown_gloss_mode_v2';
 const CACHE_BASE_KEY = 'an2_reader_en_unknown_gloss_lemma_cache_v2';
 const LEGACY_CACHE_BASE_KEY = 'an2_reader_en_unknown_gloss_cache_v1';
 const INSTANT_WORD_CACHE_KEY = 'an2_instant_translate_word_cache_v1';
 const MAX_CACHE = 8000;
-const MAX_BATCH = 24;
-const NATIVE_TIMEOUT_MS = 12 * 1000;
-const RETRY_AFTER_MS = 15 * 1000;
+const MAX_BATCH = 48;
 const PREFETCH_PAGES = 2;
+const DICT_URL = new URL('../../../wikdict/en_ru_core.json?v=1', import.meta.url).href;
 
 let scanTimer = null;
 let rootObserver = null;
 let rootObserved = null;
 let viewObserver = null;
 let viewObserved = null;
-let nativeSequence = 0;
-let batchInFlight = false;
-let retryAfter = 0;
-const nativePending = new Map();
+let dictionaryPromise = null;
+let dictionary = null;
+let lookupInFlight = false;
 const paragraphSourceText = new WeakMap();
 
 function scopedKey(base) {
@@ -242,61 +241,36 @@ function applyTranslationToDom(sourceWord, ru) {
   return count;
 }
 
-function nativeLookup(words) {
-  return new Promise((resolve, reject) => {
-    const bridge = globalThis.ReaderOfflineTranslate;
-    if (!bridge || typeof bridge.translateBatch !== 'function') {
-      reject(new Error('ReaderOfflineTranslate unavailable'));
-      return;
-    }
-    const clean = [...new Set((words || []).map(normalizeSurface).filter(Boolean))].slice(0, MAX_BATCH);
-    if (!clean.length) { resolve({}); return; }
-    const requestId = `enru-${Date.now().toString(36)}-${(++nativeSequence).toString(36)}`;
-    const timer = setTimeout(() => {
-      nativePending.delete(requestId);
-      reject(new Error('EN→RU dictionary timeout'));
-    }, NATIVE_TIMEOUT_MS);
-    nativePending.set(requestId, { resolve, reject, timer });
-    try { bridge.translateBatch(requestId, JSON.stringify(clean)); }
-    catch (error) {
-      clearTimeout(timer);
-      nativePending.delete(requestId);
-      reject(error);
-    }
-  });
+async function loadDictionary() {
+  if (dictionary) return dictionary;
+  if (dictionaryPromise) return dictionaryPromise;
+  dictionaryPromise = fetch(DICT_URL, { cache:'force-cache' })
+    .then(response => {
+      if (!response.ok) throw new Error(`EN→RU dictionary HTTP ${response.status}`);
+      return response.json();
+    })
+    .then(data => {
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new Error('EN→RU dictionary payload is invalid');
+      }
+      dictionary = data;
+      return data;
+    })
+    .finally(() => { dictionaryPromise = null; });
+  return dictionaryPromise;
 }
 
-if (typeof window !== 'undefined') {
-  window.__readerOfflineTranslateProgress = (requestId, sourceWord, translated) => {
-    if (!nativePending.has(String(requestId || ''))) return;
-    const ru = compactRussian(translated);
-    if (!ru) return;
+async function dictionaryLookup(words) {
+  const dict = await loadDictionary();
+  const out = {};
+  for (const sourceWord of [...new Set((words || []).map(normalizeSurface).filter(Boolean))].slice(0, MAX_BATCH)) {
+    const ru = compactRussian(dict[sourceWord] || '');
+    if (!ru) continue;
+    out[sourceWord] = ru;
     rememberTranslation(sourceWord, ru);
     applyTranslationToDom(sourceWord, ru);
-  };
-
-  window.__readerOfflineTranslateResolve = (requestId, ok, payloadJson) => {
-    const id = String(requestId || '');
-    const pending = nativePending.get(id);
-    if (!pending) return;
-    nativePending.delete(id);
-    clearTimeout(pending.timer);
-    let payload = {};
-    try { payload = JSON.parse(String(payloadJson || '{}')) || {}; } catch {}
-    if (!ok) {
-      pending.reject(new Error(String(payload.message || 'EN→RU dictionary failed')));
-      return;
-    }
-    const translations = payload.translations && typeof payload.translations === 'object'
-      ? payload.translations : {};
-    for (const [sourceWord, value] of Object.entries(translations)) {
-      const ru = compactRussian(value);
-      if (!ru) continue;
-      rememberTranslation(sourceWord, ru);
-      applyTranslationToDom(sourceWord, ru);
-    }
-    pending.resolve(translations);
-  };
+  }
+  return out;
 }
 
 function injectStyles() {
@@ -404,16 +378,14 @@ function priorityScopes(root) {
 }
 
 async function lookupMissing(tokens) {
-  if (batchInFlight || !tokens.length || Date.now() < retryAfter) return;
-  batchInFlight = true;
+  if (lookupInFlight || !tokens.length) return;
+  lookupInFlight = true;
   try {
-    await nativeLookup(tokens.slice(0, MAX_BATCH));
-    retryAfter = 0;
+    await dictionaryLookup(tokens.slice(0, MAX_BATCH));
   } catch (error) {
-    retryAfter = Date.now() + RETRY_AFTER_MS;
-    console.warn('[en unknown gloss v5] WikDict lookup failed:', error?.message || error);
+    console.warn('[en unknown gloss v6] bundled dictionary lookup failed:', error?.message || error);
   } finally {
-    batchInFlight = false;
+    lookupInFlight = false;
     scheduleScan(20);
   }
 }
@@ -490,9 +462,9 @@ function boot() {
   scheduleScan(0);
 }
 
-const shouldInstall = typeof window !== 'undefined' && !window.__readerEnUnknownGlossV5Installed;
+const shouldInstall = typeof window !== 'undefined' && !window.__readerEnUnknownGlossV6Installed;
 if (shouldInstall) {
-  window.__readerEnUnknownGlossV5Installed = true;
+  window.__readerEnUnknownGlossV6Installed = true;
   window.readerSetEnUnknownGlossMode = setMode;
   window.readerGetEnUnknownGlossMode = mode;
   window.readerPrepareEnStableSlots = prepareStableSlots;
