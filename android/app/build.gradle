@@ -33,8 +33,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 101
-        versionName '77.42-toc81'
+        versionCode 102
+        versionName '77.42-toc82'
     }
 
     buildFeatures {
@@ -83,6 +83,9 @@ android {
 
 dependencies {
     implementation 'androidx.webkit:webkit:1.12.1'
+    // Only used as the last-resort EN→RU fallback for Unknown words missing
+    // from the bundled 95k-entry WikDict. Most page glosses never touch ML Kit.
+    implementation 'com.google.mlkit:translate:17.0.3'
 }
 
 tasks.register('syncWebAssets', Sync) {
@@ -151,7 +154,7 @@ tasks.register('prepareEnRuWikDict') {
                     output.absolutePath
         }
 
-        // toc81: export JSON from the FULL WikDict source, not from the compact
+        // Export JSON from the FULL WikDict source, not from the compact
         // frequency-list subset. Unranked/proper/compound Unknown words therefore
         // still have a chance to receive a Russian gloss.
         exec {
