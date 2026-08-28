@@ -261,8 +261,10 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
                     try { send.recycle(); } catch (Exception ignored) {}
                 }
                 if (!sent && input != null && Build.VERSION.SDK_INT >= 30) {
-                    try { sent = input.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER); }
-                    catch (Exception ignored) {}
+                    try {
+                        sent = input.performAction(
+                                AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
+                    } catch (Exception ignored) {}
                 }
                 if (input != null) {
                     try { input.recycle(); } catch (Exception ignored) {}
