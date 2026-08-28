@@ -1,15 +1,23 @@
-const STYLE_ID = 'reader-zh-readable-inline-v1';
+// toc90 Chinese Unknown presentation.
+//
+// Important rule: Reader already has a correct native ruby/pinyin renderer.
+// Do NOT draw a second pinyin lane. This module only adds one compact Russian
+// gloss below Unknown words and lets the existing <ruby><rt> stay authoritative.
+
+const STYLE_ID = 'reader-zh-readable-inline-v2';
 const LEGACY_STYLE_IDS = [
+  'reader-zh-readable-inline-v1',
   'reader-zh-stable-slots-v3',
   'reader-zh-unknown-interlinear-v1',
   'reader-zh-unknown-interlinear-v2',
   'rd-zh-unknown-gloss-spacing-style',
+  'rd-zh-gloss-stability-v2-style',
   'reader-zh-toc88-inline-style',
 ];
 const APP_URL = '../reader-app.js?v=77.32';
-const CACHE_BASE = 'an2_reader_zh_context_gloss_v3';
-const MAX_CONCURRENT = 3;
-const RETRY_MS = 20_000;
+const CACHE_BASE = 'an2_reader_zh_context_gloss_v4';
+const MAX_CONCURRENT = 2;
+const RETRY_MS = 45_000;
 
 let appPromise = null;
 let observer = null;
@@ -82,17 +90,28 @@ function saveCache() {
   catch {}
 }
 
+// One visible meaning. Never a dictionary paragraph.
 function compactRussian(value) {
   let text = clean(value);
   if (!hasRussian(text)) return '';
+
+  // First sense only.
+  text = text.split(/\s*(?:[;；/|·•]|[.!?。！？]|[,，])\s*/)[0] || text;
+  // Remove both complete and broken parenthetical explanations.
   text = text
-    .split(/\s*(?:[;；/|·•]|[.!?。！？]|[,，])\s*/)[0]
-    .replace(/\s*[（(][^()（）]{1,80}[）)]/g, ' ')
+    .replace(/\s*[（(][^()（）]{0,80}[）)]/g, ' ')
+    .replace(/\s*[（(].*$/, '')
+    .replace(/^[—–-]\s*/, '')
+    .replace(/[;；,.，。]+$/, '')
     .replace(/\s+/g, ' ')
     .trim();
   if (!text) return '';
+
   const words = text.split(/\s+/).filter(Boolean);
-  return words.length > 3 ? words.slice(0, 3).join(' ') : text;
+  if (!words.length) return '';
+  // Long prose like "Металл красноватого цвета" is not a usable inline gloss.
+  if (text.length > 22) return words[0];
+  return words.length > 2 ? words.slice(0, 2).join(' ') : text;
 }
 
 function wordState(word) {
@@ -110,7 +129,8 @@ function paragraphContext(word) {
   try {
     const root = paragraph.querySelector('.reader-paragraph-text') || paragraph;
     const clone = root.cloneNode(true);
-    clone.querySelectorAll('rt,.rw-zh-readable-pinyin,.rw-zh-readable-ru').forEach(node => node.remove());
+    clone.querySelectorAll('rt,.rw-zh-readable-ru,.rw-zh-readable-pinyin,.rw-zh-t88-py,.rw-zh-t88-ru')
+      .forEach(node => node.remove());
     source = clean(clone.textContent).slice(0, 360);
   } catch {
     source = clean(paragraph.textContent).slice(0, 360);
@@ -119,47 +139,68 @@ function paragraphContext(word) {
   return source;
 }
 
-function ensureLane(wrap, className) {
-  let lane = wrap.querySelector(`:scope > .${className}`);
+function ensureRussianLane(wrap) {
+  let lane = wrap.querySelector(':scope > .rw-zh-readable-ru');
   if (!lane) {
     lane = document.createElement('span');
-    lane.className = className;
+    lane.className = 'rw-zh-readable-ru';
     lane.setAttribute('aria-hidden', 'true');
     wrap.appendChild(lane);
   }
   return lane;
 }
 
-function setLaneText(wrap, className, value) {
-  const lane = ensureLane(wrap, className);
-  const next = clean(value);
+function setRussianLane(wrap, value) {
+  const lane = ensureRussianLane(wrap);
+  const next = compactRussian(value);
   if (clean(lane.textContent) !== next) lane.textContent = next;
-  return lane;
+  lane.hidden = !next;
 }
 
-function clearLanes(wrap) {
-  wrap.querySelectorAll(':scope > .rw-zh-readable-pinyin,:scope > .rw-zh-readable-ru').forEach(node => node.remove());
+function clearCustomLanes(wrap) {
+  wrap.querySelectorAll(':scope > .rw-zh-readable-pinyin,:scope > .rw-zh-t88-py,:scope > .rw-zh-t88-ru')
+    .forEach(node => node.remove());
+  if (!enabled() || wordState(wrap.querySelector(':scope > .reader-word')) !== 'unknown') {
+    wrap.querySelector(':scope > .rw-zh-readable-ru')?.remove();
+  }
 }
 
-function localPinyin(wrap, word) {
+function localRussian(wrap, word) {
+  const fromWrap = wrap.dataset.zhGlossStickyRu
+    || wrap.dataset.zhGlossRuReadable
+    || wrap.dataset.zhGlossRu
+    || '';
+  const direct = compactRussian(fromWrap);
+  if (direct) return direct;
+
+  const surface = clean(word?.dataset?.word || word?.textContent || '');
+  if (!surface) return '';
+  try {
+    const entry = globalThis.readerLookupChineseWord?.(surface) || null;
+    return compactRussian(entry?.ru || entry?.russian || entry?.translation_ru || entry?.translation || '');
+  } catch {
+    return '';
+  }
+}
+
+function manualRussian(wrap, word) {
+  return wrap.dataset.zhGlossSource === 'instant' ? localRussian(wrap, word) : '';
+}
+
+function nativePinyin(word, wrap) {
   return clean(
-    wrap.dataset.zhGlossStickyPinyin
-    || wrap.dataset.zhGlossPinyin
-    || word.querySelector('rt')?.textContent
+    word?.querySelector?.('rt')?.textContent
+    || wrap?.dataset?.zhGlossStickyPinyin
+    || wrap?.dataset?.zhGlossPinyin
     || '',
   );
 }
 
-function localRussian(wrap) {
-  const source = wrap.dataset.zhGlossStickyRu
-    || wrap.dataset.zhGlossRuReadable
-    || wrap.dataset.zhGlossRu
-    || '';
-  return compactRussian(source);
-}
-
-function manualRussian(wrap) {
-  return wrap.dataset.zhGlossSource === 'instant' ? localRussian(wrap) : '';
+function updateNativePinyin(word, pinyin) {
+  const next = clean(pinyin);
+  if (!next) return;
+  const rt = word?.querySelector?.('rt');
+  if (rt && clean(rt.textContent) !== next) rt.textContent = next;
 }
 
 function isVisible(word) {
@@ -190,16 +231,14 @@ function normalizeResult(raw) {
 async function requestContextMeaning(word, context, pinyin) {
   const mod = await app();
   if (typeof mod?.readerAI !== 'function') throw new Error('readerAI unavailable');
-  const raw = await mod.readerAI({
+  return normalizeResult(await mod.readerAI({
     task: 'reader_word',
     sourceLang: 'zh',
     word,
     surface: word,
     context: clean(context).slice(0, 360) || word,
     hint: { pinyin },
-    instruction: 'Return JSON only. ru: exactly ONE short Russian translation for this word in this context, preferably 1-2 words and never more than 3 words. No English. No examples. No explanations. No sentence translation. pinyin: the correct contextual pinyin with tone marks.',
-  });
-  return normalizeResult(raw);
+  }));
 }
 
 function enqueue(wrap, word, key, context, pinyin) {
@@ -222,7 +261,8 @@ function pump() {
 
     (async () => {
       try {
-        const surface = clean(job.word.dataset.word || job.word.textContent || '');
+        const surface = clean(job.word?.dataset?.word || job.word?.textContent || '');
+        if (!surface) throw new Error('empty word');
         const result = await requestContextMeaning(surface, job.context, job.pinyin);
         if (!result.ru) throw new Error('empty Russian context meaning');
         loadCache()[job.key] = {
@@ -235,14 +275,9 @@ function pump() {
         syncKey(job.key);
       } catch (error) {
         failures.set(job.key, Date.now());
-        if (job.wrap?.isConnected) {
-          const fallback = localRussian(job.wrap);
-          if (fallback) {
-            job.wrap.dataset.zhReadableFallback = fallback;
-            syncWrap(job.wrap, false);
-          }
-        }
         console.warn('[zh readable] contextual gloss failed:', error?.message || error);
+        // Retry later, but do not hammer the service while offline.
+        schedule(RETRY_MS + 500);
       } finally {
         running.delete(job.key);
         workers = Math.max(0, workers - 1);
@@ -263,10 +298,9 @@ function syncKey(key) {
 function syncWrap(wrap, allowQueue = true) {
   const word = wrap?.querySelector?.(':scope > .reader-word');
   if (!word) return;
-  if (!enabled() || wordState(word) !== 'unknown') {
-    clearLanes(wrap);
-    return;
-  }
+  clearCustomLanes(wrap);
+
+  if (!enabled() || wordState(word) !== 'unknown') return;
 
   const surface = clean(word.dataset.word || word.textContent || '');
   if (!surface) return;
@@ -275,21 +309,29 @@ function syncWrap(wrap, allowQueue = true) {
   wrap.dataset.zhReadableKey = key;
 
   const cached = loadCache()[key] || {};
-  const pinyin = clean(cached.pinyin) || localPinyin(wrap, word);
-  const manual = manualRussian(wrap);
+  const manual = manualRussian(wrap, word);
   const cachedRu = compactRussian(cached.ru);
-  const fallback = compactRussian(wrap.dataset.zhReadableFallback || '');
-  const ru = cachedRu || manual || fallback || '';
+  const fallback = localRussian(wrap, word);
+  const ru = manual || cachedRu || fallback;
+  setRussianLane(wrap, ru);
 
-  setLaneText(wrap, 'rw-zh-readable-pinyin', pinyin);
-  setLaneText(wrap, 'rw-zh-readable-ru', ru);
+  if (cached.pinyin) updateNativePinyin(word, cached.pinyin);
+  const pinyin = clean(cached.pinyin) || nativePinyin(word, wrap);
 
+  // Always improve a dictionary fallback with the contextual reader_word result.
   if (!cachedRu && !manual && allowQueue) enqueue(wrap, word, key, context, pinyin);
+}
+
+function purgeLegacyVisuals(root = document) {
+  LEGACY_STYLE_IDS.forEach(id => document.getElementById(id)?.remove());
+  root?.querySelectorAll?.('.rw-zh-readable-pinyin,.rw-zh-t88-py,.rw-zh-t88-ru')
+    .forEach(node => node.remove());
 }
 
 function syncAll() {
   const root = document.getElementById('reader-chapter-text');
   if (!root) return;
+  purgeLegacyVisuals(root);
   root.querySelectorAll('.rw-zh-gloss-wrap').forEach(wrap => syncWrap(wrap));
   pump();
 }
@@ -300,26 +342,31 @@ function schedule(delay = 0) {
 }
 
 function installStyle() {
-  LEGACY_STYLE_IDS.forEach(id => document.getElementById(id)?.remove());
+  purgeLegacyVisuals();
   if (document.getElementById(STYLE_ID)) return;
 
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
+    /* Normal Chinese stays normal. Only Unknown tokens become two-row units. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-paragraph-text {
-      line-height: 2.02 !important;
+      line-height: 1.90 !important;
     }
 
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .reader-word) {
-      display: inline-grid !important;
-      grid-template-columns: max-content !important;
-      grid-template-rows: auto auto auto !important;
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap {
+      display: contents !important;
+    }
+
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
+    .rw-zh-gloss-wrap:has(> .reader-word.rw-migaku-unknown) {
+      display: inline-flex !important;
+      flex-direction: column !important;
       align-items: center !important;
-      justify-items: center !important;
-      vertical-align: -0.46em !important;
+      justify-content: flex-start !important;
+      vertical-align: -0.34em !important;
       line-height: 1 !important;
-      margin: 0 .045em !important;
-      padding: .015em .02em !important;
+      margin: 0 .025em !important;
+      padding: 0 !important;
       width: auto !important;
       min-width: 0 !important;
       max-width: none !important;
@@ -329,14 +376,13 @@ function installStyle() {
       break-inside: avoid !important;
     }
 
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .reader-word) > .reader-word {
-      grid-column: 1 !important;
-      grid-row: 2 !important;
-      display: inline !important;
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
+    .rw-zh-gloss-wrap:has(> .reader-word.rw-migaku-unknown) > .reader-word {
+      display: inline-block !important;
       position: static !important;
       margin: 0 !important;
       padding: 0 1px !important;
-      line-height: 1.04 !important;
+      line-height: 1.08 !important;
       white-space: nowrap !important;
       word-break: keep-all !important;
       overflow-wrap: normal !important;
@@ -344,52 +390,46 @@ function installStyle() {
       text-overflow: clip !important;
     }
 
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .reader-word) > .reader-word rt {
-      display: none !important;
+    /* Reader's own ruby is the ONLY pinyin. Keep it complete and readable. */
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
+    .rw-zh-gloss-wrap:has(> .reader-word.rw-migaku-unknown) > .reader-word ruby.reader-ruby {
+      ruby-position: over !important;
+      ruby-align: center !important;
+      line-height: 1.16 !important;
     }
 
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
+    .rw-zh-gloss-wrap:has(> .reader-word.rw-migaku-unknown) > .reader-word rt {
+      display: ruby-text !important;
+      font-family: 'IBM Plex Mono', ui-monospace, monospace !important;
+      font-size: .46em !important;
+      font-weight: 400 !important;
+      line-height: 1 !important;
+      letter-spacing: 0 !important;
+      white-space: nowrap !important;
+      word-break: keep-all !important;
+      overflow: visible !important;
+      text-overflow: clip !important;
+    }
+
+    /* Kill every historical pseudo-lane. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap::before,
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap::after {
       content: none !important;
       display: none !important;
+      visibility: hidden !important;
     }
 
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-readable-pinyin {
-      grid-column: 1 !important;
-      grid-row: 1 !important;
-      align-self: end !important;
-      justify-self: center !important;
-      display: block !important;
-      position: static !important;
-      width: max-content !important;
-      min-width: 0 !important;
-      max-width: none !important;
-      margin: 0 0 .09em !important;
-      padding: 0 !important;
-      white-space: nowrap !important;
-      word-break: keep-all !important;
-      overflow-wrap: normal !important;
-      overflow: visible !important;
-      text-overflow: clip !important;
-      text-align: center !important;
-      font-family: 'IBM Plex Sans', system-ui, sans-serif !important;
-      font-size: .42em !important;
-      font-weight: 500 !important;
-      line-height: 1 !important;
-      color: color-mix(in srgb, var(--text-muted) 86%, var(--accent)) !important;
-      pointer-events: none !important;
-    }
-
+    /* One short Russian sense. It participates in layout vertically, so it can
+       never paint over the Hanzi or the next text line. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-readable-ru {
-      grid-column: 1 !important;
-      grid-row: 3 !important;
-      align-self: start !important;
-      justify-self: center !important;
       display: block !important;
       position: static !important;
+      align-self: center !important;
       width: max-content !important;
-      max-width: 5.6em !important;
-      margin: .09em 0 0 !important;
+      max-width: 4.8em !important;
+      min-width: 0 !important;
+      margin: .08em 0 0 !important;
       padding: 0 !important;
       white-space: normal !important;
       word-break: normal !important;
@@ -398,14 +438,14 @@ function installStyle() {
       text-overflow: clip !important;
       text-align: center !important;
       font-family: 'IBM Plex Sans', system-ui, sans-serif !important;
-      font-size: .36em !important;
+      font-size: .38em !important;
       font-weight: 400 !important;
       line-height: 1.08 !important;
       color: var(--text-muted) !important;
       pointer-events: none !important;
     }
 
-    #reader-reading-view.rd-zh-unknown-gloss.rd-zh-gloss-pinyin-off[data-reader-lang="zh"] .rw-zh-readable-pinyin {
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-readable-ru[hidden] {
       display: none !important;
     }
   `;
@@ -427,34 +467,23 @@ function bindObserver() {
     let relevant = false;
     for (const record of records) {
       if (record.type === 'attributes') {
-        const target = record.target;
-        if (!(target instanceof Element)) continue;
-        const wrap = target.classList.contains('rw-zh-gloss-wrap')
-          ? target
-          : target.classList.contains('reader-word') && target.parentElement?.classList.contains('rw-zh-gloss-wrap')
-            ? target.parentElement
-            : null;
-        if (wrap) {
-          syncWrap(wrap);
+        const el = record.target;
+        if (el instanceof Element && (el.classList.contains('reader-word') || el.classList.contains('rw-zh-gloss-wrap'))) {
           relevant = true;
+          break;
         }
-        continue;
       }
-
       for (const node of record.addedNodes || []) {
         if (!(node instanceof Element)) continue;
-        if (node.classList.contains('rw-zh-readable-pinyin') || node.classList.contains('rw-zh-readable-ru')) continue;
-        if (node.classList.contains('rw-zh-gloss-wrap')) {
-          syncWrap(node);
+        if (node.classList.contains('rw-zh-readable-ru')) continue;
+        if (node.matches?.('.reader-word,.rw-zh-gloss-wrap') || node.querySelector?.('.reader-word,.rw-zh-gloss-wrap')) {
           relevant = true;
+          break;
         }
-        node.querySelectorAll?.('.rw-zh-gloss-wrap').forEach(wrap => {
-          syncWrap(wrap);
-          relevant = true;
-        });
       }
+      if (relevant) break;
     }
-    if (relevant) schedule(20);
+    if (relevant) schedule(25);
   });
 
   observer.observe(root, {
@@ -463,18 +492,18 @@ function bindObserver() {
     attributes: true,
     attributeFilter: [
       'class',
-      'data-zh-gloss-pinyin',
-      'data-zh-gloss-sticky-pinyin',
       'data-zh-gloss-ru',
       'data-zh-gloss-ru-readable',
       'data-zh-gloss-sticky-ru',
       'data-zh-gloss-source',
+      'data-zh-gloss-pinyin',
+      'data-zh-gloss-sticky-pinyin',
     ],
   });
 }
 
 function install() {
-  if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
+  if (typeof document === 'undefined') return;
   installStyle();
   bindObserver();
   schedule(0);
@@ -484,9 +513,9 @@ if (typeof window !== 'undefined') {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, { once: true });
   else install();
   window.addEventListener('pageshow', () => { installStyle(); bindObserver(); schedule(20); });
-  window.addEventListener('scroll', () => schedule(90), { passive: true });
+  window.addEventListener('scroll', () => schedule(80), { passive: true });
   window.addEventListener('reader-instant-word-translation', () => schedule(20));
-  window.addEventListener('reader:zh-core-ready', () => schedule(20));
+  window.addEventListener('reader:chromechange', () => schedule(20));
 }
 
 export { compactRussian, contextKey, syncWrap, syncAll };
