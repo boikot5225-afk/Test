@@ -4,10 +4,9 @@
   const nativeBridge = window.ReaderInstantChat;
   if (!nativeBridge || typeof nativeBridge.analyze !== 'function') return;
 
-  // This script is loaded after reader-instant-translate-bridge.js. Keeping the
-  // current fetch as our fallback preserves paragraph/word translation exactly.
   const originalFetch = window.fetch.bind(window);
   const pending = new Map();
+  const DONE_MARKER = '[RAI_DONE]';
   let sequence = 0;
 
   function isReaderAiCallable(url) {
@@ -56,25 +55,39 @@
   function buildGrammarPrompt(payload) {
     const text = String(payload?.text || '').trim();
     const lang = String(payload?.sourceLang || payload?.lang || '').trim().toLowerCase();
-    const readingField = lang === 'zh' ? 'pinyin' : (lang === 'ja' ? 'reading' : '');
-    const readingRule = readingField
-      ? ` Для каждого элемента parts добавь поле "${readingField}" с чтением.`
-      : '';
+    const readingKey = lang === 'zh' ? 'pinyin' : (lang === 'ja' ? 'reading' : '');
+    const partExample = readingKey
+      ? `{"text":"фрагмент","${readingKey}":"чтение","what":"роль/смысл","why":"кратко почему"}`
+      : '{"text":"фрагмент","what":"роль/смысл","why":"кратко почему"}';
 
     return [
-      'Ты преподаватель иностранного языка для русскоязычного ученика.',
-      'Разбери грамматику данного предложения: конструкции, функции частей и трудные места.',
-      'Ответь СТРОГО одним JSON-объектом без Markdown, ``` и любого текста до/после.',
-      'Формат:',
-      '{"parts":[{"text":"фрагмент оригинала","what":"краткий смысл/роль по-русски","why":"почему здесь такая форма или конструкция"}],"whys":[{"q":"важный вопрос о грамматике","a":"ясный ответ по-русски"}],"summary":"краткая суть структуры предложения по-русски"}',
-      'parts: 2–8 фрагментов в исходном порядке. whys: 0–4 действительно важных момента. Не выдумывай правил.' + readingRule,
-      'Исходный текст:',
+      'Кратко разбери грамматику предложения для русскоязычного ученика.',
+      'Ответь ТОЛЬКО одним компактным JSON без Markdown и без текста вокруг:',
+      `{"parts":[${partExample}],"whys":[{"q":"важный вопрос","a":"короткий ответ"}],"summary":"структура предложения"}`,
+      'Правила: parts 2–5; what до 8 слов; why до 14 слов; whys максимум 2; summary до 20 слов. Не повторяй очевидное и не пиши длинных лекций.',
+      `Сразу после закрывающей } допиши ${DONE_MARKER}.`,
+      'Текст:',
       text,
     ].join('\n');
   }
 
+  function looksLikeVendorError(value) {
+    const text = String(value || '').toLowerCase().replace(/ё/g, 'е');
+    return text.includes('что-то пошло не так')
+      || text.includes('что то пошло не так')
+      || text.includes('попробуйте снова')
+      || text.includes('попробуйте еще раз')
+      || text.includes('something went wrong')
+      || text.includes('try again')
+      || text.includes('network error')
+      || text.includes('no connection')
+      || text.includes('ошибка сети')
+      || text.includes('нет соединения');
+  }
+
   function stripCodeFence(raw) {
     let text = String(raw || '').trim();
+    text = text.replaceAll(DONE_MARKER, '').trim();
     text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     const first = text.indexOf('{');
     const last = text.lastIndexOf('}');
@@ -106,15 +119,19 @@
 
   function normalizeGrammarResponse(raw) {
     const original = String(raw || '').trim();
+    if (!original) throw new Error('Instant AI вернул пустой ответ');
+    if (looksLikeVendorError(original)) {
+      throw Object.assign(new Error('Instant AI: временная ошибка Premium Chat'), { code: 'instant_chat_vendor_error' });
+    }
+
     let parsed = null;
     try { parsed = JSON.parse(stripCodeFence(original)); } catch (_) {}
     parsed = unwrapGrammarObject(parsed);
-
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return { parts: [], whys: [], summary: original || 'Instant AI вернул пустой разбор.' };
+      throw Object.assign(new Error('Instant AI вернул неполный разбор'), { code: 'instant_chat_incomplete' });
     }
 
-    const parts = Array.isArray(parsed.parts) ? parsed.parts.slice(0, 8).map(p => ({
+    const parts = Array.isArray(parsed.parts) ? parsed.parts.slice(0, 5).map(p => ({
       text: String(p?.text || p?.zh || p?.ja || p?.en || p?.fr || '').trim(),
       pinyin: String(p?.pinyin || '').trim(),
       reading: String(p?.reading || '').trim(),
@@ -122,14 +139,14 @@
       why: String(p?.why || p?.grammar || p?.note || '').trim(),
     })).filter(p => p.text || p.what || p.why) : [];
 
-    const whys = Array.isArray(parsed.whys) ? parsed.whys.slice(0, 4).map(w => ({
+    const whys = Array.isArray(parsed.whys) ? parsed.whys.slice(0, 2).map(w => ({
       q: String(w?.q || w?.question || '').trim(),
       a: String(w?.a || w?.answer || '').trim(),
     })).filter(w => w.q || w.a) : [];
 
     const summary = String(parsed.summary || parsed.explanation || parsed.ru || parsed.answer || '').trim();
     if (!parts.length && !whys.length && !summary) {
-      return { parts: [], whys: [], summary: original || 'Instant AI вернул ответ без текста.' };
+      throw Object.assign(new Error('Instant AI вернул пустой структурированный разбор'), { code: 'instant_chat_incomplete' });
     }
     return { parts, whys, summary };
   }
@@ -156,7 +173,7 @@
 
       const body = document.createElement('div');
       body.className = 'reader-help-body';
-      for (const part of (analysis.parts || []).slice(0, 8)) {
+      for (const part of (analysis.parts || []).slice(0, 5)) {
         const row = document.createElement('div');
         row.className = 'ra2-part';
         const title = document.createElement('div');
@@ -191,7 +208,7 @@
         }
         body.appendChild(row);
       }
-      for (const why of (analysis.whys || []).slice(0, 4)) {
+      for (const why of (analysis.whys || []).slice(0, 2)) {
         const card = document.createElement('div');
         card.className = 'ra2-why-card';
         const q = document.createElement('div');
@@ -229,9 +246,6 @@
         try { details.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (_) {}
         return;
       }
-      // Reader normally re-renders immediately after its callable resolves.
-      // If that render produced no block, do one final visible fallback instead
-      // of showing a green success toast over an empty page.
       if (attempt >= 20) {
         if (appendVisibleFallback(active, analysis)) {
           try {
@@ -270,10 +284,10 @@
       const timer = setTimeout(() => {
         pending.delete(requestId);
         try { nativeBridge.cancel?.(requestId); } catch (_) {}
-        reject(Object.assign(new Error('Instant AI Chat не вернул ответ за 60 секунд'), {
+        reject(Object.assign(new Error('Instant AI Chat не вернул ответ за 50 секунд'), {
           code: 'instant_chat_timeout',
         }));
-      }, 60000);
+      }, 50000);
       pending.set(requestId, { resolve, reject, timer });
       try {
         nativeBridge.analyze(requestId, JSON.stringify(payload));
@@ -283,6 +297,39 @@
         reject(error);
       }
     });
+  }
+
+  function retryableChatError(error) {
+    const code = String(error?.code || '');
+    const message = String(error?.message || error || '');
+    return code === 'instant_chat_vendor_error' || looksLikeVendorError(message);
+  }
+
+  async function runGrammarRequest(payload) {
+    const requestPayload = {
+      text: String(payload.text || ''),
+      sourceLang: String(payload.sourceLang || payload.lang || ''),
+      prompt: buildGrammarPrompt(payload),
+    };
+
+    let lastError = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const result = await nativeAnalyze(requestPayload);
+        const raw = String(result?.text || '').trim();
+        const analysis = normalizeGrammarResponse(raw);
+        analysis.provider = 'instant_translate_chat_ui';
+        return analysis;
+      } catch (error) {
+        lastError = error;
+        if (attempt === 0 && retryableChatError(error)) {
+          await new Promise(resolve => setTimeout(resolve, 260));
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw lastError || new Error('Instant AI Chat не сработал');
   }
 
   window.fetch = async function readerInstantChatFetch(input, init = undefined) {
@@ -304,21 +351,9 @@
     setTimeout(relabelLegacyGrammarToast, 160);
 
     try {
-      const result = await nativeAnalyze({
-        text: String(payload.text || ''),
-        sourceLang: String(payload.sourceLang || payload.lang || ''),
-        prompt: buildGrammarPrompt(payload),
-      });
-      const raw = String(result?.text || '').trim();
-      if (!raw) throw new Error('Instant AI Chat вернул пустой ответ');
-      const analysis = normalizeGrammarResponse(raw);
-      analysis.provider = 'instant_translate_chat_ui';
+      const analysis = await runGrammarRequest(payload);
       window.__readerInstantLastGrammarAnalysis = analysis;
       setTimeout(() => revealGrammarAnalysis(analysis, 0), 120);
-
-      // Current Firebase Functions SDK accepts `data`; older callable clients
-      // also accept `result`. Return both so Reader receives the normalized
-      // object regardless of which compat path the bundled SDK is using.
       return new Response(JSON.stringify({ data: analysis, result: analysis }), {
         status: 200,
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -337,5 +372,5 @@
   };
 
   window.__readerInstantChatBridgeInstalled = true;
-  console.info('[Instant AI Chat] grammar bridge active');
+  console.info('[Instant AI Chat] compact grammar bridge active');
 })();
