@@ -1,10 +1,17 @@
 package space.saintjust.reader.stage1;
 
 import android.accessibilityservice.AccessibilityService;
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.PixelFormat;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.Gravity;
+import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
+import android.widget.ImageView;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -14,11 +21,12 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Reads only the visible UI tree of Instant Translate while a Reader request is armed.
+ * Reads only Instant Translate while a Reader request is armed.
  *
- * Capture is deliberately narrow: only Instant Translate is observed, the source
- * paragraph must match the popup, the target must be Russian, and the same plausible
- * translation must survive two probes before it is returned to Reader AI.
+ * toc68 also keeps a frozen snapshot of Reader AI in a TYPE_ACCESSIBILITY_OVERLAY
+ * while Instant Translate does its work underneath. The overlay is visual only:
+ * it is not focusable/touchable and the translation is still read from the real
+ * Instant Translate accessibility window.
  */
 public final class InstantTranslateCaptureService extends AccessibilityService {
     private static volatile boolean armed = false;
@@ -34,6 +42,11 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
     private static final long MIN_CAPTURE_AGE_MS = 850L;
     private static final long STABLE_WINDOW_MS = 420L;
     private static final long NATIVE_TIMEOUT_MS = 35_000L;
+    private static final long COVER_HIDE_AFTER_BACK_MS = 850L;
+
+    private WindowManager windowManager;
+    private ImageView coverView;
+    private Bitmap coverBitmap;
 
     private static final Runnable ARM_TIMEOUT = () -> {
         if (!armed) return;
@@ -42,7 +55,10 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         InstantTranslateBridge.onTranslationCaptureFailed(
                 "Instant Translate не показал готовый перевод за 35 секунд");
         if (service != null) {
-            MAIN.postDelayed(() -> service.performGlobalAction(GLOBAL_ACTION_BACK), 160L);
+            MAIN.postDelayed(() -> service.performGlobalAction(GLOBAL_ACTION_BACK), 120L);
+            MAIN.postDelayed(service::hideCoverInternal, COVER_HIDE_AFTER_BACK_MS);
+        } else {
+            hideReaderCover();
         }
     };
 
@@ -65,6 +81,75 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         stableHits = 0;
         stableSinceMs = 0L;
         MAIN.removeCallbacks(ARM_TIMEOUT);
+    }
+
+    static void showReaderCover(Bitmap snapshot) {
+        if (snapshot == null || snapshot.isRecycled()) return;
+        InstantTranslateCaptureService service = activeService.get();
+        if (service == null) {
+            try { snapshot.recycle(); } catch (Exception ignored) {}
+            return;
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            service.showCoverInternal(snapshot);
+        } else {
+            MAIN.post(() -> service.showCoverInternal(snapshot));
+        }
+    }
+
+    static void hideReaderCover() {
+        InstantTranslateCaptureService service = activeService.get();
+        if (service == null) return;
+        if (Looper.myLooper() == Looper.getMainLooper()) service.hideCoverInternal();
+        else MAIN.post(service::hideCoverInternal);
+    }
+
+    private void showCoverInternal(Bitmap snapshot) {
+        hideCoverInternal();
+        try {
+            windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+            if (windowManager == null) {
+                snapshot.recycle();
+                return;
+            }
+
+            ImageView image = new ImageView(this);
+            image.setBackgroundColor(Color.BLACK);
+            image.setScaleType(ImageView.ScaleType.FIT_XY);
+            image.setImageBitmap(snapshot);
+
+            WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    PixelFormat.TRANSLUCENT);
+            params.gravity = Gravity.TOP | Gravity.START;
+            windowManager.addView(image, params);
+            coverView = image;
+            coverBitmap = snapshot;
+        } catch (Exception error) {
+            try { snapshot.recycle(); } catch (Exception ignored) {}
+            coverView = null;
+            coverBitmap = null;
+        }
+    }
+
+    private void hideCoverInternal() {
+        ImageView view = coverView;
+        Bitmap bitmap = coverBitmap;
+        coverView = null;
+        coverBitmap = null;
+        if (view != null && windowManager != null) {
+            try { view.setImageDrawable(null); } catch (Exception ignored) {}
+            try { windowManager.removeViewImmediate(view); } catch (Exception ignored) {}
+        }
+        if (bitmap != null && !bitmap.isRecycled()) {
+            try { bitmap.recycle(); } catch (Exception ignored) {}
+        }
     }
 
     @Override
@@ -92,7 +177,7 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
 
     private void captureNow() {
         if (!armed) return;
-        AccessibilityNodeInfo root = getRootInActiveWindow();
+        AccessibilityNodeInfo root = findInstantTranslateRoot();
         if (root == null) return;
         try {
             List<String> texts = new ArrayList<>();
@@ -107,7 +192,7 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
             if (!visibleError.isEmpty()) {
                 disarm();
                 InstantTranslateBridge.onTranslationCaptureFailed(visibleError);
-                MAIN.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 160L);
+                finishExternalWindow();
                 return;
             }
 
@@ -135,10 +220,46 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
 
             disarm();
             InstantTranslateBridge.onTranslationCaptured(normalized);
-            MAIN.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 160L);
+            finishExternalWindow();
         } finally {
             try { root.recycle(); } catch (Exception ignored) {}
         }
+    }
+
+    private AccessibilityNodeInfo findInstantTranslateRoot() {
+        try {
+            List<AccessibilityWindowInfo> windows = getWindows();
+            if (windows != null) {
+                for (AccessibilityWindowInfo window : windows) {
+                    if (window == null) continue;
+                    AccessibilityNodeInfo root = null;
+                    try {
+                        root = window.getRoot();
+                        CharSequence pkg = root == null ? null : root.getPackageName();
+                        if (root != null && pkg != null
+                                && InstantTranslateBridge.TARGET_PACKAGE.contentEquals(pkg)) {
+                            return root;
+                        }
+                    } catch (Exception ignored) {
+                    }
+                    if (root != null) {
+                        try { root.recycle(); } catch (Exception ignored) {}
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+
+        AccessibilityNodeInfo active = getRootInActiveWindow();
+        if (active == null) return null;
+        CharSequence pkg = active.getPackageName();
+        if (pkg != null && InstantTranslateBridge.TARGET_PACKAGE.contentEquals(pkg)) return active;
+        try { active.recycle(); } catch (Exception ignored) {}
+        return null;
+    }
+
+    private void finishExternalWindow() {
+        MAIN.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 120L);
+        MAIN.postDelayed(this::hideCoverInternal, COVER_HIDE_AFTER_BACK_MS);
     }
 
     private void resetStableCandidate() {
@@ -183,9 +304,6 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
                     Math.min(sourceCjk.length(), midStart + probe));
             String last = sourceCjk.substring(Math.max(0, sourceCjk.length() - probe));
 
-            // Some Instant Translate layouts ellipsize long input and only expose
-            // its beginning to Accessibility. A strong 7+ CJK prefix is enough to
-            // bind the popup to this request; otherwise require multiple probes.
             if (first.length() >= 7 && allCjk.contains(first)) return true;
 
             int matches = 0;
@@ -353,6 +471,7 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         if (activeService.get() == this) activeService = new WeakReference<>(null);
         disarm();
         MAIN.removeCallbacks(captureRunnable);
+        hideCoverInternal();
         super.onDestroy();
     }
 }
