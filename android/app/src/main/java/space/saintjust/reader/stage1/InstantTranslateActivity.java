@@ -23,6 +23,7 @@ public final class InstantTranslateActivity extends MainActivity {
     private InstantTranslateBridge instantTranslateBridge;
     private InstantTranslateChatBridge instantTranslateChatBridge;
     private OfflineTranslateBridge offlineTranslateBridge;
+    private EnglishResidualTranslateBridge englishResidualTranslateBridge;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -36,10 +37,15 @@ public final class InstantTranslateActivity extends MainActivity {
         instantTranslateChatBridge = new InstantTranslateChatBridge(this, readerWebView);
         readerWebView.addJavascriptInterface(instantTranslateChatBridge, "ReaderInstantChat");
 
-        // Separate from the external-app bridges above: English Unknown glosses
-        // use the bundled WikDict EN→RU core inside Reader's own process.
+        // Compatibility bridge retained for older English gloss code.
         offlineTranslateBridge = new OfflineTranslateBridge(this, readerWebView);
         readerWebView.addJavascriptInterface(offlineTranslateBridge, "ReaderOfflineTranslate");
+
+        // toc82: only words missing from the bundled full WikDict reach ML Kit.
+        // This is independent of Instant Translate and Accessibility.
+        englishResidualTranslateBridge = new EnglishResidualTranslateBridge(this, readerWebView);
+        readerWebView.addJavascriptInterface(
+                englishResidualTranslateBridge, "ReaderEnglishResidualTranslate");
 
         // MainActivity starts loading the real Reader page asynchronously. Wait
         // for the appassets document, then install word safety, translation and
@@ -102,6 +108,10 @@ public final class InstantTranslateActivity extends MainActivity {
 
     @Override
     protected void onDestroy() {
+        if (englishResidualTranslateBridge != null) {
+            englishResidualTranslateBridge.shutdown();
+            englishResidualTranslateBridge = null;
+        }
         if (offlineTranslateBridge != null) {
             offlineTranslateBridge.shutdown();
             offlineTranslateBridge = null;
