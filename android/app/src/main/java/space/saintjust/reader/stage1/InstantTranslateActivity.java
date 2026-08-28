@@ -17,7 +17,7 @@ public final class InstantTranslateActivity extends MainActivity {
     private static final String CHAT_SCRIPT =
             "https://appassets.androidplatform.net/assets/reader-instant-chat-bridge.js";
     private static final String EN_GLOSS_SCRIPT =
-            "https://appassets.androidplatform.net/assets/www/js/reader/en-unknown-gloss-v2.js?v=3";
+            "https://appassets.androidplatform.net/assets/www/js/reader/en-unknown-gloss-v2.js?v=4";
 
     private WebView readerWebView;
     private InstantTranslateBridge instantTranslateBridge;
