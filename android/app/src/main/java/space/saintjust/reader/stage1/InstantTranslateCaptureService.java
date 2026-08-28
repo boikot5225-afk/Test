@@ -9,18 +9,38 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
-/** Reads only the visible UI tree of Instant Translate while a Reader request is armed. */
+/**
+ * Reads only the visible UI tree of Instant Translate while a Reader request is armed.
+ *
+ * The first implementation accepted almost any Cyrillic text. On Instant Translate's
+ * loading screen that meant labels such as "Перевод экрана" could win before the real
+ * translation appeared. This version uses a small state machine instead:
+ *  - the exact source paragraph must be visible in the Instant Translate popup;
+ *  - the target language "русский" must be visible;
+ *  - obvious UI labels/errors are rejected;
+ *  - the same plausible Russian paragraph must stay unchanged for two probes.
+ */
 public final class InstantTranslateCaptureService extends AccessibilityService {
     private static volatile boolean armed = false;
     private static volatile String sourceText = "";
     private static volatile long armedAtMs = 0L;
+    private static volatile String stableCandidate = "";
+    private static volatile int stableHits = 0;
+    private static volatile long stableSinceMs = 0L;
+
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    private static final long MIN_CAPTURE_AGE_MS = 850L;
+    private static final long STABLE_WINDOW_MS = 420L;
 
     static void arm(String source) {
         sourceText = source == null ? "" : source.trim();
         armedAtMs = System.currentTimeMillis();
+        stableCandidate = "";
+        stableHits = 0;
+        stableSinceMs = 0L;
         armed = true;
     }
 
@@ -28,6 +48,9 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         armed = false;
         sourceText = "";
         armedAtMs = 0L;
+        stableCandidate = "";
+        stableHits = 0;
+        stableSinceMs = 0L;
     }
 
     @Override
@@ -37,14 +60,12 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         if (packageName == null
                 || !InstantTranslateBridge.TARGET_PACKAGE.contentEquals(packageName)) return;
 
-        // Give the popup a moment to replace its loading state with the translation.
-        if (System.currentTimeMillis() - armedAtMs < 350L) {
-            MAIN.removeCallbacks(captureRunnable);
-            MAIN.postDelayed(captureRunnable, 400L);
-            return;
-        }
+        long age = System.currentTimeMillis() - armedAtMs;
+        long delay = age < MIN_CAPTURE_AGE_MS
+                ? Math.max(140L, MIN_CAPTURE_AGE_MS - age)
+                : 220L;
         MAIN.removeCallbacks(captureRunnable);
-        MAIN.postDelayed(captureRunnable, 180L);
+        MAIN.postDelayed(captureRunnable, delay);
     }
 
     private final Runnable captureRunnable = this::captureNow;
@@ -56,15 +77,57 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         try {
             List<String> texts = new ArrayList<>();
             collectTexts(root, texts, new HashSet<>());
+
+            // Do not accept anything from a stale/other Instant Translate screen.
+            if (!sourceContextMatches(texts, sourceText) || !hasRussianTargetLabel(texts)) {
+                resetStableCandidate();
+                return;
+            }
+
+            String visibleError = findVisibleError(texts);
+            if (!visibleError.isEmpty()) {
+                disarm();
+                InstantTranslateBridge.onTranslationCaptureFailed(visibleError);
+                MAIN.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 160L);
+                return;
+            }
+
             String best = chooseRussianTranslation(texts, sourceText);
-            if (best.isEmpty()) return;
+            if (best.isEmpty()) {
+                resetStableCandidate();
+                return;
+            }
+
+            String normalized = normalizeSpace(best);
+            long now = System.currentTimeMillis();
+            if (normalized.equals(stableCandidate)) {
+                stableHits++;
+            } else {
+                stableCandidate = normalized;
+                stableHits = 1;
+                stableSinceMs = now;
+            }
+
+            // One probe can still catch a transient label/layout update. Re-read the
+            // same window once more and only commit an unchanged candidate.
+            if (stableHits < 2 || now - stableSinceMs < STABLE_WINDOW_MS) {
+                MAIN.removeCallbacks(captureRunnable);
+                MAIN.postDelayed(captureRunnable, STABLE_WINDOW_MS + 80L);
+                return;
+            }
 
             disarm();
-            InstantTranslateBridge.onTranslationCaptured(best);
-            MAIN.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 180L);
+            InstantTranslateBridge.onTranslationCaptured(normalized);
+            MAIN.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 160L);
         } finally {
             try { root.recycle(); } catch (Exception ignored) {}
         }
+    }
+
+    private void resetStableCandidate() {
+        stableCandidate = "";
+        stableHits = 0;
+        stableSinceMs = 0L;
     }
 
     private void collectTexts(AccessibilityNodeInfo node, List<String> out, Set<String> seen) {
@@ -84,31 +147,76 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
 
     private void addText(CharSequence value, List<String> out, Set<String> seen) {
         if (value == null) return;
-        String text = value.toString().replace('\u00a0', ' ').trim();
+        String text = normalizeSpace(value.toString().replace('\u00a0', ' '));
         if (text.isEmpty() || !seen.add(text)) return;
         out.add(text);
+    }
+
+    private boolean sourceContextMatches(List<String> texts, String source) {
+        String sourceCjk = cjkOnly(source);
+        StringBuilder all = new StringBuilder();
+        for (String text : texts) all.append(cjkOnly(text));
+        String allCjk = all.toString();
+
+        if (sourceCjk.length() >= 6) {
+            int probe = Math.min(9, Math.max(5, sourceCjk.length() / 5));
+            String first = sourceCjk.substring(0, Math.min(probe, sourceCjk.length()));
+            int midStart = Math.max(0, (sourceCjk.length() - probe) / 2);
+            String middle = sourceCjk.substring(midStart, Math.min(sourceCjk.length(), midStart + probe));
+            String last = sourceCjk.substring(Math.max(0, sourceCjk.length() - probe));
+            int matches = 0;
+            if (!first.isEmpty() && allCjk.contains(first)) matches++;
+            if (!middle.isEmpty() && allCjk.contains(middle)) matches++;
+            if (!last.isEmpty() && allCjk.contains(last)) matches++;
+            return sourceCjk.length() < 18 ? matches >= 1 : matches >= 2;
+        }
+
+        String normalizedSource = normalizeLoose(source);
+        if (normalizedSource.length() < 5) return true;
+        StringBuilder joined = new StringBuilder();
+        for (String text : texts) joined.append(' ').append(normalizeLoose(text));
+        return joined.toString().contains(normalizedSource);
+    }
+
+    private boolean hasRussianTargetLabel(List<String> texts) {
+        for (String text : texts) {
+            String lower = text.toLowerCase(Locale.ROOT);
+            if (lower.equals("русский") || lower.startsWith("русский ")
+                    || lower.contains(" русский")) return true;
+        }
+        return false;
+    }
+
+    private String findVisibleError(List<String> texts) {
+        for (String text : texts) {
+            String lower = text.toLowerCase(Locale.ROOT);
+            if (lower.contains("не удалось") || lower.contains("ошибка перевода")
+                    || lower.contains("попробуйте еще раз") || lower.contains("попробуйте ещё раз")
+                    || lower.contains("нет подключения") || lower.contains("нет соединения")) {
+                return text.length() <= 220 ? text : "Instant Translate показал ошибку перевода";
+            }
+        }
+        return "";
     }
 
     private String chooseRussianTranslation(List<String> texts, String source) {
         String best = "";
         int bestScore = Integer.MIN_VALUE;
+        int sourceMeaningful = Math.max(countCjk(source), countLetters(source));
+        int minLength = sourceMeaningful <= 16
+                ? 8
+                : Math.min(46, Math.max(14, sourceMeaningful / 3));
+
         for (String text : texts) {
             if (text == null) continue;
-            String candidate = text.trim();
+            String candidate = normalizeSpace(text);
             if (candidate.isEmpty() || candidate.equals(source)) continue;
+            if (!isTranslationCandidate(candidate, minLength, sourceMeaningful)) continue;
 
             int cyrillic = countCyrillic(candidate);
-            if (cyrillic < 4) continue;
-
-            String lower = candidate.toLowerCase();
-            if (lower.equals("русский") || lower.equals("перевод")
-                    || lower.startsWith("скопировать") || lower.startsWith("поделиться")) {
-                continue;
-            }
-
-            int score = cyrillic * 6 + Math.min(candidate.length(), 500);
-            if (candidate.length() >= 20) score += 60;
-            if (candidate.indexOf('。') >= 0 || candidate.matches(".*[\\u4E00-\\u9FFF].*")) score -= 120;
+            int words = countWords(candidate);
+            int score = cyrillic * 8 + Math.min(candidate.length(), 700) + Math.min(words * 5, 80);
+            if (candidate.length() >= Math.max(28, minLength * 2)) score += 70;
 
             if (score > bestScore) {
                 bestScore = score;
@@ -118,8 +226,69 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         return best;
     }
 
+    private boolean isTranslationCandidate(String candidate, int minLength, int sourceMeaningful) {
+        String lower = candidate.toLowerCase(Locale.ROOT);
+        if (isKnownUiText(lower)) return false;
+        if (candidate.length() < minLength) return false;
+        if (countCjk(candidate) > 0) return false;
+
+        int cyrillic = countCyrillic(candidate);
+        int letters = countLetters(candidate);
+        if (cyrillic < Math.max(6, minLength / 2)) return false;
+        if (letters > 0 && cyrillic * 100 < letters * 52) return false;
+        if (sourceMeaningful > 20 && countWords(candidate) < 4) return false;
+
+        return !lower.contains("не удалось")
+                && !lower.contains("ошибка перевода")
+                && !lower.contains("попробуйте ещё раз")
+                && !lower.contains("попробуйте еще раз");
+    }
+
+    private boolean isKnownUiText(String lower) {
+        String s = normalizeSpace(lower);
+        return s.equals("русский")
+                || s.equals("перевод")
+                || s.equals("перевод экрана")
+                || s.equals("исходный текст")
+                || s.equals("переведенный текст")
+                || s.equals("переведённый текст")
+                || s.startsWith("китайский")
+                || s.startsWith("русский")
+                || s.startsWith("скопировать")
+                || s.startsWith("поделиться")
+                || s.startsWith("озвучить")
+                || s.startsWith("настройки")
+                || s.startsWith("история")
+                || s.startsWith("закрыть");
+    }
+
+    private String normalizeSpace(String text) {
+        return text == null ? "" : text.replaceAll("\\s+", " ").trim();
+    }
+
+    private String normalizeLoose(String text) {
+        return normalizeSpace(text).toLowerCase(Locale.ROOT)
+                .replaceAll("[\\p{Punct}«»„“”‘’—–…]+", "")
+                .replace(" ", "");
+    }
+
+    private String cjkOnly(String text) {
+        if (text == null) return "";
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c >= '\u3400' && c <= '\u9fff') out.append(c);
+        }
+        return out.toString();
+    }
+
+    private int countCjk(String text) {
+        return cjkOnly(text).length();
+    }
+
     private int countCyrillic(String text) {
         int count = 0;
+        if (text == null) return count;
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             if ((c >= '\u0400' && c <= '\u04ff') || (c >= '\u0500' && c <= '\u052f')) count++;
@@ -127,8 +296,23 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         return count;
     }
 
+    private int countLetters(String text) {
+        int count = 0;
+        if (text == null) return count;
+        for (int i = 0; i < text.length(); i++) {
+            if (Character.isLetter(text.charAt(i))) count++;
+        }
+        return count;
+    }
+
+    private int countWords(String text) {
+        String normalized = normalizeSpace(text);
+        if (normalized.isEmpty()) return 0;
+        return normalized.split(" ").length;
+    }
+
     @Override
     public void onInterrupt() {
-        // Nothing persistent is recorded; a pending request simply times out in Reader AI.
+        // Nothing persistent is recorded; a pending request is cancelled by the JS timeout.
     }
 }
