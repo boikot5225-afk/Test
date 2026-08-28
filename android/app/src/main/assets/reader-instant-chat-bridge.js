@@ -1,0 +1,202 @@
+(() => {
+  'use strict';
+  if (window.__readerInstantChatBridgeInstalled) return;
+  const nativeBridge = window.ReaderInstantChat;
+  if (!nativeBridge || typeof nativeBridge.analyze !== 'function') return;
+
+  // This script is loaded after reader-instant-translate-bridge.js. Keeping the
+  // current fetch as our fallback preserves paragraph/word translation exactly.
+  const originalFetch = window.fetch.bind(window);
+  const pending = new Map();
+  let sequence = 0;
+
+  function isReaderAiCallable(url) {
+    try {
+      const parsed = new URL(String(url || ''), location.href);
+      return /\/readerAI\/?$/i.test(parsed.pathname);
+    } catch (_) {
+      return String(url || '').includes('/readerAI');
+    }
+  }
+
+  function showChatError(message, timeoutMs = 7500) {
+    try {
+      let el = document.getElementById('reader-instant-chat-status');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'reader-instant-chat-status';
+        Object.assign(el.style, {
+          position: 'fixed', left: '50%', top: '18px', transform: 'translateX(-50%)',
+          zIndex: '2147483647', maxWidth: 'calc(100vw - 32px)', padding: '10px 14px',
+          borderRadius: '12px', font: '600 14px/1.35 system-ui,sans-serif',
+          boxShadow: '0 8px 28px rgba(0,0,0,.35)', textAlign: 'center',
+          pointerEvents: 'none', transition: 'opacity .18s ease',
+          background: '#5b1d1d', color: '#fff',
+        });
+        document.documentElement.appendChild(el);
+      }
+      el.textContent = String(message || 'Instant AI Chat не сработал');
+      el.style.opacity = '1';
+      clearTimeout(el.__timer);
+      el.__timer = setTimeout(() => { el.style.opacity = '0'; }, timeoutMs);
+    } catch (_) {}
+  }
+
+  function relabelLegacyGrammarToast() {
+    try {
+      const toast = document.getElementById('toast');
+      if (!toast) return;
+      const text = String(toast.textContent || '');
+      if (/DeepSeek\s+разбирает\s+предложение/i.test(text)) {
+        toast.textContent = '🧩 Instant AI разбирает предложение…';
+      }
+    } catch (_) {}
+  }
+
+  function buildGrammarPrompt(payload) {
+    const text = String(payload?.text || '').trim();
+    const lang = String(payload?.sourceLang || payload?.lang || '').trim().toLowerCase();
+    const readingField = lang === 'zh' ? 'pinyin' : (lang === 'ja' ? 'reading' : '');
+    const readingRule = readingField
+      ? ` Для каждого элемента parts добавь поле "${readingField}" с чтением.`
+      : '';
+
+    return [
+      'Ты преподаватель иностранного языка для русскоязычного ученика.',
+      'Разбери грамматику данного предложения: конструкции, функции частей и трудные места.',
+      'Ответь СТРОГО одним JSON-объектом без Markdown, ``` и любого текста до/после.',
+      'Формат:',
+      '{"parts":[{"text":"фрагмент оригинала","what":"краткий смысл/роль по-русски","why":"почему здесь такая форма или конструкция"}],"whys":[{"q":"важный вопрос о грамматике","a":"ясный ответ по-русски"}],"summary":"краткая суть структуры предложения по-русски"}',
+      'parts: 2–8 фрагментов в исходном порядке. whys: 0–4 действительно важных момента. Не выдумывай правил.' + readingRule,
+      'Исходный текст:',
+      text,
+    ].join('\n');
+  }
+
+  function stripCodeFence(raw) {
+    let text = String(raw || '').trim();
+    text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const first = text.indexOf('{');
+    const last = text.lastIndexOf('}');
+    if (first >= 0 && last > first) text = text.slice(first, last + 1);
+    return text;
+  }
+
+  function normalizeGrammarResponse(raw) {
+    const original = String(raw || '').trim();
+    let parsed = null;
+    try { parsed = JSON.parse(stripCodeFence(original)); } catch (_) {}
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { parts: [], whys: [], summary: original || 'Instant AI вернул пустой разбор.' };
+    }
+
+    const parts = Array.isArray(parsed.parts) ? parsed.parts.slice(0, 8).map(p => ({
+      text: String(p?.text || p?.zh || p?.ja || p?.en || p?.fr || '').trim(),
+      pinyin: String(p?.pinyin || '').trim(),
+      reading: String(p?.reading || '').trim(),
+      what: String(p?.what || p?.meaning || '').trim(),
+      why: String(p?.why || p?.grammar || '').trim(),
+    })).filter(p => p.text || p.what || p.why) : [];
+
+    const whys = Array.isArray(parsed.whys) ? parsed.whys.slice(0, 4).map(w => ({
+      q: String(w?.q || w?.question || '').trim(),
+      a: String(w?.a || w?.answer || '').trim(),
+    })).filter(w => w.q || w.a) : [];
+
+    const summary = String(parsed.summary || parsed.explanation || '').trim();
+    if (!parts.length && !whys.length && !summary) {
+      return { parts: [], whys: [], summary: original };
+    }
+    return { parts, whys, summary };
+  }
+
+  window.__readerInstantChatResolve = (requestId, ok, payloadJson) => {
+    const key = String(requestId || '');
+    const entry = pending.get(key);
+    if (!entry) return;
+    pending.delete(key);
+    clearTimeout(entry.timer);
+    let payload = {};
+    try { payload = JSON.parse(String(payloadJson || '{}')); } catch (_) {}
+    if (ok) entry.resolve(payload);
+    else entry.reject(Object.assign(new Error(payload.message || 'Instant AI Chat не сработал'), {
+      code: payload.code || 'instant_chat',
+    }));
+  };
+
+  function nativeAnalyze(payload) {
+    return new Promise((resolve, reject) => {
+      if (pending.size) {
+        reject(Object.assign(new Error('Предыдущий запрос Instant AI ещё выполняется'), {
+          code: 'instant_chat_busy',
+        }));
+        return;
+      }
+      const requestId = `chat-${Date.now().toString(36)}-${(++sequence).toString(36)}`;
+      const timer = setTimeout(() => {
+        pending.delete(requestId);
+        try { nativeBridge.cancel?.(requestId); } catch (_) {}
+        reject(Object.assign(new Error('Instant AI Chat не вернул ответ за 60 секунд'), {
+          code: 'instant_chat_timeout',
+        }));
+      }, 60000);
+      pending.set(requestId, { resolve, reject, timer });
+      try {
+        nativeBridge.analyze(requestId, JSON.stringify(payload));
+      } catch (error) {
+        clearTimeout(timer);
+        pending.delete(requestId);
+        reject(error);
+      }
+    });
+  }
+
+  window.fetch = async function readerInstantChatFetch(input, init = undefined) {
+    const url = typeof input === 'string' ? input : input?.url;
+    const method = String(init?.method || (typeof input !== 'string' ? input?.method : '') || 'GET').toUpperCase();
+    if (method !== 'POST' || !isReaderAiCallable(url) || typeof init?.body !== 'string') {
+      return originalFetch(input, init);
+    }
+
+    let callableBody;
+    try { callableBody = JSON.parse(init.body); } catch (_) { return originalFetch(input, init); }
+    const payload = callableBody?.data;
+    if (!payload || payload.task !== 'analyze_sentence' || !String(payload.text || '').trim()) {
+      return originalFetch(input, init);
+    }
+
+    relabelLegacyGrammarToast();
+    setTimeout(relabelLegacyGrammarToast, 50);
+    setTimeout(relabelLegacyGrammarToast, 160);
+
+    try {
+      const result = await nativeAnalyze({
+        text: String(payload.text || ''),
+        sourceLang: String(payload.sourceLang || payload.lang || ''),
+        prompt: buildGrammarPrompt(payload),
+      });
+      const raw = String(result?.text || '').trim();
+      if (!raw) throw new Error('Instant AI Chat вернул пустой ответ');
+      const analysis = normalizeGrammarResponse(raw);
+      analysis.provider = 'instant_translate_chat_ui';
+      return new Response(JSON.stringify({ result: analysis }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      });
+    } catch (error) {
+      const reason = String(error?.message || error || 'неизвестная ошибка').slice(0, 240);
+      console.warn('[Instant AI Chat]', error?.code || '', reason);
+      showChatError(reason);
+      return new Response(JSON.stringify({
+        error: { message: reason, code: error?.code || 'instant_chat' },
+      }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      });
+    }
+  };
+
+  window.__readerInstantChatBridgeInstalled = true;
+  console.info('[Instant AI Chat] grammar bridge active');
+})();
