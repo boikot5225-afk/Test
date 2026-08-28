@@ -30,6 +30,7 @@ final class InstantTranslateBridge {
     static final String TARGET_ACTIVITY =
             "com.spaceship.screen.translate.ui.pages.translate.popup.TranslatePopupActivity";
 
+    private static final long STALE_PENDING_MS = 75_000L;
     private static volatile WeakReference<InstantTranslateBridge> activeBridge =
             new WeakReference<>(null);
 
@@ -38,6 +39,7 @@ final class InstantTranslateBridge {
 
     private String pendingRequestId = "";
     private String pendingSourceText = "";
+    private long pendingStartedAtMs = 0L;
 
     InstantTranslateBridge(Activity activity, WebView webView) {
         this.activity = activity;
@@ -63,6 +65,13 @@ final class InstantTranslateBridge {
         }
 
         activity.runOnUiThread(() -> {
+            clearStalePendingIfNeeded();
+            if (!pendingRequestId.isEmpty()) {
+                deliverFailure(safeId, "instant_busy",
+                        "Предыдущий перевод Instant Translate ещё не завершён");
+                return;
+            }
+
             if (!isCaptureServiceEnabled(activity)) {
                 deliverFailure(safeId, "accessibility_required",
                         "Включи службу «Reader AI — Instant Translate» в Спец. возможностях и нажми перевод ещё раз");
@@ -77,6 +86,7 @@ final class InstantTranslateBridge {
 
             pendingRequestId = safeId;
             pendingSourceText = text;
+            pendingStartedAtMs = System.currentTimeMillis();
             InstantTranslateCaptureService.arm(text);
 
             try {
@@ -87,9 +97,7 @@ final class InstantTranslateBridge {
                 intent.putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true);
                 activity.startActivity(intent);
             } catch (Exception error) {
-                pendingRequestId = "";
-                pendingSourceText = "";
-                InstantTranslateCaptureService.disarm();
+                clearPending();
                 deliverFailure(safeId, "instant_launch_failed",
                         "Не удалось открыть установленный Instant Translate: " + readable(error));
             }
@@ -97,7 +105,18 @@ final class InstantTranslateBridge {
     }
 
     @JavascriptInterface
+    public void cancel(String requestId) {
+        final String safeId = requestId == null ? "" : requestId;
+        activity.runOnUiThread(() -> {
+            if (!pendingRequestId.isEmpty() && pendingRequestId.equals(safeId)) {
+                clearPending();
+            }
+        });
+    }
+
+    @JavascriptInterface
     public String status() {
+        clearStalePendingIfNeeded();
         JSONObject out = new JSONObject();
         try {
             out.put("mode", "installed_app");
@@ -112,6 +131,11 @@ final class InstantTranslateBridge {
         if (bridge != null) bridge.receiveCapturedTranslation(translatedText);
     }
 
+    static void onTranslationCaptureFailed(String message) {
+        InstantTranslateBridge bridge = activeBridge.get();
+        if (bridge != null) bridge.receiveCaptureFailure(message);
+    }
+
     static String pendingSourceText() {
         InstantTranslateBridge bridge = activeBridge.get();
         return bridge == null ? "" : bridge.pendingSourceText;
@@ -122,13 +146,33 @@ final class InstantTranslateBridge {
         final String requestId = pendingRequestId;
         if (requestId.isEmpty() || result.isEmpty()) return;
 
+        clearPending();
+        deliverSuccess(requestId, result);
+    }
+
+    private void receiveCaptureFailure(String message) {
+        final String requestId = pendingRequestId;
+        if (requestId.isEmpty()) return;
+        clearPending();
+        deliverFailure(requestId, "instant_visible_error",
+                message == null || message.trim().isEmpty()
+                        ? "Instant Translate показал ошибку перевода"
+                        : message.trim());
+    }
+
+    private void clearStalePendingIfNeeded() {
+        if (pendingRequestId.isEmpty()) return;
+        if (pendingStartedAtMs <= 0L
+                || System.currentTimeMillis() - pendingStartedAtMs > STALE_PENDING_MS) {
+            clearPending();
+        }
+    }
+
+    private void clearPending() {
         pendingRequestId = "";
         pendingSourceText = "";
+        pendingStartedAtMs = 0L;
         InstantTranslateCaptureService.disarm();
-        deliverSuccess(requestId, result);
-
-        activity.runOnUiThread(() -> Toast.makeText(activity,
-                "Instant Translate: перевод получен", Toast.LENGTH_SHORT).show());
     }
 
     static boolean isCaptureServiceEnabled(Context context) {
@@ -185,6 +229,6 @@ final class InstantTranslateBridge {
 
     void shutdown() {
         if (activeBridge.get() == this) activeBridge = new WeakReference<>(null);
-        InstantTranslateCaptureService.disarm();
+        clearPending();
     }
 }
