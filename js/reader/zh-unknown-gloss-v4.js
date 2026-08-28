@@ -4,14 +4,16 @@ import { normalizeImportKey } from '../utils.js';
 //
 // Automatic reading annotations no longer call readerAI/DeepSeek at all.
 // Source priority for every confirmed Unknown word:
-//   1) previously cached Russian meaning (including old DeepSeek results),
-//   2) local Russian meaning from Reader's bundled lexicons,
-//   3) bundled CC-CEDICT English definition as a fallback.
+//   1) a translation explicitly requested through Instant,
+//   2) previously cached Russian meaning (including old DeepSeek results),
+//   3) local Russian meaning from Reader's bundled lexicons,
+//   4) bundled CC-CEDICT English definition as a fallback.
 // Pinyin comes from the bundled dictionary immediately. The full CC-CEDICT
 // map is loaded in the background and rescanned without rebuilding the chapter.
 
 const MODE_KEY = 'an2_reader_zh_unknown_gloss_mode_v1';
 const CACHE_BASE_KEY = 'an2_reader_zh_unknown_gloss_cache_v1';
+const INSTANT_WORD_CACHE_KEY = 'an2_instant_translate_word_cache_v1';
 const READER_APP_URL = '../reader-app.js?v=77.31';
 const PREFETCH_PAGE_COUNT = 2;
 
@@ -101,9 +103,14 @@ function cacheKey(word, context) {
 
 function ownCache() { return readJson(scopedKey(CACHE_BASE_KEY)); }
 function lexicalCache() { return readJson(scopedKey('an2_reader_lexical_cache_v1')); }
+function instantWordCache() { return readJson(INSTANT_WORD_CACHE_KEY); }
 function lexicalEntry(word, cache = null) {
   const source = cache || lexicalCache();
   return source[`zh:${normalizeImportKey(word)}`] || null;
+}
+function instantEntry(word, cache = null) {
+  const source = cache || instantWordCache();
+  return source[`zh:${String(word || '').trim().toLowerCase()}`] || null;
 }
 
 function russianMeaning(data = {}) {
@@ -217,9 +224,10 @@ function localDictionaryHint(word) {
   return mergeDictionaryEntries(primary, core);
 }
 
-function bestHint(word, context, existingPinyin = '', own = null, lexical = null) {
+function bestHint(word, context, existingPinyin = '', own = null, lexical = null, instant = null) {
   const oldContextHit = (own || ownCache())[cacheKey(word, context)] || null;
   const lexHit = lexicalEntry(word, lexical);
+  const instantHit = instantEntry(word, instant);
   const localHit = localDictionaryHint(word);
 
   const pinyin = pinyinReading(oldContextHit)
@@ -228,7 +236,8 @@ function bestHint(word, context, existingPinyin = '', own = null, lexical = null
     || existingPinyin
     || '';
 
-  const ru = russianMeaning(oldContextHit)
+  const ru = russianMeaning(instantHit)
+    || russianMeaning(oldContextHit)
     || russianMeaning(lexHit)
     || russianMeaning(localHit)
     || '';
@@ -243,12 +252,12 @@ function bestHint(word, context, existingPinyin = '', own = null, lexical = null
   return { pinyin, ru, en, gloss, source, local: localHit };
 }
 
-function applyHint(el, own, lexical) {
+function applyHint(el, own, lexical, instant) {
   if (!isChineseWord(el)) return;
   const word = String(el.dataset.word || '').trim();
   const context = paragraphContext(el) || word;
   const existingRt = String(el.querySelector?.('rt')?.textContent || '').trim();
-  const hint = bestHint(word, context, existingRt, own, lexical);
+  const hint = bestHint(word, context, existingRt, own, lexical, instant);
   const wrap = ensureWrapper(el);
   if (!wrap) return;
 
@@ -289,11 +298,11 @@ function isVisibleWord(el) {
   } catch { return true; }
 }
 
-function scanScope(scope, own, lexical, visibleOnly = false) {
+function scanScope(scope, own, lexical, instant, visibleOnly = false) {
   const words = scope?.querySelectorAll?.('.reader-word[data-lang="zh"][data-word]') || [];
   for (const el of words) {
     if (visibleOnly && !isVisibleWord(el)) continue;
-    applyHint(el, own, lexical);
+    applyHint(el, own, lexical, instant);
   }
 }
 
@@ -307,12 +316,13 @@ function scan() {
   if (!root) return;
   const own = ownCache();
   const lexical = lexicalCache();
+  const instant = instantWordCache();
   const pages = Array.from(root.querySelectorAll(':scope > .rd-page'));
 
   if (!pages.length) {
     // Scroll mode: only touch what the user can currently see. The scroll/class
     // observers will cheaply fill later text as it becomes relevant.
-    scanScope(root, own, lexical, true);
+    scanScope(root, own, lexical, instant, true);
     try { globalThis.readerSyncZhGlossStability?.(); } catch {}
     return;
   }
@@ -326,7 +336,7 @@ function scan() {
   for (let offset = 0; offset <= PREFETCH_PAGE_COUNT; offset++) {
     const page = pages[current + offset];
     if (!page) break;
-    scanScope(page, own, lexical, false);
+    scanScope(page, own, lexical, instant, false);
   }
   try { globalThis.readerSyncZhGlossStability?.(); } catch {}
 }
@@ -378,6 +388,27 @@ async function setMode(next) {
 function scheduleScan(delay = 0) {
   clearTimeout(scanTimer);
   scanTimer = setTimeout(scan, delay);
+}
+
+function applyInstantTranslation(event) {
+  const detail = event?.detail || {};
+  if (String(detail.lang || '').trim().toLowerCase() !== 'zh') return;
+  const ru = compactGloss(detail.ru);
+  const keys = new Set([detail.surface, detail.lemma].map(normalizeImportKey).filter(Boolean));
+  const root = document.getElementById('reader-chapter-text');
+  if (!ru || !keys.size || !root || currentLang() !== 'zh') return;
+
+  for (const el of root.querySelectorAll('.reader-word[data-lang="zh"][data-word]')) {
+    if (!isChineseWord(el) || knowledgeState(el) === 'known') continue;
+    if (!keys.has(normalizeImportKey(el.dataset.word || ''))) continue;
+    const wrap = ensureWrapper(el);
+    if (!wrap) continue;
+    wrap.dataset.zhGlossRu = ru;
+    wrap.dataset.zhGlossSource = 'instant';
+    if (knowledgeState(el) === 'unknown') wrap.dataset.zhGlossVisible = '1';
+  }
+  try { globalThis.readerSyncZhGlossStability?.(); } catch {}
+  scheduleScan(20);
 }
 
 function bindObservers() {
@@ -436,6 +467,7 @@ if (typeof window !== 'undefined') {
   else boot();
   window.addEventListener('pageshow', () => { boot(); scheduleScan(20); });
   window.addEventListener('reader:zh-core-ready', () => scheduleScan(0));
+  window.addEventListener('reader-instant-word-translation', applyInstantTranslation);
 }
 
 export { mode, enabled, compactGloss, cacheKey, knowledgeState };

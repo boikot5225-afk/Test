@@ -154,7 +154,7 @@
         const text = String(el.textContent || '');
         if (/DeepSeek/i.test(text)) el.textContent = text.replace(/DeepSeek/gi, 'Instant');
       });
-      if (currentWordLang() === 'en') {
+      if (currentWordLang() === 'en' || currentWordLang() === 'zh') {
         const known = panel.querySelector('#reader-word-known');
         if (known && /DeepSeek/i.test(String(known.textContent || ''))) {
           known.textContent = 'локально · Instant по кнопке';
@@ -211,25 +211,35 @@
     return !!ruEl && wordTranslationIsMissing(ruEl.textContent);
   }
 
-  function currentEnglishPlaceholder(payload = {}) {
+  function currentManualWordPlaceholder(payload = {}, lang = '') {
     const panel = document.getElementById('reader-word-panel');
+    const cleanLang = String(lang || payload.sourceLang || '').trim().toLowerCase();
     const requestedSurface = String(payload.word || payload.surface || '').trim();
     const panelSurface = currentWordSurface();
     const surface = requestedSurface || panelSurface;
     const samePanelWord = !!panel && panelSurface === surface;
     const inputRu = samePanelWord ? String(panel.querySelector('#reader-word-ru')?.value || '').trim() : '';
     const cardRu = samePanelWord ? String(panel.querySelector('.reader-analysis-ru')?.textContent || '').trim() : '';
-    const cached = cachedWordTranslation(surface, 'en');
+    let localZh = {};
+    if (cleanLang === 'zh') {
+      try { localZh = window.readerLookupChineseWord?.(surface) || {}; } catch (_) {}
+    }
+    const cached = cachedWordTranslation(surface, cleanLang);
     const ru = containsCyrillic(inputRu) ? inputRu
       : containsCyrillic(cardRu) ? cardRu
         : containsCyrillic(cached) ? cached : '';
+    const panelPinyin = samePanelWord
+      ? String(panel.querySelector('.reader-analysis-pinyin:not(.muted)')?.textContent || '').trim()
+      : '';
     return {
       pos: String((samePanelWord ? panel.querySelector('#reader-word-pos')?.value : '') || 'other'),
       lemma: String((samePanelWord ? panel.querySelector('#reader-word-lemma')?.value : '') || payload.lemma || surface || '').trim(),
       word: surface,
       surface,
       ru,
-      level: String((samePanelWord ? panel.querySelector('#reader-word-level')?.value : '') || 'A2'),
+      level: String((samePanelWord ? panel.querySelector('#reader-word-level')?.value : '') || (cleanLang === 'zh' ? 'HSK?' : 'A2')),
+      pinyin: String(localZh.pinyin || localZh.py || localZh.pinyin_marked || panelPinyin || '').trim(),
+      en: String(localZh.en || localZh.english || '').trim(),
       form_note: '',
       note: '',
       _source: 'instant_manual_only',
@@ -374,8 +384,8 @@
     }), { status: 503, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
   }
 
-  function syntheticEnglishWordResponse(payload) {
-    const result = currentEnglishPlaceholder(payload);
+  function syntheticManualWordResponse(payload, lang) {
+    const result = currentManualWordPlaceholder(payload, lang);
     setTimeout(refreshWordInstantUi, 0);
     setTimeout(refreshWordInstantUi, 100);
     return new Response(JSON.stringify({ result }), {
@@ -424,14 +434,15 @@
     const payload = callableBody?.data;
     if (!payload) return originalFetch(input, init);
 
-    // English word cards are local-first and manual-Instant-only. The legacy
+    // English and Chinese word cards are local-first and manual-Instant-only. The legacy
     // reader still tries reader_word automatically on a miss (and even only
     // to obtain IPA). Return the local card state immediately instead of ever
-    // sending that English word to DeepSeek. ↻ Instant is the only network/UI
-    // translation path for an EN word after this point.
+    // sending that word to DeepSeek. ↻ Instant is the only external translation
+    // path for EN/ZH words after this point.
+    const wordLang = String(payload.sourceLang || '').trim().toLowerCase();
     if (payload.task === 'reader_word'
-        && String(payload.sourceLang || '').trim().toLowerCase() === 'en') {
-      return syntheticEnglishWordResponse(payload);
+        && (wordLang === 'en' || wordLang === 'zh')) {
+      return syntheticManualWordResponse(payload, wordLang);
     }
 
     if (payload.task !== 'translate_paragraph' || !String(payload.text || '').trim()) {

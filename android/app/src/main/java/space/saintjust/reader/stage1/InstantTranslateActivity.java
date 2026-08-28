@@ -11,9 +11,9 @@ import android.webkit.WebView;
  */
 public final class InstantTranslateActivity extends MainActivity {
     private static final String BRIDGE_SCRIPT =
-            "https://appassets.androidplatform.net/assets/reader-instant-translate-bridge.js?v=84";
+            "https://appassets.androidplatform.net/assets/reader-instant-translate-bridge.js?v=85";
     private static final String WORD_SAFE_SCRIPT =
-            "https://appassets.androidplatform.net/assets/reader-instant-word-safe.js?v=84";
+            "https://appassets.androidplatform.net/assets/reader-instant-word-safe.js?v=85";
     private static final String CHAT_SCRIPT =
             "https://appassets.androidplatform.net/assets/reader-instant-chat-bridge.js";
     private static final String EN_GLOSS_SCRIPT =
@@ -62,19 +62,19 @@ public final class InstantTranslateActivity extends MainActivity {
                 + "if(!document||!document.head)return 'wait';"
                 + "if(location.hostname!=='appassets.androidplatform.net')return 'wait';"
                 + "if(location.pathname.indexOf('/assets/www/')!==0)return 'wait';"
-                + "if(!window.__readerEnGlossLoaderAddedV84){"
-                + " window.__readerEnGlossLoaderAddedV84=true;"
+                + "if(!window.__readerEnGlossLoaderAddedV85){"
+                + " window.__readerEnGlossLoaderAddedV85=true;"
                 + " var e=document.createElement('script');e.type='module';e.src='" + EN_GLOSS_SCRIPT + "';"
-                + " e.onerror=function(){window.__readerEnGlossLoaderAddedV84=false;console.warn('English Unknown gloss module failed to load');};"
+                + " e.onerror=function(){window.__readerEnGlossLoaderAddedV85=false;console.warn('English Unknown gloss module failed to load');};"
                 + " document.head.appendChild(e);"
                 + "}"
-                + "if(window.__readerInstantTranslateLoaderAddedV84)return 'ok';"
-                + "window.__readerInstantTranslateLoaderAddedV84=true;"
+                + "if(window.__readerInstantTranslateLoaderAddedV85)return 'ok';"
+                + "window.__readerInstantTranslateLoaderAddedV85=true;"
                 + "var g=document.createElement('script');g.src='" + WORD_SAFE_SCRIPT + "';g.async=false;"
                 + "g.onerror=function(){console.warn('Instant word safety guard failed to load');};"
                 + "document.head.appendChild(g);"
                 + "var s=document.createElement('script');s.src='" + BRIDGE_SCRIPT + "';s.async=false;"
-                + "s.onerror=function(){window.__readerInstantTranslateLoaderAddedV84=false;};"
+                + "s.onerror=function(){window.__readerInstantTranslateLoaderAddedV85=false;};"
                 + "s.onload=function(){"
                 + " if(window.__readerInstantChatLoaderAdded)return;"
                 + " window.__readerInstantChatLoaderAdded=true;"
