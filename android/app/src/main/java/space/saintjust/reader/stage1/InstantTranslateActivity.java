@@ -11,9 +11,9 @@ import android.webkit.WebView;
  */
 public final class InstantTranslateActivity extends MainActivity {
     private static final String BRIDGE_SCRIPT =
-            "https://appassets.androidplatform.net/assets/reader-instant-translate-bridge.js";
+            "https://appassets.androidplatform.net/assets/reader-instant-translate-bridge.js?v=83";
     private static final String WORD_SAFE_SCRIPT =
-            "https://appassets.androidplatform.net/assets/reader-instant-word-safe.js";
+            "https://appassets.androidplatform.net/assets/reader-instant-word-safe.js?v=83";
     private static final String CHAT_SCRIPT =
             "https://appassets.androidplatform.net/assets/reader-instant-chat-bridge.js";
     private static final String EN_GLOSS_SCRIPT =
@@ -51,7 +51,7 @@ public final class InstantTranslateActivity extends MainActivity {
         // for the appassets document, then install word safety, translation and
         // finally the chat wrapper. English Unknown glosses are loaded as an ES
         // module independently, so they also survive a restored WebView where
-        // the older Instant loader flag was already present.
+        // an older Instant loader flag was already present.
         injectBridgeScriptWhenReady(0);
     }
 
@@ -68,13 +68,13 @@ public final class InstantTranslateActivity extends MainActivity {
                 + " e.onerror=function(){window.__readerEnGlossLoaderAdded=false;console.warn('English Unknown gloss module failed to load');};"
                 + " document.head.appendChild(e);"
                 + "}"
-                + "if(window.__readerInstantTranslateLoaderAdded)return 'ok';"
-                + "window.__readerInstantTranslateLoaderAdded=true;"
+                + "if(window.__readerInstantTranslateLoaderAddedV83)return 'ok';"
+                + "window.__readerInstantTranslateLoaderAddedV83=true;"
                 + "var g=document.createElement('script');g.src='" + WORD_SAFE_SCRIPT + "';g.async=false;"
                 + "g.onerror=function(){console.warn('Instant word safety guard failed to load');};"
                 + "document.head.appendChild(g);"
                 + "var s=document.createElement('script');s.src='" + BRIDGE_SCRIPT + "';s.async=false;"
-                + "s.onerror=function(){window.__readerInstantTranslateLoaderAdded=false;};"
+                + "s.onerror=function(){window.__readerInstantTranslateLoaderAddedV83=false;};"
                 + "s.onload=function(){"
                 + " if(window.__readerInstantChatLoaderAdded)return;"
                 + " window.__readerInstantChatLoaderAdded=true;"
