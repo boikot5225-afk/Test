@@ -16,10 +16,13 @@ public final class InstantTranslateActivity extends MainActivity {
             "https://appassets.androidplatform.net/assets/reader-instant-word-safe.js";
     private static final String CHAT_SCRIPT =
             "https://appassets.androidplatform.net/assets/reader-instant-chat-bridge.js";
+    private static final String EN_GLOSS_SCRIPT =
+            "https://appassets.androidplatform.net/assets/www/js/reader/en-unknown-gloss-v2.js?v=3";
 
     private WebView readerWebView;
     private InstantTranslateBridge instantTranslateBridge;
     private InstantTranslateChatBridge instantTranslateChatBridge;
+    private OfflineTranslateBridge offlineTranslateBridge;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -33,10 +36,17 @@ public final class InstantTranslateActivity extends MainActivity {
         instantTranslateChatBridge = new InstantTranslateChatBridge(this, readerWebView);
         readerWebView.addJavascriptInterface(instantTranslateChatBridge, "ReaderInstantChat");
 
+        // Separate from the external-app bridge above: this one runs ML Kit in
+        // Reader's own process and is used only for unobtrusive EN→RU Unknown
+        // glosses. No Accessibility window or screen cover is involved.
+        offlineTranslateBridge = new OfflineTranslateBridge(this, readerWebView);
+        readerWebView.addJavascriptInterface(offlineTranslateBridge, "ReaderOfflineTranslate");
+
         // MainActivity starts loading the real Reader page asynchronously. Wait
         // for the appassets document, then install word safety, translation and
-        // finally the chat wrapper. The chat wrapper loads last so its fallback
-        // fetch remains the already-working translation wrapper from toc70.
+        // finally the chat wrapper. English Unknown glosses are loaded as an ES
+        // module independently, so they also survive a restored WebView where
+        // the older Instant loader flag was already present.
         injectBridgeScriptWhenReady(0);
     }
 
@@ -47,6 +57,12 @@ public final class InstantTranslateActivity extends MainActivity {
                 + "if(!document||!document.head)return 'wait';"
                 + "if(location.hostname!=='appassets.androidplatform.net')return 'wait';"
                 + "if(location.pathname.indexOf('/assets/www/')!==0)return 'wait';"
+                + "if(!window.__readerEnGlossLoaderAdded){"
+                + " window.__readerEnGlossLoaderAdded=true;"
+                + " var e=document.createElement('script');e.type='module';e.src='" + EN_GLOSS_SCRIPT + "';"
+                + " e.onerror=function(){window.__readerEnGlossLoaderAdded=false;console.warn('English Unknown gloss module failed to load');};"
+                + " document.head.appendChild(e);"
+                + "}"
                 + "if(window.__readerInstantTranslateLoaderAdded)return 'ok';"
                 + "window.__readerInstantTranslateLoaderAdded=true;"
                 + "var g=document.createElement('script');g.src='" + WORD_SAFE_SCRIPT + "';g.async=false;"
@@ -87,6 +103,10 @@ public final class InstantTranslateActivity extends MainActivity {
 
     @Override
     protected void onDestroy() {
+        if (offlineTranslateBridge != null) {
+            offlineTranslateBridge.shutdown();
+            offlineTranslateBridge = null;
+        }
         if (instantTranslateChatBridge != null) {
             instantTranslateChatBridge.shutdown();
             instantTranslateChatBridge = null;
