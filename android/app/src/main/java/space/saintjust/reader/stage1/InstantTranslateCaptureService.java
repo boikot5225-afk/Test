@@ -6,6 +6,7 @@ import android.os.Looper;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -15,13 +16,9 @@ import java.util.Set;
 /**
  * Reads only the visible UI tree of Instant Translate while a Reader request is armed.
  *
- * The first implementation accepted almost any Cyrillic text. On Instant Translate's
- * loading screen that meant labels such as "Перевод экрана" could win before the real
- * translation appeared. This version uses a small state machine instead:
- *  - the exact source paragraph must be visible in the Instant Translate popup;
- *  - the target language "русский" must be visible;
- *  - obvious UI labels/errors are rejected;
- *  - the same plausible Russian paragraph must stay unchanged for two probes.
+ * Capture is deliberately narrow: only Instant Translate is observed, the source
+ * paragraph must match the popup, the target must be Russian, and the same plausible
+ * translation must survive two probes before it is returned to Reader AI.
  */
 public final class InstantTranslateCaptureService extends AccessibilityService {
     private static volatile boolean armed = false;
@@ -30,10 +27,24 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
     private static volatile String stableCandidate = "";
     private static volatile int stableHits = 0;
     private static volatile long stableSinceMs = 0L;
+    private static volatile WeakReference<InstantTranslateCaptureService> activeService =
+            new WeakReference<>(null);
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final long MIN_CAPTURE_AGE_MS = 850L;
     private static final long STABLE_WINDOW_MS = 420L;
+    private static final long NATIVE_TIMEOUT_MS = 35_000L;
+
+    private static final Runnable ARM_TIMEOUT = () -> {
+        if (!armed) return;
+        InstantTranslateCaptureService service = activeService.get();
+        disarm();
+        InstantTranslateBridge.onTranslationCaptureFailed(
+                "Instant Translate не показал готовый перевод за 35 секунд");
+        if (service != null) {
+            MAIN.postDelayed(() -> service.performGlobalAction(GLOBAL_ACTION_BACK), 160L);
+        }
+    };
 
     static void arm(String source) {
         sourceText = source == null ? "" : source.trim();
@@ -42,6 +53,8 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         stableHits = 0;
         stableSinceMs = 0L;
         armed = true;
+        MAIN.removeCallbacks(ARM_TIMEOUT);
+        MAIN.postDelayed(ARM_TIMEOUT, NATIVE_TIMEOUT_MS);
     }
 
     static void disarm() {
@@ -51,6 +64,13 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         stableCandidate = "";
         stableHits = 0;
         stableSinceMs = 0L;
+        MAIN.removeCallbacks(ARM_TIMEOUT);
+    }
+
+    @Override
+    protected void onServiceConnected() {
+        super.onServiceConnected();
+        activeService = new WeakReference<>(this);
     }
 
     @Override
@@ -78,7 +98,6 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
             List<String> texts = new ArrayList<>();
             collectTexts(root, texts, new HashSet<>());
 
-            // Do not accept anything from a stale/other Instant Translate screen.
             if (!sourceContextMatches(texts, sourceText) || !hasRussianTargetLabel(texts)) {
                 resetStableCandidate();
                 return;
@@ -108,8 +127,6 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
                 stableSinceMs = now;
             }
 
-            // One probe can still catch a transient label/layout update. Re-read the
-            // same window once more and only commit an unchanged candidate.
             if (stableHits < 2 || now - stableSinceMs < STABLE_WINDOW_MS) {
                 MAIN.removeCallbacks(captureRunnable);
                 MAIN.postDelayed(captureRunnable, STABLE_WINDOW_MS + 80L);
@@ -162,8 +179,15 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
             int probe = Math.min(9, Math.max(5, sourceCjk.length() / 5));
             String first = sourceCjk.substring(0, Math.min(probe, sourceCjk.length()));
             int midStart = Math.max(0, (sourceCjk.length() - probe) / 2);
-            String middle = sourceCjk.substring(midStart, Math.min(sourceCjk.length(), midStart + probe));
+            String middle = sourceCjk.substring(midStart,
+                    Math.min(sourceCjk.length(), midStart + probe));
             String last = sourceCjk.substring(Math.max(0, sourceCjk.length() - probe));
+
+            // Some Instant Translate layouts ellipsize long input and only expose
+            // its beginning to Accessibility. A strong 7+ CJK prefix is enough to
+            // bind the popup to this request; otherwise require multiple probes.
+            if (first.length() >= 7 && allCjk.contains(first)) return true;
+
             int matches = 0;
             if (!first.isEmpty() && allCjk.contains(first)) matches++;
             if (!middle.isEmpty() && allCjk.contains(middle)) matches++;
@@ -182,7 +206,9 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         for (String text : texts) {
             String lower = text.toLowerCase(Locale.ROOT);
             if (lower.equals("русский") || lower.startsWith("русский ")
-                    || lower.contains(" русский")) return true;
+                    || lower.contains(" русский")
+                    || lower.equals("russian") || lower.startsWith("russian ")
+                    || lower.contains(" russian")) return true;
         }
         return false;
     }
@@ -192,7 +218,9 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
             String lower = text.toLowerCase(Locale.ROOT);
             if (lower.contains("не удалось") || lower.contains("ошибка перевода")
                     || lower.contains("попробуйте еще раз") || lower.contains("попробуйте ещё раз")
-                    || lower.contains("нет подключения") || lower.contains("нет соединения")) {
+                    || lower.contains("нет подключения") || lower.contains("нет соединения")
+                    || lower.contains("translation failed") || lower.contains("try again")
+                    || lower.contains("no connection")) {
                 return text.length() <= 220 ? text : "Instant Translate показал ошибку перевода";
             }
         }
@@ -241,12 +269,14 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
         return !lower.contains("не удалось")
                 && !lower.contains("ошибка перевода")
                 && !lower.contains("попробуйте ещё раз")
-                && !lower.contains("попробуйте еще раз");
+                && !lower.contains("попробуйте еще раз")
+                && !lower.contains("translation failed");
     }
 
     private boolean isKnownUiText(String lower) {
         String s = normalizeSpace(lower);
         return s.equals("русский")
+                || s.equals("russian")
                 || s.equals("перевод")
                 || s.equals("перевод экрана")
                 || s.equals("исходный текст")
@@ -254,6 +284,8 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
                 || s.equals("переведённый текст")
                 || s.startsWith("китайский")
                 || s.startsWith("русский")
+                || s.startsWith("chinese")
+                || s.startsWith("russian")
                 || s.startsWith("скопировать")
                 || s.startsWith("поделиться")
                 || s.startsWith("озвучить")
@@ -313,6 +345,14 @@ public final class InstantTranslateCaptureService extends AccessibilityService {
 
     @Override
     public void onInterrupt() {
-        // Nothing persistent is recorded; a pending request is cancelled by the JS timeout.
+        // No persistent state is stored; a pending request will fail visibly.
+    }
+
+    @Override
+    public void onDestroy() {
+        if (activeService.get() == this) activeService = new WeakReference<>(null);
+        disarm();
+        MAIN.removeCallbacks(captureRunnable);
+        super.onDestroy();
     }
 }
