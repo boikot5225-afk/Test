@@ -1,53 +1,55 @@
 package space.saintjust.reader.stage1;
 
 import android.app.Activity;
+import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
-
-import com.google.mlkit.common.model.DownloadConditions;
-import com.google.mlkit.nl.translate.TranslateLanguage;
-import com.google.mlkit.nl.translate.Translation;
-import com.google.mlkit.nl.translate.Translator;
-import com.google.mlkit.nl.translate.TranslatorOptions;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
- * In-process ML Kit EN→RU bridge used only for English Unknown-word glosses.
+ * Bundled WikDict EN→RU bridge used only for English Unknown-word glosses.
  *
- * The model is downloaded once by ML Kit and then reused locally. A completed
- * word is streamed back to the page immediately instead of waiting for the
- * whole batch, which also makes the UI resilient to page-mode DOM rebuilds.
+ * toc79 deliberately stops depending on ML Kit here. The compact dictionary is
+ * generated at build time from WikDict's EN→RU SQLite database and packaged in
+ * the APK. Lookups are therefore immediate, offline and deterministic: no model
+ * download, no Accessibility window and no asynchronous inference lifecycle.
  */
 public final class OfflineTranslateBridge {
+    private static final String ASSET_PATH = "wikdict/en_ru_core.sqlite3";
+    private static final String LOCAL_NAME = "wikdict-en-ru-core-2026-06-v1.sqlite3";
+
     private final Activity activity;
     private final WeakReference<WebView> webViewRef;
     private final Map<String, String> sessionCache = new ConcurrentHashMap<>();
-    private final Translator translator;
-    private volatile boolean modelReady = false;
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final Object dbLock = new Object();
+
+    private SQLiteDatabase database;
     private volatile boolean closed = false;
 
     OfflineTranslateBridge(Activity activity, WebView webView) {
         this.activity = activity;
         this.webViewRef = new WeakReference<>(webView);
-        TranslatorOptions options = new TranslatorOptions.Builder()
-                .setSourceLanguage(TranslateLanguage.ENGLISH)
-                .setTargetLanguage(TranslateLanguage.RUSSIAN)
-                .build();
-        translator = Translation.getClient(options);
     }
 
     @JavascriptInterface
     public void translateBatch(String requestId, String wordsJson) {
         if (closed) {
-            sendFailure(requestId, "Офлайн-переводчик уже остановлен");
+            sendFailure(requestId, "Офлайн-словарь уже остановлен");
             return;
         }
 
@@ -55,7 +57,7 @@ public final class OfflineTranslateBridge {
         try {
             JSONArray array = new JSONArray(wordsJson == null ? "[]" : wordsJson);
             for (int i = 0; i < array.length() && words.size() < 40; i++) {
-                String word = array.optString(i, "").trim();
+                String word = normalize(array.optString(i, ""));
                 if (!word.isEmpty() && !words.contains(word)) words.add(word);
             }
         } catch (Exception error) {
@@ -68,55 +70,84 @@ public final class OfflineTranslateBridge {
             return;
         }
 
-        activity.runOnUiThread(() -> {
+        executor.execute(() -> {
             if (closed) return;
-            if (modelReady) {
-                translateNext(requestId, words, 0, new JSONObject());
-                return;
+            JSONObject out = new JSONObject();
+            try {
+                SQLiteDatabase db = ensureDatabase();
+                for (String word : words) {
+                    if (closed) return;
+                    String translated = sessionCache.get(word);
+                    if (translated == null) {
+                        translated = lookup(db, word);
+                        if (translated != null && !translated.isEmpty()) {
+                            sessionCache.put(word, translated);
+                        }
+                    }
+                    if (translated == null || translated.isEmpty()) continue;
+                    try { out.put(word, translated); } catch (Exception ignored) {}
+                    sendProgress(requestId, word, translated);
+                }
+                sendSuccess(requestId, out);
+            } catch (Exception error) {
+                sendFailure(requestId, "Не удалось открыть встроенный EN→RU словарь: " + safeMessage(error));
             }
-
-            DownloadConditions conditions = new DownloadConditions.Builder().build();
-            translator.downloadModelIfNeeded(conditions)
-                    .addOnSuccessListener(ignored -> {
-                        modelReady = true;
-                        translateNext(requestId, words, 0, new JSONObject());
-                    })
-                    .addOnFailureListener(error -> sendFailure(
-                            requestId,
-                            "Не удалось скачать EN→RU офлайн-модель: " + safeMessage(error)));
         });
     }
 
-    private void translateNext(String requestId, List<String> words, int index, JSONObject out) {
-        if (closed) return;
-        if (index >= words.size()) {
-            sendSuccess(requestId, out);
-            return;
-        }
+    private SQLiteDatabase ensureDatabase() throws Exception {
+        synchronized (dbLock) {
+            if (database != null && database.isOpen()) return database;
 
-        final String word = words.get(index);
-        final String cached = sessionCache.get(word);
-        if (cached != null && !cached.isEmpty()) {
-            try { out.put(word, cached); } catch (Exception ignored) {}
-            sendProgress(requestId, word, cached);
-            translateNext(requestId, words, index + 1, out);
-            return;
-        }
-
-        translator.translate(word)
-                .addOnSuccessListener(result -> {
-                    String translated = result == null ? "" : result.trim();
-                    if (!translated.isEmpty()) {
-                        sessionCache.put(word, translated);
-                        try { out.put(word, translated); } catch (Exception ignored) {}
-                        sendProgress(requestId, word, translated);
+            File dbFile = new File(activity.getFilesDir(), LOCAL_NAME);
+            if (!dbFile.exists() || dbFile.length() < 100_000L) {
+                File temp = new File(activity.getFilesDir(), LOCAL_NAME + ".tmp");
+                if (temp.exists()) temp.delete();
+                try (InputStream input = activity.getAssets().open(ASSET_PATH);
+                     FileOutputStream output = new FileOutputStream(temp)) {
+                    byte[] buffer = new byte[64 * 1024];
+                    int read;
+                    while ((read = input.read(buffer)) >= 0) {
+                        if (read > 0) output.write(buffer, 0, read);
                     }
-                    translateNext(requestId, words, index + 1, out);
-                })
-                .addOnFailureListener(error -> {
-                    // One odd token must not discard every other useful gloss.
-                    translateNext(requestId, words, index + 1, out);
-                });
+                    output.getFD().sync();
+                }
+                if (dbFile.exists() && !dbFile.delete()) {
+                    throw new IllegalStateException("не удалось заменить локальную базу");
+                }
+                if (!temp.renameTo(dbFile)) {
+                    throw new IllegalStateException("не удалось установить локальную базу");
+                }
+            }
+
+            database = SQLiteDatabase.openDatabase(
+                    dbFile.getAbsolutePath(), null, SQLiteDatabase.OPEN_READONLY);
+            return database;
+        }
+    }
+
+    private String lookup(SQLiteDatabase db, String word) {
+        Cursor cursor = null;
+        try {
+            cursor = db.rawQuery(
+                    "SELECT ru FROM translations WHERE word = ? COLLATE NOCASE LIMIT 1",
+                    new String[]{word});
+            if (!cursor.moveToFirst()) return "";
+            String value = cursor.getString(0);
+            return value == null ? "" : value.trim();
+        } catch (Exception ignored) {
+            return "";
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+    }
+
+    private String normalize(String value) {
+        return (value == null ? "" : value)
+                .replace('’', '\'')
+                .replace('‘', '\'')
+                .trim()
+                .toLowerCase(java.util.Locale.US);
     }
 
     private void sendProgress(String requestId, String sourceWord, String translated) {
@@ -131,7 +162,8 @@ public final class OfflineTranslateBridge {
         try {
             JSONObject payload = new JSONObject();
             payload.put("translations", translations == null ? new JSONObject() : translations);
-            payload.put("modelReady", true);
+            payload.put("dictionaryReady", true);
+            payload.put("provider", "wikdict_en_ru_offline");
             sendToPage(requestId, true, payload);
         } catch (Exception error) {
             sendFailure(requestId, safeMessage(error));
@@ -141,7 +173,7 @@ public final class OfflineTranslateBridge {
     private void sendFailure(String requestId, String message) {
         try {
             JSONObject payload = new JSONObject();
-            payload.put("message", message == null ? "Офлайн-перевод не сработал" : message);
+            payload.put("message", message == null ? "Офлайн-словарь не сработал" : message);
             sendToPage(requestId, false, payload);
         } catch (Exception ignored) {}
     }
@@ -174,8 +206,13 @@ public final class OfflineTranslateBridge {
 
     void shutdown() {
         closed = true;
-        modelReady = false;
         sessionCache.clear();
-        try { translator.close(); } catch (Exception ignored) {}
+        executor.shutdownNow();
+        synchronized (dbLock) {
+            if (database != null) {
+                try { database.close(); } catch (Exception ignored) {}
+                database = null;
+            }
+        }
     }
 }
