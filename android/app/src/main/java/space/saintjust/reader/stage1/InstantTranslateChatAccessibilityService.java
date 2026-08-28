@@ -495,7 +495,6 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
     private boolean setNodeText(AccessibilityNodeInfo node, String text) {
         if (node == null || text == null || text.isEmpty()) return false;
         try {
-            try { node.performAction(AccessibilityNodeInfo.ACTION_SHOW_ON_SCREEN); } catch (Exception ignored) {}
             node.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
             Bundle args = new Bundle();
             args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
@@ -509,7 +508,6 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
         AccessibilityNodeInfo current = node == null ? null : AccessibilityNodeInfo.obtain(node);
         for (int depth = 0; current != null && depth < 6; depth++) {
             try {
-                try { current.performAction(AccessibilityNodeInfo.ACTION_SHOW_ON_SCREEN); } catch (Exception ignored) {}
                 if ((current.isClickable() || hasClickAction(current))
                         && current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
                 AccessibilityNodeInfo parent = current.getParent();
