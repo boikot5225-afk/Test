@@ -7,6 +7,10 @@ import sqlite3
 import unicodedata
 
 
+def norm(value: str) -> str:
+    return (value or "").strip().lower().replace("’", "'").replace("‘", "'")
+
+
 def clean(value: str) -> str:
     text = re.sub(r"\[\[([^\]]+)\]\]", r"\1", value or "")
     text = unicodedata.normalize("NFD", text)
@@ -15,24 +19,50 @@ def clean(value: str) -> str:
     return " ".join(text.split()).strip()
 
 
+def first_translation(value: str) -> str:
+    parts = [part.strip() for part in (value or "").split("|") if part.strip()]
+    return clean(parts[0] if parts else "")
+
+
 def export(source_db: str, output_json: str) -> None:
     os.makedirs(os.path.dirname(output_json), exist_ok=True)
     conn = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
     try:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         data = {}
-        for word, ru in conn.execute("SELECT word, ru FROM translations ORDER BY word COLLATE NOCASE"):
-            word = (word or "").strip().lower()
-            ru = clean(ru)
-            if word and ru:
-                data[word] = ru
+
+        # toc81: export the FULL WikDict source. toc80 accidentally exported the
+        # frequency-list-filtered `translations` table, which meant Reader could
+        # mark an unranked word Unknown but have no RU entry for it.
+        if "simple_translation" in tables:
+            rows = conn.execute(
+                "SELECT written_rep, trans_list FROM simple_translation "
+                "WHERE written_rep IS NOT NULL AND trans_list IS NOT NULL"
+            )
+            for word, raw_ru in rows:
+                key = norm(word)
+                ru = first_translation(raw_ru)
+                if key and ru and key not in data:
+                    data[key] = ru
+        elif "translations" in tables:
+            # Compatibility with the old compact DB, useful for local tooling.
+            for word, ru in conn.execute("SELECT word, ru FROM translations"):
+                key = norm(word)
+                ru = clean(ru)
+                if key and ru and key not in data:
+                    data[key] = ru
+        else:
+            raise SystemExit(f"Unsupported WikDict schema: {sorted(tables)}")
     finally:
         conn.close()
 
     with open(output_json, "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    print(f"WikDict EN-RU JSON: {len(data)} entries -> {output_json}")
-    if len(data) < 5000:
-        raise SystemExit(f"WikDict EN-RU JSON unexpectedly small: {len(data)}")
+    print(f"WikDict EN-RU FULL JSON: {len(data)} entries -> {output_json}")
+    for probe in ("venezuela", "realignment", "reuters", "long-term", "oilfield", "oilfields"):
+        print(f"probe {probe}: {data.get(probe, '∅')}")
+    if len(data) < 50000:
+        raise SystemExit(f"WikDict EN-RU full JSON unexpectedly small: {len(data)}")
 
 
 def main() -> None:
