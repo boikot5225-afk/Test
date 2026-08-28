@@ -26,8 +26,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 81
-        versionName '77.42-toc61'
+        versionCode 82
+        versionName '77.42-toc62'
     }
 
     buildFeatures {
@@ -74,6 +74,16 @@ android {
 
 dependencies {
     implementation 'androidx.webkit:webkit:1.12.1'
+
+    // Experimental Instant Translate compatibility bridge. These libraries are
+    // used only by the native paragraph-translation path; the web reader stays
+    // unchanged and falls back to its existing DeepSeek callable on any error.
+    implementation 'androidx.credentials:credentials:1.5.0'
+    implementation 'androidx.credentials:credentials-play-services-auth:1.5.0'
+    implementation 'com.google.android.libraries.identity.googleid:googleid:1.1.1'
+    implementation platform('com.google.firebase:firebase-bom:34.18.0')
+    implementation 'com.google.firebase:firebase-config'
+    implementation 'com.revenuecat.purchases:purchases:10.15.1'
 }
 
 /**
