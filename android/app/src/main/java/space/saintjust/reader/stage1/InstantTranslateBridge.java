@@ -18,7 +18,7 @@ import androidx.credentials.GetCredentialResponse;
 import androidx.credentials.exceptions.GetCredentialException;
 
 import com.google.android.gms.tasks.Tasks;
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption;
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption;
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.FirebaseOptions;
@@ -143,11 +143,14 @@ final class InstantTranslateBridge {
 
         activity.runOnUiThread(() -> {
             try {
-                GetGoogleIdOption googleOption = new GetGoogleIdOption.Builder()
-                        .setFilterByAuthorizedAccounts(false)
-                        .setAutoSelectEnabled(false)
-                        .setServerClientId(FIREBASE_WEB_CLIENT_ID)
-                        .build();
+                // The generic GetGoogleIdOption bottom-sheet flow can legitimately
+                // return NoCredentialException even with accounts on the device.
+                // For a user-triggered Reader translation we want the explicit
+                // Sign in with Google flow instead: it prompts the user to choose
+                // an account and does not pre-filter candidates.
+                GetSignInWithGoogleOption googleOption =
+                        new GetSignInWithGoogleOption.Builder(FIREBASE_WEB_CLIENT_ID)
+                                .build();
                 GetCredentialRequest request = new GetCredentialRequest.Builder()
                         .addCredentialOption(googleOption)
                         .build();
@@ -191,12 +194,14 @@ final class InstantTranslateBridge {
                             @Override
                             public void onError(GetCredentialException e) {
                                 googleSignInRunning.set(false);
-                                deliverFailure(requestId, "google_sign_in", readable(e));
+                                deliverFailure(requestId, "google_sign_in",
+                                        e.getClass().getSimpleName() + ": " + readable(e));
                             }
                         });
             } catch (Exception e) {
                 googleSignInRunning.set(false);
-                deliverFailure(requestId, "google_sign_in_start", readable(e));
+                deliverFailure(requestId, "google_sign_in_start",
+                        e.getClass().getSimpleName() + ": " + readable(e));
             }
         });
     }
