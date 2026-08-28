@@ -15,6 +15,27 @@ export function createReaderWordLookup({
   findVerbByForm,
   findKnownNoun,
 }) {
+  function chineseOfflineResult(entry) {
+    if (!entry || typeof entry !== 'object') return entry || null;
+    const ru = String(entry.ru || entry.translation_ru || entry.russian || entry.meaning_ru || '').trim();
+    if (ru) return entry;
+    const enRaw = entry.en || entry.english || entry.definition || entry.definitions || entry.gloss || '';
+    const en = Array.isArray(enRaw) ? enRaw.join('; ') : String(enRaw || '').trim();
+    if (!en) return entry;
+    // Reader-app historically uses "has Russian meaning" as the signal for
+    // whether it should automatically call DeepSeek after a local Chinese hit.
+    // With DeepSeek optional/offline-first, an English CC-CEDICT answer is a
+    // complete local result too. Put the fallback in the transient `ru` field so
+    // that old caller stops there; the word-panel bridge clears the editable RU
+    // input immediately, so English can never be accidentally saved as Russian.
+    return {
+      ...entry,
+      ru: `EN: ${en}`,
+      _source: 'offline-cedict-en',
+      _offlineEnglishFallback: true,
+    };
+  }
+
   async function lookup(word) {
     const lang = currentLang();
     const normalized = normalizeWord(word, lang);
@@ -22,8 +43,8 @@ export function createReaderWordLookup({
 
     if (lang === 'zh') {
       const local = lookupChineseWord(normalized);
-      if (local) return local;
-      return await fetchChineseDictEntry(normalized);
+      if (local) return chineseOfflineResult(local);
+      return chineseOfflineResult(await fetchChineseDictEntry(normalized));
     }
 
     // JMdict answers the form as it appears in the text, deinflecting it to a
