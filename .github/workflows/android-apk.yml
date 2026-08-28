@@ -211,6 +211,7 @@ jobs:
             assets/www/js/reader/library-store.js \
             assets/www/js/reader/interactions.js \
             assets/www/js/reader/interactions-runtime.js \
+            assets/www/js/reader/zh-unknown-interlinear.js \
             assets/www/js/reader/chapter-render.js \
             assets/www/js/reader/toc-upgrade.js \
             assets/www/js/reader/delete-fix.js \

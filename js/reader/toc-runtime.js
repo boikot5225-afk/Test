@@ -10,7 +10,7 @@
 
 import { getExactTocRecords } from './toc-registry.js?v=1';
 
-const READER_APP_URL = '../reader-app.js?v=77.31';
+const READER_APP_URL = '../reader-app.js?v=77.32';
 let appPromise = null;
 let visibleBookId = '';
 let visibleTitle = '';

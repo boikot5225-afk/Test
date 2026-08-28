@@ -11,6 +11,7 @@ on:
       - 'js/reader/en-unknown-gloss-v2.js'
       - 'js/reader/en-unknown-gloss-full-fallback.js'
       - 'js/reader/zh-unknown-gloss-v4.js'
+      - 'js/reader/zh-unknown-interlinear.js'
       - 'js/reader/zh-unknown-gloss.js'
       - 'scripts/check-reader-paragraph-help-render.mjs'
       - 'scripts/check-reader-paragraph-help-runtime.mjs'

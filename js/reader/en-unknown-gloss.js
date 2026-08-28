@@ -5,7 +5,7 @@ import { normalizeImportKey } from '../utils.js';
 // only fill an out-of-flow label and therefore cannot repaginate the chapter.
 const MODE_KEY = 'an2_reader_en_unknown_gloss_mode_v1';
 const CACHE_BASE_KEY = 'an2_reader_en_unknown_gloss_cache_v1';
-const READER_APP_URL = '../reader-app.js?v=77.31';
+const READER_APP_URL = '../reader-app.js?v=77.32';
 const MAX_CACHE = 2600;
 const MAX_CONCURRENT = 4;
 const MAX_ENRICH_CURRENT_PAGE = 28;

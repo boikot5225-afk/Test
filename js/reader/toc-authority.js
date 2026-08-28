@@ -9,7 +9,7 @@
 
 import { readZipEntries, resolveEpubPath } from './epub.js?v=3';
 
-const READER_APP_URL = '../reader-app.js?v=77.31';
+const READER_APP_URL = '../reader-app.js?v=77.32';
 let appPromise = null;
 let visibleBook = null;
 let pendingImport = null;

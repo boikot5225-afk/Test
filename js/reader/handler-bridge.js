@@ -10,7 +10,7 @@
 // recover the active book from the rendered DOM if an async owner/storage switch
 // cleared readerCurrentBookId while the chapter is still visible.
 
-const READER_APP_URL = '../reader-app.js?v=77.31';
+const READER_APP_URL = '../reader-app.js?v=77.32';
 let appPromise = null;
 let tocBridgeInstalled = false;
 

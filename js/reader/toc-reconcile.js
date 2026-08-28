@@ -10,7 +10,7 @@ import { getExactTocRecords } from './toc-registry.js?v=1';
 import { libraryIdbPut } from './library-idb-store.js?v=1';
 import { sb, sbGetCurrentUserId, isSupabaseReady } from '../supabase.js';
 
-const READER_APP_URL = '../reader-app.js?v=77.31';
+const READER_APP_URL = '../reader-app.js?v=77.32';
 const BOOKS_BASE_KEY = 'an2_reader_books_v1';
 const TOMBSTONES_BASE_KEY = 'an2_reader_book_tombstones_v1';
 const MAX_TOMBSTONES = 500;

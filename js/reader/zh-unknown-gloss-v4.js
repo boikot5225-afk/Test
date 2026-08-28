@@ -14,7 +14,7 @@ import { normalizeImportKey } from '../utils.js';
 const MODE_KEY = 'an2_reader_zh_unknown_gloss_mode_v1';
 const CACHE_BASE_KEY = 'an2_reader_zh_unknown_gloss_cache_v1';
 const INSTANT_WORD_CACHE_KEY = 'an2_instant_translate_word_cache_v1';
-const READER_APP_URL = '../reader-app.js?v=77.31';
+const READER_APP_URL = '../reader-app.js?v=77.32';
 const PREFETCH_PAGE_COUNT = 2;
 
 let appPromise = null;
@@ -136,10 +136,11 @@ function compactGloss(value) {
     .trim();
   if (!full) return '';
   // CEDICT sources can use semicolons or slash-separated senses. One or two
-  // short senses are more readable in the tiny annotation lane than a full card.
+  // senses are enough for an inline hint. Do not cut a sense by character
+  // count: the interlinear renderer wraps it inside its own word block.
   const parts = full.split(/\s*(?:[;；]|\/(?!\s*$))\s*/).map(x => x.trim()).filter(Boolean);
   if (parts.length) full = parts.slice(0, 2).join(' · ');
-  return full.length > 28 ? full.slice(0, 27).trimEnd() + '…' : full;
+  return full;
 }
 
 function isChineseWord(el) {
