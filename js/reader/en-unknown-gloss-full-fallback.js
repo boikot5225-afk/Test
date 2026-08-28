@@ -363,7 +363,7 @@ function schedule(delay = 40) {
 
 function bind() {
   const root = document.getElementById('reader-chapter-text');
-  if (root && root !== observedRoot) {
+  if (root && root !== observedRoot && typeof MutationObserver === 'function') {
     observer?.disconnect();
     observedRoot = root;
     observer = new MutationObserver(() => schedule(50));

@@ -470,6 +470,7 @@ function bindObservers() {
 }
 
 function boot() {
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
   injectStyles();
   ensureControl();
   syncControl();
