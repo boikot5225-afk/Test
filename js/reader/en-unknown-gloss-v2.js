@@ -1,21 +1,24 @@
 import { normalizeImportKey } from '../utils.js';
 
-// English Unknown glosses v2.
+// English Unknown glosses v3.
 // Goals: (1) a resolved gloss never disappears during transient classifier DOM
 // passes; (2) page N+1/N+2 prefetch cannot be starved by a huge paragraph on N;
-// (3) late network text never changes pagination geometry.
+// (3) late native translation text never changes pagination geometry;
+// (4) missing glosses never call DeepSeek or open another Android app.
 const MODE_KEY = 'an2_reader_en_unknown_gloss_mode_v1';
 const CACHE_BASE_KEY = 'an2_reader_en_unknown_gloss_cache_v1';
 const READER_APP_URL = '../reader-app.js?v=77.31';
+const INSTANT_WORD_CACHE_KEY = 'an2_instant_translate_word_cache_v1';
 const MAX_CACHE = 2600;
-const MAX_CONCURRENT = 4;
+const MAX_CONCURRENT = 1;
 const MAX_CURRENT = 28;
 const MAX_PREFETCH = 56;
 const PREFETCH_PAGES = 2;
 const HEAD_CURRENT = 4;
 const HEAD_NEXT = 8;
 const MAX_QUEUE = 96;
-const RETRY_AFTER_MS = 5 * 60 * 1000;
+const RETRY_AFTER_MS = 90 * 1000;
+const NATIVE_TIMEOUT_MS = 55 * 1000;
 
 let appPromise = null;
 let scanTimer = null;
@@ -24,11 +27,13 @@ let rootObserved = null;
 let viewObserver = null;
 let viewObserved = null;
 let activeWorkers = 0;
+let nativeSequence = 0;
 const queue = [];
 const queuedKeys = new Set();
 const failedAt = new Map();
 const paragraphSourceText = new WeakMap();
 const liveWrappersByKey = new Map();
+const nativePending = new Map();
 
 function scopedKey(base) {
   try { return globalThis.an2ReaderStorageKey?.(base) || base; }
@@ -39,8 +44,13 @@ function currentLang() {
   return lang.startsWith('en') ? 'en' : lang;
 }
 function mode() {
-  try { return localStorage.getItem(MODE_KEY) === 'unknown' ? 'unknown' : 'off'; }
-  catch { return 'off'; }
+  try {
+    const stored = localStorage.getItem(MODE_KEY);
+    // Before v3 the missing key behaved as OFF even though the feature was
+    // intended to mirror Chinese Unknown assistance. Keep an explicit user OFF,
+    // but make a fresh install / untouched profile useful immediately.
+    return stored === 'off' ? 'off' : 'unknown';
+  } catch { return 'unknown'; }
 }
 function enabled() { return mode() === 'unknown'; }
 function canonicalApp() {
@@ -72,6 +82,7 @@ function cacheKey(word, context) {
   return `${normalizeImportKey(normalizeSurface(word))}|${textHash(cleanContext)}`;
 }
 function russianMeaning(data = {}) {
+  if (typeof data === 'string') return data.trim();
   const value = data && typeof data === 'object' ? data : {};
   return String(value.ru || value.translation_ru || value.russian || value.meaning_ru || value.meaning || '').trim();
 }
@@ -107,6 +118,7 @@ function saveOwnCache(cache) {
   writeJson(scopedKey(CACHE_BASE_KEY), cache || {});
 }
 function lexicalCache() { return readJson(scopedKey('an2_reader_lexical_cache_v1')); }
+function instantWordCache() { return readJson(INSTANT_WORD_CACHE_KEY); }
 function lemmaFor(word) {
   try { return String(globalThis.readerEnglishLemmaFor?.(word) || normalizeSurface(word)).trim(); }
   catch { return normalizeSurface(word); }
@@ -117,9 +129,19 @@ function lexicalEntry(word, lemma = '', source = null) {
   const canonical = normalizeImportKey(normalizeSurface(lemma));
   return cache[`en:${surface}`] || (canonical ? cache[`en:${canonical}`] : null) || null;
 }
-function bestHint(word, context, lemma, own, lexical) {
+function instantEntry(word, lemma = '', source = null) {
+  const cache = source || instantWordCache();
+  const surface = normalizeSurface(word);
+  const canonical = normalizeSurface(lemma);
+  return cache[`en:${surface}`] || (canonical ? cache[`en:${canonical}`] : null) || null;
+}
+function bestHint(word, context, lemma, own, lexical, instant) {
   const direct = own?.[cacheKey(word, context)] || null;
-  return compactRussian(russianMeaning(direct) || russianMeaning(lexicalEntry(word, lemma, lexical)));
+  return compactRussian(
+    russianMeaning(direct)
+    || russianMeaning(instantEntry(word, lemma, instant))
+    || russianMeaning(lexicalEntry(word, lemma, lexical))
+  );
 }
 function isEnglishWord(el) {
   return !!el?.classList?.contains('reader-word')
@@ -182,11 +204,52 @@ function registerWrapper(key, wrap) {
   set.add(wrap);
 }
 
+function nativeTranslate(words) {
+  return new Promise((resolve, reject) => {
+    const bridge = globalThis.ReaderOfflineTranslate;
+    if (!bridge || typeof bridge.translateBatch !== 'function') {
+      reject(new Error('ReaderOfflineTranslate unavailable'));
+      return;
+    }
+    const clean = [...new Set((words || []).map(normalizeSurface).filter(Boolean))].slice(0, 4);
+    if (!clean.length) { resolve({}); return; }
+    const requestId = `enru-${Date.now().toString(36)}-${(++nativeSequence).toString(36)}`;
+    const timer = setTimeout(() => {
+      nativePending.delete(requestId);
+      reject(new Error('EN→RU offline model timeout'));
+    }, NATIVE_TIMEOUT_MS);
+    nativePending.set(requestId, { resolve, reject, timer });
+    try {
+      bridge.translateBatch(requestId, JSON.stringify(clean));
+    } catch (error) {
+      clearTimeout(timer);
+      nativePending.delete(requestId);
+      reject(error);
+    }
+  });
+}
+
+if (typeof window !== 'undefined') {
+  window.__readerOfflineTranslateResolve = (requestId, ok, payloadJson) => {
+    const pending = nativePending.get(String(requestId || ''));
+    if (!pending) return;
+    nativePending.delete(String(requestId || ''));
+    clearTimeout(pending.timer);
+    let payload = {};
+    try { payload = JSON.parse(String(payloadJson || '{}')) || {}; } catch {}
+    if (ok) pending.resolve(payload.translations && typeof payload.translations === 'object' ? payload.translations : {});
+    else pending.reject(new Error(String(payload.message || 'EN→RU offline translation failed')));
+  };
+}
+
 async function callReaderWord(word, context, lemma) {
-  const app = await canonicalApp();
-  if (typeof app?.readerAI !== 'function') throw new Error('readerAI unavailable');
-  const raw = await app.readerAI({ task:'reader_word', sourceLang:'en', word, surface:word, lemma:lemma || undefined, context });
-  return compactRussian(russianMeaning(raw));
+  // Context stays in the cache key so a manually corrected meaning can remain
+  // context-specific, but the fast inline fallback itself is an offline lexical
+  // translation. Prefer the lemma (went→go) and keep the surface as fallback.
+  const surface = normalizeSurface(word);
+  const canonical = normalizeSurface(lemma || surface);
+  const translations = await nativeTranslate(canonical === surface ? [surface] : [canonical, surface]);
+  return compactRussian(translations[canonical] || translations[surface] || '');
 }
 function updateLive(key, word, ru) {
   const wraps = liveWrappersByKey.get(key);
@@ -208,7 +271,7 @@ function enqueue(job, priority) {
   if (!enabled() || !job?.word || !job?.context) return;
   const key = job.key || cacheKey(job.word, job.context);
   const cached = ownCache()[key];
-  if (russianMeaning(cached) || russianMeaning(job.lexical)) return;
+  if (russianMeaning(cached) || russianMeaning(job.instant) || russianMeaning(job.lexical)) return;
   if (queuedKeys.has(key)) return;
   const failed = Number(failedAt.get(key) || 0);
   if (failed && Date.now() - failed < RETRY_AFTER_MS) return;
@@ -228,13 +291,13 @@ function pump() {
         const ru = await callReaderWord(job.word, job.context, job.lemma);
         if (ru) {
           const cache = ownCache();
-          cache[job.key] = { ru, t: Date.now() };
+          cache[job.key] = { ru, t: Date.now(), provider: 'mlkit_offline_en_ru' };
           saveOwnCache(cache);
           updateLive(job.key, job.word, ru);
         }
       } catch (error) {
         failedAt.set(job.key, Date.now());
-        console.warn('[en unknown gloss v2] enrichment failed:', job.word, error?.message || error);
+        console.warn('[en unknown gloss v3] offline enrichment failed:', job.word, error?.message || error);
       } finally {
         queuedKeys.delete(job.key);
         activeWorkers--;
@@ -300,7 +363,7 @@ async function setMode(next) {
   try { localStorage.setItem(MODE_KEY, next === 'unknown' ? 'unknown' : 'off'); } catch {}
   syncControl();
   try { (await canonicalApp()).renderReaderChapter?.(); }
-  catch (error) { console.warn('[en unknown gloss v2] refresh skipped:', error?.message || error); }
+  catch (error) { console.warn('[en unknown gloss v3] refresh skipped:', error?.message || error); }
   scheduleScan(30);
 }
 
@@ -309,11 +372,12 @@ function prepareStableSlots(root = document.getElementById('reader-chapter-text'
   if (!enabled() || currentLang() !== 'en' || !root) return 0;
   const own = ownCache();
   const lexical = lexicalCache();
+  const instant = instantWordCache();
   let count = 0;
   root.querySelectorAll('.reader-word[data-lang="en"][data-word]').forEach(el => {
     const word = String(el.dataset.word || '').trim();
     if (!word) return;
-    const ru = bestHint(word, paragraphContext(el), lemmaFor(word), own, lexical);
+    const ru = bestHint(word, paragraphContext(el), lemmaFor(word), own, lexical, instant);
     if (ensureWrapper(el, ru)) count++;
   });
   return count;
@@ -338,6 +402,7 @@ function scan() {
 
   const own = ownCache();
   const lexical = lexicalCache();
+  const instant = instantWordCache();
   const pages = Array.from(root.querySelectorAll(':scope > .rd-page'));
   let current = pages.findIndex(page => page.classList.contains('rd-page-current'));
   if (current < 0) current = pages.findIndex(page => page.classList.contains('rd-page-show'));
@@ -355,7 +420,8 @@ function scan() {
       const context = paragraphContext(el);
       const key = cacheKey(word, context);
       const lexicalHit = lexicalEntry(word, lemma, lexical);
-      const ru = bestHint(word, context, lemma, own, lexical);
+      const instantHit = instantEntry(word, lemma, instant);
+      const ru = bestHint(word, context, lemma, own, lexical, instant);
       const wrap = ensureWrapper(el, ru);
       if (!wrap) continue;
       registerWrapper(key, wrap);
@@ -370,7 +436,7 @@ function scan() {
         continue;
       }
       if (!pageMode && !isVisibleWord(el)) continue;
-      pending[si].push({ key, word, lemma, context, lexical: lexicalHit });
+      pending[si].push({ key, word, lemma, context, lexical: lexicalHit, instant: instantHit });
     }
   }
 
@@ -380,8 +446,9 @@ function scan() {
   }
 
   const here = pending[0] || [];
-  // Start exactly four current jobs, then queue the top of N+1/N+2 before the
-  // rest of a giant current paragraph. This is the starvation bug seen on A54.
+  // Start one local current-page job, then queue the top of N+1/N+2 before the
+  // rest of a giant paragraph. Native ML Kit is serial on purpose: unlike the
+  // old DeepSeek path it is fast after model warm-up and cannot flood the A54.
   enqueueSlice(here, 0, Math.min(HEAD_CURRENT, here.length), 0);
   let prefetched = 0;
   for (let si = 1; si < pending.length; si++) {
@@ -432,7 +499,9 @@ function boot() {
   injectStyles(); ensureControl(); syncControl(); bindObservers(); scheduleScan(0);
 }
 
-if (typeof window !== 'undefined') {
+const shouldInstall = typeof window !== 'undefined' && !window.__readerEnUnknownGlossV3Installed;
+if (shouldInstall) {
+  window.__readerEnUnknownGlossV3Installed = true;
   window.readerSetEnUnknownGlossMode = setMode;
   window.readerGetEnUnknownGlossMode = mode;
   window.readerPrepareEnStableSlots = prepareStableSlots;
