@@ -22,10 +22,10 @@ import java.lang.ref.WeakReference;
  * Compatibility bridge that delegates translation to the user's installed
  * Instant Translate app. No copied OAuth/Firebase/RevenueCat state is used.
  *
- * toc68 takes a short-lived bitmap snapshot of Reader immediately before the
- * PROCESS_TEXT activity is launched. The enabled AccessibilityService displays
- * that snapshot as a non-interactive accessibility overlay, so Instant Translate
- * can render and translate underneath without visibly replacing Reader AI.
+ * A short-lived bitmap snapshot of Reader is shown by the AccessibilityService
+ * while PROCESS_TEXT runs underneath, so the external translator stays hidden.
+ * toc69 adds an explicit word mode: the same bridge can now return short Russian
+ * word translations without weakening paragraph capture rules.
  */
 final class InstantTranslateBridge {
     static final String TARGET_PACKAGE = "com.spaceship.screen.textcopy";
@@ -41,6 +41,7 @@ final class InstantTranslateBridge {
 
     private String pendingRequestId = "";
     private String pendingSourceText = "";
+    private String pendingMode = "paragraph";
     private long pendingStartedAtMs = 0L;
 
     InstantTranslateBridge(Activity activity, WebView webView) {
@@ -61,8 +62,10 @@ final class InstantTranslateBridge {
         }
 
         final String text = payload.optString("text", "").trim();
+        final String requestedMode = payload.optString("mode", "paragraph").trim();
+        final String mode = "word".equals(requestedMode) ? "word" : "paragraph";
         if (text.isEmpty()) {
-            deliverFailure(safeId, "empty_text", "Пустой абзац");
+            deliverFailure(safeId, "empty_text", "Пустой текст");
             return;
         }
 
@@ -88,16 +91,14 @@ final class InstantTranslateBridge {
 
             pendingRequestId = safeId;
             pendingSourceText = text;
+            pendingMode = mode;
             pendingStartedAtMs = System.currentTimeMillis();
 
-            // Draw the current Reader frame synchronously before another package
-            // gets a chance to paint. If the overlay cannot be created we simply
-            // fall back to toc67's visible external-window behaviour.
             Bitmap readerSnapshot = captureReaderSnapshot();
             if (readerSnapshot != null) {
                 InstantTranslateCaptureService.showReaderCover(readerSnapshot);
             }
-            InstantTranslateCaptureService.arm(text);
+            InstantTranslateCaptureService.arm(text, mode);
 
             try {
                 Intent intent = new Intent(Intent.ACTION_PROCESS_TEXT);
@@ -136,6 +137,7 @@ final class InstantTranslateBridge {
         activity.runOnUiThread(() -> {
             if (!pendingRequestId.isEmpty() && pendingRequestId.equals(safeId)) {
                 clearPending();
+                InstantTranslateCaptureService.hideReaderCover();
             }
         });
     }
@@ -148,6 +150,7 @@ final class InstantTranslateBridge {
             out.put("mode", "installed_app_hidden");
             out.put("accessibilityEnabled", isCaptureServiceEnabled(activity));
             out.put("pending", !pendingRequestId.isEmpty());
+            out.put("pendingType", pendingMode);
         } catch (JSONException ignored) {}
         return out.toString();
     }
@@ -198,6 +201,7 @@ final class InstantTranslateBridge {
     private void clearPending() {
         pendingRequestId = "";
         pendingSourceText = "";
+        pendingMode = "paragraph";
         pendingStartedAtMs = 0L;
         InstantTranslateCaptureService.disarm();
     }
