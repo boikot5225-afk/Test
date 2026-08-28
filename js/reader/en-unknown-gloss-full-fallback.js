@@ -1,13 +1,27 @@
-// toc81 fallback for English Unknown words that the main gloss layer could not
-// resolve. It reads the FULL bundled WikDict JSON and only fills empty glosses;
-// existing translations and Chinese/Japanese rendering are untouched.
+// toc82 coverage fallback for English Unknown words that the main gloss layer
+// could not resolve. Order: full bundled WikDict -> morphology/compound lookup
+// -> tiny high-confidence exceptions/proper names -> local ML Kit for the rare
+// residual miss. Existing glosses are never blanked or delayed by this module.
 
 const FULL_DICT_URL = new URL('../../../wikdict/en_ru_core.json?v=2', import.meta.url).href;
+const SPECIAL_GLOSSES = Object.freeze({
+  realignment: 'перестройка',
+  reuters: 'Рейтерс',
+  oilfield: 'нефтепромысел',
+  oilfields: 'нефтепромыслы',
+});
+
 let dictionary = null;
 let dictionaryPromise = null;
 let timer = null;
 let observer = null;
 let observedRoot = null;
+let residualSeq = 0;
+let residualBlockedUntil = 0;
+
+const residualCache = new Map();
+const residualInFlight = new Set();
+const residualRequests = new Map();
 
 function normalize(value) {
   return String(value || '')
@@ -104,9 +118,24 @@ function candidatesFor(surface) {
 }
 
 function lookup(dict, surface) {
-  for (const key of candidatesFor(surface)) {
+  const candidates = candidatesFor(surface);
+  for (const key of candidates) {
+    const special = compactRussian(SPECIAL_GLOSSES[key]);
+    if (special) return { key:`special:${key}`, ru:special };
     const ru = compactRussian(dict[key]);
     if (ru) return { key, ru };
+  }
+
+  // Closed compounds are common in news prose. Try every plausible split as a
+  // dictionary phrase: oilfield -> "oil field" -> нефтепромысел. This also runs
+  // on morphology candidates, so oilfields -> oilfield -> "oil field".
+  for (const key of candidates) {
+    if (!/^[a-z]+$/.test(key) || key.length < 6) continue;
+    for (let i = 2; i <= key.length - 2; i += 1) {
+      const phrase = `${key.slice(0, i)} ${key.slice(i)}`;
+      const ru = compactRussian(dict[phrase]);
+      if (ru) return { key:phrase, ru };
+    }
   }
   return null;
 }
@@ -138,6 +167,147 @@ function fontSize(surface, ru) {
   return `${Math.max(0.27, Math.min(0.46, 0.47 / Math.sqrt(Math.max(1, ratio)))).toFixed(3)}em`;
 }
 
+function fillElement(el, ru, lookupKey = '') {
+  const translated = compactRussian(ru);
+  if (!translated) return false;
+  const pair = ensureWrapper(el);
+  if (!pair) return false;
+  const surface = String(el.dataset.word || el.textContent || '').trim();
+  pair.wrap.dataset.enGlossVisible = '1';
+  pair.node.textContent = translated;
+  pair.wrap.dataset.enGlossRu = translated;
+  if (lookupKey) pair.wrap.dataset.enGlossLookup = lookupKey;
+  pair.wrap.style.setProperty('--en-gloss-font', fontSize(surface, translated));
+  return true;
+}
+
+function transliterateProperName(surface) {
+  const original = String(surface || '').replace(/[’‘]/g, "'").trim();
+  if (!/^[A-Z][A-Za-z'.-]{2,}$/.test(original)) return '';
+  const special = SPECIAL_GLOSSES[normalize(original)];
+  if (special) return special;
+
+  // Conservative orthographic fallback for a proper name absent from WikDict.
+  // It is intentionally last in the dictionary path and is better than an empty
+  // Unknown label; named entities are not semantically "translated" anyway.
+  const rules = [
+    ['shch','щ'],['tch','ч'],['sch','ш'],['sh','ш'],['ch','ч'],['ph','ф'],
+    ['th','т'],['kh','х'],['zh','ж'],['qu','кв'],['ck','к'],['ng','нг'],
+    ['wh','в'],['ee','и'],['oo','у'],['ea','и'],['ou','ау'],['ow','оу'],
+  ];
+  const single = {
+    a:'а',b:'б',c:'к',d:'д',e:'е',f:'ф',g:'г',h:'х',i:'и',j:'дж',k:'к',l:'л',m:'м',
+    n:'н',o:'о',p:'п',q:'к',r:'р',s:'с',t:'т',u:'у',v:'в',w:'в',x:'кс',y:'й',z:'з',
+    "'":'', '-':'-', '.':'.',
+  };
+  let rest = original.toLowerCase();
+  let out = '';
+  while (rest) {
+    let matched = false;
+    for (const [from, to] of rules) {
+      if (rest.startsWith(from)) {
+        out += to;
+        rest = rest.slice(from.length);
+        matched = true;
+        break;
+      }
+    }
+    if (matched) continue;
+    const ch = rest[0];
+    out += single[ch] ?? ch;
+    rest = rest.slice(1);
+  }
+  return out ? out[0].toLocaleUpperCase('ru-RU') + out.slice(1) : '';
+}
+
+function allUnknownElements() {
+  const root = document.getElementById('reader-chapter-text');
+  if (!root) return [];
+  return Array.from(root.querySelectorAll('.reader-word.rw-migaku-unknown[data-word]'));
+}
+
+function fillResidualSource(source, translated) {
+  const key = normalize(source);
+  const ru = compactRussian(translated);
+  if (!key || !ru) return false;
+  residualCache.set(key, ru);
+  let changed = false;
+  for (const el of allUnknownElements()) {
+    const surface = String(el.dataset.word || el.textContent || '').trim();
+    if (normalize(surface) !== key) continue;
+    const pair = ensureWrapper(el);
+    if (pair && !String(pair.node.textContent || '').trim()) {
+      changed = fillElement(el, ru, `mlkit:${key}`) || changed;
+    }
+  }
+  return changed;
+}
+
+function parsePayload(payloadJson) {
+  try {
+    const value = typeof payloadJson === 'string' ? JSON.parse(payloadJson) : payloadJson;
+    return value && typeof value === 'object' ? value : {};
+  } catch { return {}; }
+}
+
+if (typeof window !== 'undefined') {
+  window.__readerEnResidualProgress = (requestId, source, translated) => {
+    const ru = compactRussian(translated);
+    const key = normalize(source);
+    if (key) residualInFlight.delete(key);
+    if (ru) fillResidualSource(source, ru);
+  };
+
+  window.__readerEnResidualResolve = (requestId, ok, payloadJson) => {
+    const words = residualRequests.get(String(requestId || '')) || [];
+    residualRequests.delete(String(requestId || ''));
+    for (const word of words) residualInFlight.delete(normalize(word));
+
+    const payload = parsePayload(payloadJson);
+    if (ok) {
+      const translations = payload.translations && typeof payload.translations === 'object'
+        ? payload.translations : {};
+      for (const [source, translated] of Object.entries(translations)) {
+        fillResidualSource(source, translated);
+      }
+    } else {
+      residualBlockedUntil = Date.now() + 20_000;
+      console.warn('[en gloss residual] ML Kit unavailable', payload.message || 'unknown error');
+    }
+    schedule(80);
+  };
+}
+
+function requestResidual(words) {
+  const bridge = globalThis.ReaderEnglishResidualTranslate;
+  if (!bridge || typeof bridge.translateBatch !== 'function') return false;
+  if (Date.now() < residualBlockedUntil) return false;
+
+  const unique = [];
+  for (const word of words || []) {
+    const raw = String(word || '').trim();
+    const key = normalize(raw);
+    if (!key || residualCache.has(key) || residualInFlight.has(key)) continue;
+    residualInFlight.add(key);
+    unique.push(raw);
+    if (unique.length >= 24) break;
+  }
+  if (!unique.length) return false;
+
+  const requestId = `en-residual-${Date.now().toString(36)}-${(++residualSeq).toString(36)}`;
+  residualRequests.set(requestId, unique);
+  try {
+    bridge.translateBatch(requestId, JSON.stringify(unique));
+    return true;
+  } catch (error) {
+    residualRequests.delete(requestId);
+    for (const word of unique) residualInFlight.delete(normalize(word));
+    residualBlockedUntil = Date.now() + 20_000;
+    console.warn('[en gloss residual] bridge call failed', error?.message || error);
+    return false;
+  }
+}
+
 async function scan() {
   if (currentLang() !== 'en') return;
   const root = document.getElementById('reader-chapter-text');
@@ -149,19 +319,41 @@ async function scan() {
     return;
   }
 
-  for (const el of root.querySelectorAll('.reader-word.rw-migaku-unknown[data-word]')) {
+  const unresolved = [];
+  for (const el of allUnknownElements()) {
     const pair = ensureWrapper(el);
     if (!pair) continue;
     pair.wrap.dataset.enGlossVisible = '1';
     if (String(pair.node.textContent || '').trim()) continue;
+
     const surface = String(el.dataset.word || el.textContent || '').trim();
+    const key = normalize(surface);
+    const cached = compactRussian(residualCache.get(key));
+    if (cached) {
+      fillElement(el, cached, `mlkit-cache:${key}`);
+      continue;
+    }
+
     const found = lookup(dict, surface);
-    if (!found) continue;
-    pair.node.textContent = found.ru;
-    pair.wrap.dataset.enGlossRu = found.ru;
-    pair.wrap.dataset.enGlossLookup = found.key;
-    pair.wrap.style.setProperty('--en-gloss-font', fontSize(surface, found.ru));
+    if (found) {
+      fillElement(el, found.ru, found.key);
+      continue;
+    }
+
+    // Proper names should never sit there as a naked red underline while a
+    // model downloads. Transliteration is the correct fallback semantics.
+    const proper = transliterateProperName(surface);
+    if (proper) {
+      fillElement(el, proper, 'proper-name');
+      continue;
+    }
+
+    unresolved.push(surface);
   }
+
+  // The full dictionary handles the overwhelming majority. ML Kit receives
+  // only the genuinely missing common words, normally a handful per page.
+  requestResidual(unresolved);
 }
 
 function schedule(delay = 40) {
@@ -180,8 +372,8 @@ function bind() {
   schedule(0);
 }
 
-if (typeof window !== 'undefined' && !window.__readerEnFullGlossFallbackV1) {
-  window.__readerEnFullGlossFallbackV1 = true;
+if (typeof window !== 'undefined' && !window.__readerEnFullGlossFallbackV2) {
+  window.__readerEnFullGlossFallbackV2 = true;
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind, { once:true });
   else bind();
   window.addEventListener('pageshow', bind);
