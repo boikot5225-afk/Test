@@ -27,8 +27,11 @@ import java.util.Set;
  * Drives only the installed Instant Translate Chat UI while a Reader grammar
  * request is armed. It never reads or exports credentials.
  *
- * The automation is deliberately isolated from InstantTranslateCaptureService:
- * a failed Chat experiment therefore cannot break paragraph/word translation.
+ * toc72 fixes the toc71 overlay deadlock: a full-screen accessibility overlay
+ * intentionally hides Instant Translate from the user, which also makes many
+ * underlying nodes report isVisibleToUser() == false. Those nodes are still in
+ * the target accessibility window and can be acted on, so discovery must not
+ * discard them merely because our own protective overlay is above them.
  */
 public final class InstantTranslateChatAccessibilityService extends AccessibilityService {
     private static final int STAGE_FIND_CHAT = 1;
@@ -41,6 +44,7 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
     private static volatile String sourceText = "";
     private static volatile int stage = STAGE_FIND_CHAT;
     private static volatile long armedAtMs = 0L;
+    private static volatile long stageStartedAtMs = 0L;
     private static volatile long sentAtMs = 0L;
     private static volatile String stableCandidate = "";
     private static volatile int stableHits = 0;
@@ -49,24 +53,25 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
             new WeakReference<>(null);
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
-    private static final long CHAT_TIMEOUT_MS = 50_000L;
+    private static final long OVERALL_TIMEOUT_MS = 45_000L;
+    private static final long FIND_CHAT_TIMEOUT_MS = 8_000L;
+    private static final long FIND_INPUT_TIMEOUT_MS = 8_000L;
+    private static final long SEND_TIMEOUT_MS = 7_000L;
+    private static final long RESPONSE_TIMEOUT_MS = 32_000L;
     private static final long RESPONSE_STABLE_MS = 700L;
-    private static final long COVER_HIDE_MS = 1050L;
+    private static final long COVER_HIDE_MS = 900L;
 
     private WindowManager windowManager;
     private ImageView coverView;
     private Bitmap coverBitmap;
 
-    private static final Runnable TIMEOUT = () -> {
+    private static final Runnable OVERALL_TIMEOUT = () -> {
         if (!armed) return;
         InstantTranslateChatAccessibilityService service = activeService.get();
-        String where;
-        if (stage == STAGE_FIND_CHAT) where = "не нашёл кнопку Chat";
-        else if (stage == STAGE_FIND_INPUT) where = "не нашёл поле сообщения Chat";
-        else if (stage == STAGE_SEND) where = "не смог отправить запрос в Chat";
-        else where = "не получил готовый ответ Chat";
+        String where = stageLabel(stage);
         disarm();
-        InstantTranslateChatBridge.onChatCaptureFailed("Instant AI: " + where + " за 50 секунд");
+        InstantTranslateChatBridge.onChatCaptureFailed(
+                "Instant AI остановился на этапе «" + where + "»");
         if (service != null) service.finishExternalInternal();
         else hideReaderCover();
     };
@@ -76,15 +81,16 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
         sourceText = source == null ? "" : source.trim();
         stage = STAGE_FIND_CHAT;
         armedAtMs = System.currentTimeMillis();
+        stageStartedAtMs = armedAtMs;
         sentAtMs = 0L;
         stableCandidate = "";
         stableHits = 0;
         stableSinceMs = 0L;
         armed = true;
-        MAIN.removeCallbacks(TIMEOUT);
-        MAIN.postDelayed(TIMEOUT, CHAT_TIMEOUT_MS);
+        MAIN.removeCallbacks(OVERALL_TIMEOUT);
+        MAIN.postDelayed(OVERALL_TIMEOUT, OVERALL_TIMEOUT_MS);
         InstantTranslateChatAccessibilityService service = activeService.get();
-        if (service != null) MAIN.postDelayed(service.stepRunnable, 450L);
+        if (service != null) MAIN.postDelayed(service.stepRunnable, 380L);
     }
 
     static void disarm() {
@@ -93,11 +99,12 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
         sourceText = "";
         stage = STAGE_FIND_CHAT;
         armedAtMs = 0L;
+        stageStartedAtMs = 0L;
         sentAtMs = 0L;
         stableCandidate = "";
         stableHits = 0;
         stableSinceMs = 0L;
-        MAIN.removeCallbacks(TIMEOUT);
+        MAIN.removeCallbacks(OVERALL_TIMEOUT);
         InstantTranslateChatAccessibilityService service = activeService.get();
         if (service != null) MAIN.removeCallbacks(service.stepRunnable);
     }
@@ -138,8 +145,8 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
             image.setBackgroundColor(Color.BLACK);
             image.setScaleType(ImageView.ScaleType.FIT_XY);
             image.setImageBitmap(snapshot);
-            // Unlike the paragraph overlay this one intentionally consumes taps:
-            // Chat can take tens of seconds and a tap must never hit the hidden app.
+            // Consume touches so the user can never accidentally operate the
+            // hidden Instant Translate window while automation is running.
             image.setOnTouchListener((view, event) -> true);
 
             WindowManager.LayoutParams params = new WindowManager.LayoutParams(
@@ -187,7 +194,7 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
         CharSequence pkg = event.getPackageName();
         if (pkg == null || !InstantTranslateChatBridge.TARGET_PACKAGE.contentEquals(pkg)) return;
         MAIN.removeCallbacks(stepRunnable);
-        MAIN.postDelayed(stepRunnable, 260L);
+        MAIN.postDelayed(stepRunnable, 220L);
     }
 
     private final Runnable stepRunnable = this::stepNow;
@@ -198,11 +205,44 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
         MAIN.postDelayed(stepRunnable, delayMs);
     }
 
+    private void enterStage(int nextStage) {
+        stage = nextStage;
+        stageStartedAtMs = System.currentTimeMillis();
+    }
+
+    private long stageAgeMs() {
+        return stageStartedAtMs <= 0L ? 0L : System.currentTimeMillis() - stageStartedAtMs;
+    }
+
+    private boolean failIfStageTimedOut() {
+        long age = stageAgeMs();
+        long limit;
+        if (stage == STAGE_FIND_CHAT) limit = FIND_CHAT_TIMEOUT_MS;
+        else if (stage == STAGE_FIND_INPUT) limit = FIND_INPUT_TIMEOUT_MS;
+        else if (stage == STAGE_SEND) limit = SEND_TIMEOUT_MS;
+        else limit = RESPONSE_TIMEOUT_MS;
+        if (age <= limit) return false;
+
+        String where = stageLabel(stage);
+        disarm();
+        InstantTranslateChatBridge.onChatCaptureFailed(
+                "Instant AI: не прошёл этап «" + where + "»");
+        finishExternalInternal();
+        return true;
+    }
+
+    private static String stageLabel(int value) {
+        if (value == STAGE_FIND_CHAT) return "поиск Chat";
+        if (value == STAGE_FIND_INPUT) return "поле сообщения";
+        if (value == STAGE_SEND) return "отправка запроса";
+        return "ожидание ответа";
+    }
+
     private void stepNow() {
-        if (!armed) return;
+        if (!armed || failIfStageTimedOut()) return;
         AccessibilityNodeInfo root = findTargetRoot();
         if (root == null) {
-            scheduleStep(450L);
+            scheduleStep(360L);
             return;
         }
         try {
@@ -210,8 +250,8 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
                 AccessibilityNodeInfo input = findBestEditable(root);
                 if (input != null) {
                     try { input.recycle(); } catch (Exception ignored) {}
-                    stage = STAGE_FIND_INPUT;
-                    scheduleStep(180L);
+                    enterStage(STAGE_FIND_INPUT);
+                    scheduleStep(120L);
                     return;
                 }
 
@@ -220,34 +260,35 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
                     boolean clicked = clickNodeOrAncestor(chat);
                     try { chat.recycle(); } catch (Exception ignored) {}
                     if (clicked) {
-                        stage = STAGE_FIND_INPUT;
-                        scheduleStep(650L);
+                        enterStage(STAGE_FIND_INPUT);
+                        scheduleStep(520L);
                         return;
                     }
                 }
-                scheduleStep(500L);
+                scheduleStep(360L);
                 return;
             }
 
             if (stage == STAGE_FIND_INPUT) {
                 AccessibilityNodeInfo input = findBestEditable(root);
                 if (input == null) {
-                    // We may still be on Home after a slow transition. Try Chat again.
+                    // A slow Home -> Chat transition can leave us on Home for a
+                    // moment. Re-try the Chat entry without resetting watchdog.
                     AccessibilityNodeInfo chat = findBestChatNode(root);
                     if (chat != null) {
                         clickNodeOrAncestor(chat);
                         try { chat.recycle(); } catch (Exception ignored) {}
                     }
-                    scheduleStep(500L);
+                    scheduleStep(360L);
                     return;
                 }
                 boolean set = setNodeText(input, promptText);
                 try { input.recycle(); } catch (Exception ignored) {}
                 if (set) {
-                    stage = STAGE_SEND;
-                    scheduleStep(330L);
+                    enterStage(STAGE_SEND);
+                    scheduleStep(260L);
                 } else {
-                    scheduleStep(450L);
+                    scheduleStep(340L);
                 }
                 return;
             }
@@ -270,21 +311,19 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
                     try { input.recycle(); } catch (Exception ignored) {}
                 }
                 if (sent) {
-                    stage = STAGE_WAIT_RESPONSE;
+                    enterStage(STAGE_WAIT_RESPONSE);
                     sentAtMs = System.currentTimeMillis();
-                    stableCandidate = "";
-                    stableHits = 0;
-                    stableSinceMs = 0L;
-                    scheduleStep(900L);
+                    resetStable();
+                    scheduleStep(760L);
                 } else {
-                    scheduleStep(450L);
+                    scheduleStep(340L);
                 }
                 return;
             }
 
             if (stage == STAGE_WAIT_RESPONSE) {
-                if (System.currentTimeMillis() - sentAtMs < 900L) {
-                    scheduleStep(420L);
+                if (System.currentTimeMillis() - sentAtMs < 700L) {
+                    scheduleStep(320L);
                     return;
                 }
                 List<String> texts = new ArrayList<>();
@@ -300,7 +339,7 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
                 String response = chooseChatResponse(texts);
                 if (response.isEmpty()) {
                     resetStable();
-                    scheduleStep(520L);
+                    scheduleStep(420L);
                     return;
                 }
 
@@ -313,7 +352,7 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
                     stableSinceMs = now;
                 }
                 if (stableHits < 2 || now - stableSinceMs < RESPONSE_STABLE_MS) {
-                    scheduleStep(RESPONSE_STABLE_MS + 120L);
+                    scheduleStep(RESPONSE_STABLE_MS + 90L);
                     return;
                 }
 
@@ -375,7 +414,7 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
         if (all.contains(" chat") || all.contains("chat ") || all.contains(" чат") || all.contains("чат ")) score += 100;
         if (text.equals("ai") || desc.equals("ai") || text.equals("ии") || desc.equals("ии")) score += 55;
         if (node.isClickable()) score += 30;
-        if (node.isVisibleToUser()) score += 10;
+        if (node.isVisibleToUser()) score += 10; // boost only; never a requirement under our overlay
         if (score > best.score) best.replace(node, score);
 
         for (int i = 0; i < node.getChildCount(); i++) {
@@ -398,12 +437,13 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
         String id = nodeId(node).toLowerCase(Locale.ROOT);
         boolean editable = node.isEditable() || clazz.contains("EditText")
                 || id.contains("input") || id.contains("message");
-        if (editable && node.isVisibleToUser()) {
+        if (editable) {
             Rect r = new Rect();
             node.getBoundsInScreen(r);
             int score = 100 + Math.max(0, r.top / 10);
             if (node.isEditable()) score += 80;
             if (id.contains("chat") || id.contains("message") || id.contains("input")) score += 70;
+            if (node.isVisibleToUser()) score += 20; // overlay can legitimately make this false
             if (score > best.score) best.replace(node, score);
         }
         for (int i = 0; i < node.getChildCount(); i++) {
@@ -424,26 +464,26 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
 
     private void scanForSend(AccessibilityNodeInfo node, Rect inputRect, Candidate best) {
         if (node == null) return;
-        if (node.isVisibleToUser()) {
-            String text = nodeText(node).toLowerCase(Locale.ROOT);
-            String desc = nodeDesc(node).toLowerCase(Locale.ROOT);
-            String id = nodeId(node).toLowerCase(Locale.ROOT);
-            String all = text + " " + desc + " " + id;
-            int score = 0;
-            if (id.contains("send")) score += 180;
-            if (all.contains("send") || all.contains("отправ")) score += 150;
-            if (all.contains("paperplane") || all.contains("arrowup") || all.contains("arrow_up")) score += 110;
-            if (node.isClickable()) score += 35;
+        String text = nodeText(node).toLowerCase(Locale.ROOT);
+        String desc = nodeDesc(node).toLowerCase(Locale.ROOT);
+        String id = nodeId(node).toLowerCase(Locale.ROOT);
+        String all = text + " " + desc + " " + id;
+        int score = 0;
+        if (id.contains("send")) score += 180;
+        if (all.contains("send") || all.contains("отправ")) score += 150;
+        if (all.contains("paperplane") || all.contains("arrowup") || all.contains("arrow_up")) score += 110;
+        if (node.isClickable()) score += 35;
+        if (node.isVisibleToUser()) score += 15; // boost only; our overlay may obscure it
 
-            Rect r = new Rect();
-            node.getBoundsInScreen(r);
-            if (!inputRect.isEmpty()) {
-                int cy = (r.top + r.bottom) / 2;
-                int inputCy = (inputRect.top + inputRect.bottom) / 2;
-                if (Math.abs(cy - inputCy) < 180 && r.left >= inputRect.centerX()) score += 80;
-            }
-            if (score > best.score) best.replace(node, score);
+        Rect r = new Rect();
+        node.getBoundsInScreen(r);
+        if (!inputRect.isEmpty()) {
+            int cy = (r.top + r.bottom) / 2;
+            int inputCy = (inputRect.top + inputRect.bottom) / 2;
+            if (Math.abs(cy - inputCy) < 180 && r.left >= inputRect.centerX()) score += 80;
         }
+        if (score > best.score) best.replace(node, score);
+
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child == null) continue;
@@ -455,6 +495,7 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
     private boolean setNodeText(AccessibilityNodeInfo node, String text) {
         if (node == null || text == null || text.isEmpty()) return false;
         try {
+            try { node.performAction(AccessibilityNodeInfo.ACTION_SHOW_ON_SCREEN); } catch (Exception ignored) {}
             node.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
             Bundle args = new Bundle();
             args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
@@ -468,6 +509,7 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
         AccessibilityNodeInfo current = node == null ? null : AccessibilityNodeInfo.obtain(node);
         for (int depth = 0; current != null && depth < 6; depth++) {
             try {
+                try { current.performAction(AccessibilityNodeInfo.ACTION_SHOW_ON_SCREEN); } catch (Exception ignored) {}
                 if ((current.isClickable() || hasClickAction(current))
                         && current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
                 AccessibilityNodeInfo parent = current.getParent();
@@ -613,8 +655,8 @@ public final class InstantTranslateChatAccessibilityService extends Accessibilit
     private void finishExternalInternal() {
         MAIN.removeCallbacks(stepRunnable);
         // Normal path is Reader -> Instant home -> Chat, therefore two backs.
-        MAIN.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 120L);
-        MAIN.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 470L);
+        MAIN.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 90L);
+        MAIN.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_BACK), 390L);
         MAIN.postDelayed(this::hideCoverInternal, COVER_HIDE_MS);
     }
 
