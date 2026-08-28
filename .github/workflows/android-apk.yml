@@ -227,11 +227,11 @@ jobs:
           done
           unzip -p "$APK" assets/www/js/reader-app.js | grep -qF 'readerTokenizeJapaneseParagraph' \
             || { echo 'reader-app.js in the APK has no Japanese tokenizer'; exit 1; }
-          unzip -p "$APK" assets/www/js/app.js | grep -qF "from './reader-app.js?v=77.31'" \
+          unzip -p "$APK" assets/www/js/app.js | grep -qF "from './reader-app.js?v=77.32'" \
             || { echo 'canonical reader-app URL changed unexpectedly'; exit 1; }
-          unzip -p "$APK" assets/www/js/reader/toc-upgrade.js | grep -qF "import('../reader-app.js?v=77.31')" \
+          unzip -p "$APK" assets/www/js/reader/toc-upgrade.js | grep -qF "import('../reader-app.js?v=77.32')" \
             || { echo 'TOC module would create a second reader-app instance'; exit 1; }
-          unzip -p "$APK" assets/www/js/reader/delete-fix.js | grep -qF "import('../reader-app.js?v=77.31')" \
+          unzip -p "$APK" assets/www/js/reader/delete-fix.js | grep -qF "import('../reader-app.js?v=77.32')" \
             || { echo 'delete module would create a second reader-app instance'; exit 1; }
           if unzip -p "$APK" assets/www/js/reader/toc-upgrade.js | grep -qF "import('../reader-app.js')"; then
             echo 'query-less TOC reader-app import leaked into APK'; exit 1
