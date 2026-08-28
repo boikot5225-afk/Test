@@ -24,14 +24,21 @@ public final class InstantTranslateActivity extends MainActivity {
 
         instantTranslateBridge = new InstantTranslateBridge(this, readerWebView);
         readerWebView.addJavascriptInterface(instantTranslateBridge, "ReaderInstantTranslate");
+
+        // Important: MainActivity starts loading the real Reader page asynchronously.
+        // The previous toc62 implementation injected into the initial about:blank page,
+        // which was then replaced by index.html, so the bridge silently disappeared.
+        // Wait until the actual appassets Reader document is alive before injecting.
         injectBridgeScriptWhenReady(0);
     }
 
     private void injectBridgeScriptWhenReady(int attempt) {
         WebView view = readerWebView;
-        if (view == null || attempt > 160) return;
+        if (view == null || attempt > 240) return;
         String source = "(function(){"
                 + "if(!document||!document.head)return 'wait';"
+                + "if(location.hostname!=='appassets.androidplatform.net')return 'wait';"
+                + "if(location.pathname.indexOf('/assets/www/')!==0)return 'wait';"
                 + "if(window.__readerInstantTranslateLoaderAdded)return 'ok';"
                 + "window.__readerInstantTranslateLoaderAdded=true;"
                 + "var s=document.createElement('script');s.src='" + BRIDGE_SCRIPT + "';s.async=true;"
