@@ -7,9 +7,13 @@
   const originalFetch = window.fetch.bind(window);
   const originalAlert = typeof window.alert === 'function' ? window.alert.bind(window) : null;
   const pending = new Map();
+  const WORD_CACHE_KEY = 'an2_instant_translate_word_cache_v1';
+  const WORD_CACHE_LIMIT = 1200;
   let sequence = 0;
   let manualTranslateUntil = 0;
   let manualTranslateMode = '';
+  let wordAnalysisGeneration = 0;
+  let wordInFlightKey = '';
 
   function showInstantError(message, timeoutMs = 6500) {
     try {
@@ -86,9 +90,196 @@
     if (attempt < 12) setTimeout(() => revealActiveParagraphTranslation(attempt + 1), 90);
   }
 
+  function currentWordSurface() {
+    return String(document.getElementById('reader-word-title')?.textContent || '').trim();
+  }
+
+  function currentWordLang() {
+    const view = document.getElementById('reader-reading-view');
+    return String(view?.dataset?.readerLang || view?.lang || '').trim().toLowerCase();
+  }
+
+  function wordKey(surface, lang) {
+    return `${String(lang || '').trim().toLowerCase()}:${String(surface || '').trim().toLowerCase()}`;
+  }
+
+  function loadWordCache() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(WORD_CACHE_KEY) || '{}');
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function cachedWordTranslation(surface, lang) {
+    const item = loadWordCache()[wordKey(surface, lang)];
+    if (typeof item === 'string') return item.trim();
+    return String(item?.ru || '').trim();
+  }
+
+  function rememberWordTranslation(surface, lang, ru) {
+    const translation = String(ru || '').trim();
+    if (!translation) return;
+    try {
+      const cache = loadWordCache();
+      cache[wordKey(surface, lang)] = { ru: translation, t: Date.now() };
+      const entries = Object.entries(cache);
+      if (entries.length > WORD_CACHE_LIMIT) {
+        entries
+          .sort((a, b) => Number(b[1]?.t || 0) - Number(a[1]?.t || 0))
+          .slice(WORD_CACHE_LIMIT)
+          .forEach(([key]) => { delete cache[key]; });
+      }
+      localStorage.setItem(WORD_CACHE_KEY, JSON.stringify(cache));
+    } catch (_) {}
+  }
+
+  function containsCyrillic(text) {
+    return /[\u0400-\u052f]/.test(String(text || ''));
+  }
+
+  function usableWordSurface(surface) {
+    const text = String(surface || '').trim();
+    return !!text && text.length <= 80
+      && /[A-Za-zÀ-ÿ\u0400-\u052f\u3040-\u30ff\u3400-\u9fff]/.test(text);
+  }
+
+  function wordTranslationIsMissing(text) {
+    const value = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!value || value === '—' || value === '-' || value === '…') return true;
+    return !containsCyrillic(value);
+  }
+
+  function refreshWordInstantUi() {
+    try {
+      const panel = document.getElementById('reader-word-panel');
+      if (!panel) return;
+      panel.querySelectorAll('.reader-word-actions button').forEach(button => {
+        if (/DeepSeek|↻\s*Instant/i.test(String(button.textContent || ''))) {
+          button.textContent = '↻ Instant';
+          button.dataset.instantWordTranslate = '1';
+        }
+      });
+      panel.querySelectorAll('.reader-analysis-pinyin.muted').forEach(el => {
+        const text = String(el.textContent || '');
+        if (/DeepSeek/i.test(text)) el.textContent = text.replace(/DeepSeek/gi, 'Instant');
+      });
+    } catch (_) {}
+  }
+
+  function applyWordTranslation(surface, lang, ru) {
+    const translation = String(ru || '').trim();
+    if (!translation) return false;
+    rememberWordTranslation(surface, lang, translation);
+
+    if (currentWordSurface() !== String(surface || '').trim()) return false;
+    const panel = document.getElementById('reader-word-panel');
+    if (!panel) return false;
+    const ruEl = panel.querySelector('.reader-analysis-ru');
+    if (ruEl) {
+      ruEl.textContent = translation;
+      ruEl.dataset.instantTranslate = '1';
+    }
+    const input = panel.querySelector('#reader-word-ru');
+    if (input) input.value = translation;
+    refreshWordInstantUi();
+    return true;
+  }
+
+  function currentWordCardMissingRussian(surface) {
+    if (currentWordSurface() !== String(surface || '').trim()) return false;
+    const ruEl = document.querySelector('#reader-word-panel .reader-analysis-ru');
+    return !!ruEl && wordTranslationIsMissing(ruEl.textContent);
+  }
+
+  async function translateWord(surface, lang, { force = false, silent = true } = {}) {
+    const cleanSurface = String(surface || '').trim();
+    const cleanLang = String(lang || currentWordLang() || '').trim().toLowerCase();
+    if (!usableWordSurface(cleanSurface)) return;
+    const key = wordKey(cleanSurface, cleanLang);
+
+    if (!force) {
+      const cached = cachedWordTranslation(cleanSurface, cleanLang);
+      if (cached) {
+        applyWordTranslation(cleanSurface, cleanLang, cached);
+        return;
+      }
+      if (!currentWordCardMissingRussian(cleanSurface)) return;
+    }
+
+    if (wordInFlightKey === key || pending.size) return;
+    wordInFlightKey = key;
+    const ruEl = currentWordSurface() === cleanSurface
+      ? document.querySelector('#reader-word-panel .reader-analysis-ru')
+      : null;
+    const previous = String(ruEl?.textContent || '—');
+    if (ruEl) {
+      ruEl.textContent = '…';
+      ruEl.dataset.instantPending = '1';
+    }
+
+    try {
+      const translated = await nativeTranslate({
+        text: cleanSurface,
+        sourceLang: cleanLang,
+        targetLang: 'ru',
+        mode: 'word',
+      });
+      const ru = String(translated?.ru || '').trim();
+      if (!ru) throw new Error('Instant Translate вернул пустой перевод слова');
+      applyWordTranslation(cleanSurface, cleanLang, ru);
+    } catch (error) {
+      if (currentWordSurface() === cleanSurface && ruEl?.isConnected) {
+        ruEl.textContent = previous || '—';
+        delete ruEl.dataset.instantPending;
+      }
+      console.warn('[Instant Translate word]', error?.code || '', error?.message || error);
+      if (!silent) showInstantError(String(error?.message || error || 'Перевод слова не сработал'));
+    } finally {
+      if (wordInFlightKey === key) wordInFlightKey = '';
+    }
+  }
+
+  function scheduleWordFallback(detail = {}) {
+    const generation = ++wordAnalysisGeneration;
+    const surface = String(detail.surface || '').trim();
+    const lang = String(detail.lang || currentWordLang() || '').trim().toLowerCase();
+    if (!usableWordSurface(surface)) return;
+
+    setTimeout(() => {
+      if (generation !== wordAnalysisGeneration || currentWordSurface() !== surface) return;
+      refreshWordInstantUi();
+      const cached = cachedWordTranslation(surface, lang);
+      if (cached) {
+        applyWordTranslation(surface, lang, cached);
+        return;
+      }
+      if (currentWordCardMissingRussian(surface)) {
+        translateWord(surface, lang, { force: false, silent: true });
+      }
+    }, 80);
+  }
+
+  document.addEventListener('reader-word-analysis-ready', event => {
+    scheduleWordFallback(event?.detail || {});
+  });
+
   function markManualTranslation(event) {
     const target = event?.target;
     if (!target?.closest) return;
+
+    const wordButton = target.closest('#reader-word-panel .reader-word-actions button');
+    if (wordButton && (/DeepSeek|Instant/i.test(String(wordButton.textContent || ''))
+        || wordButton.dataset.instantWordTranslate === '1')) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      const surface = currentWordSurface();
+      const lang = currentWordLang();
+      setTimeout(() => translateWord(surface, lang, { force: true, silent: false }), 0);
+      return;
+    }
 
     const paragraphButton = target.closest('.reader-action-btn[data-reader-action="translate"]');
     const selectionButton = target.closest('#reader-sel-btn');
@@ -206,6 +397,7 @@
         text: String(payload.text || ''),
         sourceLang: String(payload.sourceLang || payload.lang || ''),
         targetLang: String(payload.targetLang || 'ru'),
+        mode: 'paragraph',
       });
       const ru = String(translated?.ru || '').trim();
       if (!ru) throw new Error('Instant Translate вернул пустой текст');
@@ -233,5 +425,5 @@
   };
 
   window.__readerInstantTranslateBridgeInstalled = true;
-  console.info('[Instant Translate] hidden installed-app bridge active');
+  console.info('[Instant Translate] hidden paragraph + word bridge active');
 })();
