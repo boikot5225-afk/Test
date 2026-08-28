@@ -33,8 +33,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 100
-        versionName '77.42-toc80'
+        versionCode 101
+        versionName '77.42-toc81'
     }
 
     buildFeatures {
@@ -139,6 +139,9 @@ tasks.register('prepareEnRuWikDict') {
             }
         }
 
+        // Keep the compact SQLite for the old native bridge as a compatibility
+        // fallback, but the active English inline-gloss layer no longer depends
+        // on it.
         exec {
             commandLine 'python3',
                     new File(repoRoot, 'scripts/build_en_ru_wikdict_core.py').absolutePath,
@@ -148,10 +151,13 @@ tasks.register('prepareEnRuWikDict') {
                     output.absolutePath
         }
 
+        // toc81: export JSON from the FULL WikDict source, not from the compact
+        // frequency-list subset. Unranked/proper/compound Unknown words therefore
+        // still have a chance to receive a Russian gloss.
         exec {
             commandLine 'python3',
                     new File(repoRoot, 'scripts/export_en_ru_wikdict_json.py').absolutePath,
-                    output.absolutePath,
+                    raw.absolutePath,
                     jsonOutput.absolutePath
         }
     }
