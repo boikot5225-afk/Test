@@ -8,6 +8,38 @@
   const pending = new Map();
   let sequence = 0;
 
+  function showInstantNotice(message, error = false, timeoutMs = 4200) {
+    try {
+      let el = document.getElementById('reader-instant-translate-status');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'reader-instant-translate-status';
+        Object.assign(el.style, {
+          position: 'fixed',
+          left: '50%',
+          top: '18px',
+          transform: 'translateX(-50%)',
+          zIndex: '2147483647',
+          maxWidth: 'calc(100vw - 32px)',
+          padding: '10px 14px',
+          borderRadius: '12px',
+          font: '600 14px/1.35 system-ui, sans-serif',
+          boxShadow: '0 8px 28px rgba(0,0,0,.35)',
+          textAlign: 'center',
+          pointerEvents: 'none',
+          transition: 'opacity .18s ease',
+        });
+        document.documentElement.appendChild(el);
+      }
+      el.textContent = String(message || '');
+      el.style.background = error ? '#5b1d1d' : '#173d2a';
+      el.style.color = '#fff';
+      el.style.opacity = '1';
+      clearTimeout(el.__readerInstantTimer);
+      el.__readerInstantTimer = setTimeout(() => { el.style.opacity = '0'; }, timeoutMs);
+    } catch (_) {}
+  }
+
   window.__readerInstantTranslateResolve = (requestId, ok, payloadJson) => {
     const entry = pending.get(String(requestId || ''));
     if (!entry) return;
@@ -35,7 +67,7 @@
       const requestId = `it-${Date.now().toString(36)}-${(++sequence).toString(36)}`;
       const timer = setTimeout(() => {
         pending.delete(requestId);
-        reject(Object.assign(new Error('Instant Translate AI timeout'), { code: 'instant_ai_timeout' }));
+        reject(Object.assign(new Error('тайм-аут Instant Translate AI'), { code: 'instant_ai_timeout' }));
       }, 45000);
       pending.set(requestId, { resolve, reject, timer });
       try {
@@ -62,6 +94,7 @@
       return originalFetch(input, init);
     }
 
+    showInstantNotice('Instant Translate AI: выполняю перевод…', false, 2500);
     try {
       const translated = await nativeTranslate({
         text: String(payload.text || ''),
@@ -69,17 +102,21 @@
         targetLang: String(payload.targetLang || 'ru'),
       });
       const ru = String(translated?.ru || '').trim();
-      if (!ru) throw new Error('Instant Translate AI returned empty text');
+      if (!ru) throw new Error('Instant Translate AI вернул пустой текст');
+      showInstantNotice('Instant Translate AI: перевод получен', false, 2200);
       return new Response(JSON.stringify({ result: { ru, provider: 'instant_translate_ai' } }), {
         status: 200,
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
       });
     } catch (error) {
-      console.warn('[Instant Translate AI] fallback to DeepSeek:', error?.code || '', error?.message || error);
+      const reason = String(error?.message || error || 'неизвестная ошибка').slice(0, 180);
+      console.warn('[Instant Translate AI] fallback to DeepSeek:', error?.code || '', reason);
+      showInstantNotice(`Instant Translate не сработал: ${reason}. Fallback → DeepSeek`, true, 7000);
       return originalFetch(input, init);
     }
   };
 
   window.__readerInstantTranslateBridgeInstalled = true;
+  showInstantNotice('Instant Translate AI: мост активен. Нажми перевод абзаца.', false, 5000);
   console.info('[Instant Translate AI] native translation interceptor installed');
 })();
