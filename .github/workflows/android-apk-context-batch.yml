@@ -65,7 +65,8 @@ jobs:
           grep -qF "zh-readable-inline.js?v=6" js/reader/interactions-runtime.js
           grep -qF "zh-context-batch.js?v=1" js/reader/interactions-runtime.js
           grep -qF "readerZhBatch" js/reader/zh-context-batch.js
-          grep -qF "reader-word.rw-migaku-unknown" js/reader/zh-context-batch.js
+          grep -qF ".reader-word[data-word]" js/reader/zh-context-batch.js
+          grep -qF "classList.contains('rw-migaku-unknown')" js/reader/zh-context-batch.js
           grep -qF "rw-zh-gloss-wrap" js/reader/zh-context-batch.js
           grep -qF "zhGlossStickyRu" js/reader/zh-context-batch.js
           grep -qF "zhGlossStickyPinyin" js/reader/zh-context-batch.js
