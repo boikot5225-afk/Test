@@ -48,12 +48,12 @@ jobs:
           python3 scripts/build_zh_migaku_resources_v2.py --self-test
           python3 scripts/build_zh_migaku_sqlite.py --self-test
 
-      - name: Check JavaScript and function syntax
+      - name: Check JavaScript and task syntax
         shell: bash
         run: |
           set -euo pipefail
           while IFS= read -r -d '' file; do node --check "$file"; done < <(find js -type f -name '*.js' -print0)
-          node --check functions/zh-batch-index.js
+          node --check functions/zh-context-task.js
 
       - name: Verify toc97 isolation contract
         shell: bash
@@ -64,15 +64,16 @@ jobs:
           grep -qF "zh-resource-profiles.js?v=2" js/reader/interactions-runtime.js
           grep -qF "zh-readable-inline.js?v=6" js/reader/interactions-runtime.js
           grep -qF "zh-context-batch.js?v=1" js/reader/interactions-runtime.js
-          grep -qF "readerZhBatch" js/reader/zh-context-batch.js
+          grep -qF "httpsCallable('readerAI')" js/reader/zh-context-batch.js
+          grep -qF "task: 'zh_context_batch'" js/reader/zh-context-batch.js
           grep -qF ".reader-word[data-word]" js/reader/zh-context-batch.js
           grep -qF "classList.contains('rw-migaku-unknown')" js/reader/zh-context-batch.js
           grep -qF "rw-zh-gloss-wrap" js/reader/zh-context-batch.js
           grep -qF "zhGlossStickyRu" js/reader/zh-context-batch.js
           grep -qF "zhGlossStickyPinyin" js/reader/zh-context-batch.js
           grep -qF "MAX_TARGETS = 18" js/reader/zh-context-batch.js
-          grep -qF "exports.readerZhBatch = onCall(" functions/zh-batch-index.js
-          grep -qF 'boundary="suspect"' functions/zh-batch-index.js
+          grep -qF "buildZhContextBatchPrompt" functions/zh-context-task.js
+          grep -qF 'boundary="suspect"' functions/zh-context-task.js
           # The new layer may annotate existing wrappers, but must never own the
           # token DOM or repaginate/re-render the chapter.
           if grep -Eq 'innerHTML[[:space:]]*=|replaceChildren\(|renderReaderChapter|readerNextParagraph|readerPrevParagraph' js/reader/zh-context-batch.js; then
@@ -80,6 +81,17 @@ jobs:
             exit 1
           fi
           node scripts/check-reader-zh-unknown-gloss.mjs
+          node - <<'NODE'
+          const assert = require('node:assert/strict');
+          const { buildZhContextBatchPrompt } = require('./functions/zh-context-task');
+          const prompt = buildZhContextBatchPrompt({
+            context: '她看着他，眼神里带着几分嘲讽。',
+            targets: [{ id: 't0', surface: '里带', en: 'inner tube' }],
+          });
+          assert.match(prompt, /里带/);
+          assert.match(prompt, /里 \/ 带着/);
+          assert.match(prompt, /boundary/);
+          NODE
 
       - name: Build debug APK
         working-directory: android
