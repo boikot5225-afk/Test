@@ -172,6 +172,7 @@ tasks.register('prepareEnRuWikDict') {
 
 tasks.register('prepareZhMigakuResources') {
     inputs.file(new File(repoRoot, 'scripts/build_zh_migaku_resources.py'))
+    inputs.file(new File(repoRoot, 'scripts/build_zh_migaku_resources_v2.py'))
     outputs.file(layout.buildDirectory.file('generated/migakuZhAssets/data/zh_migaku_dict.json'))
     outputs.file(layout.buildDirectory.file('generated/migakuZhAssets/data/zh_migaku_profiles.json'))
     outputs.file(layout.buildDirectory.file('generated/migakuZhAssets/data/zh_migaku_manifest.json'))
@@ -184,7 +185,7 @@ tasks.register('prepareZhMigakuResources') {
         logger.lifecycle("Building supplemental Mandarin dictionary and BLCU/SUBTLEX/Jieba profiles…")
         exec {
             commandLine 'python3',
-                    new File(repoRoot, 'scripts/build_zh_migaku_resources.py').absolutePath,
+                    new File(repoRoot, 'scripts/build_zh_migaku_resources_v2.py').absolutePath,
                     '--output-dir', outputDir.absolutePath,
                     '--cache-dir', cacheDir.absolutePath
         }
