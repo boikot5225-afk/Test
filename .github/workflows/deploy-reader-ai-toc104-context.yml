@@ -1,0 +1,127 @@
+name: Deploy toc104 contextual readerAI
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc104-deepseek-context-cache
+    paths:
+      - '.github/workflows/deploy-reader-ai-toc104-context.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-reader-ai-toc104-context
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS }}
+      GCP_SA_KEY_JSON: ${{ secrets.GCP_SA_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc104-deepseek-context-cache
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Verify contextual readerAI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix functions ci --ignore-scripts
+          node --check functions/index.js
+          grep -qF 'AS USED IN THIS SPECIFIC CONTEXT' functions/index.js
+          grep -qF "thinking: { type: 'disabled' }" functions/index.js
+          grep -qF "response_format: { type: 'json_object' }" functions/index.js
+          grep -qF 'exports.readerAI = onCall(' functions/index.js
+
+      - name: Build readerAI-only deployment copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('functions/index.js')
+          source = path.read_text()
+          marker = '// Cloud TTS proxy:'
+          marker_at = source.find(marker)
+          if marker_at < 0:
+              raise SystemExit('Cloud TTS marker not found')
+          section_at = source.rfind('// ─', 0, marker_at)
+          if section_at < 0:
+              raise SystemExit('readerAI section boundary not found')
+          source = source[:section_at].rstrip() + '\n'
+          for declaration in (
+              "const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');\n",
+              "const SELFHOST_TTS_STT_URL = defineSecret('SELFHOST_TTS_STT_URL');\n",
+              "const SELFHOST_TOKEN = defineSecret('SELFHOST_TOKEN');\n",
+          ):
+              source = source.replace(declaration, '')
+          for required in (
+              'exports.readerAI = onCall(',
+              "defineSecret('DEEPSEEK_API_KEY')",
+              'AS USED IN THIS SPECIFIC CONTEXT',
+              "thinking: { type: 'disabled' }",
+              "response_format: { type: 'json_object' }",
+          ):
+              if required not in source:
+                  raise SystemExit('missing after trim: ' + required)
+          for forbidden in ('exports.ttsAudio', 'exports.transcribeAudio', "defineSecret('OPENROUTER_API_KEY')"):
+              if forbidden in source:
+                  raise SystemExit('unexpected after trim: ' + forbidden)
+          path.write_text(source)
+          PY
+          node --check functions/index.js
+
+      - name: Select deployment credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${FIREBASE_TOKEN}" ]]; then
+            echo 'FIREBASE_AUTH_MODE=token' >> "$GITHUB_ENV"
+            exit 0
+          fi
+          credentials="${FIREBASE_SERVICE_ACCOUNT_JSON}"
+          [[ -n "$credentials" ]] || credentials="${GOOGLE_CREDENTIALS_JSON}"
+          [[ -n "$credentials" ]] || credentials="${GCP_SA_KEY_JSON}"
+          if [[ -z "$credentials" ]]; then
+            echo '::error::No Firebase deployment credential configured.'
+            exit 1
+          fi
+          credentials_file="${RUNNER_TEMP}/firebase-service-account.json"
+          printf '%s' "$credentials" > "$credentials_file"
+          chmod 600 "$credentials_file"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=${credentials_file}" >> "$GITHUB_ENV"
+          echo 'FIREBASE_AUTH_MODE=adc' >> "$GITHUB_ENV"
+
+      - name: Install Firebase CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cli_root="${RUNNER_TEMP}/firebase-cli"
+          npm --prefix "$cli_root" install --no-save --ignore-scripts firebase-tools@15.24.0
+
+      - name: Deploy readerAI
+        shell: bash
+        run: |
+          set -euo pipefail
+          firebase_cli="${RUNNER_TEMP}/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
+          args=(deploy --only functions:readerAI --project french-da79a --non-interactive)
+          if [[ "${FIREBASE_AUTH_MODE}" == 'token' ]]; then
+            node "$firebase_cli" "${args[@]}" --token "$FIREBASE_TOKEN"
+          else
+            node "$firebase_cli" "${args[@]}"
+          fi
