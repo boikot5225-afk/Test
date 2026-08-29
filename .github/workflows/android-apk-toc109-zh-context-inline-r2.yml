@@ -1,0 +1,162 @@
+name: Android APK toc109 Chinese context inline r2
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc109-zh-context-inline
+    paths:
+      - '.github/workflows/android-apk-toc109-zh-context-inline-r2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reader-toc109-zh-context-inline-r2
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc109-zh-context-inline
+          fetch-depth: 0
+
+      - name: Apply contextual Chinese inline patch
+        run: python3 scripts/patch-toc109-zh-context-inline.py
+
+      - name: Validate contextual inline priority
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in \
+            js/reader/zh-unknown-gloss-v4.js \
+            js/reader/interactions-runtime.js \
+            js/reader/chapter-render-next.js \
+            js/reader/chapter-render-stage1.js \
+            js/reader/chapter-render-dialogue.js \
+            js/reader/chapter-render.js \
+            js/reader-app.js js/app.js; do
+            node --check "$file"
+          done
+          grep -qF 'const contextLexHit = contextLexicalEntry(word, context, lexical);' js/reader/zh-unknown-gloss-v4.js
+          grep -qF "contextRu ? 'context-cache'" js/reader/zh-unknown-gloss-v4.js
+          grep -qF 'readerEnsureNativeChineseSegmentations' js/reader-app.js
+          grep -qF 'primeSegmentationScores(db, run);' android/app/src/main/java/space/saintjust/reader/stage1/ChineseResourceBridge.java
+
+          sed "s#import { normalizeImportKey } from '../utils.js';#const normalizeImportKey = (value) => String(value || '').trim().toLowerCase();#" \
+            js/reader/zh-unknown-gloss-v4.js > /tmp/zh-unknown-gloss-v4.mjs
+          node --input-type=module <<'NODE'
+          const store = new Map();
+          globalThis.localStorage = {
+            getItem: key => store.has(key) ? store.get(key) : null,
+            setItem: (key, value) => store.set(key, String(value)),
+          };
+          const mod = await import('file:///tmp/zh-unknown-gloss-v4.mjs');
+          const paragraph = '中国军方高层出现了一个足够重大的正式变化。全国人大常委会已正式免去张又侠。';
+          const key = mod.contextLexicalKey('高层', paragraph);
+          const lexical = {
+            'zh:高层': { ru: 'Высотных', pinyin: 'gāo céng' },
+            [key]: { ru: 'высшее руководство', pinyin: 'gāo céng' },
+          };
+          const hint = mod.bestHint('高层', paragraph, '', {}, lexical, {});
+          if (hint.ru !== 'высшее руководство') {
+            throw new Error('generic gloss beat context cache: ' + JSON.stringify(hint));
+          }
+          if (hint.source !== 'context-cache') {
+            throw new Error('wrong source priority: ' + JSON.stringify(hint));
+          }
+          if (mod.sentenceContext(paragraph, '高层') !== '中国军方高层出现了一个足够重大的正式变化。') {
+            throw new Error('sentence context differs from Reader card context');
+          }
+          console.log('toc109 context-inline priority: OK', key, hint.ru);
+          NODE
+
+      - name: Commit toc109 source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            js/reader/zh-unknown-gloss-v4.js \
+            js/reader/interactions-runtime.js \
+            js/reader/chapter-render-next.js \
+            js/reader/chapter-render-stage1.js \
+            js/reader/chapter-render-dialogue.js \
+            js/reader/chapter-render.js \
+            js/reader-app.js js/app.js index.html
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix(reader): prefer Chinese context cache in inline glosses'
+            git fetch origin feature/77.42-toc109-zh-context-inline
+            git rebase origin/feature/77.42-toc109-zh-context-inline
+            git push origin HEAD:feature/77.42-toc109-zh-context-inline
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Restore signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+            echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+          fi
+
+      - name: Wire maintained native translation bridges
+        run: python3 scripts/wire-toc104-native-bridges.py
+
+      - name: Prepare toc109 build identity
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle'); s=p.read_text()
+          assert s.count('versionCode 118')==1
+          assert s.count("versionName '77.42-toc98'")==1
+          p.write_text(s.replace('versionCode 118','versionCode 129',1).replace("versionName '77.42-toc98'","versionName '77.42-toc109'",1))
+          PY
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify and package APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+          unzip -p "$APK" assets/www/js/reader/zh-unknown-gloss-v4.js | grep -qF 'contextLexicalEntry'
+          unzip -p "$APK" assets/www/js/reader/zh-unknown-gloss-v4.js | grep -qF "contextRu ? 'context-cache'"
+          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF 'zh-unknown-gloss-v4.js?v=4-context-lexical'
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF 'readerEnsureNativeChineseSegmentations'
+          unzip -p "$APK" assets/www/js/app.js | grep -qF 'reader-app.js?v=77.38-zh-context-inline'
+          unzip -p "$APK" assets/www/index.html | grep -qF 'js/app.js?v=77.37-zh-context-inline'
+          unzip -l "$APK" | grep -qF 'assets/data/zh_migaku.sqlite3'
+          mkdir -p unique-out
+          cp "$APK" unique-out/Reader-AI-77.42-toc109-build129.apk
+          sha256sum unique-out/Reader-AI-77.42-toc109-build129.apk | tee unique-out/SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc109-build129
+          path: |
+            unique-out/Reader-AI-77.42-toc109-build129.apk
+            unique-out/SHA256.txt
+          retention-days: 30
