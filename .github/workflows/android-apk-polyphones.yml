@@ -1,0 +1,140 @@
+name: Android APK toc99 polyphones
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc99-polyphones
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            echo "::warning::No shared signing key; install-over may fail."
+            exit 0
+          fi
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Validate toc99 polyphone source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check functions/zh-polyphones-packed.js
+          node --check functions/zh-context-task.js
+          node - <<'NODE'
+          const assert = require('node:assert/strict');
+          const poly = require('./functions/zh-polyphones-packed');
+          const { buildZhContextBatchPrompt } = require('./functions/zh-context-task');
+          assert.equal(poly.count, 792);
+          assert.deepEqual(poly.lookupPolyphone('还').readings, ['hái','huán']);
+          assert.deepEqual(poly.lookupPolyphone('着').readings, ['zháo','zhe','zhāo','zhuó']);
+          assert.deepEqual(poly.lookupPolyphone('得').readings, ['dé','de','děi']);
+          assert.deepEqual(poly.lookupPolyphone('行').readings, ['xíng','háng']);
+          assert.deepEqual(poly.lookupPolyphone('长').readings, ['cháng','zhǎng']);
+          const prompt = buildZhContextBatchPrompt({context:'他还没有回来。',targets:[{id:'t0',surface:'还'}]});
+          assert.match(prompt, /pinyinCandidates/);
+          assert.match(prompt, /hái/);
+          assert.match(prompt, /huán/);
+          assert.match(prompt, /MUST be exactly one/);
+          console.log('polyphone candidates:', poly.count);
+          NODE
+
+      - name: Validate Chinese resource builders
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/build_zh_migaku_resources.py --self-test
+          python3 scripts/build_zh_migaku_resources_v2.py --self-test
+          python3 scripts/build_zh_migaku_sqlite.py --self-test
+          node --check js/reader/zh-context-batch.js
+          node --check js/reader/interactions-runtime.js
+
+      - name: Prepare toc99 build identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle')
+          s=p.read_text()
+          if s.count('versionCode 118') != 1 or s.count("versionName '77.42-toc98'") != 1:
+              raise SystemExit('toc98 version anchor changed')
+          s=s.replace('versionCode 118','versionCode 119',1)
+          s=s.replace("versionName '77.42-toc98'","versionName '77.42-toc99'",1)
+          p.write_text(s)
+          PY
+          grep -qF 'versionCode 119' android/app/build.gradle
+          grep -qF "versionName '77.42-toc99'" android/app/build.gradle
+
+      - name: Verify toc94 layout contract remains untouched
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qF 'toc94 Chinese reading aid' js/reader/zh-readable-inline.js
+          grep -qF 'function visibleParagraphs()' js/reader/zh-context-batch.js
+          if grep -Eq 'renderReaderChapter|readerNextParagraph|readerPrevParagraph|readerSelectParagraph' js/reader/zh-context-batch.js; then
+            echo 'toc99 context layer crossed toc94 layout/navigation boundary' >&2
+            exit 1
+          fi
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify toc99 APK contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+          unzip -l "$APK" | grep -qF 'assets/data/zh_migaku.sqlite3'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/zh-readable-inline.js'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/zh-context-batch.js'
+          unzip -p "$APK" assets/data/zh_migaku.sqlite3 > /tmp/zh_migaku.sqlite3
+          python3 - <<'PY'
+          import sqlite3
+          con=sqlite3.connect('file:/tmp/zh_migaku.sqlite3?mode=ro', uri=True)
+          count=con.execute('select count(*) from entries').fetchone()[0]
+          assert count >= 500_000, count
+          assert con.execute('pragma integrity_check').fetchone()[0] == 'ok'
+          con.close()
+          print('SQLite rows:', count)
+          PY
+          mkdir -p unique-out
+          cp "$APK" unique-out/Reader-AI-77.42-toc99-build119.apk
+          sha256sum unique-out/Reader-AI-77.42-toc99-build119.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc99-build119
+          path: unique-out/Reader-AI-77.42-toc99-build119.apk
+          if-no-files-found: error
+          retention-days: 30
