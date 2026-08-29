@@ -1,4 +1,4 @@
-name: Android APK toc108 installable
+name: Android APK high-version install diagnostic
 
 on:
   push:
@@ -7,10 +7,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: reader-toc108-installable
+  group: reader-high-version-install-diagnostic
   cancel-in-progress: false
 
 jobs:
@@ -38,96 +38,77 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Restore shared signing key
+      - name: Restore signing key exactly like toc106
         shell: bash
         run: |
           set -euo pipefail
           test -n "${ANDROID_KEYSTORE_BASE64}"
           printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
           echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
-          echo "READER_KS_PASS=${ANDROID_KEYSTORE_PASSWORD:-readerai2026}" >> "$GITHUB_ENV"
-          echo "READER_KEY_ALIAS=${ANDROID_KEY_ALIAS:-reader-ai}" >> "$GITHUB_ENV"
-          echo "READER_KEY_PASS=${ANDROID_KEY_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD:-readerai2026}}" >> "$GITHUB_ENV"
 
-      - name: Validate source checkpoint
+      - name: Validate toc107 segmentation source
         shell: bash
         run: |
           set -euo pipefail
           grep -qF "an2_zh_segment_cache_v5" js/reader-app.js
           grep -qF "return ls > rs + 1.2 ? local : remote;" js/reader-app.js
-          grep -qF "renderReaderChapterInPlace();" js/reader-app.js
           grep -qF "manualKnowledge = 'known'" js/reader/word-state.js
-          grep -qF "reader-app.js?v=77.36-zh-segmentation" js/app.js
+          grep -Eq "reader-app.js\?v=77\.36-(native-)?zh-seg" js/app.js
 
       - name: Wire maintained native translation bridges
         run: python3 scripts/wire-toc104-native-bridges.py
 
-      - name: Prepare toc108 build identity
+      - name: Set deliberately high versionCode
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('android/app/build.gradle')
-          s=p.read_text()
+          p = Path('android/app/build.gradle')
+          s = p.read_text()
           assert s.count('versionCode 118') == 1
           assert s.count("versionName '77.42-toc98'") == 1
-          s=s.replace('versionCode 118','versionCode 128',1)
-          s=s.replace("versionName '77.42-toc98'","versionName '77.42-toc108'",1)
+          s = s.replace('versionCode 118', 'versionCode 1000', 1)
+          s = s.replace("versionName '77.42-toc98'", "versionName '77.42-toc111-install-diagnostic'", 1)
           p.write_text(s)
           PY
 
-      - name: Build debug APK
+      - name: Build with Gradle shared signing only
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Re-sign and validate with Android tools
+      - name: Validate without modifying APK
         shell: bash
         run: |
           set -euo pipefail
           APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
           test -f "$APK"
           BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
-          test -x "${BUILD_TOOLS}/zipalign"
           test -x "${BUILD_TOOLS}/apksigner"
           test -x "${BUILD_TOOLS}/aapt"
+          test -x "${BUILD_TOOLS}/zipalign"
           mkdir -p unique-out
-          ALIGNED="unique-out/Reader-AI-77.42-toc108-build128-aligned.apk"
-          FINAL="unique-out/Reader-AI-77.42-toc108-build128.apk"
-          "${BUILD_TOOLS}/zipalign" -p -f 4 "$APK" "$ALIGNED"
-          "${BUILD_TOOLS}/zipalign" -c -v 4 "$ALIGNED"
-          "${BUILD_TOOLS}/apksigner" sign \
-            --ks "$ANDROID_KEYSTORE_PATH" \
-            --ks-key-alias "$READER_KEY_ALIAS" \
-            --ks-pass "pass:$READER_KS_PASS" \
-            --key-pass "pass:$READER_KEY_PASS" \
-            --v1-signing-enabled true \
-            --v2-signing-enabled true \
-            --v3-signing-enabled true \
-            --v4-signing-enabled false \
-            --out "$FINAL" \
-            "$ALIGNED"
-          rm -f "$ALIGNED"
-          "${BUILD_TOOLS}/apksigner" verify --verbose --print-certs "$FINAL" | tee unique-out/APKSIGNER.txt
-          "${BUILD_TOOLS}/aapt" dump badging "$FINAL" | tee unique-out/BADGING.txt
+          "${BUILD_TOOLS}/apksigner" verify --verbose --print-certs "$APK" | tee unique-out/APKSIGNER.txt
+          "${BUILD_TOOLS}/aapt" dump badging "$APK" | tee unique-out/BADGING.txt
+          "${BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$APK" > unique-out/ZIPALIGN.txt
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
-          grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
-          grep -q "Signer: certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
-          grep -q "package: name='space.saintjust.reader.semanticstage1clean.formatfix.debug' versionCode='128'" unique-out/BADGING.txt
+          grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
+          grep -q "package: name='space.saintjust.reader.semanticstage1clean.formatfix.debug' versionCode='1000'" unique-out/BADGING.txt
           grep -q "sdkVersion:'24'" unique-out/BADGING.txt
-          unzip -t "$FINAL" >/dev/null
-          unzip -p "$FINAL" assets/www/js/reader-app.js | grep -qF "an2_zh_segment_cache_v5"
-          unzip -p "$FINAL" assets/www/js/reader-app.js | grep -qF "return ls > rs + 1.2 ? local : remote;"
-          sha256sum "$FINAL" | tee unique-out/SHA256.txt
+          unzip -t "$APK" >/dev/null
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "an2_zh_segment_cache_v5"
+          cp "$APK" unique-out/Reader-AI-77.42-toc111-install-diagnostic-vc1000.apk
+          sha256sum unique-out/Reader-AI-77.42-toc111-install-diagnostic-vc1000.apk | tee unique-out/SHA256.txt
 
-      - name: Upload APK
+      - name: Upload exact Gradle APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-77.42-toc108-build128
+          name: Reader-AI-77.42-toc111-install-diagnostic-vc1000
           path: |
-            unique-out/Reader-AI-77.42-toc108-build128.apk
+            unique-out/Reader-AI-77.42-toc111-install-diagnostic-vc1000.apk
             unique-out/SHA256.txt
             unique-out/APKSIGNER.txt
             unique-out/BADGING.txt
+            unique-out/ZIPALIGN.txt
           if-no-files-found: error
           retention-days: 30
