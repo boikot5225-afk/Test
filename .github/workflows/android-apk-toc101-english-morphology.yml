@@ -1,0 +1,144 @@
+name: Android APK toc101 English morphology
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc101-english-morphology
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            echo "::warning::No shared signing key; install-over may fail."
+            exit 0
+          fi
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Validate English morphology resolver
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check js/reader/en-morphology-resolver.js
+          node --check js/reader/interactions-runtime.js
+          grep -qF "en-morphology-resolver.js?v=1" js/reader/interactions-runtime.js
+          grep -qF "36,566-word English frequency list" js/reader/en-morphology-resolver.js
+          grep -qF "written, thought, better, feet" js/reader/en-morphology-resolver.js
+
+          node --experimental-default-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { rankedLemma, augmentOne } from './js/reader/en-morphology-resolver.js';
+
+          const words = ['rewrite','outgrow','child','woman','run','study','make','big','use','us','can','write','see','leave'];
+          const rankFold = new Map(words.map((word, index) => [word, { word, index }]));
+          const data = { rankFold, lemma:new Map([['went','go']]) };
+
+          assert.equal(rankedLemma(data, 'rewritten'), 'rewrite');
+          assert.equal(rankedLemma(data, 'outgrown'), 'outgrow');
+          assert.equal(rankedLemma(data, 'children'), 'child');
+          assert.equal(rankedLemma(data, 'women'), 'woman');
+          assert.equal(rankedLemma(data, 'running'), 'run');
+          assert.equal(rankedLemma(data, 'studies'), 'study');
+          assert.equal(rankedLemma(data, 'making'), 'make');
+          assert.equal(rankedLemma(data, 'bigger'), 'big');
+          assert.equal(rankedLemma(data, "can't"), 'can');
+
+          // uses can mean the noun us / verb use after blind suffix stripping;
+          // two ranked candidates means the resolver must refuse to guess.
+          assert.equal(rankedLemma(data, 'uses'), '');
+          // en.sqlite itself marks these as lexically ambiguous.
+          assert.equal(rankedLemma(data, 'written'), '');
+          assert.equal(rankedLemma(data, 'saw'), '');
+          assert.equal(rankedLemma(data, 'left'), '');
+
+          // Existing curated Migaku mapping always wins.
+          assert.equal(augmentOne(data, 'went'), false);
+          assert.equal(data.lemma.get('went'), 'go');
+          assert.equal(augmentOne(data, 'rewritten'), true);
+          assert.equal(data.lemma.get('rewritten'), 'rewrite');
+          console.log('toc101 English morphology contract: OK');
+          NODE
+
+      - name: Verify layout isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qF 'toc94 Chinese reading aid' js/reader/zh-readable-inline.js
+          if grep -Eq 'renderReaderChapter|readerNextParagraph|readerPrevParagraph|readerSelectParagraph|createElement\(|appendChild\(|replaceChildren\(' js/reader/en-morphology-resolver.js; then
+            echo 'toc101 English morphology resolver crossed layout/navigation boundary' >&2
+            exit 1
+          fi
+
+      - name: Prepare toc101 build identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle')
+          s=p.read_text()
+          if s.count('versionCode 118') != 1 or s.count("versionName '77.42-toc98'") != 1:
+              raise SystemExit('toc98 build identity anchor changed')
+          s=s.replace('versionCode 118','versionCode 121',1)
+          s=s.replace("versionName '77.42-toc98'","versionName '77.42-toc101'",1)
+          p.write_text(s)
+          PY
+          grep -qF 'versionCode 121' android/app/build.gradle
+          grep -qF "versionName '77.42-toc101'" android/app/build.gradle
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify APK contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/en-morphology-resolver.js'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/en-vocab-estimate.js'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/en-unknown-gloss-full-fallback.js'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/zh-readable-inline.js'
+          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF 'en-morphology-resolver.js?v=1'
+          unzip -p "$APK" assets/www/js/reader/en-morphology-resolver.js | grep -qF "rewritten:'rewrite'"
+          unzip -p "$APK" assets/www/js/reader/en-morphology-resolver.js | grep -qF "\"can't\":'can'"
+
+          mkdir -p unique-out
+          cp "$APK" unique-out/Reader-AI-77.42-toc101-build121.apk
+          sha256sum unique-out/Reader-AI-77.42-toc101-build121.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc101-build121
+          path: unique-out/Reader-AI-77.42-toc101-build121.apk
+          if-no-files-found: error
+          retention-days: 30
