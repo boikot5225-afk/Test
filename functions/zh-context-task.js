@@ -1,5 +1,7 @@
 'use strict';
 
+const { lookupPolyphone } = require('./zh-polyphones-packed');
+
 const MAX_CONTEXT_CHARS = 1200;
 const MAX_TARGETS = 24;
 
@@ -10,10 +12,13 @@ function clean(value, max = 200) {
 function safeTarget(raw, index) {
   const surface = clean(raw?.surface || raw?.word, 32);
   if (!surface || !/[\u3400-\u9fff]/.test(surface)) return null;
+  const poly = lookupPolyphone(surface);
   return {
     id: clean(raw?.id || `t${index}`, 40) || `t${index}`,
     surface,
     pinyin: clean(raw?.pinyin, 72),
+    pinyinCandidates: poly?.readings || [],
+    posCandidates: poly?.pos || [],
     en: clean(raw?.en || raw?.english, 220),
     alt: clean(raw?.alt, 80),
     hsk: clean(raw?.hsk, 24),
@@ -46,16 +51,22 @@ You receive ONE exact Chinese paragraph and a list of token OCCURRENCES that Rea
 
 For every target return:
 - id: copy exactly;
-- ru: the meaning AS USED HERE, in natural Russian, strictly 1-2 words, never an English gloss and never an explanation;
-- pinyin: the pronunciation of THIS SURFACE IN THIS CONTEXT, with tone marks. Resolve polyphonic characters from context;
+- ru: the meaning AS USED HERE, in natural Russian, strictly 1-3 words, never an English gloss and never an explanation;
+- pinyin: the pronunciation of THIS SURFACE IN THIS CONTEXT, with tone marks;
 - confidence: number 0..1;
 - boundary: "ok" if the supplied token is a sensible word boundary here, or "suspect" if it appears to cross/split a real word or name;
 - suggestion: only when boundary="suspect", a very short better local segmentation, otherwise "".
 
+PINYIN SAFETY RULE — IMPORTANT:
+If a target has a non-empty pinyinCandidates array, the returned pinyin MUST be exactly one of those candidates, character-for-character. Choose only by the supplied Chinese context. Never invent a third reading, never merge candidates, and never fall back to whichever dictionary reading happens to be first. posCandidates may help disambiguate but context wins.
+If pinyinCandidates is empty, determine the contextual reading normally, using the dictionary pinyin only as a hint.
+
 Important examples of the required behaviour:
 - 特警 in a police context -> ru "спецназ", not a literal translation of English "SWAT" such as a verb.
 - 摇头 -> ru "качать головой" or "покачать головой" only if it fits the exact sentence.
-- 还 must be hái or huán according to context, not whichever reading is first in a dictionary.
+- 他还没有回来。 with pinyinCandidates ["hái","huán"] -> pinyin "hái".
+- 把书还给我。 with the same candidates -> pinyin "huán".
+- 银行 works with the word-level candidate supplied for 银行; 行 alone must be xíng or háng only when it is itself the target and its own candidates say so.
 - In 眼神里带着几分嘲讽, a supplied token 里带 should be boundary="suspect" because the useful segmentation is 里 / 带着.
 - Proper names may be boundary="suspect" when Reader split the name into ordinary dictionary words.
 
