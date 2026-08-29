@@ -175,11 +175,20 @@ function syncVisibility(el, wrap) {
   else if (state === 'known') wrap.dataset.enGlossVisible = '0';
   return state;
 }
-function setWrapperTranslation(wrap, word, value) {
+function contextProvider(wrap) {
+  return String(wrap?.dataset?.enContextProvider || '').trim();
+}
+function hasContextOverride(wrap) {
+  return !!contextProvider(wrap);
+}
+function setWrapperTranslation(wrap, word, value, options = {}) {
   const ru = compactRussian(value);
   const node = glossNode(wrap);
   if (!node) return '';
   if (!ru) return String(node.textContent || '').trim();
+  // Context wins. Once a contextual rule/ML/DeepSeek result is on this exact
+  // token, the lemma dictionary is only a fallback and may not paint over it.
+  if (!options.force && hasContextOverride(wrap)) return String(node.textContent || '').trim();
   node.textContent = ru;
   wrap.dataset.enGlossRu = ru;
   wrap.style.setProperty('--en-gloss-font', glossFontSize(word, ru));
@@ -419,6 +428,39 @@ function scan() {
   if (missing.length) void lookupMissing(missing);
 }
 
+function applyDeepSeekContextGloss(detail = {}) {
+  if (currentLang() !== 'en') return 0;
+  const root = document.getElementById('reader-chapter-text');
+  const translation = compactRussian(detail.ru || detail.translation || detail.meaning || '');
+  const targetKey = normalizedKey(detail.word || detail.surface || '');
+  if (!root || !translation || !targetKey) return 0;
+
+  const requestedParagraph = Number(detail.paragraphIndex);
+  const scopes = Number.isFinite(requestedParagraph)
+    ? Array.from(root.querySelectorAll('.reader-paragraph')).filter(p => Number(p.dataset.p) === requestedParagraph)
+    : [root];
+  let count = 0;
+  for (const scope of scopes) {
+    for (const el of scope.querySelectorAll('.reader-word[data-word]')) {
+      if (!isEnglishWord(el) || knowledge(el) === 'known') continue;
+      const surface = String(el.dataset.word || el.textContent || '').trim();
+      const lemma = lemmaFor(surface);
+      if (normalizedKey(surface) !== targetKey && normalizedKey(lemma) !== targetKey) continue;
+      const wrap = ensureWrapper(el);
+      const node = glossNode(wrap);
+      if (!wrap || !node) continue;
+      node.textContent = translation;
+      wrap.dataset.enGlossRu = translation;
+      wrap.dataset.enContextProvider = 'deepseek-context';
+      wrap.dataset.enContextKey = legacyCacheKey(detail.word || surface, detail.context || '');
+      wrap.dataset.enGlossVisible = knowledge(el) === 'unknown' ? '1' : '0';
+      wrap.style.setProperty('--en-gloss-font', glossFontSize(surface, translation));
+      count++;
+    }
+  }
+  return count;
+}
+
 function scheduleScan(delay = 35) {
   clearTimeout(scanTimer);
   scanTimer = setTimeout(scan, Math.max(0, Number(delay) || 0));
@@ -463,6 +505,8 @@ if (shouldInstall) {
   window.readerGetEnUnknownGlossMode = mode;
   window.readerPrepareEnStableSlots = prepareStableSlots;
   window.readerPrefetchEnUnknownGloss = scanNow;
+  window.readerApplyEnglishDeepSeekGloss = applyDeepSeekContextGloss;
+  window.addEventListener('reader:en-deepseek-gloss', event => applyDeepSeekContextGloss(event?.detail || {}));
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once:true });
   else boot();
   window.addEventListener('pageshow', () => { boot(); scheduleScan(25); });

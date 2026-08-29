@@ -4382,6 +4382,17 @@ function readerAutoTranslateActiveParagraph(index) {
   readerTranslateParagraphAI(index, { silent: true }).finally(() => readerAutoTranslateInFlight.delete(key));
 }
 
+function readerPublishEnglishContextGloss(word, context, ru) {
+  if (readerCurrentLang() !== 'en') return;
+  const translation = String(ru || '').trim();
+  if (!translation) return;
+  try {
+    window.dispatchEvent(new CustomEvent('reader:en-deepseek-gloss', {
+      detail: { word, context, ru: translation, paragraphIndex: readerSelectedParagraphIndex },
+    }));
+  } catch {}
+}
+
 async function readerTranslateWordAI(forceOrOptions = true) {
   const opts = (forceOrOptions && typeof forceOrOptions === 'object') ? forceOrOptions : { force: forceOrOptions };
   const force = opts.force !== false;
@@ -4416,6 +4427,11 @@ async function readerTranslateWordAI(forceOrOptions = true) {
       const contextualCached = readerGetCachedContextLexical(word, context, readerCurrentLang());
       if (contextualCached && readerHasRussianMeaning(contextualCached)) {
         readerRenderWordAnalysis(contextualCached, 'context-cache');
+        readerPublishEnglishContextGloss(
+          word,
+          context,
+          contextualCached.ru || contextualCached.translation_ru || contextualCached.russian || contextualCached.meaning_ru || ''
+        );
         if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = '⚡ Контекстный перевод из локального кэша'; }
         return contextualCached;
       }
@@ -4502,6 +4518,7 @@ async function readerTranslateWordAI(forceOrOptions = true) {
       if (hasContext) readerPutCachedContextLexical(word, context, payload, readerCurrentLang());
       readerRenderWordAnalysis(payload, 'deepseek');
     }
+    if (sourceLang === 'en' && hasContext) readerPublishEnglishContextGloss(word, context, payload.ru);
     // Re-render so the freshly learned pinyin/furigana appears over the token.
     if (readerIsCjkLang(readerCurrentLang())) renderReaderChapterInPlace();
     if (st) {

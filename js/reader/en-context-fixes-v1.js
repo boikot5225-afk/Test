@@ -80,6 +80,7 @@ function scan() {
   for (const el of root.querySelectorAll('.reader-word.rw-migaku-unknown[data-word]')) {
     const { wrap, node } = existingGloss(el);
     if (!wrap || !node) continue;
+    if (String(wrap.dataset.enContextProvider || '') === 'deepseek-context') continue;
     const surface = String(el.dataset.word || el.textContent || '').trim();
     const ru = contextualGloss(surface, paragraphContext(el));
     if (!ru || String(node.textContent || '').trim() === ru) continue;

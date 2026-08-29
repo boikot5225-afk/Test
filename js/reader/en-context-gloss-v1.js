@@ -323,6 +323,7 @@ function replaceGloss(el, ru, provider, contextKey = '') {
   if (!translated) return false;
   const { wrap, node } = existingGloss(el);
   if (!wrap || !node) return false;
+  if (String(wrap.dataset.enContextProvider || '') === 'deepseek-context') return false;
   const same = String(node.textContent || '').trim() === translated
     && wrap.dataset.enContextProvider === provider
     && (!contextKey || wrap.dataset.enContextKey === contextKey);
