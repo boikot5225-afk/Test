@@ -10,6 +10,7 @@ import './en-morphology-resolver.js?v=1'; // toc101: safe morphology gaps only; 
 import './en-manual-knowledge-bridge.js?v=2';
 import './en-unknown-gloss-v2.js?v=3';
 import './en-unknown-gloss-full-fallback.js?v=2';
+import './en-context-gloss-v1.js?v=1'; // toc102: refine ambiguous RU glosses from local context; text-only
 import './toc51-stability.js?v=2';
 import './toolbar-scroll.js?v=1';
 import './zh-readable-inline.js?v=6';
