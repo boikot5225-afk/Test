@@ -4,8 +4,10 @@ on:
   push:
     branches:
       - feature/77.42-toc97-context-batch
+      - feature/77.42-toc99-polyphones
     paths:
       - 'functions/zh-context-task.js'
+      - 'functions/zh-polyphones-packed.js'
       - '.github/workflows/deploy-reader-ai-context-batch.yml'
   workflow_dispatch:
 
@@ -50,8 +52,6 @@ jobs:
               raise SystemExit(f'maxTokens anchor count={source.count(token_anchor)}')
           source = source.replace(token_anchor, token_patch, 1)
 
-          # Deploy readerAI only. Strip later TTS/STT exports so this targeted
-          # deploy never asks for unrelated OpenRouter/self-host secrets.
           marker = '// Cloud TTS proxy:'
           marker_at = source.find(marker)
           if marker_at < 0:
@@ -105,20 +105,31 @@ jobs:
           npm --prefix functions ci --ignore-scripts
           node --check functions/index.js
           node --check functions/zh-context-task.js
+          node --check functions/zh-polyphones-packed.js
           node - <<'NODE'
           const assert = require('node:assert/strict');
           const fs = require('node:fs');
           const { buildZhContextBatchPrompt } = require('./functions/zh-context-task');
+          const poly = require('./functions/zh-polyphones-packed');
+
+          assert.equal(poly.count, 792);
+          assert.deepEqual(poly.lookupPolyphone('还').readings, ['hái', 'huán']);
+          assert.deepEqual(poly.lookupPolyphone('行').readings, ['xíng', 'háng']);
+          assert.equal(poly.lookupPolyphone('特警'), null);
+
           const prompt = buildZhContextBatchPrompt({
-            context: '特警队长立刻摇了摇头。',
+            context: '他还没有回来，把书还给我。',
             targets: [
-              { id: 't0', surface: '特警', pinyin: 'tè jǐng', en: 'SWAT; riot police' },
-              { id: 't1', surface: '摇头', pinyin: 'yáo tóu', en: "shake one's head" },
+              { id: 't0', surface: '还', pinyin: 'Huán', en: 'still; return' },
+              { id: 't1', surface: '特警', pinyin: 'tè jǐng', en: 'SWAT; riot police' },
             ],
           });
-          assert.match(prompt, /特警/);
-          assert.match(prompt, /摇头/);
-          assert.match(prompt, /boundary/);
+          assert.match(prompt, /pinyinCandidates/);
+          assert.match(prompt, /hái/);
+          assert.match(prompt, /huán/);
+          assert.match(prompt, /MUST be exactly one/);
+          assert.match(prompt, /1-3 words/);
+
           const source = fs.readFileSync('functions/index.js', 'utf8');
           assert.match(source, /task === 'zh_context_batch'/);
           assert.match(source, /buildZhContextBatchPrompt\(body\)/);
