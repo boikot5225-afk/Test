@@ -24,6 +24,9 @@ def wikdictAssetDir = layout.buildDirectory.dir('generated/wikdictAssets')
 def wikdictCoreFile = layout.buildDirectory.file('generated/wikdictAssets/wikdict/en_ru_core.sqlite3')
 def wikdictCoreJsonFile = layout.buildDirectory.file('generated/wikdictAssets/wikdict/en_ru_core.json')
 def wikdictUrl = 'https://download.wikdict.com/dictionaries/sqlite/2_2026-06/en-ru.sqlite3'
+def migakuZhAssetDir = layout.buildDirectory.dir('generated/migakuZhAssets')
+def migakuZhDataDir = layout.buildDirectory.dir('generated/migakuZhAssets/data')
+def migakuZhCacheDir = layout.buildDirectory.dir('migaku-zh-cache')
 
 android {
     namespace 'space.saintjust.reader.stage1'
@@ -33,8 +36,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 114
-        versionName '77.42-toc94'
+        versionCode 115
+        versionName '77.42-toc95'
     }
 
     buildFeatures {
@@ -76,6 +79,7 @@ android {
             assets.srcDirs += [
                     layout.buildDirectory.dir('generated/webAssets').get().asFile,
                     wikdictAssetDir.get().asFile,
+                    migakuZhAssetDir.get().asFile,
             ]
         }
     }
@@ -166,7 +170,29 @@ tasks.register('prepareEnRuWikDict') {
     }
 }
 
+tasks.register('prepareZhMigakuResources') {
+    inputs.file(new File(repoRoot, 'scripts/build_zh_migaku_resources.py'))
+    outputs.file(layout.buildDirectory.file('generated/migakuZhAssets/data/zh_migaku_dict.json'))
+    outputs.file(layout.buildDirectory.file('generated/migakuZhAssets/data/zh_migaku_profiles.json'))
+    outputs.file(layout.buildDirectory.file('generated/migakuZhAssets/data/zh_migaku_manifest.json'))
+
+    doLast {
+        File outputDir = migakuZhDataDir.get().asFile
+        File cacheDir = migakuZhCacheDir.get().asFile
+        outputDir.mkdirs()
+        cacheDir.mkdirs()
+        logger.lifecycle("Building supplemental Mandarin dictionary and BLCU/SUBTLEX/Jieba profiles…")
+        exec {
+            commandLine 'python3',
+                    new File(repoRoot, 'scripts/build_zh_migaku_resources.py').absolutePath,
+                    '--output-dir', outputDir.absolutePath,
+                    '--cache-dir', cacheDir.absolutePath
+        }
+    }
+}
+
 tasks.named('preBuild') {
     dependsOn 'syncWebAssets'
     dependsOn 'prepareEnRuWikDict'
+    dependsOn 'prepareZhMigakuResources'
 }
