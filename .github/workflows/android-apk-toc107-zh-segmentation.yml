@@ -1,0 +1,193 @@
+name: Android APK toc107 zh segmentation
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc107-zh-segmentation
+    paths:
+      - '.github/workflows/android-apk-toc107-zh-segmentation.yml'
+      - 'scripts/patch-toc107-zh-segmentation.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reader-toc107-zh-segmentation
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc107-zh-segmentation
+          fetch-depth: 0
+
+      - name: Apply Chinese segmentation fix
+        run: python3 scripts/patch-toc107-zh-segmentation.py
+
+      - name: Verify segmentation behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check js/reader-app.js
+          node --check js/app.js
+
+          grep -qF "an2_zh_segment_cache_v5" js/reader-app.js
+          grep -qF "readerEnsureZhCoreJsonLoaded({ rerender: true })" js/reader-app.js
+          grep -qF "return ls > rs + 1.2 ? local : remote;" js/reader-app.js
+          grep -qF "reader:zh-segmentation-ready" js/reader-app.js
+          grep -qF "renderReaderChapterInPlace();" js/reader-app.js
+          grep -qF "reader-app.js?v=77.36-zh-segmentation" js/app.js
+          grep -qF "v77.42-toc107-zh-segmentation" index.html
+          grep -qF "js/app.js?v=77.35-zh-segmentation" index.html
+
+          # Preserve the two fixes immediately before toc107.
+          grep -qF "state.manualKnowledge = 'known'" js/reader/word-state.js
+          grep -qF "deepseek-context" js/reader/en-unknown-gloss-v2.js
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('data/zh_dict_core.json').read_text(encoding='utf-8'))['map']
+          required = ['国家','中央军委','副主席','职务','军委','委员','终止','全国人大','代表','资格','此前','涉嫌','严重','违纪','违法','因此','机构','层面','正式','清除']
+          missing = [w for w in required if w not in data]
+          assert not missing, f'core lexicon missing screenshot words: {missing}'
+
+          def hanlen(w): return len(w)
+          def score(words):
+              total = 0.0
+              for w in words:
+                  if not any('\u3400' <= ch <= '\u9fff' for ch in w):
+                      continue
+                  n = hanlen(w)
+                  if n >= 4: total += n * 3.2
+                  elif n >= 2: total += n * 2.2
+                  else: total -= 0.55
+                  if w in data: total += 2.5
+              return total - len(words) * 0.06
+
+          # With toc107's selector the remote proper-name token wins unless the
+          # local segmentation is more than 1.2 points better.
+          for name in ['张又侠','刘振立']:
+              remote = [name]
+              local = list(name)
+              rs, ls = score(remote), score(local)
+              chosen = local if ls > rs + 1.2 else remote
+              assert chosen == remote, (name, rs, ls)
+          print('toc107 screenshot segmentation regression: OK')
+          PY
+
+      - name: Commit toc107 source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add js/reader-app.js js/app.js index.html
+          if git diff --cached --quiet; then
+            echo 'No source changes to commit'
+          else
+            git commit -m 'fix(reader): stabilize Chinese segmentation after lexicon load'
+            git fetch origin feature/77.42-toc107-zh-segmentation
+            git rebase origin/feature/77.42-toc107-zh-segmentation
+            git push origin HEAD:feature/77.42-toc107-zh-segmentation
+          fi
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            echo '::warning::No shared signing key; install-over may fail.'
+            exit 0
+          fi
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Validate Instant Translate remains absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateActivity.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateBridge.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateCaptureService.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateChatAccessibilityService.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateChatBridge.java
+          if grep -Eq 'InstantTranslate|screen.textcopy|BIND_ACCESSIBILITY_SERVICE' android/app/src/main/AndroidManifest.xml; then
+            echo 'Manifest contains Instant Translate remnants' >&2
+            exit 1
+          fi
+
+      - name: Wire maintained native translation bridges
+        run: python3 scripts/wire-toc104-native-bridges.py
+
+      - name: Prepare toc107 build identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle')
+          s=p.read_text()
+          assert s.count('versionCode 118') == 1
+          assert s.count("versionName '77.42-toc98'") == 1
+          s=s.replace('versionCode 118','versionCode 127',1)
+          s=s.replace("versionName '77.42-toc98'","versionName '77.42-toc107'",1)
+          p.write_text(s)
+          PY
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify toc107 APK and package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "an2_zh_segment_cache_v5"
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "readerEnsureZhCoreJsonLoaded({ rerender: true })"
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "return ls > rs + 1.2 ? local : remote;"
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "reader:zh-segmentation-ready"
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "renderReaderChapterInPlace();"
+          unzip -p "$APK" assets/www/js/reader/word-state.js | grep -qF "state.manualKnowledge = 'known'"
+          unzip -p "$APK" assets/www/js/reader/en-unknown-gloss-v2.js | grep -qF "deepseek-context"
+          unzip -p "$APK" assets/www/js/app.js | grep -qF "reader-app.js?v=77.36-zh-segmentation"
+          unzip -p "$APK" assets/www/index.html | grep -qF "js/app.js?v=77.35-zh-segmentation"
+          if unzip -l "$APK" | grep -Eqi 'reader-instant|instant_translate|InstantTranslate'; then
+            echo 'Instant Translate file survived into APK' >&2
+            exit 1
+          fi
+          mkdir -p unique-out
+          cp "$APK" unique-out/Reader-AI-77.42-toc107-build127.apk
+          sha256sum unique-out/Reader-AI-77.42-toc107-build127.apk | tee unique-out/SHA256.txt
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc107-build127
+          path: |
+            unique-out/Reader-AI-77.42-toc107-build127.apk
+            unique-out/SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
