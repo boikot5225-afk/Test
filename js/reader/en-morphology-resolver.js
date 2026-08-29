@@ -3,8 +3,8 @@
 // The bundled Migaku lemma table stays authoritative. This layer only fills
 // gaps when a surface form has exactly one plausible base lemma that already
 // exists in Reader's 36,566-word English frequency list. It never owns layout.
-// The rules were checked against Migaku's en.sqlite morphology database; the
-// 57 MB source database is intentionally not shipped in the APK.
+// The rules and irregulars were checked against Migaku's en.sqlite morphology
+// database; the 57 MB source database is intentionally not shipped in the APK.
 
 const VERSION = 1;
 let timer = null;
@@ -12,40 +12,24 @@ let observer = null;
 let observedRoot = null;
 let running = false;
 
+// Only forms for which en.sqlite contains ONE lexical term. Ambiguous forms
+// (saw, left, written, thought, better, feet, etc.) are intentionally absent.
 const SAFE_IRREGULAR = Object.freeze({
   outgrown:'outgrow', outgrew:'outgrow',
   rewritten:'rewrite', overwrote:'overwrite', overwritten:'overwrite',
   underwrote:'underwrite', underwritten:'underwrite',
-  misunderstood:'misunderstand',
-  withstood:'withstand', withdrawn:'withdraw', withdrew:'withdraw',
-  sought:'seek', brought:'bring', bought:'buy', caught:'catch',
-  taught:'teach', thought:'think', fought:'fight',
-  slept:'sleep', wept:'weep', swept:'sweep', kept:'keep',
-  knelt:'kneel', leant:'lean', learnt:'learn', spelt:'spell',
-  smelt:'smell', dreamt:'dream', dealt:'deal', meant:'mean',
-  paid:'pay', laid:'lay', fled:'flee', fed:'feed', led:'lead',
-  dug:'dig', hung:'hang', stuck:'stick', struck:'strike',
-  spun:'spin', stung:'sting', swung:'swing', wrung:'wring',
-  arose:'arise', arisen:'arise', awoke:'awake', awoken:'awake',
-  bore:'bear', borne:'bear', born:'bear',
-  chose:'choose', chosen:'choose', froze:'freeze', frozen:'freeze',
-  hid:'hide', hidden:'hide', rode:'ride', ridden:'ride',
-  shook:'shake', shaken:'shake', spoke:'speak', spoken:'speak',
-  stole:'steal', stolen:'steal', tore:'tear', torn:'tear',
-  wore:'wear', worn:'wear', wrote:'write', written:'write',
-  bit:'bite', bitten:'bite', broke:'break', broken:'break',
-  drove:'drive', driven:'drive', ate:'eat', eaten:'eat',
-  fell:'fall', fallen:'fall', gave:'give', given:'give',
-  grew:'grow', grown:'grow', knew:'know', known:'know',
-  saw:'see', seen:'see', took:'take', taken:'take',
-  threw:'throw', thrown:'throw', forgot:'forget', forgotten:'forget',
-  began:'begin', begun:'begin', drank:'drink', drunk:'drink',
-  rang:'ring', rung:'ring', sang:'sing', sung:'sing',
-  sank:'sink', sunk:'sink', swam:'swim', swum:'swim',
-  blew:'blow', blown:'blow', flew:'fly', flown:'fly',
-  drew:'draw', drawn:'draw',
-  children:'child', women:'woman', men:'man', mice:'mouse', geese:'goose',
-  oxen:'ox', teeth:'tooth'
+  withstood:'withstand', withdrew:'withdraw',
+  brought:'bring', bought:'buy', taught:'teach',
+  slept:'sleep', wept:'weep', kept:'keep',
+  knelt:'kneel', leant:'lean', learnt:'learn',
+  dealt:'deal', meant:'mean', fled:'flee',
+  struck:'strike', spun:'spin', stung:'sting', swung:'swing', wrung:'wring',
+  arose:'arise', arisen:'arise', awoke:'awake', froze:'freeze', hid:'hide',
+  wore:'wear', wrote:'write', bitten:'bite', gave:'give', knew:'know',
+  took:'take', threw:'throw', forgot:'forget', began:'begin', begun:'begin',
+  rang:'ring', sung:'sing', sank:'sink', sunk:'sink', swam:'swim', swum:'swim',
+  blew:'blow', drew:'draw',
+  children:'child', women:'woman', men:'man', geese:'goose'
 });
 
 // Contractions whose lexical head is unambiguous. Ambiguous forms such as
@@ -148,8 +132,8 @@ function rankedLemma(data, surface) {
     const hit = data.rankFold.get(candidate);
     if (hit?.word) hits.set(normalize(hit.word), hit.word);
   }
-  // This is the safety gate: if suffix stripping points to two real Reader
-  // lemmas, do not choose. The existing curated table / dictionary keeps control.
+  // Safety gate: if suffix stripping points to two real Reader lemmas, do not
+  // choose. The existing curated table / dictionary keeps control.
   return hits.size === 1 ? [...hits.values()][0] : '';
 }
 
