@@ -75,13 +75,13 @@ jobs:
           grep -qF "zhGlossStickyRu" js/reader/zh-context-batch.js
           grep -qF "zhGlossStickyPinyin" js/reader/zh-context-batch.js
           grep -qF "getBoundingClientRect" js/reader/zh-context-batch.js
-          # Context layer may fill existing text slots, but must not own token
-          # DOM, re-render the chapter, or navigate the reader.
-          if grep -Eq 'innerHTML[[:space:]]*=|replaceChildren\(|createElement\(|renderReaderChapter|readerNextParagraph|readerPrevParagraph|readerSelectParagraph' js/reader/zh-context-batch.js; then
+          # Context layer may create its one <style> node and fill textContent in
+          # already-existing toc94 lanes, but it must never create/move token DOM,
+          # replace children, re-render the chapter, or navigate the reader.
+          if grep -Eq 'innerHTML[[:space:]]*=|replaceChildren\(|createElement\(["'"''](?:span|ruby|rt|div)["'"'']\)|renderReaderChapter|readerNextParagraph|readerPrevParagraph|readerSelectParagraph' js/reader/zh-context-batch.js; then
             echo "toc98 context layer crossed the toc94 layout/navigation boundary" >&2
             exit 1
           fi
-          # The old active-only implementation must be gone.
           if grep -qF "function activeParagraph()" js/reader/zh-context-batch.js; then
             echo "toc98 is still active-paragraph-only" >&2
             exit 1
