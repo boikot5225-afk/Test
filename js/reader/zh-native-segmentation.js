@@ -3,7 +3,7 @@
 // so token boundaries do not jump after reading has started.
 
 const CACHE_KEY = 'an2_zh_native_segment_v1';
-const CACHE_MAX = 500;
+const CACHE_MAX = 1400;
 const pending = new Map();
 let seq = 0;
 let cache = null;
@@ -100,8 +100,97 @@ function prefetch(texts) {
   }
 }
 
+const MANY_BATCH_TEXTS = 32;
+const MANY_BATCH_CHARS = 8000;
+
+function paragraphBatchSeparator(texts) {
+  let separator = '\uE000';
+  while (texts.some(text => String(text || '').includes(separator))) separator += '\uE001';
+  return separator;
+}
+
+async function ensureBatch(texts) {
+  const batch = texts.filter(Boolean);
+  if (!batch.length) return true;
+  if (batch.length === 1) return !!(await ensure(batch[0]));
+
+  const separator = paragraphBatchSeparator(batch);
+  const joined = batch.join(separator);
+  const joinedTokens = await ensure(joined);
+  if (!validTokens(joined, joinedTokens)) return false;
+
+  // Convert the joined token stream into absolute end offsets. Paragraph
+  // boundaries are then forced explicitly, so even a punctuation token that
+  // spans the private-use separator cannot leak into its neighbour.
+  const tokenEnds = [];
+  let offset = 0;
+  for (const token of joinedTokens) {
+    offset += token.length;
+    tokenEnds.push(offset);
+  }
+
+  const c = loadCache();
+  delete c[cacheKey(joined)]; // do not keep a duplicate chapter-sized cache row
+  let rangeStart = 0;
+  let endIndex = 0;
+  for (const text of batch) {
+    const rangeEnd = rangeStart + text.length;
+    while (endIndex < tokenEnds.length && tokenEnds[endIndex] <= rangeStart) endIndex += 1;
+    const parts = [];
+    let partStart = rangeStart;
+    let scan = endIndex;
+    while (scan < tokenEnds.length && tokenEnds[scan] < rangeEnd) {
+      const partEnd = tokenEnds[scan];
+      if (partEnd > partStart) parts.push(joined.slice(partStart, partEnd));
+      partStart = partEnd;
+      scan += 1;
+    }
+    if (rangeEnd > partStart) parts.push(joined.slice(partStart, rangeEnd));
+    if (validTokens(text, parts)) {
+      c[cacheKey(text)] = { tokens: parts, t: Date.now(), provider: 'native-sqlite-dp-page-v2' };
+    }
+    rangeStart = rangeEnd + separator.length;
+    endIndex = scan;
+  }
+  saveCache();
+  return batch.every(text => !!getSync(text));
+}
+
+async function ensureMany(texts) {
+  const unique = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(texts) ? texts : []) {
+    const text = String(raw || '');
+    if (!text || !/[\u3400-\u9fff]/.test(text) || seen.has(text) || getSync(text)) continue;
+    seen.add(text);
+    unique.push(text);
+  }
+  if (!unique.length) return true;
+
+  const batches = [];
+  let current = [];
+  let chars = 0;
+  for (const text of unique) {
+    if (current.length && (current.length >= MANY_BATCH_TEXTS || chars + text.length > MANY_BATCH_CHARS)) {
+      batches.push(current);
+      current = [];
+      chars = 0;
+    }
+    current.push(text);
+    chars += text.length;
+  }
+  if (current.length) batches.push(current);
+
+  for (const batch of batches) {
+    const ok = await ensureBatch(batch);
+    if (!ok) return false;
+  }
+  return unique.every(text => !!getSync(text));
+}
+
 globalThis.readerNativeChineseSegmentationSync = getSync;
 globalThis.readerEnsureNativeChineseSegmentation = ensure;
+globalThis.readerEnsureNativeChineseSegmentations = ensureMany;
 globalThis.readerPrefetchNativeChineseSegmentation = prefetch;
 globalThis.readerNativeChineseSegmentationStats = () => ({
   cached: Object.keys(loadCache()).length,
@@ -109,4 +198,4 @@ globalThis.readerNativeChineseSegmentationStats = () => ({
   nativeAvailable: !!bridge(),
 });
 
-export { getSync, ensure, prefetch };
+export { getSync, ensure, ensureMany, prefetch };

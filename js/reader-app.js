@@ -20,7 +20,7 @@ import { audioStorePut, audioStoreGet, audioStoreDelete } from './reader/audio-s
 import { libraryIdbPut, libraryIdbGet } from './reader/library-idb-store.js?v=1';
 import { wordStateIdbPut, wordStateIdbGet } from './reader/word-state-idb-store.js?v=1';
 import { lexicalCacheIdbPut, lexicalCacheIdbGet } from './reader/lexical-cache-idb-store.js?v=1';
-import './reader/zh-native-segmentation.js?v=1';
+import './reader/zh-native-segmentation.js?v=2-page';
 import { createReaderWordPanel } from './reader/word-panel.js?v=5';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=2-deepseek-fallback';
 import { createReaderWordState } from './reader/word-state.js?v=5-manual-known';
@@ -3207,8 +3207,10 @@ function readerZhActiveParagraphInfo() {
   const paragraphs = chapter?.paragraphs || [];
   const paragraphIndex = Math.max(0, Math.min(book.currentParagraph || 0, Math.max(0, paragraphs.length - 1)));
   const paragraph = paragraphs[paragraphIndex];
-  if (typeof paragraph !== 'string' || !/[\u3400-\u9fff]/.test(paragraph)) return null;
-  return { book, chapterIndex, paragraphIndex, paragraphs, text: paragraph };
+  const activeText = typeof paragraph === 'string' && /[\u3400-\u9fff]/.test(paragraph) ? paragraph : '';
+  const chineseTexts = paragraphs.filter(value => typeof value === 'string' && /[\u3400-\u9fff]/.test(value));
+  if (!chineseTexts.length) return null;
+  return { book, chapterIndex, paragraphIndex, paragraphs, text: activeText || chineseTexts[0], activeText, chineseTexts };
 }
 
 function readerPrefetchZhSegmentationNeighbors(info) {
@@ -3224,28 +3226,43 @@ function readerPrefetchZhSegmentationNeighbors(info) {
 function renderReaderChapter() {
   const info = readerZhActiveParagraphInfo();
   const ensureNative = globalThis.readerEnsureNativeChineseSegmentation;
+  const ensureNativeMany = globalThis.readerEnsureNativeChineseSegmentations;
+  const getNativeSync = globalThis.readerNativeChineseSegmentationSync;
   const nativeAvailable = !!globalThis.ReaderChineseResources?.segmentText;
+  const pagesActive = readerPagesMode.isEnabled?.() === true;
   if (info && nativeAvailable && typeof ensureNative === 'function') {
-    const cached = globalThis.readerNativeChineseSegmentationSync?.(info.text);
-    if (!cached) {
+    // Page mode renders the entire chapter before it measures pages. Every
+    // Chinese string paragraph therefore has to be native-tokenized before
+    // that single paint. Scroll mode keeps the cheaper active-paragraph gate.
+    const requiredTexts = pagesActive ? info.chineseTexts : (info.activeText ? [info.activeText] : []);
+    const missing = requiredTexts.filter(text => !getNativeSync?.(text));
+    if (requiredTexts.length && missing.length) {
       const gate = ++_readerNativeZhRenderGate;
       const chapterText = document.getElementById('reader-chapter-text');
       const renderedChapter = Number(chapterText?.dataset?.renderedChapter ?? -1);
-      if (chapterText && renderedChapter !== info.chapterIndex) {
-        chapterText.innerHTML = '<div class="reader-zh-seg-wait">Подготавливаю китайские слова…</div>';
+      if (chapterText && (pagesActive || renderedChapter !== info.chapterIndex)) {
+        chapterText.innerHTML = `<div class="reader-zh-seg-wait">${pagesActive ? 'Подготавливаю китайские слова для страницы…' : 'Подготавливаю китайские слова…'}</div>`;
       }
-      ensureNative(info.text).then(() => {
+      const prepare = pagesActive && typeof ensureNativeMany === 'function'
+        ? ensureNativeMany(requiredTexts)
+        : ensureNative(requiredTexts[0]);
+      Promise.resolve(prepare).then(() => {
         if (gate !== _readerNativeZhRenderGate) return;
+        const stillMissing = requiredTexts.filter(text => !getNativeSync?.(text));
+        if (stillMissing.length) {
+          console.warn('[reader zh segmentation] native preparation incomplete; using fallback for', stillMissing.length, 'paragraphs');
+        }
         readerChapterRenderer.render();
-        readerPrefetchZhSegmentationNeighbors(info);
+        if (!pagesActive) readerPrefetchZhSegmentationNeighbors(info);
         requestAnimationFrame(() => { try { readerScrollActiveParagraph(); } catch {} });
-      }).catch(() => {
+      }).catch((error) => {
         if (gate !== _readerNativeZhRenderGate) return;
+        console.warn('[reader zh segmentation] preparation failed', error);
         readerChapterRenderer.render();
       });
       return;
     }
-    readerPrefetchZhSegmentationNeighbors(info);
+    if (!pagesActive && info.activeText) readerPrefetchZhSegmentationNeighbors(info);
   }
   _readerNativeZhRenderGate += 1;
   return readerChapterRenderer.render();

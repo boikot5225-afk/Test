@@ -34,6 +34,7 @@ public final class ChineseResourceBridge {
     private static final String LOCAL_NAME = "reader-zh-migaku-v1.sqlite3";
     private static final int MAX_BATCH = 80;
     private static final int SEGMENT_MAX_WORD = 8;
+    private static final int SEGMENT_PREFETCH_CHUNK = 700;
     private static final double SEGMENT_INF = 1.0e12;
     private static final String COMMON_SURNAMES =
             "赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳鲍史唐费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟平黄和穆萧尹姚邵湛汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯昝管卢莫经房裘缪干解应宗丁宣邓郁单杭洪包诸左石崔吉龚程嵇邢裴陆荣翁荀羊甄曲封芮储靳汲邴糜松井段富巫乌焦巴弓牧隗山谷车侯宓蓬全郗班仰秋仲伊宫宁仇栾暴甘钭厉戎祖武符刘景詹束龙叶幸司韶郜黎蓟薄印宿白怀蒲邰从鄂索咸籍赖卓蔺屠蒙池乔阴胥能苍双闻莘党翟谭贡劳逄姬申扶堵冉宰郦雍郤璩桑桂濮牛寿通边扈燕冀郏浦尚农温别庄晏柴瞿阎充慕连茹习宦艾鱼容向古易慎戈廖庾终暨居衡步都耿满弘匡国文寇广禄阙东欧殳沃利蔚越夔隆师巩厍聂晁勾敖融冷訾辛阚那简饶空曾毋沙乜养鞠须丰巢关蒯相查后荆红游竺权逯盖益桓公";
@@ -135,6 +136,7 @@ public final class ChineseResourceBridge {
     }
 
     private List<String> segmentHanRun(SQLiteDatabase db, String run) {
+        primeSegmentationScores(db, run);
         int n = run.length();
         double[] best = new double[n + 1];
         int[] next = new int[n + 1];
@@ -177,6 +179,72 @@ public final class ChineseResourceBridge {
             i = j;
         }
         return out;
+    }
+
+    private void primeSegmentationScores(SQLiteDatabase db, String run) {
+        if (run == null || run.isEmpty()) return;
+        LinkedHashSet<String> missing = new LinkedHashSet<>();
+        int n = run.length();
+        for (int i = 0; i < n; i++) {
+            int max = Math.min(SEGMENT_MAX_WORD, n - i);
+            for (int len = 1; len <= max; len++) {
+                String word = run.substring(i, i + len);
+                if (!segmentationScoreCache.containsKey(word)) missing.add(word);
+            }
+        }
+        if (missing.isEmpty()) return;
+
+        List<String> words = new ArrayList<>(missing);
+        for (int start = 0; start < words.size(); start += SEGMENT_PREFETCH_CHUNK) {
+            int end = Math.min(words.size(), start + SEGMENT_PREFETCH_CHUNK);
+            StringBuilder placeholders = new StringBuilder();
+            String[] args = new String[end - start];
+            LinkedHashSet<String> unresolved = new LinkedHashSet<>();
+            for (int i = start; i < end; i++) {
+                if (i > start) placeholders.append(',');
+                placeholders.append('?');
+                String word = words.get(i);
+                args[i - start] = word;
+                unresolved.add(word);
+            }
+
+            Cursor cursor = null;
+            try {
+                cursor = db.rawQuery(
+                        "SELECT word,blcu,subtlex,jieba FROM entries WHERE word IN (" + placeholders + ")",
+                        args);
+                while (cursor.moveToNext()) {
+                    String word = cursor.getString(0);
+                    long rank = Long.MAX_VALUE;
+                    int coverage = 0;
+                    for (int index = 1; index <= 3; index++) {
+                        if (!cursor.isNull(index)) {
+                            long value = cursor.getLong(index);
+                            if (value > 0) {
+                                coverage += 1;
+                                if (value < rank) rank = value;
+                            }
+                        }
+                    }
+                    double cost = SEGMENT_INF;
+                    if (rank != Long.MAX_VALUE) {
+                        cost = Math.log(rank + 1.0);
+                        if (coverage == 1) cost += 0.75;
+                        if (rank > 50_000L) cost += 3.0;
+                        if (rank > 150_000L) cost += 3.0;
+                    }
+                    segmentationScoreCache.put(word, cost);
+                    unresolved.remove(word);
+                }
+            } catch (Exception ignored) {
+                // Point-query fallback remains available in dictionarySegmentCost.
+            } finally {
+                if (cursor != null) cursor.close();
+            }
+            for (String word : unresolved) {
+                segmentationScoreCache.putIfAbsent(word, SEGMENT_INF);
+            }
+        }
     }
 
     private double dictionarySegmentCost(SQLiteDatabase db, String word) {
