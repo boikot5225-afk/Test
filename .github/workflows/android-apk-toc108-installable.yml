@@ -1,4 +1,4 @@
-name: Android APK high-version install diagnostic
+name: Android APK toc112 Chinese context inline
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reader-high-version-install-diagnostic
+  group: reader-toc112-zh-context-inline
   cancel-in-progress: false
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Restore signing key exactly like toc106
+      - name: Restore signing key exactly like installed vc1000 build
         shell: bash
         run: |
           set -euo pipefail
@@ -46,19 +46,41 @@ jobs:
           printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
           echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
 
-      - name: Validate toc107 segmentation source
+      - name: Validate toc107 base
         shell: bash
         run: |
           set -euo pipefail
           grep -qF "an2_zh_segment_cache_v5" js/reader-app.js
           grep -qF "return ls > rs + 1.2 ? local : remote;" js/reader-app.js
           grep -qF "manualKnowledge = 'known'" js/reader/word-state.js
-          grep -Eq "reader-app.js\?v=77\.36-(native-)?zh-seg" js/app.js
+          grep -qF "reader-app.js?v=77.36-zh-segmentation" js/app.js
 
       - name: Wire maintained native translation bridges
         run: python3 scripts/wire-toc104-native-bridges.py
 
-      - name: Set deliberately high versionCode
+      - name: Apply toc112 Chinese context-to-inline fix
+        run: python3 scripts/patch-toc112-zh-context-inline.py
+
+      - name: Validate toc112 source invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qF "reader:zh-context-gloss" js/reader-app.js
+          grep -qF "readerGetCachedChineseContextRuForInline" js/reader-app.js
+          grep -qF "manualKnowledge = 'unknown'" js/reader-app.js
+          grep -qF "zhGlossContextRu" js/reader/zh-readable-inline.js
+          grep -qF "applyPanelContextGloss" js/reader/zh-readable-inline.js
+          grep -qF "hasContextOverride" js/reader/zh-direct-ru-fallback.js
+          grep -qF "zh-readable-inline.js?v=7-context-card" js/reader/interactions-runtime.js
+          grep -qF "zh-direct-ru-fallback.js?v=2-context-priority" js/reader/interactions-runtime.js
+          grep -qF "reader-app.js?v=77.37-zh-context-inline" js/app.js
+          grep -qF "v77.42-toc112-zh-context-inline" index.html
+          grep -qF "js/app.js?v=77.36-zh-context-inline" index.html
+          node --check js/reader/zh-readable-inline.js
+          node --check js/reader/zh-direct-ru-fallback.js
+          node --check js/reader-app.js
+
+      - name: Set toc112 version identity
         shell: bash
         run: |
           set -euo pipefail
@@ -68,8 +90,8 @@ jobs:
           s = p.read_text()
           assert s.count('versionCode 118') == 1
           assert s.count("versionName '77.42-toc98'") == 1
-          s = s.replace('versionCode 118', 'versionCode 1000', 1)
-          s = s.replace("versionName '77.42-toc98'", "versionName '77.42-toc111-install-diagnostic'", 1)
+          s = s.replace('versionCode 118', 'versionCode 1001', 1)
+          s = s.replace("versionName '77.42-toc98'", "versionName '77.42-toc112-zh-context-inline'", 1)
           p.write_text(s)
           PY
 
@@ -77,7 +99,7 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Validate without modifying APK
+      - name: Validate exact APK without modifying it
         shell: bash
         run: |
           set -euo pipefail
@@ -93,19 +115,21 @@ jobs:
           "${BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$APK" > unique-out/ZIPALIGN.txt
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
           grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
-          grep -q "package: name='space.saintjust.reader.semanticstage1clean.formatfix.debug' versionCode='1000'" unique-out/BADGING.txt
+          grep -q "package: name='space.saintjust.reader.semanticstage1clean.formatfix.debug' versionCode='1001'" unique-out/BADGING.txt
           grep -q "sdkVersion:'24'" unique-out/BADGING.txt
           unzip -t "$APK" >/dev/null
-          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "an2_zh_segment_cache_v5"
-          cp "$APK" unique-out/Reader-AI-77.42-toc111-install-diagnostic-vc1000.apk
-          sha256sum unique-out/Reader-AI-77.42-toc111-install-diagnostic-vc1000.apk | tee unique-out/SHA256.txt
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "reader:zh-context-gloss"
+          unzip -p "$APK" assets/www/js/reader/zh-readable-inline.js | grep -qF "zhGlossContextRu"
+          unzip -p "$APK" assets/www/js/reader/zh-direct-ru-fallback.js | grep -qF "hasContextOverride"
+          cp "$APK" unique-out/Reader-AI-77.42-toc112-zh-context-inline-vc1001.apk
+          sha256sum unique-out/Reader-AI-77.42-toc112-zh-context-inline-vc1001.apk | tee unique-out/SHA256.txt
 
       - name: Upload exact Gradle APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-77.42-toc111-install-diagnostic-vc1000
+          name: Reader-AI-77.42-toc112-zh-context-inline-vc1001
           path: |
-            unique-out/Reader-AI-77.42-toc111-install-diagnostic-vc1000.apk
+            unique-out/Reader-AI-77.42-toc112-zh-context-inline-vc1001.apk
             unique-out/SHA256.txt
             unique-out/APKSIGNER.txt
             unique-out/BADGING.txt
