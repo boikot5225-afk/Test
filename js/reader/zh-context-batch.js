@@ -1,13 +1,17 @@
-// toc98: contextual Chinese Unknown glosses for every paragraph visible on screen.
+// toc100: contextual Chinese Unknown glosses for every paragraph visible on screen.
 //
 // toc94 still owns layout, pagination and Known/Unknown. This layer only writes
-// Russian + contextual pinyin into the existing Unknown gloss slots. Visible
-// paragraphs are processed sequentially (active first), so a page fills in
-// without firing several DeepSeek calls at once or repaginating anything.
+// Russian + contextual pinyin into the existing Unknown gloss slots. A result
+// is considered complete only when it contains a usable Russian gloss. Missing
+// or filtered glosses are retried in small batches instead of being cached as
+// finished pinyin-only entries.
 
-const CACHE_BASE_KEY = 'an2_reader_zh_context_gloss_v2';
-const STYLE_ID = 'reader-zh-context-batch-style-v2';
+const CACHE_BASE_KEY = 'an2_reader_zh_context_gloss_v3';
+const STYLE_ID = 'reader-zh-context-batch-style-v3';
 const MAX_TARGETS = 18;
+const RETRY_BATCH_TARGETS = 6;
+const MAX_RETRY_ATTEMPTS = 4;
+const RETRY_RESET_MS = 5_000;
 const MAX_VISIBLE_PARAGRAPHS = 5;
 const SCAN_DELAY_MS = 80;
 const RESOURCE_SETTLE_MS = 110;
@@ -15,16 +19,18 @@ const RETRY_MS = 20_000;
 const CALL_TIMEOUT_MS = 65_000;
 const CACHE_LIMIT = 2200;
 
-const state = globalThis.__readerZhContextBatchV2 || {
+const state = globalThis.__readerZhContextBatchV3 || {
   cache: null,
   inFlight: new Set(),
+  attempts: new Map(),
+  retryResetTimers: new Map(),
   timer: 0,
   observer: null,
   observedRoot: null,
   blockedUntil: 0,
   running: false,
 };
-globalThis.__readerZhContextBatchV2 = state;
+globalThis.__readerZhContextBatchV3 = state;
 
 function clean(value, max = 1000) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -52,13 +58,35 @@ function hashText(value) {
   return (h >>> 0).toString(36);
 }
 
+function compactRu(value) {
+  const text = clean(value, 56)
+    .replace(/^["'«»“”„]+|["'«»“”„]+$/g, '')
+    .replace(/[;,.!?。！？]+$/g, '')
+    .trim();
+  if (!/[\u0400-\u052f]/.test(text)) return '';
+  const words = text.split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 4) return '';
+  return text;
+}
+
+function compactPinyin(value) {
+  const text = clean(value, 72);
+  if (!text || /[\u0400-\u052f\u4e00-\u9fff]/.test(text)) return '';
+  return text;
+}
+
+function completeCachedResult(value) {
+  return !!compactRu(value?.ru);
+}
+
 function loadCache() {
   if (state.cache instanceof Map) return state.cache;
   const map = new Map();
   try {
     const raw = JSON.parse(localStorage.getItem(cacheStorageKey()) || '{}');
     for (const [key, value] of Object.entries(raw || {})) {
-      if (key && value && typeof value === 'object') map.set(key, value);
+      // toc100 never resurrects a pinyin-only/invalid result as "done".
+      if (key && value && typeof value === 'object' && completeCachedResult(value)) map.set(key, value);
     }
   } catch {}
   state.cache = map;
@@ -69,6 +97,7 @@ function saveCache() {
   const cache = loadCache();
   if (cache.size > CACHE_LIMIT) {
     const ordered = Array.from(cache.entries())
+      .filter(([, value]) => completeCachedResult(value))
       .sort((a, b) => Number(b[1]?.ts || 0) - Number(a[1]?.ts || 0))
       .slice(0, CACHE_LIMIT);
     cache.clear();
@@ -154,23 +183,6 @@ function unknownOccurrences(paragraph, context) {
   return out;
 }
 
-function compactRu(value) {
-  const text = clean(value, 42)
-    .replace(/^["'«»“”„]+|["'«»“”„]+$/g, '')
-    .replace(/[;,.!?。！？]+$/g, '')
-    .trim();
-  if (!/[\u0400-\u052f]/.test(text)) return '';
-  const words = text.split(/\s+/).filter(Boolean);
-  if (!words.length || words.length > 3) return '';
-  return text;
-}
-
-function compactPinyin(value) {
-  const text = clean(value, 72);
-  if (!text || /[\u0400-\u052f\u4e00-\u9fff]/.test(text)) return '';
-  return text;
-}
-
 function directPaint(wrap, pinyin, ru) {
   if (!wrap?.isConnected) return;
   const lane = wrap.querySelector(':scope > .rw-zh-readable-ru');
@@ -212,9 +224,6 @@ function applyResult(occurrence, result, { cached = false } = {}) {
   }
   if (pinyin && confidence >= 0.72) wrap.dataset.zhGlossStickyPinyin = pinyin;
 
-  // toc94's old compact filter allows only very short hints. Paint the exact
-  // contextual result into its existing lane too, so a legitimate 3-word
-  // gloss is not silently discarded. No elements are created or moved here.
   directPaint(wrap, pinyin && confidence >= 0.72 ? pinyin : '', ru);
 }
 
@@ -254,24 +263,67 @@ async function callBatch(context, occurrences) {
   return Array.isArray(payload?.items) ? payload.items : [];
 }
 
+function attemptCount(cacheKey) {
+  return Math.max(0, Number(state.attempts.get(cacheKey) || 0));
+}
+
+function hasCompleteCache(cacheKey) {
+  const value = loadCache().get(cacheKey);
+  return !!value && completeCachedResult(value);
+}
+
+function resetRetryLater(cacheKey) {
+  if (state.retryResetTimers.has(cacheKey)) return;
+  const timer = setTimeout(() => {
+    state.retryResetTimers.delete(cacheKey);
+    state.attempts.delete(cacheKey);
+    schedule(20);
+  }, RETRY_RESET_MS);
+  state.retryResetTimers.set(cacheKey, timer);
+}
+
+function noteIncomplete(cacheKey) {
+  const next = attemptCount(cacheKey) + 1;
+  state.attempts.set(cacheKey, next);
+  if (next >= MAX_RETRY_ATTEMPTS) resetRetryLater(cacheKey);
+  return next;
+}
+
 function applyCachedForParagraph(paragraph, context) {
   const cache = loadCache();
   const all = unknownOccurrences(paragraph, context);
   let changed = false;
+  let removedIncomplete = false;
   for (const occurrence of all) {
     const cached = cache.get(occurrence.cacheKey);
     if (!cached) continue;
+    if (!completeCachedResult(cached)) {
+      cache.delete(occurrence.cacheKey);
+      removedIncomplete = true;
+      continue;
+    }
     applyResult(occurrence, cached, { cached: true });
     changed = true;
   }
+  if (removedIncomplete) saveCache();
   return { all, changed };
 }
 
-async function fillOneParagraph(paragraph, context, all) {
+function requestCandidates(all, mode) {
+  const eligible = all.filter(item => {
+    if (hasCompleteCache(item.cacheKey) || state.inFlight.has(item.cacheKey)) return false;
+    const attempts = attemptCount(item.cacheKey);
+    if (attempts >= MAX_RETRY_ATTEMPTS) return false;
+    if (mode === 'fresh') return attempts === 0;
+    if (mode === 'retry') return attempts > 0;
+    return true;
+  });
+  return eligible.slice(0, mode === 'retry' ? RETRY_BATCH_TARGETS : MAX_TARGETS);
+}
+
+async function fillOneParagraph(paragraph, context, all, mode = 'fresh') {
   const cache = loadCache();
-  const batch = all
-    .filter(item => !cache.has(item.cacheKey) && !state.inFlight.has(item.cacheKey))
-    .slice(0, MAX_TARGETS);
+  const batch = requestCandidates(all, mode);
   if (!batch.length) return false;
 
   batch.forEach(item => {
@@ -285,14 +337,17 @@ async function fillOneParagraph(paragraph, context, all) {
     const items = await callBatch(context, batch);
     const byId = new Map(items.map(item => [clean(item?.id, 40), item]));
     let changed = false;
+    let cacheChanged = false;
 
     for (const occurrence of batch) {
       state.inFlight.delete(occurrence.cacheKey);
       const result = byId.get(occurrence.id) || null;
       if (!result) {
         delete occurrence.wrap?.dataset?.zhContextPending;
+        noteIncomplete(occurrence.cacheKey);
         continue;
       }
+
       const stored = {
         ru: compactRu(result.ru),
         pinyin: compactPinyin(result.pinyin),
@@ -301,22 +356,77 @@ async function fillOneParagraph(paragraph, context, all) {
         suggestion: clean(result.suggestion, 48),
         ts: Date.now(),
       };
+
+      if (!stored.ru) {
+        // Keep a useful contextual pinyin visible, but DO NOT cache this item as
+        // complete. It remains eligible for a small retry batch.
+        applyResult(occurrence, stored);
+        noteIncomplete(occurrence.cacheKey);
+        changed = true;
+        continue;
+      }
+
+      state.attempts.delete(occurrence.cacheKey);
+      const retryTimer = state.retryResetTimers.get(occurrence.cacheKey);
+      if (retryTimer) clearTimeout(retryTimer);
+      state.retryResetTimers.delete(occurrence.cacheKey);
       cache.set(occurrence.cacheKey, stored);
       applyResult(occurrence, stored);
+      cacheChanged = true;
       changed = true;
     }
 
-    if (changed) saveCache();
+    if (cacheChanged) saveCache();
     return changed;
   } catch (error) {
     batch.forEach(item => {
       state.inFlight.delete(item.cacheKey);
       delete item.wrap?.dataset?.zhContextPending;
+      noteIncomplete(item.cacheKey);
     });
     state.blockedUntil = Date.now() + RETRY_MS;
     console.warn('[zh context batch] unavailable, keeping toc94 fallback:', error?.message || error);
     return false;
   }
+}
+
+function paragraphHasFresh(all) {
+  return all.some(item => !hasCompleteCache(item.cacheKey)
+    && !state.inFlight.has(item.cacheKey)
+    && attemptCount(item.cacheKey) === 0);
+}
+
+function paragraphHasRetry(all) {
+  return all.some(item => {
+    const attempts = attemptCount(item.cacheKey);
+    return !hasCompleteCache(item.cacheKey)
+      && !state.inFlight.has(item.cacheKey)
+      && attempts > 0
+      && attempts < MAX_RETRY_ATTEMPTS;
+  });
+}
+
+async function runPrepared(prepared, mode) {
+  const predicate = mode === 'retry' ? paragraphHasRetry : paragraphHasFresh;
+  for (const item of prepared) {
+    if (!predicate(item.all)) continue;
+    const changed = await fillOneParagraph(item.paragraph, item.context, item.all, mode);
+    if (changed) {
+      try {
+        window.dispatchEvent(new CustomEvent('reader-instant-word-translation'));
+        queueMicrotask(() => {
+          const contextNow = paragraphContext(item.paragraph);
+          if (contextNow) applyCachedForParagraph(item.paragraph, contextNow);
+        });
+        window.dispatchEvent(new CustomEvent('reader:zh-context-ready', {
+          detail: { contextHash: hashText(item.context), count: item.all.length, mode },
+        }));
+      } catch {}
+    }
+    schedule(mode === 'retry' ? 190 : 140);
+    return true;
+  }
+  return false;
 }
 
 async function processVisibleParagraphs() {
@@ -329,12 +439,8 @@ async function processVisibleParagraphs() {
     const paragraphs = visibleParagraphs();
     if (!paragraphs.length) return;
     let cachedChanged = false;
-
-    // First repaint every cached visible result immediately, active paragraph
-    // first. Then spend at most one network call per pass on the first visible
-    // paragraph that still has unresolved Unknowns. A follow-up pass moves to
-    // the next paragraph, keeping network/UI load bounded.
     const prepared = [];
+
     for (const paragraph of paragraphs) {
       const context = paragraphContext(paragraph);
       if (!context) continue;
@@ -347,28 +453,10 @@ async function processVisibleParagraphs() {
       try { window.dispatchEvent(new CustomEvent('reader-instant-word-translation')); } catch {}
     }
 
-    for (const item of prepared) {
-      const unresolved = item.all.some(x => !loadCache().has(x.cacheKey) && !state.inFlight.has(x.cacheKey));
-      if (!unresolved) continue;
-      const changed = await fillOneParagraph(item.paragraph, item.context, item.all);
-      if (changed) {
-        try {
-          window.dispatchEvent(new CustomEvent('reader-instant-word-translation'));
-          // Repaint after toc94's listener has synced its lanes; this keeps
-          // valid 3-word contextual glosses instead of letting its old 2-word
-          // filter erase them.
-          queueMicrotask(() => {
-            const contextNow = paragraphContext(item.paragraph);
-            if (contextNow) applyCachedForParagraph(item.paragraph, contextNow);
-          });
-          window.dispatchEvent(new CustomEvent('reader:zh-context-ready', {
-            detail: { contextHash: hashText(item.context), count: item.all.length },
-          }));
-        } catch {}
-      }
-      schedule(140);
-      return;
-    }
+    // First give every visible paragraph a first-pass chance. Only when there
+    // are no fresh Unknowns left do we spend calls on the smaller retry batches.
+    if (await runPrepared(prepared, 'fresh')) return;
+    await runPrepared(prepared, 'retry');
   } finally {
     state.running = false;
   }
@@ -382,6 +470,7 @@ function schedule(delay = SCAN_DELAY_MS) {
 function installStyle() {
   if (document.getElementById(STYLE_ID)) return;
   document.getElementById('reader-zh-context-batch-style-v1')?.remove();
+  document.getElementById('reader-zh-context-batch-style-v2')?.remove();
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
@@ -444,4 +533,11 @@ if (typeof window !== 'undefined') {
   window.addEventListener('reader:chromechange', () => schedule(80));
 }
 
-export { paragraphContext, visibleParagraphs, unknownOccurrences, dictionaryHint, processVisibleParagraphs };
+export {
+  paragraphContext,
+  visibleParagraphs,
+  unknownOccurrences,
+  dictionaryHint,
+  processVisibleParagraphs,
+  completeCachedResult,
+};
