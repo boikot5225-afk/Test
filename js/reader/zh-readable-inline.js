@@ -1,17 +1,18 @@
-// toc92 Chinese reading aid.
+// toc94 Chinese reading aid.
 //
 // Layout contract:
 //   - every Chinese token keeps the same Hanzi baseline;
-//   - Reader's native ruby is the only pinyin renderer;
-//   - only confirmed Unknown words receive one short Russian gloss below;
+//   - only confirmed Unknown words receive one compact two-line note below;
+//   - pinyin and a short Russian equivalent share that one note;
 //   - no English text, dictionary articles or automatic online translation;
 //   - the gloss may reserve a small bounded width, never a phone-sized column.
 
-const STYLE_ID = 'reader-zh-readable-inline-v5';
+const STYLE_ID = 'reader-zh-readable-inline-v6';
 const LEGACY_STYLE_IDS = [
   'reader-zh-readable-inline-v1',
   'reader-zh-readable-inline-v2',
   'reader-zh-readable-inline-v3',
+  'reader-zh-readable-inline-v5',
   'reader-zh-stable-slots-v3',
   'reader-zh-unknown-interlinear-v1',
   'reader-zh-unknown-interlinear-v2',
@@ -172,7 +173,25 @@ function translatedRussian(english) {
 function glossWidth(value) {
   const count = Array.from(clean(value)).length;
   if (!count) return '0em';
-  return `${Math.min(2.65, Math.max(1, count * 0.19)).toFixed(2)}em`;
+  return `${Math.min(5.2, Math.max(1.8, count * 0.52)).toFixed(2)}em`;
+}
+
+function localPinyin(wrap, word) {
+  const stored = clean(
+    wrap?.dataset?.zhGlossStickyPinyin
+    || wrap?.dataset?.zhGlossPinyin
+    || word?.querySelector?.('rt')?.textContent
+    || ''
+  );
+  if (stored) return stored;
+  const surface = clean(word?.dataset?.word || '');
+  if (!surface) return '';
+  try {
+    const entry = globalThis.readerLookupChineseWord?.(surface) || null;
+    return clean(entry?.pinyin || entry?.py || entry?.pinyin_marked || entry?.pinyinTone || '');
+  } catch {
+    return '';
+  }
 }
 
 function ensureLane(word) {
@@ -181,23 +200,36 @@ function ensureLane(word) {
     lane = document.createElement('span');
     lane.className = 'rw-zh-readable-ru';
     lane.setAttribute('aria-hidden', 'true');
+    lane.innerHTML = '<span class="rw-zh-readable-py"></span><span class="rw-zh-readable-meaning"></span>';
     word.parentElement.appendChild(lane);
+  }
+  if (lane && !lane.querySelector(':scope > .rw-zh-readable-py')) {
+    lane.replaceChildren();
+    const py = document.createElement('span');
+    py.className = 'rw-zh-readable-py';
+    const meaning = document.createElement('span');
+    meaning.className = 'rw-zh-readable-meaning';
+    lane.append(py, meaning);
   }
   return lane;
 }
 
-function setLane(wrap, word, value) {
-  const ru = compactRussian(value);
+function setLane(wrap, word, pinyinValue, russianValue) {
+  const pinyin = clean(pinyinValue);
+  const ru = compactRussian(russianValue);
   const lane = ensureLane(word);
   if (!lane) return;
-  if (clean(lane.textContent) !== ru) lane.textContent = ru;
-  lane.hidden = !ru;
-  wrap.style.setProperty('--rw-zh-readable-width', glossWidth(ru));
+  const py = lane.querySelector(':scope > .rw-zh-readable-py');
+  const meaning = lane.querySelector(':scope > .rw-zh-readable-meaning');
+  if (py && clean(py.textContent) !== pinyin) py.textContent = pinyin;
+  if (meaning && clean(meaning.textContent) !== ru) meaning.textContent = ru;
+  py?.toggleAttribute('hidden', !pinyin);
+  meaning?.toggleAttribute('hidden', !ru);
+  lane.hidden = !pinyin && !ru;
 }
 
 function clearLane(wrap) {
   wrap?.querySelector?.(':scope > .rw-zh-readable-ru')?.remove();
-  wrap?.style?.removeProperty('--rw-zh-readable-width');
 }
 
 function queueEnglish(value) {
@@ -280,15 +312,16 @@ function syncWrap(wrap) {
     return;
   }
 
+  const pinyin = localPinyin(wrap, word);
   const ru = localRussian(wrap, word);
   if (ru) {
-    setLane(wrap, word, ru);
+    setLane(wrap, word, pinyin, ru);
     return;
   }
 
   const english = localEnglish(word);
   const translated = translatedRussian(english);
-  setLane(wrap, word, translated);
+  setLane(wrap, word, pinyin, translated);
   if (!translated && english) queueEnglish(english);
 }
 
@@ -321,20 +354,31 @@ function installStyle() {
   style.id = STYLE_ID;
   style.textContent = `
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-paragraph-text {
-      line-height: 2.04 !important;
+      line-height: 2.22 !important;
+      word-break: normal !important;
+      overflow-wrap: normal !important;
     }
 
-    /* Every word owns the same two rows. This is what keeps all Hanzi on one
-       baseline instead of lifting only annotated words out of the sentence. */
+    /* Known and still-unclassified words keep Reader's original inline flow. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap {
+      display: contents !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+
+    /* Only a confirmed Unknown becomes a two-row ruby-like unit. The Russian
+       note is short and complete, so the browser reserves collision-free
+       width instead of painting it across neighbouring words. */
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
+    .rw-zh-gloss-wrap:has(> .reader-word.rw-migaku-unknown) {
       display: inline-grid !important;
-      grid-template-rows: auto .52em !important;
+      grid-template-rows: auto auto !important;
       grid-template-columns: max-content !important;
-      align-items: end !important;
+      align-items: start !important;
       justify-items: center !important;
       vertical-align: baseline !important;
       line-height: 1 !important;
-      margin: 0 .018em !important;
+      margin: 0 .035em !important;
       padding: 0 !important;
       width: auto !important;
       min-width: 0 !important;
@@ -343,10 +387,11 @@ function installStyle() {
       overflow: visible !important;
       box-sizing: border-box !important;
       break-inside: avoid !important;
+      white-space: nowrap !important;
     }
 
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
-    .rw-zh-gloss-wrap > .reader-word {
+    .rw-zh-gloss-wrap:has(> .reader-word.rw-migaku-unknown) > .reader-word {
       grid-row: 1 !important;
       grid-column: 1 !important;
       align-self: end !important;
@@ -354,7 +399,7 @@ function installStyle() {
       position: static !important;
       margin: 0 !important;
       padding: 0 1px !important;
-      line-height: 1.12 !important;
+      line-height: 1.08 !important;
       white-space: nowrap !important;
       word-break: keep-all !important;
       overflow-wrap: normal !important;
@@ -362,23 +407,10 @@ function installStyle() {
       text-overflow: clip !important;
     }
 
-    /* Reader's native ruby is the single pinyin source. */
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
-    .rw-zh-gloss-wrap > .reader-word ruby.reader-ruby {
-      ruby-position: over !important;
-      ruby-align: center !important;
-    }
+    /* This note is the only visible reading aid in this mode. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
     .rw-zh-gloss-wrap > .reader-word rt {
-      font-family: 'IBM Plex Sans', system-ui, sans-serif !important;
-      font-size: .46em !important;
-      font-weight: 400 !important;
-      line-height: 1 !important;
-      letter-spacing: 0 !important;
-      white-space: nowrap !important;
-      word-break: keep-all !important;
-      overflow: visible !important;
-      text-overflow: clip !important;
+      display: none !important;
     }
 
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap::before,
@@ -388,36 +420,57 @@ function installStyle() {
       visibility: hidden !important;
     }
 
-    /* A complete short Russian equivalent. Its width contribution is capped;
-       long prose is rejected by JS rather than wrapped into a vertical tower. */
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-readable-ru {
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
+    .rw-zh-gloss-wrap:has(> .reader-word.rw-migaku-unknown) > .rw-zh-readable-ru {
       grid-row: 2 !important;
       grid-column: 1 !important;
       align-self: start !important;
       justify-self: center !important;
-      display: block !important;
-      width: var(--rw-zh-readable-width, 0em) !important;
-      min-width: 0 !important;
-      max-width: var(--rw-zh-readable-width, 0em) !important;
-      margin: .07em 0 0 !important;
+      display: grid !important;
+      justify-items: center !important;
+      width: max-content !important;
+      min-width: 1.8em !important;
+      max-width: 5.2em !important;
+      margin: .08em 0 0 !important;
       padding: 0 !important;
-      white-space: nowrap !important;
-      word-break: keep-all !important;
-      overflow-wrap: normal !important;
       overflow: visible !important;
-      text-overflow: clip !important;
       text-align: center !important;
       font-family: 'IBM Plex Sans', system-ui, sans-serif !important;
-      font-size: .34em !important;
+      font-size: .38em !important;
       font-weight: 400 !important;
-      line-height: 1 !important;
+      line-height: 1.08 !important;
       letter-spacing: 0 !important;
       color: var(--text-muted) !important;
       pointer-events: none !important;
       user-select: none !important;
     }
 
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-readable-ru[hidden] {
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
+    .rw-zh-gloss-wrap:has(> .reader-word.rw-migaku-unknown) > .rw-zh-readable-ru[hidden] {
+      display: none !important;
+    }
+
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
+    .rw-zh-readable-ru > .rw-zh-readable-py {
+      display: block !important;
+      max-width: 100% !important;
+      white-space: nowrap !important;
+      color: color-mix(in srgb, var(--text-muted) 82%, var(--accent)) !important;
+      font-weight: 500 !important;
+    }
+
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
+    .rw-zh-readable-ru > .rw-zh-readable-meaning {
+      display: block !important;
+      max-width: 5.2em !important;
+      white-space: normal !important;
+      word-break: normal !important;
+      overflow-wrap: normal !important;
+      hyphens: none !important;
+    }
+
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
+    .rw-zh-readable-ru > [hidden] {
       display: none !important;
     }
   `;

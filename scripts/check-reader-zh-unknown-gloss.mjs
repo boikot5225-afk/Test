@@ -6,11 +6,13 @@ const glossPath = 'js/reader/zh-unknown-gloss-v4.js';
 const layoutPath = 'js/reader/zh-readable-inline.js';
 const spacingPath = 'js/reader/zh-unknown-gloss-spacing.js';
 const runtimePath = 'js/reader/interactions-runtime.js';
+const vocabPath = 'js/reader/vocab-estimate.js';
 
 const gloss = fs.readFileSync(glossPath, 'utf8');
 const layout = fs.readFileSync(layoutPath, 'utf8');
 const spacing = fs.readFileSync(spacingPath, 'utf8');
 const runtime = fs.readFileSync(runtimePath, 'utf8');
+const vocab = fs.readFileSync(vocabPath, 'utf8');
 
 assert.match(runtime, /import '\.\/zh-unknown-gloss-v4\.js\?v=\d+';/, 'Chinese data module is not loaded');
 assert.match(runtime, /import '\.\/zh-readable-inline\.js\?v=\d+';/, 'Chinese readable layout is not loaded');
@@ -21,15 +23,19 @@ assert.doesNotMatch(layout, /readerAI|task:\s*['"]reader_word/, 'reading must no
 assert.match(layout, /ReaderOfflineTranslate/, 'missing Russian hints must use the bundled offline EN→RU bridge');
 assert.match(spacing, /customOn \? 'unknown' : 'off'/, 'custom mode must enable native pinyin for every Unknown word');
 
-// Phone layout contract: all Chinese words share the same two-row inline grid,
-// while the Russian width contribution remains small and bounded.
-assert.match(layout, /\.rw-zh-gloss-wrap \{[\s\S]*display: inline-grid !important;/, 'all Chinese tokens must use the same inline grid');
-assert.match(layout, /grid-template-rows: auto \.52em !important;/, 'all Hanzi must reserve one equal Russian row');
+// Phone layout contract: normal Chinese stays in the original flow. Only an
+// Unknown word becomes one compact two-row unit with pinyin + Russian below.
+assert.match(layout, /\.rw-zh-gloss-wrap \{[\s\S]*display: contents !important;/, 'known Chinese must keep the original inline flow');
+assert.match(layout, /\.rw-zh-gloss-wrap:has\(> \.reader-word\.rw-migaku-unknown\) \{[\s\S]*display: inline-grid !important;/, 'only Unknown words may own an annotation grid');
+assert.match(layout, /grid-template-rows: auto auto !important;/, 'Unknown note must sit directly below Hanzi');
 assert.match(layout, /vertical-align: baseline !important;/, 'Hanzi must share the normal text baseline');
 assert.match(layout, /grid-row: 2 !important;/, 'Russian gloss must occupy the row below Hanzi');
-assert.match(layout, /font-size: \.34em !important;/, 'Russian hint must remain legible without controlling text size');
-assert.doesNotMatch(layout, /46vw|white-space:\s*normal|text-overflow:\s*ellipsis/, 'wide, vertical or clipped gloss columns must not return');
+assert.match(layout, /font-size: \.38em !important;/, 'reading note must remain legible without controlling text size');
+assert.match(layout, /rw-zh-readable-py/, 'pinyin must be part of the single lower note');
+assert.match(layout, /rw-zh-readable-meaning/, 'Russian must be part of the single lower note');
+assert.doesNotMatch(layout, /46vw|text-overflow:\s*ellipsis/, 'wide or clipped gloss columns must not return');
 assert.doesNotMatch(layout, /position:\s*absolute\s*!important/, 'glosses must not float over neighbouring text');
+assert.doesNotMatch(vocab, /grid-template-rows:\.58em 1\.08em \.54em/, 'vocabulary classification must not override annotation geometry');
 assert.doesNotMatch(gloss + layout, /currentChapter\s*=|currentParagraph\s*=/, 'optional aid must not mutate navigation');
 
 const dataModule = await import(pathToFileURL(glossPath).href + '?ci=' + Date.now());
@@ -44,7 +50,7 @@ assert.equal(presentation.compactRussian('про́волока | кабель'),
 assert.equal(presentation.compactRussian('a copper metal'), '', 'English must never pass the Russian formatter');
 assert.equal(presentation.compactEnglish('to peel; to skin; to shell'), 'peel');
 assert.deepEqual(presentation.englishCandidates('to seek proof'), ['seek proof', 'seek']);
-assert.equal(presentation.glossWidth('подбирать'), '1.71em');
-assert.equal(presentation.glossWidth('оченьдлинныйперевод'), '2.65em');
+assert.equal(presentation.glossWidth('подбирать'), '4.68em');
+assert.equal(presentation.glossWidth('оченьдлинныйперевод'), '5.20em');
 
 console.log('reader Chinese unknown-word gloss regression: PASS');
