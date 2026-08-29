@@ -1,0 +1,217 @@
+name: Android APK toc102 contextual English glosses
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc102-english-context-lemma
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            echo "::warning::No shared signing key; install-over may fail."
+            exit 0
+          fi
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Validate contextual English source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check js/reader/en-context-gloss-v1.js
+          node --check js/reader/en-morphology-resolver.js
+          node --check js/reader/interactions-runtime.js
+          python3 -m py_compile scripts/export_en_ru_wikdict_json.py
+          grep -qF 'en-context-gloss-v1.js?v=1' js/reader/interactions-runtime.js
+          grep -qF 'en_ru_senses.json' scripts/export_en_ru_wikdict_json.py
+          grep -qF 'mlkit_en_ru_context' android/app/src/main/java/space/saintjust/reader/stage1/EnglishContextTranslateBridge.java
+
+          node --experimental-default-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { directContextGloss, chooseSenseFromTranslation } from './js/reader/en-context-gloss-v1.js';
+
+          assert.equal(directContextGloss('charge', 'please charge the phone battery tonight'), 'заряжать');
+          assert.equal(directContextGloss('charged', 'he was charged with murder by police'), 'обвинение');
+          assert.equal(directContextGloss('charge', 'there is no extra fee and it is free of charge'), 'бесплатно');
+          assert.equal(directContextGloss('right', 'turn to the right side of the road'), 'правый');
+          assert.equal(directContextGloss('rights', 'the law protects human rights'), 'права');
+          assert.equal(directContextGloss('mean', 'what do you mean by that word'), 'означать');
+          assert.equal(directContextGloss('match', 'the football match starts after the league game'), 'матч');
+          assert.equal(directContextGloss('match', 'strike a match to light the candle'), 'спичка');
+          assert.equal(directContextGloss('bank', 'the bank approved my loan account'), 'банк');
+          assert.equal(directContextGloss('bank', 'they sat on the river bank near the water'), 'берег');
+          assert.equal(directContextGloss('written', 'a written agreement and written contract'), 'письменный');
+
+          assert.equal(
+            chooseSenseFromTranslation(['обвинение','заряд','плата'], 'его обвинили в убийстве'),
+            'обвинение'
+          );
+          assert.equal(
+            chooseSenseFromTranslation(['матч','спичка','соответствовать'], 'он зажег спичку'),
+            'спичка'
+          );
+          // Both candidates share the same Russian root; context engine must not guess.
+          assert.equal(
+            chooseSenseFromTranslation(['право','правильный'], 'это правильный ответ'),
+            ''
+          );
+          console.log('toc102 contextual English contract: OK');
+          NODE
+
+      - name: Verify layout isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qF 'toc94 Chinese reading aid' js/reader/zh-readable-inline.js
+          for file in js/reader/en-context-gloss-v1.js js/reader/en-morphology-resolver.js; do
+            if grep -Eq 'renderReaderChapter|readerNextParagraph|readerPrevParagraph|readerSelectParagraph|createElement\(|appendChild\(|insertBefore\(|replaceChildren\(' "$file"; then
+              echo "toc102 crossed Reader layout/navigation boundary: $file" >&2
+              exit 1
+            fi
+          done
+
+      - name: Wire native translation bridges
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java')
+          s=p.read_text()
+
+          field='    private ChineseResourceBridge chineseResourceBridge;\n'
+          patch=field + (
+              '    private ChineseOfflineTranslateBridge chineseOfflineTranslateBridge;\n'
+              '    private EnglishResidualTranslateBridge englishResidualTranslateBridge;\n'
+              '    private EnglishContextTranslateBridge englishContextTranslateBridge;\n'
+          )
+          assert s.count(field) == 1
+          s=s.replace(field, patch, 1)
+
+          anchor='        webView.addJavascriptInterface(chineseResourceBridge, "ReaderChineseResources");\n'
+          patch=anchor + (
+              '\n        // Preserve toc100 Chinese offline fallback and expose the English\n'
+              '        // translators used by toc82/toc102. None of these bridges owns DOM.\n'
+              '        chineseOfflineTranslateBridge = new ChineseOfflineTranslateBridge(this, webView);\n'
+              '        webView.addJavascriptInterface(chineseOfflineTranslateBridge, "ReaderChineseTranslate");\n'
+              '        englishResidualTranslateBridge = new EnglishResidualTranslateBridge(this, webView);\n'
+              '        webView.addJavascriptInterface(englishResidualTranslateBridge, "ReaderEnglishResidualTranslate");\n'
+              '        englishContextTranslateBridge = new EnglishContextTranslateBridge(this, webView);\n'
+              '        webView.addJavascriptInterface(englishContextTranslateBridge, "ReaderEnglishContextTranslate");\n'
+          )
+          assert s.count(anchor) == 1
+          s=s.replace(anchor, patch, 1)
+
+          destroy='        if (chineseResourceBridge != null) {\n            chineseResourceBridge.shutdown();\n            chineseResourceBridge = null;\n        }\n'
+          patch=destroy + (
+              '        if (chineseOfflineTranslateBridge != null) {\n'
+              '            chineseOfflineTranslateBridge.shutdown();\n'
+              '            chineseOfflineTranslateBridge = null;\n'
+              '        }\n'
+              '        if (englishResidualTranslateBridge != null) {\n'
+              '            englishResidualTranslateBridge.shutdown();\n'
+              '            englishResidualTranslateBridge = null;\n'
+              '        }\n'
+              '        if (englishContextTranslateBridge != null) {\n'
+              '            englishContextTranslateBridge.shutdown();\n'
+              '            englishContextTranslateBridge = null;\n'
+              '        }\n'
+          )
+          assert s.count(destroy) == 1
+          s=s.replace(destroy, patch, 1)
+          p.write_text(s)
+          PY
+          grep -qF 'ReaderChineseTranslate' android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java
+          grep -qF 'ReaderEnglishResidualTranslate' android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java
+          grep -qF 'ReaderEnglishContextTranslate' android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java
+
+      - name: Prepare toc102 build identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle')
+          s=p.read_text()
+          if s.count('versionCode 118') != 1 or s.count("versionName '77.42-toc98'") != 1:
+              raise SystemExit('toc98 build identity anchor changed')
+          s=s.replace('versionCode 118','versionCode 122',1)
+          s=s.replace("versionName '77.42-toc98'","versionName '77.42-toc102'",1)
+          p.write_text(s)
+          PY
+          grep -qF 'versionCode 122' android/app/build.gradle
+          grep -qF "versionName '77.42-toc102'" android/app/build.gradle
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify contextual dictionary and APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/en-context-gloss-v1.js'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/en-morphology-resolver.js'
+          unzip -l "$APK" | grep -qF 'assets/wikdict/en_ru_senses.json'
+          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF 'en-context-gloss-v1.js?v=1'
+          unzip -p "$APK" 'classes*.dex' | strings | grep -qF 'ReaderChineseTranslate'
+          unzip -p "$APK" 'classes*.dex' | strings | grep -qF 'ReaderEnglishResidualTranslate'
+          unzip -p "$APK" 'classes*.dex' | strings | grep -qF 'ReaderEnglishContextTranslate'
+          unzip -p "$APK" 'classes*.dex' | strings | grep -qF 'mlkit_en_ru_context'
+
+          unzip -p "$APK" assets/wikdict/en_ru_senses.json > /tmp/en_ru_senses.json
+          python3 - <<'PY'
+          import json
+          data=json.load(open('/tmp/en_ru_senses.json', encoding='utf-8'))
+          print('ambiguous ranked sense entries:', len(data))
+          assert len(data) >= 500, len(data)
+          found=0
+          for word in ('charge','right','mean','match','left','better','bank','date'):
+              values=data.get(word, [])
+              print(word, values[:8])
+              if len(values) >= 2:
+                  found += 1
+          assert found >= 4, found
+          PY
+
+          mkdir -p unique-out
+          cp "$APK" unique-out/Reader-AI-77.42-toc102-build122.apk
+          sha256sum unique-out/Reader-AI-77.42-toc102-build122.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc102-build122
+          path: unique-out/Reader-AI-77.42-toc102-build122.apk
+          if-no-files-found: error
+          retention-days: 30
