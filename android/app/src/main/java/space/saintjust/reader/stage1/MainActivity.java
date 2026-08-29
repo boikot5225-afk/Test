@@ -49,6 +49,7 @@ public class MainActivity extends Activity {
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;
     private boolean serviceWorkerClientInstalled = false;
+    private ChineseResourceBridge chineseResourceBridge;
 
     private Uri pendingImportUri;
     private String pendingImportName = "";
@@ -118,6 +119,11 @@ public class MainActivity extends Activity {
         cookies.setAcceptThirdPartyCookies(webView, true);
 
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
+
+        // The interface exposes only read-only bundled dictionary lookups. Heavy
+        // SQLite work happens on ChineseResourceBridge's background executor.
+        chineseResourceBridge = new ChineseResourceBridge(this, webView);
+        webView.addJavascriptInterface(chineseResourceBridge, "ReaderChineseResources");
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -411,6 +417,10 @@ public class MainActivity extends Activity {
                 // WebView provider changed or is already gone; nothing left to clean up.
             }
             serviceWorkerClientInstalled = false;
+        }
+        if (chineseResourceBridge != null) {
+            chineseResourceBridge.shutdown();
+            chineseResourceBridge = null;
         }
         if (webView != null) {
             webView.loadUrl("about:blank");
