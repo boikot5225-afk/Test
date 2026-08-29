@@ -68,7 +68,7 @@ p.write_text(s, encoding='utf-8')
 p = Path('index.html')
 s = p.read_text(encoding='utf-8')
 s = repl(s,
-    "window.AN2_BUILD = 'v77.42-toc104-deepseek-context';",
+    "window.AN2_BUILD = 'v77.42-toc106-manual-known';",
     "window.AN2_BUILD = 'v77.42-toc107-zh-segmentation';",
     'build marker')
 s = repl(s,
