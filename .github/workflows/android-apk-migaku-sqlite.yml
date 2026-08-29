@@ -1,0 +1,129 @@
+name: Android APK toc96 Migaku SQLite
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc96-migaku-sqlite
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            echo "::warning::No shared signing key; install-over may fail."
+            exit 0
+          fi
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Validate resource builders
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/build_zh_migaku_resources.py --self-test
+          python3 scripts/build_zh_migaku_resources_v2.py --self-test
+          python3 scripts/build_zh_migaku_sqlite.py --self-test
+
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do node --check "$file"; done < <(find js -type f -name '*.js' -print0)
+
+      - name: Verify toc96 isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qF "versionCode 116" android/app/build.gradle
+          grep -qF "versionName '77.42-toc96'" android/app/build.gradle
+          grep -qF "zh-resource-profiles.js?v=2" js/reader/interactions-runtime.js
+          grep -qF "build_zh_migaku_sqlite.py" android/app/build.gradle
+          grep -qF "ReaderChineseResources" android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java
+          grep -qF "class ChineseResourceBridge" android/app/src/main/java/space/saintjust/reader/stage1/ChineseResourceBridge.java
+          grep -qF "MAX_BATCH = 80" android/app/src/main/java/space/saintjust/reader/stage1/ChineseResourceBridge.java
+          grep -qF "MAX_BATCH = 60" js/reader/zh-resource-profiles.js
+          grep -qF "39,999-word Known/Unknown scale" js/reader/zh-resource-profiles.js
+          node scripts/check-reader-zh-unknown-gloss.mjs
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify SQLite resource APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+          unzip -l "$APK" | grep -qF 'assets/data/zh_migaku.sqlite3'
+          unzip -l "$APK" | grep -qF 'assets/data/zh_migaku_manifest.json'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/zh-resource-profiles.js'
+          if unzip -l "$APK" | grep -qF 'assets/data/zh_migaku_dict.json'; then
+            echo "Huge dictionary JSON returned to APK" >&2; exit 1
+          fi
+          if unzip -l "$APK" | grep -qF 'assets/data/zh_migaku_profiles.json'; then
+            echo "Huge profile JSON returned to APK" >&2; exit 1
+          fi
+
+          unzip -p "$APK" assets/data/zh_migaku.sqlite3 > /tmp/zh_migaku.sqlite3
+          unzip -p "$APK" assets/data/zh_migaku_manifest.json > /tmp/zh_migaku_manifest.json
+          python3 - <<'PY'
+          import json, os, sqlite3
+          db='/tmp/zh_migaku.sqlite3'
+          manifest=json.load(open('/tmp/zh_migaku_manifest.json', encoding='utf-8'))
+          con=sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+          count=con.execute('select count(*) from entries').fetchone()[0]
+          assert count >= 500_000, count
+          probes={}
+          for word in ('摇头','立刻','特警','觉得','中国'):
+              row=con.execute('select word,pinyin,en,blcu,subtlex,jieba,hsk,new_hsk from entries where word=? limit 1',(word,)).fetchone()
+              probes[word]=row
+              assert row is not None, word
+          integrity=con.execute('pragma integrity_check').fetchone()[0]
+          con.close()
+          assert integrity == 'ok', integrity
+          assert manifest['dictionary']['count'] >= 500_000, manifest['dictionary']
+          print('SQLite rows:', count)
+          print('SQLite bytes:', os.path.getsize(db))
+          print('Dictionary source rows:', manifest['dictionary']['count'])
+          print('BLCU:', manifest['frequency']['blcu']['count'])
+          print('SUBTLEX:', manifest['frequency']['subtlex']['count'])
+          print('Jieba:', manifest['frequency']['jieba']['count'])
+          for word,row in probes.items(): print(word, row)
+          PY
+
+          mkdir -p unique-out
+          cp "$APK" unique-out/Reader-AI-77.42-toc96-build116.apk
+          sha256sum unique-out/Reader-AI-77.42-toc96-build116.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc96-build116
+          path: unique-out/Reader-AI-77.42-toc96-build116.apk
+          if-no-files-found: error
+          retention-days: 30
