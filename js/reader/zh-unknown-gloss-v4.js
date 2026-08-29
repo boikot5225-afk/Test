@@ -15,7 +15,7 @@ import { normalizeImportKey } from '../utils.js';
 const MODE_KEY = 'an2_reader_zh_unknown_gloss_mode_v1';
 const CACHE_BASE_KEY = 'an2_reader_zh_unknown_gloss_cache_v1';
 const INSTANT_WORD_CACHE_KEY = 'an2_instant_translate_word_cache_v1';
-const READER_APP_URL = '../reader-app.js?v=77.32';
+const READER_APP_URL = '../reader-app.js?v=77.38-zh-context-inline';
 const PREFETCH_PAGE_COUNT = 2;
 
 let appPromise = null;
@@ -92,8 +92,15 @@ function textHash(text) {
   return (h >>> 0).toString(36);
 }
 
+function normalizeParagraphContext(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
 function normalizeContext(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 260);
+  // Legacy zh-unknown-gloss cache keys intentionally keep the old 260-char
+  // cap. The Reader lexical context cache below uses the exact sentence and
+  // must not inherit that truncation.
+  return normalizeParagraphContext(value).slice(0, 260);
 }
 
 // Keep the exact key format from v2/v3 so Russian meanings already paid for
@@ -108,6 +115,31 @@ function instantWordCache() { return readJson(INSTANT_WORD_CACHE_KEY); }
 function lexicalEntry(word, cache = null) {
   const source = cache || lexicalCache();
   return source[`zh:${normalizeImportKey(word)}`] || null;
+}
+
+function sentenceContext(paragraphText, word) {
+  const clean = normalizeParagraphContext(paragraphText);
+  if (!clean) return '';
+  const sentences = clean.match(/[^.!?…。！？]+[.!?…。！？»”"]*|[^.!?…。！？]+$/g) || [clean];
+  const normalizedWord = String(word || '').trim();
+  const found = normalizedWord
+    ? sentences.find(sentence => String(sentence || '').includes(normalizedWord))
+    : null;
+  return String(found || sentences[0] || clean).trim();
+}
+
+function contextLexicalKey(word, paragraphText) {
+  const cleanContext = sentenceContext(paragraphText, word);
+  const normalizedWord = normalizeImportKey(word);
+  if (!normalizedWord || !cleanContext) return '';
+  // Exact mirror of readerContextLexicalCacheKey() in reader-app.js for zh.
+  return `ctx|zh:${normalizedWord}|${textHash(cleanContext)}_${cleanContext.length}`;
+}
+
+function contextLexicalEntry(word, paragraphText, cache = null) {
+  const source = cache || lexicalCache();
+  const key = contextLexicalKey(word, paragraphText);
+  return key ? source[key] || null : null;
 }
 function instantEntry(word, cache = null) {
   const source = cache || instantWordCache();
@@ -199,7 +231,7 @@ function paragraphContext(el) {
   } else {
     source = String(paragraph.textContent || '');
   }
-  source = normalizeContext(source);
+  source = normalizeParagraphContext(source);
   if (!source) source = String(el?.dataset?.word || '').trim();
   paragraphSourceText.set(paragraph, source);
   return source;
@@ -228,30 +260,40 @@ function localDictionaryHint(word) {
 
 function bestHint(word, context, existingPinyin = '', own = null, lexical = null, instant = null) {
   const oldContextHit = (own || ownCache())[cacheKey(word, context)] || null;
+  const contextLexHit = contextLexicalEntry(word, context, lexical);
   const lexHit = lexicalEntry(word, lexical);
   const instantHit = instantEntry(word, instant);
   const localHit = localDictionaryHint(word);
 
-  const pinyin = pinyinReading(oldContextHit)
+  // Context lexical entries are the same cached results the word sheet shows.
+  // They outrank generic zh:<word> entries for both polyphonic pinyin and RU.
+  const pinyin = pinyinReading(contextLexHit)
+    || pinyinReading(oldContextHit)
     || pinyinReading(lexHit)
     || pinyinReading(localHit)
     || existingPinyin
     || '';
 
-  const ru = russianMeaning(instantHit)
-    || russianMeaning(oldContextHit)
-    || russianMeaning(lexHit)
-    || russianMeaning(localHit)
-    || '';
+  const instantRu = russianMeaning(instantHit);
+  const contextRu = russianMeaning(contextLexHit);
+  const oldContextRu = russianMeaning(oldContextHit);
+  const lexicalRu = russianMeaning(lexHit);
+  const localRu = russianMeaning(localHit);
+  const ru = instantRu || contextRu || oldContextRu || lexicalRu || localRu || '';
 
-  const en = englishMeaning(localHit)
+  const en = englishMeaning(contextLexHit)
+    || englishMeaning(localHit)
     || englishMeaning(lexHit)
     || englishMeaning(oldContextHit)
     || '';
 
   const gloss = ru;
-  const source = ru ? 'ru' : '';
-  return { pinyin, ru, en, gloss, source, local: localHit };
+  const source = instantRu ? 'instant'
+    : contextRu ? 'context-cache'
+      : oldContextRu ? 'legacy-context-cache'
+        : lexicalRu ? 'lexical-cache'
+          : localRu ? 'local' : '';
+  return { pinyin, ru, en, gloss, source, local: localHit, contextual: contextLexHit };
 }
 
 function applyHint(el, own, lexical, instant) {
@@ -472,4 +514,4 @@ if (typeof window !== 'undefined') {
   window.addEventListener('reader-instant-word-translation', applyInstantTranslation);
 }
 
-export { mode, enabled, compactGloss, cacheKey, knowledgeState };
+export { mode, enabled, compactGloss, cacheKey, knowledgeState, sentenceContext, contextLexicalKey, contextLexicalEntry, bestHint };

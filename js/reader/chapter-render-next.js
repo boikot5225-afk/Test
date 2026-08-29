@@ -1,4 +1,4 @@
-import { bindReaderInteractions } from './interactions-runtime.js?v=2';
+import { bindReaderInteractions } from './interactions-runtime.js?v=3-zh-context-inline';
 
 export function createReaderChapterRenderer({
   getCurrentBook,

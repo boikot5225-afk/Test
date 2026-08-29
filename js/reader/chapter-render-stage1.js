@@ -1,4 +1,4 @@
-import { createReaderChapterRenderer as createBaseRenderer } from './chapter-render-next.js?v=14';
+import { createReaderChapterRenderer as createBaseRenderer } from './chapter-render-next.js?v=15-zh-context-inline';
 import {
   contentItemText,
   firstReadableContentIndex,
