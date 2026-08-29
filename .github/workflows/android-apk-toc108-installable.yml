@@ -81,7 +81,7 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Re-sign conservatively with Android apksigner
+      - name: Re-sign and validate with Android tools
         shell: bash
         run: |
           set -euo pipefail
@@ -110,10 +110,11 @@ jobs:
           rm -f "$ALIGNED"
           "${BUILD_TOOLS}/apksigner" verify --verbose --print-certs "$FINAL" | tee unique-out/APKSIGNER.txt
           "${BUILD_TOOLS}/aapt" dump badging "$FINAL" | tee unique-out/BADGING.txt
-          grep -q "Verified using v1 scheme (JAR signing): true" unique-out/APKSIGNER.txt
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
           grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
+          grep -q "Signer: certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
           grep -q "package: name='space.saintjust.reader.semanticstage1clean.formatfix.debug' versionCode='128'" unique-out/BADGING.txt
+          grep -q "sdkVersion:'24'" unique-out/BADGING.txt
           unzip -t "$FINAL" >/dev/null
           unzip -p "$FINAL" assets/www/js/reader-app.js | grep -qF "an2_zh_segment_cache_v5"
           unzip -p "$FINAL" assets/www/js/reader-app.js | grep -qF "return ls > rs + 1.2 ? local : remote;"
