@@ -1,4 +1,4 @@
-import { createReaderChapterRenderer as createBaseRenderer } from './chapter-render-next.js?v=15-zh-context-inline';
+import { createReaderChapterRenderer as createBaseRenderer } from './chapter-render-next.js?v=16-known-collapse';
 import {
   contentItemText,
   firstReadableContentIndex,

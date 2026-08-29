@@ -3,7 +3,7 @@ import './toc-registry.js?v=1';
 import './toc-navigation-fix.js?v=1';
 import './mobile-nav-stability.js?v=1';
 import { setTocVisibleBook } from './toc-runtime.js?v=3';
-import { createReaderChapterRenderer as createBaseRenderer } from './chapter-render-dialogue.js?v=11-zh-context-inline';
+import { createReaderChapterRenderer as createBaseRenderer } from './chapter-render-dialogue.js?v=12-known-collapse';
 
 // readerOpenWordPanel() in the legacy orchestrator still schedules a full
 // renderReaderChapter() on the next animation frame merely to recolor other

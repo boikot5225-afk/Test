@@ -1,4 +1,4 @@
-import { createReaderChapterRenderer as createStage1Renderer } from './chapter-render-stage1.js?v=13-zh-context-inline';
+import { createReaderChapterRenderer as createStage1Renderer } from './chapter-render-stage1.js?v=14-known-collapse';
 import {
   normalizeSemanticBookLineItems,
   normalizeSemanticBookTextChunks,

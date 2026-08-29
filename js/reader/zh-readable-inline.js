@@ -7,7 +7,7 @@
 //   - no English text, dictionary articles or automatic online translation;
 //   - the gloss may reserve a small bounded width, never a phone-sized column.
 
-const STYLE_ID = 'reader-zh-readable-inline-v6';
+const STYLE_ID = 'reader-zh-readable-inline-v7-known-collapse';
 const LEGACY_STYLE_IDS = [
   'reader-zh-readable-inline-v1',
   'reader-zh-readable-inline-v2',
@@ -364,6 +364,15 @@ function installStyle() {
       display: contents !important;
       margin: 0 !important;
       padding: 0 !important;
+    }
+
+    /* The helper lane is opt-in, never opt-out. When Unknown -> Known changes
+       the word class, CSS must hide the old pinyin/Russian lane in the very
+       same style pass. MutationObserver will remove the node afterwards, but
+       no stale frame may inherit the book's large font and escape into layout. */
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
+    .rw-zh-gloss-wrap > .rw-zh-readable-ru {
+      display: none !important;
     }
 
     /* Only a confirmed Unknown becomes a two-row ruby-like unit. The Russian
