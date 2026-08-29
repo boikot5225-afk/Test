@@ -1,13 +1,17 @@
 import { normalizeImportKey } from '../utils.js';
 
-// English Unknown glosses v6.
+// English Unknown glosses v7.
 // Chinese rendering stays untouched. English Unknown words get a real DOM
-// child below the word. v6 reads bundled WikDict JSON directly in WebView,
-// bypassing the Android JavascriptInterface callback path entirely.
+// child below the word. v7 makes the bundled WikDict the only source for the
+// immediate inline gloss; deprecated Instant/lexical/legacy caches must never
+// override it. Context refinement remains a separate later layer.
 const MODE_KEY = 'an2_reader_en_unknown_gloss_mode_v2';
-const CACHE_BASE_KEY = 'an2_reader_en_unknown_gloss_lemma_cache_v2';
-const LEGACY_CACHE_BASE_KEY = 'an2_reader_en_unknown_gloss_cache_v1';
-const INSTANT_WORD_CACHE_KEY = 'an2_instant_translate_word_cache_v1';
+const CACHE_BASE_KEY = 'an2_reader_en_unknown_gloss_lemma_cache_v3';
+const DEPRECATED_CACHE_KEYS = [
+  'an2_instant_translate_word_cache_v1',
+  'an2_reader_en_unknown_gloss_lemma_cache_v2',
+  'an2_reader_en_unknown_gloss_cache_v1',
+];
 const MAX_CACHE = 8000;
 const MAX_BATCH = 48;
 const PREFETCH_PAGES = 2;
@@ -106,9 +110,14 @@ function saveOwnCache(cache) {
   }
   writeJson(scopedKey(CACHE_BASE_KEY), Object.fromEntries(entries));
 }
-function legacyCache() { return readJson(scopedKey(LEGACY_CACHE_BASE_KEY)); }
-function lexicalCache() { return readJson(scopedKey('an2_reader_lexical_cache_v1')); }
-function instantWordCache() { return readJson(INSTANT_WORD_CACHE_KEY); }
+function purgeDeprecatedGlossCaches() {
+  try {
+    for (const key of DEPRECATED_CACHE_KEYS) {
+      localStorage.removeItem(key);
+      localStorage.removeItem(scopedKey(key));
+    }
+  } catch {}
+}
 
 function russianMeaning(data) {
   if (typeof data === 'string') return data.trim();
@@ -131,27 +140,10 @@ function paragraphContext(el) {
   return source;
 }
 
-function lexicalEntry(word, lemma, cache) {
-  const source = cache || lexicalCache();
-  return source[`en:${normalizedKey(word)}`] || source[`en:${normalizedKey(lemma)}`] || null;
-}
-function instantEntry(word, lemma, cache) {
-  const source = cache || instantWordCache();
-  return source[`en:${normalizeSurface(word)}`] || source[`en:${normalizeSurface(lemma)}`] || null;
-}
-
 function bestHint(word, context, lemma, caches = {}) {
   const own = caches.own || {};
   const direct = own[normalizedKey(lemma)] || own[normalizedKey(word)] || null;
-  const instant = instantEntry(word, lemma, caches.instant);
-  const lexical = lexicalEntry(word, lemma, caches.lexical);
-  const legacy = caches.legacy?.[legacyCacheKey(word, context)] || null;
-  return compactRussian(
-    russianMeaning(direct)
-    || russianMeaning(instant)
-    || russianMeaning(lexical)
-    || russianMeaning(legacy),
-  );
+  return compactRussian(russianMeaning(direct));
 }
 
 function isEnglishWord(el) {
@@ -239,21 +231,6 @@ function applyTranslationToDom(sourceWord, ru, aliases = []) {
     count++;
   }
   return count;
-}
-
-function applyInstantTranslation(event) {
-  const detail = event?.detail || {};
-  const lang = String(detail.lang || '').trim().toLowerCase();
-  if (lang !== 'en') return;
-  const surface = String(detail.surface || '').trim();
-  const lemma = String(detail.lemma || '').trim();
-  const ru = String(detail.ru || '').trim();
-  if (!surface || !compactRussian(ru)) return;
-  rememberTranslation(surface, ru, 'instant_translate_installed_app');
-  if (lemma && normalizedKey(lemma) !== normalizedKey(surface)) {
-    rememberTranslation(lemma, ru, 'instant_translate_installed_app');
-  }
-  applyTranslationToDom(surface, ru, lemma ? [lemma] : []);
 }
 
 async function loadDictionary() {
@@ -354,7 +331,7 @@ function setMode(next) {
 }
 
 function cachesSnapshot() {
-  return { own:ownCache(), legacy:legacyCache(), lexical:lexicalCache(), instant:instantWordCache() };
+  return { own:ownCache() };
 }
 
 function prepareStableSlots(root = document.getElementById('reader-chapter-text')) {
@@ -398,7 +375,7 @@ async function lookupMissing(tokens) {
   try {
     await dictionaryLookup(tokens.slice(0, MAX_BATCH));
   } catch (error) {
-    console.warn('[en unknown gloss v6] bundled dictionary lookup failed:', error?.message || error);
+    console.warn('[en unknown gloss v7] bundled dictionary lookup failed:', error?.message || error);
   } finally {
     lookupInFlight = false;
     scheduleScan(20);
@@ -471,6 +448,7 @@ function bindObservers() {
 
 function boot() {
   if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
+  purgeDeprecatedGlossCaches();
   injectStyles();
   ensureControl();
   syncControl();
@@ -478,9 +456,9 @@ function boot() {
   scheduleScan(0);
 }
 
-const shouldInstall = typeof window !== 'undefined' && !window.__readerEnUnknownGlossV6Installed;
+const shouldInstall = typeof window !== 'undefined' && !window.__readerEnUnknownGlossV7Installed;
 if (shouldInstall) {
-  window.__readerEnUnknownGlossV6Installed = true;
+  window.__readerEnUnknownGlossV7Installed = true;
   window.readerSetEnUnknownGlossMode = setMode;
   window.readerGetEnUnknownGlossMode = mode;
   window.readerPrepareEnStableSlots = prepareStableSlots;
@@ -490,7 +468,6 @@ if (shouldInstall) {
   window.addEventListener('pageshow', () => { boot(); scheduleScan(25); });
   window.addEventListener('reader:en-vocab-ready', () => scheduleScan(0));
   window.addEventListener('an2:languagechange', () => scheduleScan(0));
-  window.addEventListener('reader-instant-word-translation', applyInstantTranslation);
 }
 
 export { mode, enabled, compactRussian, legacyCacheKey as cacheKey, prepareStableSlots };
