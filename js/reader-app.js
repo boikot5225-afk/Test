@@ -523,7 +523,7 @@ function readerQuickLookup(word) {
 // segmentation + basic pinyin are cheap dictionary work.
 const READER_ZH_SEGMENT_URL = 'https://icudtjvnnoeibzxyyxfz.supabase.co/functions/v1/segment-text';
 const READER_ZH_SEGMENT_KEY = 'sb_publishable_U72E36q-R5ZXlWrbWor-Ug_t0gmHDfA';
-const READER_ZH_SEGMENT_CACHE_KEY = 'an2_zh_segment_cache_v4';
+const READER_ZH_SEGMENT_CACHE_KEY = 'an2_zh_segment_cache_v5';
 const READER_ZH_SEGMENT_CACHE_MAX = 1800;
 // CC-CEDICT/lang_dictionary lookup: используем как технический слой для pinyin и факта существования слова.
 // Русский смысл всё равно добирает DeepSeek, если в базе нет ru-поля.
@@ -820,7 +820,7 @@ function readerChooseBestChineseSegmentation(text, remoteWords, localWords) {
   if (!local.length) return remote;
   const rs = readerChineseSegScore(remote);
   const ls = readerChineseSegScore(local);
-  return rs > ls + 1.2 ? remote : local;
+  return ls > rs + 1.2 ? local : remote;
 }
 
 function loadReaderZhSegmentCache() {
@@ -1031,6 +1031,10 @@ function readerScheduleChineseSegmentation(text) {
         // up on the next natural chapter render instead.
         try {
           window.dispatchEvent(new CustomEvent('reader:zh-segmentation-ready', { detail: { key } }));
+          const readingView = document.getElementById('reader-reading-view');
+          if (readerCurrentLang() === 'zh' && readingView && readingView.style.display !== 'none') {
+            renderReaderChapterInPlace();
+          }
         } catch {}
       }
     })
@@ -1483,7 +1487,7 @@ function readerNormalizeWord(word, lang = null) {
 function readerTokenizeChineseParagraph(text) {
   const s = String(text || '');
   if (!s) return [];
-  if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: false });
+  if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: true });
   const key = readerTextHash(s);
   const cached = loadReaderZhSegmentCache()[key];
   const local = readerSegmentChineseLocal(s);
