@@ -1,0 +1,186 @@
+name: Android APK toc105 inline DeepSeek priority
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc105-inline-deepseek-priority
+    paths:
+      - '.github/workflows/android-apk-toc105-inline-deepseek-priority.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reader-toc105-inline-deepseek-priority
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc105-inline-deepseek-priority
+          fetch-depth: 0
+
+      - name: Apply inline DeepSeek priority patch
+        run: python3 scripts/patch-toc105-inline-deepseek-priority.py
+
+      - name: Verify English gloss priority
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check js/reader-app.js
+          node --check js/reader/en-unknown-gloss-v2.js
+          node --check js/reader/en-context-gloss-v1.js
+          node --check js/reader/en-context-fixes-v1.js
+          node --check js/reader/interactions-runtime.js
+          node --check js/app.js
+
+          grep -qF "wrap.dataset.enContextProvider = 'deepseek-context'" js/reader/en-unknown-gloss-v2.js
+          grep -qF "if (!options.force && hasContextOverride(wrap))" js/reader/en-unknown-gloss-v2.js
+          grep -qF "reader:en-deepseek-gloss" js/reader-app.js
+          grep -qF "readerPublishEnglishContextGloss" js/reader-app.js
+          grep -qF "deepseek-context') continue" js/reader/en-context-fixes-v1.js
+          grep -qF "deepseek-context') return false" js/reader/en-context-gloss-v1.js
+          grep -qF "en-unknown-gloss-v2.js?v=5" js/reader/interactions-runtime.js
+          grep -qF "reader-app.js?v=77.34-inline-deepseek" js/app.js
+          grep -qF "js/app.js?v=77.33-inline-deepseek" index.html
+
+          node --experimental-default-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { contextualGloss } from './js/reader/en-context-fixes-v1.js';
+          const p = "While the DEA had a mission to fight trafficking, the CIA had a mission to bolster the contras, and they could not help but tread on each other's feet.";
+          assert.equal(contextualGloss('bolster', p), 'поддерживать');
+          assert.equal(contextualGloss('contras', p), 'контрас');
+          assert.equal(contextualGloss('tread', p), 'наступать');
+          assert.equal(contextualGloss("other's", p), 'друг друга');
+          console.log('toc105 screenshot regression: OK');
+          NODE
+
+          python3 - <<'PY'
+          from pathlib import Path
+          unknown = Path('js/reader/en-unknown-gloss-v2.js').read_text()
+          reader = Path('js/reader-app.js').read_text()
+          fixes = Path('js/reader/en-context-fixes-v1.js').read_text()
+          ctx = Path('js/reader/en-context-gloss-v1.js').read_text()
+          assert unknown.count("wrap.dataset.enContextProvider = 'deepseek-context'") == 1
+          assert unknown.count('hasContextOverride(wrap)') >= 2
+          assert reader.count("new CustomEvent('reader:en-deepseek-gloss'") == 1
+          assert reader.count('readerPublishEnglishContextGloss(') >= 3
+          assert "deepseek-context') continue" in fixes
+          assert "deepseek-context') return false" in ctx
+          print('DeepSeek inline priority regression: OK')
+          PY
+
+      - name: Commit toc105 source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add js/reader-app.js js/reader/en-unknown-gloss-v2.js js/reader/en-context-gloss-v1.js js/reader/en-context-fixes-v1.js js/reader/interactions-runtime.js js/app.js index.html
+          if git diff --cached --quiet; then
+            echo 'No source changes to commit'
+          else
+            git commit -m 'fix(reader): DeepSeek inline gloss outranks dictionary'
+            git fetch origin feature/77.42-toc105-inline-deepseek-priority
+            git rebase origin/feature/77.42-toc105-inline-deepseek-priority
+            git push origin HEAD:feature/77.42-toc105-inline-deepseek-priority
+          fi
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            echo '::warning::No shared signing key; install-over may fail.'
+            exit 0
+          fi
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Validate Instant Translate remains absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateActivity.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateBridge.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateCaptureService.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateChatAccessibilityService.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateChatBridge.java
+          if grep -Eq 'InstantTranslate|screen.textcopy|BIND_ACCESSIBILITY_SERVICE' android/app/src/main/AndroidManifest.xml; then
+            echo 'Manifest contains Instant Translate remnants' >&2
+            exit 1
+          fi
+
+      - name: Wire maintained native translation bridges
+        run: python3 scripts/wire-toc104-native-bridges.py
+
+      - name: Prepare toc105 build identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle')
+          s=p.read_text()
+          assert s.count('versionCode 118') == 1
+          assert s.count("versionName '77.42-toc98'") == 1
+          s=s.replace('versionCode 118','versionCode 125',1)
+          s=s.replace("versionName '77.42-toc98'","versionName '77.42-toc105'",1)
+          p.write_text(s)
+          PY
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify toc105 APK and package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+          unzip -p "$APK" assets/www/js/reader/en-unknown-gloss-v2.js | grep -qF "wrap.dataset.enContextProvider = 'deepseek-context'"
+          unzip -p "$APK" assets/www/js/reader/en-unknown-gloss-v2.js | grep -qF "if (!options.force && hasContextOverride(wrap))"
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "reader:en-deepseek-gloss"
+          unzip -p "$APK" assets/www/js/reader/en-context-fixes-v1.js | grep -qF "deepseek-context') continue"
+          unzip -p "$APK" assets/www/js/reader/en-context-gloss-v1.js | grep -qF "deepseek-context') return false"
+          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF "en-unknown-gloss-v2.js?v=5"
+          unzip -p "$APK" assets/www/js/app.js | grep -qF "reader-app.js?v=77.34-inline-deepseek"
+          unzip -p "$APK" assets/www/index.html | grep -qF "js/app.js?v=77.33-inline-deepseek"
+          if unzip -l "$APK" | grep -Eqi 'reader-instant|instant_translate|InstantTranslate'; then
+            echo 'Instant Translate file survived into APK' >&2
+            exit 1
+          fi
+          mkdir -p unique-out
+          cp "$APK" unique-out/Reader-AI-77.42-toc105-build125.apk
+          sha256sum unique-out/Reader-AI-77.42-toc105-build125.apk | tee unique-out/SHA256.txt
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc105-build125
+          path: |
+            unique-out/Reader-AI-77.42-toc105-build125.apk
+            unique-out/SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
