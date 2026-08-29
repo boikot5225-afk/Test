@@ -1,7 +1,9 @@
-// Cosmetic spacing + mode bridge for the optional Chinese unknown-word aid.
-// It does not touch vocabulary state, AI, navigation, page position or word DOM.
+// Chinese Unknown mode bridge only.
+// toc91 deliberately owns NO spacing/pinyin presentation here. Reader's native
+// ruby renderer stays authoritative and zh-readable-inline paints only Russian.
 
 const BASE_PINYIN_MODE_KEY = 'an2_reader_zh_pinyin_mode_v1';
+const RETIRED_STYLE_ID = 'rd-zh-unknown-gloss-spacing-style';
 
 function basePinyinMode() {
   try { return localStorage.getItem(BASE_PINYIN_MODE_KEY) || 'unknown'; }
@@ -25,17 +27,12 @@ function installModeBridge() {
   if (html?.dataset?.zhGlossModeBridge !== '1') {
     if (html) html.dataset.zhGlossModeBridge = '1';
 
-    // Run before the custom mode button's own handler. That handler performs a
-    // chapter render, so the legacy ruby state must already be correct by then.
     document.addEventListener('click', (event) => {
       const target = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
       const customButton = target?.closest?.('.rd-zh-gloss-mode');
       if (customButton) syncLegacyRubyMode(customButton.dataset.mode || 'off');
     }, true);
 
-    // The top 拼 button owns the legacy pinyin mode. After it cycles, reflect
-    // its new state in our overlay as well. In 拼× the Russian gloss can remain,
-    // but our pinyin lane is hidden too instead of ignoring the user's choice.
     document.addEventListener('click', (event) => {
       const target = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
       if (!target?.closest?.('#reader-pinyin-btn')) return;
@@ -47,7 +44,6 @@ function installModeBridge() {
     });
   }
 
-  // Keep programmatic calls consistent with the two buttons as well.
   const current = window.readerSetZhUnknownGlossMode;
   if (typeof current === 'function' && !current.__zhGlossModeBridge) {
     const wrapped = async (next) => {
@@ -61,40 +57,10 @@ function installModeBridge() {
   syncPinyinVisibility();
 }
 
+// Compatibility export: old callers may still invoke this function. It now
+// only removes the retired style instead of injecting geometry-changing CSS.
 function injectSpacingStyle() {
-  if (document.getElementById('rd-zh-unknown-gloss-spacing-style')) return;
-  const style = document.createElement('style');
-  style.id = 'rd-zh-unknown-gloss-spacing-style';
-  style.textContent = `
-    /* Keep a predictable vertical lane above/below every Chinese text line. */
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-paragraph-text {
-      line-height: 2.18 !important;
-    }
-
-    /* Keep both annotations visually attached to their own Hanzi. The extra
-       line-height above creates the breathing room toward neighbouring lines. */
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-looked)::before,
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-learning)::before,
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-familiar)::before,
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-problem)::before {
-      bottom: calc(100% + .045em) !important;
-    }
-
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-looked)::after,
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-learning)::after,
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-familiar)::after,
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap:has(> .rw-problem)::after {
-      top: calc(100% + .045em) !important;
-    }
-
-    /* Respect the existing top 拼 control. Our overlay must not keep showing
-       pinyin after the legacy control is explicitly switched to off. */
-    #reader-reading-view.rd-zh-unknown-gloss.rd-zh-gloss-pinyin-off[data-reader-lang="zh"] .rw-zh-gloss-wrap::before {
-      content: '' !important;
-      display: none !important;
-    }
-  `;
-  document.head.appendChild(style);
+  document.getElementById(RETIRED_STYLE_ID)?.remove();
 }
 
 function install() {
