@@ -201,11 +201,14 @@ function functionRegion() {
 async function callBatch(context, occurrences) {
   const firebase = globalThis.firebase;
   if (!firebase?.app) throw new Error('Firebase недоступен');
-  const fn = firebase.app().functions(functionRegion()).httpsCallable('readerZhBatch');
+  // Use the already deployed/authenticated readerAI service. Creating a new
+  // callable requires Cloud Run IAM rights that the CI service account does
+  // not have, while readerAI already has the correct invoker policy.
+  const fn = firebase.app().functions(functionRegion()).httpsCallable('readerAI');
   const targets = occurrences.map((item) => ({ id: item.id, ...dictionaryHint(item.surface) }));
-  const work = fn({ context, targets });
+  const work = fn({ task: 'zh_context_batch', sourceLang: 'zh', context, targets });
   const timeout = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('readerZhBatch timeout')), CALL_TIMEOUT_MS);
+    setTimeout(() => reject(new Error('readerAI zh_context_batch timeout')), CALL_TIMEOUT_MS);
   });
   const result = await Promise.race([work, timeout]);
   const payload = result?.data?.data || result?.data || {};
