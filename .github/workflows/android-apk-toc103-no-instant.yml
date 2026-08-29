@@ -1,0 +1,212 @@
+name: Android APK toc103 clean English glosses
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc103-no-instant
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            echo "::warning::No shared signing key; install-over may fail."
+            exit 0
+          fi
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Validate clean English source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check js/reader/en-unknown-gloss-v2.js
+          node --check js/reader/en-context-gloss-v1.js
+          node --check js/reader/en-context-fixes-v1.js
+          node --check js/reader/interactions-runtime.js
+
+          grep -qF "an2_reader_en_unknown_gloss_lemma_cache_v3" js/reader/en-unknown-gloss-v2.js
+          grep -qF "purgeDeprecatedGlossCaches" js/reader/en-unknown-gloss-v2.js
+          grep -qF "en-unknown-gloss-v2.js?v=4" js/reader/interactions-runtime.js
+          grep -qF "en-context-fixes-v1.js?v=1" js/reader/interactions-runtime.js
+
+          if grep -Eq 'function instantWordCache|function instantEntry|function applyInstantTranslation|reader-instant-word-translation' js/reader/en-unknown-gloss-v2.js; then
+            echo 'English inline gloss still consumes Instant Translate state' >&2
+            exit 1
+          fi
+
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateActivity.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateBridge.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateCaptureService.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateChatAccessibilityService.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateChatBridge.java
+          test ! -e android/app/src/main/assets/reader-instant-translate-bridge.js
+          test ! -e android/app/src/main/assets/reader-instant-word-safe.js
+          test ! -e android/app/src/main/assets/reader-instant-chat-bridge.js
+          test ! -e android/app/src/main/res/xml/instant_translate_accessibility_service.xml
+          test ! -e android/app/src/main/res/xml/instant_translate_chat_accessibility_service.xml
+
+          grep -qF 'android:name=".MainActivity"' android/app/src/main/AndroidManifest.xml
+          if grep -Eq 'InstantTranslate|screen.textcopy|BIND_ACCESSIBILITY_SERVICE' android/app/src/main/AndroidManifest.xml; then
+            echo 'Manifest still contains Instant Translate integration' >&2
+            exit 1
+          fi
+
+          node --experimental-default-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { contextualGloss } from './js/reader/en-context-fixes-v1.js';
+          const p = "While the DEA had a mission to fight trafficking, the CIA had a mission to bolster the contras, and they could not help but tread on each other's feet.";
+          assert.equal(contextualGloss('bolster', p), 'поддерживать');
+          assert.equal(contextualGloss('contras', p), 'контрас');
+          assert.equal(contextualGloss('tread', p), 'наступать');
+          assert.equal(contextualGloss("other's", p), 'друг друга');
+          console.log('toc103 screenshot regression: OK');
+          NODE
+
+      - name: Verify context layer isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qF 'toc94 Chinese reading aid' js/reader/zh-readable-inline.js
+          for file in js/reader/en-context-gloss-v1.js js/reader/en-context-fixes-v1.js js/reader/en-morphology-resolver.js; do
+            if grep -Eq 'renderReaderChapter|readerNextParagraph|readerPrevParagraph|readerSelectParagraph|createElement\(|appendChild\(|insertBefore\(|replaceChildren\(' "$file"; then
+              echo "English context code crossed Reader layout/navigation boundary: $file" >&2
+              exit 1
+            fi
+          done
+
+      - name: Wire maintained native translation bridges
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java')
+          s=p.read_text()
+
+          field='    private ChineseResourceBridge chineseResourceBridge;\n'
+          patch=field + (
+              '    private ChineseOfflineTranslateBridge chineseOfflineTranslateBridge;\n'
+              '    private EnglishResidualTranslateBridge englishResidualTranslateBridge;\n'
+              '    private EnglishContextTranslateBridge englishContextTranslateBridge;\n'
+          )
+          assert s.count(field) == 1
+          s=s.replace(field, patch, 1)
+
+          anchor='        webView.addJavascriptInterface(chineseResourceBridge, "ReaderChineseResources");\n'
+          patch=anchor + (
+              '\n        chineseOfflineTranslateBridge = new ChineseOfflineTranslateBridge(this, webView);\n'
+              '        webView.addJavascriptInterface(chineseOfflineTranslateBridge, "ReaderChineseTranslate");\n'
+              '        englishResidualTranslateBridge = new EnglishResidualTranslateBridge(this, webView);\n'
+              '        webView.addJavascriptInterface(englishResidualTranslateBridge, "ReaderEnglishResidualTranslate");\n'
+              '        englishContextTranslateBridge = new EnglishContextTranslateBridge(this, webView);\n'
+              '        webView.addJavascriptInterface(englishContextTranslateBridge, "ReaderEnglishContextTranslate");\n'
+          )
+          assert s.count(anchor) == 1
+          s=s.replace(anchor, patch, 1)
+
+          destroy='        if (chineseResourceBridge != null) {\n            chineseResourceBridge.shutdown();\n            chineseResourceBridge = null;\n        }\n'
+          patch=destroy + (
+              '        if (chineseOfflineTranslateBridge != null) {\n'
+              '            chineseOfflineTranslateBridge.shutdown();\n'
+              '            chineseOfflineTranslateBridge = null;\n'
+              '        }\n'
+              '        if (englishResidualTranslateBridge != null) {\n'
+              '            englishResidualTranslateBridge.shutdown();\n'
+              '            englishResidualTranslateBridge = null;\n'
+              '        }\n'
+              '        if (englishContextTranslateBridge != null) {\n'
+              '            englishContextTranslateBridge.shutdown();\n'
+              '            englishContextTranslateBridge = null;\n'
+              '        }\n'
+          )
+          assert s.count(destroy) == 1
+          s=s.replace(destroy, patch, 1)
+          p.write_text(s)
+          PY
+
+      - name: Prepare toc103 build identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle')
+          s=p.read_text()
+          assert s.count('versionCode 118') == 1
+          assert s.count("versionName '77.42-toc98'") == 1
+          s=s.replace('versionCode 118','versionCode 123',1)
+          s=s.replace("versionName '77.42-toc98'","versionName '77.42-toc103'",1)
+          p.write_text(s)
+          PY
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify toc103 APK is clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/en-context-fixes-v1.js'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/en-unknown-gloss-v2.js'
+          unzip -p "$APK" assets/www/js/reader/en-unknown-gloss-v2.js | grep -qF 'an2_reader_en_unknown_gloss_lemma_cache_v3'
+          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF 'en-context-fixes-v1.js?v=1'
+
+          if unzip -l "$APK" | grep -Eqi 'reader-instant|instant_translate|InstantTranslate'; then
+            echo 'Instant Translate file survived into APK' >&2
+            unzip -l "$APK" | grep -Ei 'reader-instant|instant_translate|InstantTranslate' || true
+            exit 1
+          fi
+
+          unzip -p "$APK" 'classes*.dex' > /tmp/toc103-classes.dex
+          if strings /tmp/toc103-classes.dex | grep -Eq 'ReaderInstantTranslate|InstantTranslateActivity|InstantTranslateBridge|InstantTranslateCaptureService|InstantTranslateChatBridge|InstantTranslateChatAccessibilityService'; then
+            echo 'Instant Translate bytecode survived into APK' >&2
+            strings /tmp/toc103-classes.dex | grep -E 'ReaderInstantTranslate|InstantTranslateActivity|InstantTranslateBridge|InstantTranslateCaptureService|InstantTranslateChatBridge|InstantTranslateChatAccessibilityService' || true
+            exit 1
+          fi
+          strings /tmp/toc103-classes.dex | grep -qF 'ReaderChineseTranslate'
+          strings /tmp/toc103-classes.dex | grep -qF 'ReaderEnglishResidualTranslate'
+          strings /tmp/toc103-classes.dex | grep -qF 'ReaderEnglishContextTranslate'
+
+          mkdir -p unique-out
+          cp "$APK" unique-out/Reader-AI-77.42-toc103-build123.apk
+          wc -c unique-out/Reader-AI-77.42-toc103-build123.apk
+          sha256sum unique-out/Reader-AI-77.42-toc103-build123.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc103-build123
+          path: unique-out/Reader-AI-77.42-toc103-build123.apk
+          if-no-files-found: error
+          retention-days: 30
