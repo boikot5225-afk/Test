@@ -12,6 +12,7 @@ import './en-unknown-gloss-full-fallback.js?v=2';
 import './toc51-stability.js?v=2';
 import './toolbar-scroll.js?v=1';
 import './zh-readable-inline.js?v=6';
+import './zh-context-batch.js?v=1'; // context Russian + polyphonic pinyin; never owns layout/tokenization
 import { createReaderInteractions } from './interactions.js?v=2';
 
 function getRoot() {
