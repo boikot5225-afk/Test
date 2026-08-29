@@ -8,9 +8,10 @@ import './vocab-estimate.js?v=8';
 import './en-vocab-estimate.js?v=1';
 import './en-morphology-resolver.js?v=1'; // toc101: safe morphology gaps only; no layout ownership
 import './en-manual-knowledge-bridge.js?v=2';
-import './en-unknown-gloss-v2.js?v=3';
+import './en-unknown-gloss-v2.js?v=4'; // toc103: no Instant/legacy cache input
 import './en-unknown-gloss-full-fallback.js?v=2';
 import './en-context-gloss-v1.js?v=1'; // toc102: refine ambiguous RU glosses from local context; text-only
+import './en-context-fixes-v1.js?v=1'; // toc103: high-confidence sense corrections; text-only
 import './toc51-stability.js?v=2';
 import './toolbar-scroll.js?v=1';
 import './zh-readable-inline.js?v=6';
@@ -33,8 +34,6 @@ function toggleReadingChrome() {
   const view = document.getElementById('reader-reading-view');
   if (!view || view.style.display === 'none') return false;
   const hidden = view.classList.toggle('rd-chrome-hidden');
-  // Bars are absolutely overlaid, so toggling them must not change the logical
-  // paragraph/page. Re-measure only ancillary player heights; no render/nav.
   try { window.__rdMeasureChrome?.(); } catch {}
   try {
     window.dispatchEvent(new CustomEvent('reader:chromechange', { detail: { hidden } }));
