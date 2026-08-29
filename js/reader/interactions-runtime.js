@@ -6,6 +6,7 @@ import './zh-offline-word-panel.js?v=1';
 import './zh-unknown-gloss-spacing.js?v=3'; // native pinyin for every Unknown word
 import './vocab-estimate.js?v=8';
 import './en-vocab-estimate.js?v=1';
+import './en-morphology-resolver.js?v=1'; // toc101: safe morphology gaps only; no layout ownership
 import './en-manual-knowledge-bridge.js?v=2';
 import './en-unknown-gloss-v2.js?v=3';
 import './en-unknown-gloss-full-fallback.js?v=2';
