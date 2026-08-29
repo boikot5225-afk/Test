@@ -56,7 +56,7 @@ jobs:
           import assert from 'node:assert/strict';
           import { rankedLemma, augmentOne } from './js/reader/en-morphology-resolver.js';
 
-          const words = ['rewrite','outgrow','child','woman','run','study','make','big','use','us','can','write','see','leave'];
+          const words = ['rewrite','outgrow','child','woman','run','study','make','big','use','can','write','see','leave','rat','rate'];
           const rankFold = new Map(words.map((word, index) => [word, { word, index }]));
           const data = { rankFold, lemma:new Map([['went','go']]) };
 
@@ -69,10 +69,11 @@ jobs:
           assert.equal(rankedLemma(data, 'making'), 'make');
           assert.equal(rankedLemma(data, 'bigger'), 'big');
           assert.equal(rankedLemma(data, "can't"), 'can');
+          assert.equal(rankedLemma(data, 'uses'), 'use');
 
-          // uses can mean the noun us / verb use after blind suffix stripping;
-          // two ranked candidates means the resolver must refuse to guess.
-          assert.equal(rankedLemma(data, 'uses'), '');
+          // rates can be stripped to ranked rat / rate candidates. The resolver
+          // must refuse to guess when more than one real Reader lemma survives.
+          assert.equal(rankedLemma(data, 'rates'), '');
           // en.sqlite itself marks these as lexically ambiguous.
           assert.equal(rankedLemma(data, 'written'), '');
           assert.equal(rankedLemma(data, 'saw'), '');
