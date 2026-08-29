@@ -21,7 +21,7 @@ import { libraryIdbPut, libraryIdbGet } from './reader/library-idb-store.js?v=1'
 import { wordStateIdbPut, wordStateIdbGet } from './reader/word-state-idb-store.js?v=1';
 import { lexicalCacheIdbPut, lexicalCacheIdbGet } from './reader/lexical-cache-idb-store.js?v=1';
 import { createReaderWordPanel } from './reader/word-panel.js?v=5';
-import { createReaderWordLookup } from './reader/word-lookup.js?v=1';
+import { createReaderWordLookup } from './reader/word-lookup.js?v=2-deepseek-fallback';
 import { createReaderWordState } from './reader/word-state.js?v=4';
 import { createReaderLibraryStore } from './reader/library-store.js?v=5';
 import { createReaderDisplay } from './reader/display.js?v=5';
@@ -416,6 +416,37 @@ function readerPutCachedLexical(word, data, lang = null) {
   const cache = loadReaderLexicalCache();
   const l = readerCanonicalLang(lang || data.lang || readerCurrentLang());
   cache[readerLexicalCacheKey(word, l)] = { ...data, lang: l, cachedAt: new Date().toISOString() };
+  saveReaderLexicalCache();
+}
+
+function readerNormalizeLexicalContext(context) {
+  return String(context || '').replace(/\s+/g, ' ').trim();
+}
+
+function readerContextLexicalCacheKey(word, context, lang = null) {
+  const cleanContext = readerNormalizeLexicalContext(context);
+  if (!word || !cleanContext) return '';
+  const base = readerLexicalCacheKey(word, lang);
+  return `ctx|${base}|${readerHashString(cleanContext)}_${cleanContext.length}`;
+}
+
+function readerGetCachedContextLexical(word, context, lang = null) {
+  const key = readerContextLexicalCacheKey(word, context, lang);
+  return key ? loadReaderLexicalCache()[key] || null : null;
+}
+
+function readerPutCachedContextLexical(word, context, data, lang = null) {
+  const key = readerContextLexicalCacheKey(word, context, lang);
+  if (!key || !data) return;
+  const cache = loadReaderLexicalCache();
+  const l = readerCanonicalLang(lang || data.lang || readerCurrentLang());
+  cache[key] = {
+    ...data,
+    lang: l,
+    _contextual: true,
+    context: readerNormalizeLexicalContext(context),
+    cachedAt: new Date().toISOString(),
+  };
   saveReaderLexicalCache();
 }
 
@@ -3738,6 +3769,17 @@ async function readerOpenWordPanel(word, paragraphIndex = 0) {
   readerRenderWordLoading('⏳ Проверяю словарь и формы...');
 
   try {
+    const contextualCached = readerGetCachedContextLexical(readerSelectedWord, sentContext, activeLang);
+    if (contextualCached && readerHasRussianMeaning(contextualCached)) {
+      readerRenderWordAnalysis(contextualCached, 'context-cache');
+      if (st) {
+        st.style.display = 'block';
+        st.style.color = 'var(--good)';
+        st.textContent = '⚡ Контекстный перевод из локального кэша';
+      }
+      return;
+    }
+
     const found = await readerLookupWord(readerSelectedWord);
     if (found) {
       readerRenderWordAnalysis(found, 'local');
@@ -4348,15 +4390,35 @@ async function readerTranslateWordAI(forceOrOptions = true) {
   const word = readerSelectedWord;
   const st = panel.querySelector('#reader-word-status');
   const contextEl = panel.querySelector('#reader-word-context');
+  const aiBtn = panel.querySelector('button[onclick="readerTranslateWordAI(true)"]');
+  let context = '';
+  let aiButtonWasDisabled = false;
 
   try {
     if (!word) throw new Error('Слово не выбрано');
+    context = readerNormalizeLexicalContext(
+      contextEl?.value || readerSentenceContext(readerCurrentParagraphText(readerSelectedParagraphIndex), word, readerCurrentLang())
+    );
+    if (aiBtn) {
+      aiButtonWasDisabled = !!aiBtn.disabled;
+      aiBtn.disabled = true;
+      aiBtn.textContent = '⏳ DeepSeek';
+    }
 
     if (force) {
       readerRenderWordLoading('⏳ DeepSeek заново разбирает слово...');
       if (st) { st.style.display = 'block'; st.style.color = 'var(--accent)'; st.textContent = '⏳ DeepSeek готовит разбор...'; }
     } else if (st) {
       st.style.display = 'block'; st.style.color = 'var(--accent)'; st.textContent = skipLocal ? '⏳ DeepSeek добирает русский смысл...' : '⏳ DeepSeek готовит разбор...';
+    }
+
+    if (!force) {
+      const contextualCached = readerGetCachedContextLexical(word, context, readerCurrentLang());
+      if (contextualCached && readerHasRussianMeaning(contextualCached)) {
+        readerRenderWordAnalysis(contextualCached, 'context-cache');
+        if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = '⚡ Контекстный перевод из локального кэша'; }
+        return contextualCached;
+      }
     }
 
     if (!force && !skipLocal) {
@@ -4375,7 +4437,6 @@ async function readerTranslateWordAI(forceOrOptions = true) {
       return cached;
     }
 
-    const context = contextEl?.value || readerSentenceContext(readerCurrentParagraphText(readerSelectedParagraphIndex), word, readerCurrentLang());
     const sourceLang = readerCurrentLang();
     const localZhHint = sourceLang === 'zh' ? (readerLookupChineseWord(word) || readerGetCachedLexical(word, 'zh') || {}) : {};
     // JMdict already resolved the dictionary form and the reading. Keep them so
@@ -4384,7 +4445,7 @@ async function readerTranslateWordAI(forceOrOptions = true) {
     const localJaHint = sourceLang === 'ja' ? (readerLookupJapaneseWord(word) || {}) : {};
     const inFlightKey = readerLexicalCacheKey(word, readerCurrentLang()) + '|' + normalizeImportKey(context.slice(0, 80));
     let data;
-    if (!force && readerLexicalInFlight.has(inFlightKey)) {
+    if (readerLexicalInFlight.has(inFlightKey)) {
       data = await readerLexicalInFlight.get(inFlightKey);
     } else {
       const p = readerAI({
@@ -4409,7 +4470,7 @@ async function readerTranslateWordAI(forceOrOptions = true) {
               ? 'Return JSON only: {pos:"noun|verb|adjective|adverb|preposition|pronoun|other", lemma, infinitive, ru, gender:"m|f|", level:"A1|A2|B1|B2", tense, person, number, form_note, note}. For Spanish conjugated verb forms, lemma and infinitive must be the infinitive (reflexive verbs keep "-se"); explain the selected surface form in form_note. For nouns, give gender.'
               : 'Return JSON only: {pos:"noun|verb|adjective|adverb|preposition|pronoun|other", lemma, infinitive, ru, gender:"m|f|", level:"A1|A2|B1|B2", tense, person, number, form_note, note}. For French conjugated verb forms, lemma and infinitive must be the infinitive; explain the selected surface form in form_note. For nouns, give gender.'
       });
-      if (!force) readerLexicalInFlight.set(inFlightKey, p);
+      readerLexicalInFlight.set(inFlightKey, p);
       try { data = await p; }
       finally { readerLexicalInFlight.delete(inFlightKey); }
     }
@@ -4432,18 +4493,27 @@ async function readerTranslateWordAI(forceOrOptions = true) {
       traditional: d.traditional || localZhHint.traditional || '',
       form_note: d.form_note || d.pinyin || d.tense || d.note || localZhHint.note || localJaHint.form_note || ''
     };
-    readerPutCachedLexical(word, payload, readerCurrentLang());
-    readerRenderWordAnalysis(payload, 'deepseek');
+    const hasContext = !!readerNormalizeLexicalContext(context);
+    if (force && hasContext) {
+      readerPutCachedContextLexical(word, context, payload, readerCurrentLang());
+      readerRenderWordAnalysis(payload, 'deepseek-context');
+    } else {
+      readerPutCachedLexical(word, payload, readerCurrentLang());
+      if (hasContext) readerPutCachedContextLexical(word, context, payload, readerCurrentLang());
+      readerRenderWordAnalysis(payload, 'deepseek');
+    }
     // Re-render so the freshly learned pinyin/furigana appears over the token.
     if (readerIsCjkLang(readerCurrentLang())) renderReaderChapterInPlace();
     if (st) {
       st.style.display = 'block';
       st.style.color = 'var(--good)';
-      st.textContent = pos === 'verb'
-        ? `✅ Глагольная форма: ${payload.lemma}`
-        : pos === 'noun'
-          ? `✅ Существительное${payload.gender ? ', род: ' + payload.gender : ''}`
-          : `✅ ${readerPosRu(pos)}`;
+      st.textContent = force && hasContext
+        ? '✅ Новый перевод сохранён только для этого контекста'
+        : pos === 'verb'
+          ? `✅ Глагольная форма: ${payload.lemma}`
+          : pos === 'noun'
+            ? `✅ Существительное${payload.gender ? ', род: ' + payload.gender : ''}`
+            : `✅ ${readerPosRu(pos)}`;
     }
     return payload;
   } catch(e) {
@@ -4452,8 +4522,9 @@ async function readerTranslateWordAI(forceOrOptions = true) {
     // follow-up (Chinese and Japanese ask DeepSeek only for the Russian
     // meaning). Replacing the card with an error would throw away a perfectly
     // good offline answer, so the failure goes to the status line instead.
-    const localFallback = skipLocal ? (readerLookupChineseWord(word) || readerLookupJapaneseWord(word)) : null;
-    if (localFallback) readerRenderWordAnalysis(localFallback, 'local');
+    const cachedFallback = readerGetCachedContextLexical(word, context, readerCurrentLang()) || readerGetCachedLexical(word, readerCurrentLang());
+    const localFallback = cachedFallback || (skipLocal ? (readerLookupChineseWord(word) || readerLookupJapaneseWord(word)) : null);
+    if (localFallback) readerRenderWordAnalysis(localFallback, cachedFallback ? 'context-cache' : 'local');
     else readerRenderWordError('DeepSeek не сработал: ' + msg);
     if (st) {
       st.style.display = 'block';
@@ -4463,6 +4534,11 @@ async function readerTranslateWordAI(forceOrOptions = true) {
         : '❌ DeepSeek не сработал: ' + msg;
     }
     throw e;
+  } finally {
+    if (aiBtn) {
+      aiBtn.disabled = aiButtonWasDisabled;
+      aiBtn.textContent = '↻ DeepSeek';
+    }
   }
 }
 

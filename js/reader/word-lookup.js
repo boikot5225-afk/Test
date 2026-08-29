@@ -22,16 +22,14 @@ export function createReaderWordLookup({
     const enRaw = entry.en || entry.english || entry.definition || entry.definitions || entry.gloss || '';
     const en = Array.isArray(enRaw) ? enRaw.join('; ') : String(enRaw || '').trim();
     if (!en) return entry;
-    // Reader-app historically uses "has Russian meaning" as the signal for
-    // whether it should automatically call DeepSeek after a local Chinese hit.
-    // With DeepSeek optional/offline-first, an English CC-CEDICT answer is a
-    // complete local result too. Put the fallback in the transient `ru` field so
-    // that old caller stops there; the word-panel bridge clears the editable RU
-    // input immediately, so English can never be accidentally saved as Russian.
+    // English remains a cheap offline hint, never a fake Russian translation.
+    // reader-app therefore sees "no RU" and asks DeepSeek exactly once; the
+    // resulting Russian value is cached and subsequent taps stay local.
     return {
       ...entry,
-      ru: `EN: ${en}`,
-      _source: 'offline-cedict-en',
+      en,
+      english: entry.english || en,
+      _source: entry._source || 'offline-cedict-en',
       _offlineEnglishFallback: true,
     };
   }
