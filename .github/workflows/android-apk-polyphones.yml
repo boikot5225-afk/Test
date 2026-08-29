@@ -66,7 +66,7 @@ jobs:
           console.log('polyphone candidates:', poly.count);
           NODE
 
-      - name: Validate Chinese resource builders
+      - name: Validate Chinese resource and cache layers
         shell: bash
         run: |
           set -euo pipefail
@@ -74,7 +74,12 @@ jobs:
           python3 scripts/build_zh_migaku_resources_v2.py --self-test
           python3 scripts/build_zh_migaku_sqlite.py --self-test
           node --check js/reader/zh-context-batch.js
+          node --check js/reader/zh-context-cache-v3.js
           node --check js/reader/interactions-runtime.js
+          grep -qF "zh-context-cache-v3.js?v=1" js/reader/interactions-runtime.js
+          grep -qF "zh-context-batch.js?v=3" js/reader/interactions-runtime.js
+          grep -qF "an2_reader_zh_context_cache_schema_v3" js/reader/zh-context-cache-v3.js
+          grep -qF "an2_reader_zh_context_gloss_v2::" js/reader/zh-context-cache-v3.js
 
       - name: Prepare toc99 build identity
         shell: bash
@@ -103,6 +108,10 @@ jobs:
             echo 'toc99 context layer crossed toc94 layout/navigation boundary' >&2
             exit 1
           fi
+          if grep -Eq 'renderReaderChapter|readerNextParagraph|readerPrevParagraph|readerSelectParagraph' js/reader/zh-context-cache-v3.js; then
+            echo 'toc99 cache migration crossed toc94 layout/navigation boundary' >&2
+            exit 1
+          fi
 
       - name: Build debug APK
         working-directory: android
@@ -117,6 +126,10 @@ jobs:
           unzip -l "$APK" | grep -qF 'assets/data/zh_migaku.sqlite3'
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/zh-readable-inline.js'
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/zh-context-batch.js'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/zh-context-cache-v3.js'
+          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF 'zh-context-cache-v3.js?v=1'
+          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF 'zh-context-batch.js?v=3'
+          unzip -p "$APK" assets/www/js/reader/zh-context-cache-v3.js | grep -qF 'an2_reader_zh_context_cache_schema_v3'
           unzip -p "$APK" assets/data/zh_migaku.sqlite3 > /tmp/zh_migaku.sqlite3
           python3 - <<'PY'
           import sqlite3
