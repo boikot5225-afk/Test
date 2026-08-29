@@ -1,6 +1,6 @@
 import './toc-upgrade.js?v=1'; // retired no-op shim; kept for old cache/CI compatibility
 import './handler-bridge.js?v=1';
-import './zh-resource-profiles.js?v=1'; // supplemental Migaku/BLCU/SUBTLEX/Jieba/HSK data; no layout ownership
+import './zh-resource-profiles.js?v=2'; // lazy native SQLite: Migaku/BLCU/SUBTLEX/Jieba/HSK; no layout ownership
 import './zh-unknown-gloss-v4.js?v=3';
 import './zh-offline-word-panel.js?v=1';
 import './zh-unknown-gloss-spacing.js?v=3'; // native pinyin for every Unknown word
