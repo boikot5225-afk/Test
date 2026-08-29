@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Stable Reader AI builder for Migaku Chinese resources.
 
-Use the public resource URLs published by Migaku's index directly. This avoids
-coupling the Android build to the index's nested UI grouping while still using
-only resources advertised in that index.
+Migaku publishes resource paths in /dicts/index.json as language-relative paths
+(`/zh_CN/...`). The CDN serves those files under the same /dicts namespace as
+the index, so resolve them against https://migaku-public-data.migaku.com/dicts.
 """
 from __future__ import annotations
 
@@ -11,10 +11,12 @@ import argparse
 import json
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 import build_zh_migaku_resources as base
 
-RESOURCE_URLS = {
+RESOURCE_ROOT = "https://migaku-public-data.migaku.com/dicts"
+RESOURCE_PATHS = {
     "dictionary": "/zh_CN/en/migaku-mandarin-dict.json.zip",
     "blcu": "/zh_CN/frequency_lists/Beijing Language and Culture University Corpus.json.zip",
     "subtlex": "/zh_CN/frequency_lists/Loach.json.zip",
@@ -22,6 +24,11 @@ RESOURCE_URLS = {
     "hsk": "/zh_CN/word_lists/HSK_Simplified.json",
     "new_hsk": "/zh_CN/word_lists/New_HSK_Simplified.json",
 }
+
+
+def resource_url(path: str) -> str:
+    # Keep URL path separators but encode spaces/non-ASCII safely for urllib.
+    return RESOURCE_ROOT + quote(path, safe="/._-~")
 
 
 def main() -> int:
@@ -32,13 +39,14 @@ def main() -> int:
     args = ap.parse_args()
     if args.self_test:
         base.self_test()
+        assert resource_url(RESOURCE_PATHS["dictionary"]).startswith(RESOURCE_ROOT + "/zh_CN/")
         return 0
 
     out_dir = Path(args.output_dir)
     cache_dir = Path(args.cache_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    urls = {key: base.absolute_url(value) for key, value in RESOURCE_URLS.items()}
+    urls = {key: resource_url(value) for key, value in RESOURCE_PATHS.items()}
 
     dictionary = base.extract_dictionary(base.fetch_json(urls["dictionary"], cache_dir))
     if len(dictionary) < 1000:
@@ -66,7 +74,7 @@ def main() -> int:
         "entries": dictionary,
     }
     manifest = {
-        "version": 2,
+        "version": 3,
         "builtAt": int(time.time()),
         "index": base.INDEX_URL,
         "dictionary": {"name": base.DICT_NAME, "count": len(dictionary), "url": urls["dictionary"]},
