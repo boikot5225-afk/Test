@@ -20,6 +20,7 @@ import { audioStorePut, audioStoreGet, audioStoreDelete } from './reader/audio-s
 import { libraryIdbPut, libraryIdbGet } from './reader/library-idb-store.js?v=1';
 import { wordStateIdbPut, wordStateIdbGet } from './reader/word-state-idb-store.js?v=1';
 import { lexicalCacheIdbPut, lexicalCacheIdbGet } from './reader/lexical-cache-idb-store.js?v=1';
+import './reader/zh-native-segmentation.js?v=1';
 import { createReaderWordPanel } from './reader/word-panel.js?v=5';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=2-deepseek-fallback';
 import { createReaderWordState } from './reader/word-state.js?v=5-manual-known';
@@ -1483,6 +1484,8 @@ function readerNormalizeWord(word, lang = null) {
 function readerTokenizeChineseParagraph(text) {
   const s = String(text || '');
   if (!s) return [];
+  const nativeTokens = globalThis.readerNativeChineseSegmentationSync?.(s);
+  if (Array.isArray(nativeTokens) && nativeTokens.length && nativeTokens.join('') === s) return nativeTokens;
   if (!readerZhCoreJson && !readerZhCoreJsonPromise) readerEnsureZhCoreJsonLoaded({ rerender: false });
   const key = readerTextHash(s);
   const cached = loadReaderZhSegmentCache()[key];
@@ -3193,7 +3196,58 @@ const readerChapterRenderer = createReaderChapterRenderer({
   autoTranslateActive: (index) => readerAutoTranslateActiveParagraph(index),
 });
 
+let _readerNativeZhRenderGate = 0;
+
+function readerZhActiveParagraphInfo() {
+  const book = readerCurrentBook?.();
+  if (!book || readerCanonicalLang(readerBookLang(book)) !== 'zh') return null;
+  const chapters = book.chapters || [];
+  const chapterIndex = Math.max(0, Math.min(book.currentChapter || 0, Math.max(0, chapters.length - 1)));
+  const chapter = chapters[chapterIndex];
+  const paragraphs = chapter?.paragraphs || [];
+  const paragraphIndex = Math.max(0, Math.min(book.currentParagraph || 0, Math.max(0, paragraphs.length - 1)));
+  const paragraph = paragraphs[paragraphIndex];
+  if (typeof paragraph !== 'string' || !/[\u3400-\u9fff]/.test(paragraph)) return null;
+  return { book, chapterIndex, paragraphIndex, paragraphs, text: paragraph };
+}
+
+function readerPrefetchZhSegmentationNeighbors(info) {
+  if (!info) return;
+  const nearby = [];
+  for (const offset of [-2, -1, 1, 2]) {
+    const value = info.paragraphs[info.paragraphIndex + offset];
+    if (typeof value === 'string' && /[\u3400-\u9fff]/.test(value)) nearby.push(value);
+  }
+  globalThis.readerPrefetchNativeChineseSegmentation?.(nearby);
+}
+
 function renderReaderChapter() {
+  const info = readerZhActiveParagraphInfo();
+  const ensureNative = globalThis.readerEnsureNativeChineseSegmentation;
+  const nativeAvailable = !!globalThis.ReaderChineseResources?.segmentText;
+  if (info && nativeAvailable && typeof ensureNative === 'function') {
+    const cached = globalThis.readerNativeChineseSegmentationSync?.(info.text);
+    if (!cached) {
+      const gate = ++_readerNativeZhRenderGate;
+      const chapterText = document.getElementById('reader-chapter-text');
+      const renderedChapter = Number(chapterText?.dataset?.renderedChapter ?? -1);
+      if (chapterText && renderedChapter !== info.chapterIndex) {
+        chapterText.innerHTML = '<div class="reader-zh-seg-wait">Подготавливаю китайские слова…</div>';
+      }
+      ensureNative(info.text).then(() => {
+        if (gate !== _readerNativeZhRenderGate) return;
+        readerChapterRenderer.render();
+        readerPrefetchZhSegmentationNeighbors(info);
+        requestAnimationFrame(() => { try { readerScrollActiveParagraph(); } catch {} });
+      }).catch(() => {
+        if (gate !== _readerNativeZhRenderGate) return;
+        readerChapterRenderer.render();
+      });
+      return;
+    }
+    readerPrefetchZhSegmentationNeighbors(info);
+  }
+  _readerNativeZhRenderGate += 1;
   return readerChapterRenderer.render();
 }
 
