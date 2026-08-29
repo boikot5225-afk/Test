@@ -1,0 +1,103 @@
+name: Android APK toc107 native Chinese segmentation r4
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc107-native-zh-segmentation
+    paths:
+      - '.github/workflows/android-apk-toc107-native-zh-segmentation-r4.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc107-native-zh-segmentation
+          fetch-depth: 0
+
+      - name: Verify committed toc107 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check js/reader-app.js
+          node --check js/reader/zh-native-segmentation.js
+          node --check js/app.js
+          grep -qF 'public void segmentText(String requestId, String text)' android/app/src/main/java/space/saintjust/reader/stage1/ChineseResourceBridge.java
+          grep -qF 'dictionarySegmentCost' android/app/src/main/java/space/saintjust/reader/stage1/ChineseResourceBridge.java
+          grep -qF 'native-sqlite-dp-v1' android/app/src/main/java/space/saintjust/reader/stage1/ChineseResourceBridge.java
+          grep -qF "readerNativeChineseSegmentationSync?.(s)" js/reader-app.js
+          grep -qF 'readerEnsureNativeChineseSegmentation' js/reader-app.js
+          grep -qF "reader-app.js?v=77.36-native-zh-seg" js/app.js
+          grep -qF "js/app.js?v=77.35-native-zh-seg" index.html
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+
+      - name: Restore signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+            echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+          fi
+
+      - name: Wire maintained native translation bridges
+        run: python3 scripts/wire-toc104-native-bridges.py
+
+      - name: Prepare toc107 build identity
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle'); s=p.read_text()
+          assert s.count('versionCode 118')==1
+          assert s.count("versionName '77.42-toc98'")==1
+          p.write_text(s.replace('versionCode 118','versionCode 127',1).replace("versionName '77.42-toc98'","versionName '77.42-toc107'",1))
+          PY
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify and package APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+          unzip -p "$APK" assets/www/js/reader/zh-native-segmentation.js | grep -qF 'readerNativeChineseSegmentationSync'
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF 'readerEnsureNativeChineseSegmentation'
+          unzip -p "$APK" assets/www/js/app.js | grep -qF 'reader-app.js?v=77.36-native-zh-seg'
+          unzip -p "$APK" assets/www/index.html | grep -qF 'js/app.js?v=77.35-native-zh-seg'
+          unzip -l "$APK" | grep -qF 'assets/data/zh_migaku.sqlite3'
+          FOUND=0
+          while read -r DEX; do
+            if unzip -p "$APK" "$DEX" | strings | grep -qF 'native-sqlite-dp-v1'; then FOUND=1; break; fi
+          done < <(unzip -Z1 "$APK" | grep -E '^classes[0-9]*\.dex$')
+          test "$FOUND" -eq 1
+          mkdir -p unique-out
+          cp "$APK" unique-out/Reader-AI-77.42-toc107-build127.apk
+          sha256sum unique-out/Reader-AI-77.42-toc107-build127.apk | tee unique-out/SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc107-build127
+          path: |
+            unique-out/Reader-AI-77.42-toc107-build127.apk
+            unique-out/SHA256.txt
+          retention-days: 30
