@@ -7,7 +7,7 @@
 //   - no English text, dictionary articles or automatic online translation;
 //   - the gloss may reserve a small bounded width, never a phone-sized column.
 
-const STYLE_ID = 'reader-zh-readable-inline-v4';
+const STYLE_ID = 'reader-zh-readable-inline-v5';
 const LEGACY_STYLE_IDS = [
   'reader-zh-readable-inline-v1',
   'reader-zh-readable-inline-v2',
@@ -51,7 +51,13 @@ function enabled() {
 }
 
 function firstSense(value) {
-  let text = clean(value);
+  let text = clean(value)
+    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
+    .replace(/\[\[([^\]]+)\]\]/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .normalize('NFC');
   if (!text) return '';
   text = text.split(/\s*(?:[;；/|·•]|[.!?。！？]|[,，])\s*/)[0] || text;
   return text

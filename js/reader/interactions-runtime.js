@@ -10,7 +10,7 @@ import './en-unknown-gloss-v2.js?v=3';
 import './en-unknown-gloss-full-fallback.js?v=2';
 import './toc51-stability.js?v=2';
 import './toolbar-scroll.js?v=1';
-import './zh-readable-inline.js?v=4';
+import './zh-readable-inline.js?v=5';
 import { createReaderInteractions } from './interactions.js?v=2';
 
 function getRoot() {

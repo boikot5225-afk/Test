@@ -39,6 +39,8 @@ const presentation = await import(pathToFileURL(layoutPath).href + '?ci=' + Date
 assert.equal(presentation.compactRussian('куча; груда; складывать'), 'куча');
 assert.equal(presentation.compactRussian('Металл красноватого цвета, химический элемент (Cu).'), '');
 assert.equal(presentation.compactRussian('подбирать'), 'подбирать');
+assert.equal(presentation.compactRussian('[[вбива́ть]] [[сва́и]]'), 'вбивать сваи');
+assert.equal(presentation.compactRussian('про́волока | кабель'), 'проволока');
 assert.equal(presentation.compactRussian('a copper metal'), '', 'English must never pass the Russian formatter');
 assert.equal(presentation.compactEnglish('to peel; to skin; to shell'), 'peel');
 assert.deepEqual(presentation.englishCandidates('to seek proof'), ['seek proof', 'seek']);
