@@ -71,17 +71,24 @@ jobs:
           set -euo pipefail
           while IFS= read -r -d '' file; do node --check "$file"; done < <(find js -type f -name '*.js' -print0)
 
-      - name: Verify toc90 Chinese renderer wiring
+      - name: Verify toc91 Chinese renderer wiring
         shell: bash
         run: |
           set -euo pipefail
-          grep -qF "import './zh-readable-inline.js?v=2'" js/reader/interactions-runtime.js
-          grep -qF "native ruby/pinyin renderer" js/reader/zh-readable-inline.js
+          grep -qF "import './zh-unknown-gloss-spacing.js?v=3'" js/reader/interactions-runtime.js
+          grep -qF "import './zh-readable-inline.js?v=3'" js/reader/interactions-runtime.js
+          grep -qF "reader-zh-readable-inline-v3" js/reader/zh-readable-inline.js
+          grep -qF "display: contents !important" js/reader/zh-readable-inline.js
+          grep -qF "position: absolute !important" js/reader/zh-readable-inline.js
+          if grep -qF "display: inline-flex !important" js/reader/zh-readable-inline.js; then
+            echo "Geometry-changing inline-flex returned"; exit 1
+          fi
           if grep -qF "rw-zh-readable-pinyin'" js/reader/zh-readable-inline.js; then
             echo "A second pinyin lane returned"; exit 1
           fi
-          grep -qF "versionCode 110" android/app/build.gradle
-          grep -qF "versionName '77.42-toc90'" android/app/build.gradle
+          grep -qF "versionCode 111" android/app/build.gradle
+          grep -qF "versionName '77.42-toc91'" android/app/build.gradle
+          node scripts/check-reader-zh-unknown-gloss.mjs
 
       - name: Build debug APK
         working-directory: android
@@ -96,8 +103,8 @@ jobs:
           mkdir -p unique-out
           cp "$APK" "unique-out/${{ steps.meta.outputs.filename }}"
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/zh-readable-inline.js'
-          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF "import './zh-readable-inline.js?v=2'"
-          unzip -p "$APK" assets/www/js/reader/zh-readable-inline.js | grep -qF 'reader-zh-readable-inline-v2'
+          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF "import './zh-readable-inline.js?v=3'"
+          unzip -p "$APK" assets/www/js/reader/zh-readable-inline.js | grep -qF 'reader-zh-readable-inline-v3'
           echo "Unique APK staged: ${{ steps.meta.outputs.filename }}"
 
       - name: Upload unique APK artifact
