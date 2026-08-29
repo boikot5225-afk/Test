@@ -1,0 +1,679 @@
+name: Android APK toc104 DeepSeek context cache
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc104-deepseek-context-cache
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reader-toc104-deepseek-context-cache
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc104-deepseek-context-cache
+          fetch-depth: 0
+
+      - name: Apply DeepSeek economy and context patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              s = p.read_text()
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match in {path}, got {count}')
+              p.write_text(s.replace(old, new, 1))
+
+          # 1) CC-CEDICT English is useful fallback metadata, but it is NOT a
+          # Russian translation. toc103 wrote it into `ru`, which prevented the
+          # intended "missing RU -> one DeepSeek request" path from ever firing.
+          replace_once(
+              'js/reader/word-lookup.js',
+              '''  function chineseOfflineResult(entry) {
+    if (!entry || typeof entry !== 'object') return entry || null;
+    const ru = String(entry.ru || entry.translation_ru || entry.russian || entry.meaning_ru || '').trim();
+    if (ru) return entry;
+    const enRaw = entry.en || entry.english || entry.definition || entry.definitions || entry.gloss || '';
+    const en = Array.isArray(enRaw) ? enRaw.join('; ') : String(enRaw || '').trim();
+    if (!en) return entry;
+    // Reader-app historically uses "has Russian meaning" as the signal for
+    // whether it should automatically call DeepSeek after a local Chinese hit.
+    // With DeepSeek optional/offline-first, an English CC-CEDICT answer is a
+    // complete local result too. Put the fallback in the transient `ru` field so
+    // that old caller stops there; the word-panel bridge clears the editable RU
+    // input immediately, so English can never be accidentally saved as Russian.
+    return {
+      ...entry,
+      ru: `EN: ${en}`,
+      _source: 'offline-cedict-en',
+      _offlineEnglishFallback: true,
+    };
+  }
+''',
+              '''  function chineseOfflineResult(entry) {
+    if (!entry || typeof entry !== 'object') return entry || null;
+    const ru = String(entry.ru || entry.translation_ru || entry.russian || entry.meaning_ru || '').trim();
+    if (ru) return entry;
+    const enRaw = entry.en || entry.english || entry.definition || entry.definitions || entry.gloss || '';
+    const en = Array.isArray(enRaw) ? enRaw.join('; ') : String(enRaw || '').trim();
+    if (!en) return entry;
+    // English remains a cheap offline hint, never a fake Russian translation.
+    // reader-app therefore sees "no RU" and asks DeepSeek exactly once; the
+    // resulting Russian value is cached and subsequent taps stay local.
+    return {
+      ...entry,
+      en,
+      english: entry.english || en,
+      _source: entry._source || 'offline-cedict-en',
+      _offlineEnglishFallback: true,
+    };
+  }
+''',
+              'CC-CEDICT RU fallback',
+          )
+
+          # 2) Context-specific DeepSeek values share the already durable,
+          # bounded lexical cache, but use a key that cannot collide with the
+          # normal word entry. Manual retranslation can therefore override one
+          # sentence without poisoning the same word everywhere else.
+          replace_once(
+              'js/reader-app.js',
+              '''function readerPutCachedLexical(word, data, lang = null) {
+  if (!word || !data) return;
+  const cache = loadReaderLexicalCache();
+  const l = readerCanonicalLang(lang || data.lang || readerCurrentLang());
+  cache[readerLexicalCacheKey(word, l)] = { ...data, lang: l, cachedAt: new Date().toISOString() };
+  saveReaderLexicalCache();
+}
+''',
+              '''function readerPutCachedLexical(word, data, lang = null) {
+  if (!word || !data) return;
+  const cache = loadReaderLexicalCache();
+  const l = readerCanonicalLang(lang || data.lang || readerCurrentLang());
+  cache[readerLexicalCacheKey(word, l)] = { ...data, lang: l, cachedAt: new Date().toISOString() };
+  saveReaderLexicalCache();
+}
+
+function readerNormalizeLexicalContext(context) {
+  return String(context || '').replace(/\\s+/g, ' ').trim();
+}
+
+function readerContextLexicalCacheKey(word, context, lang = null) {
+  const cleanContext = readerNormalizeLexicalContext(context);
+  if (!word || !cleanContext) return '';
+  const base = readerLexicalCacheKey(word, lang);
+  return `ctx|${base}|${readerHashString(cleanContext)}_${cleanContext.length}`;
+}
+
+function readerGetCachedContextLexical(word, context, lang = null) {
+  const key = readerContextLexicalCacheKey(word, context, lang);
+  return key ? loadReaderLexicalCache()[key] || null : null;
+}
+
+function readerPutCachedContextLexical(word, context, data, lang = null) {
+  const key = readerContextLexicalCacheKey(word, context, lang);
+  if (!key || !data) return;
+  const cache = loadReaderLexicalCache();
+  const l = readerCanonicalLang(lang || data.lang || readerCurrentLang());
+  cache[key] = {
+    ...data,
+    lang: l,
+    _contextual: true,
+    context: readerNormalizeLexicalContext(context),
+    cachedAt: new Date().toISOString(),
+  };
+  saveReaderLexicalCache();
+}
+''',
+              'context lexical cache helpers',
+          )
+
+          # 3) Reopening the same word in the same sentence uses its contextual
+          # override immediately, with zero network request.
+          replace_once(
+              'js/reader-app.js',
+              '''  readerRenderWordLoading('⏳ Проверяю словарь и формы...');
+
+  try {
+    const found = await readerLookupWord(readerSelectedWord);
+''',
+              '''  readerRenderWordLoading('⏳ Проверяю словарь и формы...');
+
+  try {
+    const contextualCached = readerGetCachedContextLexical(readerSelectedWord, sentContext, activeLang);
+    if (contextualCached && readerHasRussianMeaning(contextualCached)) {
+      readerRenderWordAnalysis(contextualCached, 'context-cache');
+      if (st) {
+        st.style.display = 'block';
+        st.style.color = 'var(--good)';
+        st.textContent = '⚡ Контекстный перевод из локального кэша';
+      }
+      return;
+    }
+
+    const found = await readerLookupWord(readerSelectedWord);
+''',
+              'open-word context cache priority',
+          )
+
+          # 4) Compute context before any AI/cache decision and lock the manual
+          # button for the duration. A normal disabled HTML button cannot be
+          # double-tapped; the in-flight map below is the second line of defence.
+          replace_once(
+              'js/reader-app.js',
+              '''  const st = panel.querySelector('#reader-word-status');
+  const contextEl = panel.querySelector('#reader-word-context');
+
+  try {
+    if (!word) throw new Error('Слово не выбрано');
+
+    if (force) {
+''',
+              '''  const st = panel.querySelector('#reader-word-status');
+  const contextEl = panel.querySelector('#reader-word-context');
+  const aiBtn = panel.querySelector('button[onclick="readerTranslateWordAI(true)"]');
+  let context = '';
+  let aiButtonWasDisabled = false;
+
+  try {
+    if (!word) throw new Error('Слово не выбрано');
+    context = readerNormalizeLexicalContext(
+      contextEl?.value || readerSentenceContext(readerCurrentParagraphText(readerSelectedParagraphIndex), word, readerCurrentLang())
+    );
+    if (aiBtn) {
+      aiButtonWasDisabled = !!aiBtn.disabled;
+      aiBtn.disabled = true;
+      aiBtn.textContent = '⏳ DeepSeek';
+    }
+
+    if (force) {
+''',
+              'AI button/context header',
+          )
+
+          # Non-forced calls are allowed to reuse an exact contextual result.
+          replace_once(
+              'js/reader-app.js',
+              '''    } else if (st) {
+      st.style.display = 'block'; st.style.color = 'var(--accent)'; st.textContent = skipLocal ? '⏳ DeepSeek добирает русский смысл...' : '⏳ DeepSeek готовит разбор...';
+    }
+
+    if (!force && !skipLocal) {
+''',
+              '''    } else if (st) {
+      st.style.display = 'block'; st.style.color = 'var(--accent)'; st.textContent = skipLocal ? '⏳ DeepSeek добирает русский смысл...' : '⏳ DeepSeek готовит разбор...';
+    }
+
+    if (!force) {
+      const contextualCached = readerGetCachedContextLexical(word, context, readerCurrentLang());
+      if (contextualCached && readerHasRussianMeaning(contextualCached)) {
+        readerRenderWordAnalysis(contextualCached, 'context-cache');
+        if (st) { st.style.display = 'block'; st.style.color = 'var(--good)'; st.textContent = '⚡ Контекстный перевод из локального кэша'; }
+        return contextualCached;
+      }
+    }
+
+    if (!force && !skipLocal) {
+''',
+              'AI contextual cache hit',
+          )
+
+          replace_once(
+              'js/reader-app.js',
+              '''    const context = contextEl?.value || readerSentenceContext(readerCurrentParagraphText(readerSelectedParagraphIndex), word, readerCurrentLang());
+    const sourceLang = readerCurrentLang();
+''',
+              '''    const sourceLang = readerCurrentLang();
+''',
+              'remove late context declaration',
+          )
+
+          # Dedupe applies to BOTH automatic and forced requests. If the user
+          # taps DeepSeek while an automatic lookup for that exact word/context
+          # is still flying, we wait for it instead of paying twice.
+          replace_once(
+              'js/reader-app.js',
+              '''    if (!force && readerLexicalInFlight.has(inFlightKey)) {
+      data = await readerLexicalInFlight.get(inFlightKey);
+''',
+              '''    if (readerLexicalInFlight.has(inFlightKey)) {
+      data = await readerLexicalInFlight.get(inFlightKey);
+''',
+              'force in-flight reuse',
+          )
+          replace_once(
+              'js/reader-app.js',
+              '''      if (!force) readerLexicalInFlight.set(inFlightKey, p);
+''',
+              '''      readerLexicalInFlight.set(inFlightKey, p);
+''',
+              'force in-flight registration',
+          )
+
+          # Automatic missing-RU enrichment becomes the reusable generic value
+          # (and an exact-context copy). Manual ↻ DeepSeek writes ONLY the
+          # contextual copy, so a sense from 打电话 can never overwrite 打
+          # globally for the rest of the book.
+          replace_once(
+              'js/reader-app.js',
+              '''    readerPutCachedLexical(word, payload, readerCurrentLang());
+    readerRenderWordAnalysis(payload, 'deepseek');
+    // Re-render so the freshly learned pinyin/furigana appears over the token.
+''',
+              '''    const hasContext = !!readerNormalizeLexicalContext(context);
+    if (force && hasContext) {
+      readerPutCachedContextLexical(word, context, payload, readerCurrentLang());
+      readerRenderWordAnalysis(payload, 'deepseek-context');
+    } else {
+      readerPutCachedLexical(word, payload, readerCurrentLang());
+      if (hasContext) readerPutCachedContextLexical(word, context, payload, readerCurrentLang());
+      readerRenderWordAnalysis(payload, 'deepseek');
+    }
+    // Re-render so the freshly learned pinyin/furigana appears over the token.
+''',
+              'separate generic/context AI cache writes',
+          )
+
+          replace_once(
+              'js/reader-app.js',
+              '''      st.textContent = pos === 'verb'
+        ? `✅ Глагольная форма: ${payload.lemma}`
+        : pos === 'noun'
+          ? `✅ Существительное${payload.gender ? ', род: ' + payload.gender : ''}`
+          : `✅ ${readerPosRu(pos)}`;
+''',
+              '''      st.textContent = force && hasContext
+        ? '✅ Новый перевод сохранён только для этого контекста'
+        : pos === 'verb'
+          ? `✅ Глагольная форма: ${payload.lemma}`
+          : pos === 'noun'
+            ? `✅ Существительное${payload.gender ? ', род: ' + payload.gender : ''}`
+            : `✅ ${readerPosRu(pos)}`;
+''',
+              'context success status',
+          )
+
+          # Manual retranslation failure should leave the best known answer on
+          # screen rather than replacing a useful card with an error.
+          replace_once(
+              'js/reader-app.js',
+              '''    const localFallback = skipLocal ? (readerLookupChineseWord(word) || readerLookupJapaneseWord(word)) : null;
+    if (localFallback) readerRenderWordAnalysis(localFallback, 'local');
+    else readerRenderWordError('DeepSeek не сработал: ' + msg);
+''',
+              '''    const cachedFallback = readerGetCachedContextLexical(word, context, readerCurrentLang()) || readerGetCachedLexical(word, readerCurrentLang());
+    const localFallback = cachedFallback || (skipLocal ? (readerLookupChineseWord(word) || readerLookupJapaneseWord(word)) : null);
+    if (localFallback) readerRenderWordAnalysis(localFallback, cachedFallback ? 'context-cache' : 'local');
+    else readerRenderWordError('DeepSeek не сработал: ' + msg);
+''',
+              'AI failure fallback',
+          )
+
+          replace_once(
+              'js/reader-app.js',
+              '''    throw e;
+  }
+}
+
+
+// ── Reader window exports ──
+''',
+              '''    throw e;
+  } finally {
+    if (aiBtn) {
+      aiBtn.disabled = aiButtonWasDisabled;
+      aiBtn.textContent = '↻ DeepSeek';
+    }
+  }
+}
+
+
+// ── Reader window exports ──
+''',
+              'AI button finally',
+          )
+
+          # Cache-bust the modules that changed so an upgraded Android WebView
+          # cannot keep toc103 JS by URL.
+          replace_once(
+              'js/reader-app.js',
+              "import { createReaderWordLookup } from './reader/word-lookup.js?v=1';",
+              "import { createReaderWordLookup } from './reader/word-lookup.js?v=2-deepseek-fallback';",
+              'word lookup cache bust',
+          )
+          replace_once(
+              'js/app.js',
+              "} from './reader-app.js?v=77.32';",
+              "} from './reader-app.js?v=77.33-deepseek-context';",
+              'reader-app cache bust',
+          )
+          replace_once(
+              'index.html',
+              '<script type="module" src="js/app.js?v=77.31"></script>',
+              '<script type="module" src="js/app.js?v=77.32-deepseek-context"></script>',
+              'app cache bust',
+          )
+          replace_once(
+              'index.html',
+              "window.AN2_BUILD = 'v77.41-no-block';",
+              "window.AN2_BUILD = 'v77.42-toc104-deepseek-context';",
+              'build marker',
+          )
+
+          # 5) Server prompt: context is an explicit lexical constraint, not a
+          # vague hint. This makes manual retranslation actually choose the
+          # sense used in the current sentence.
+          replace_once(
+              'functions/index.js',
+              'Rules: pinyin must use tone marks; ru must be short and natural Russian; if the token is a name or place, mark proper_noun; do not invent grammar essays.',
+              'Rules: pinyin must use tone marks; ru must be the short natural Russian meaning of TOKEN AS USED IN THIS SPECIFIC CONTEXT, not merely its most common dictionary sense. If TOKEN is part of a fixed expression, idiom, resultative/compound verb, or the surrounding words change its sense, translate that contextual sense and briefly name the expression in note. If CONTEXT is empty, use the most useful short dictionary meaning. If the token is a name or place, mark proper_noun; do not invent grammar essays.',
+              'Chinese contextual prompt',
+          )
+
+          print('toc104 source patch applied')
+          PY
+
+      - name: Verify DeepSeek economy patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check js/reader-app.js
+          node --check js/reader/word-lookup.js
+          node --check js/app.js
+          node --check functions/index.js
+
+          grep -qF 'readerContextLexicalCacheKey' js/reader-app.js
+          grep -qF 'Контекстный перевод из локального кэша' js/reader-app.js
+          grep -qF 'Новый перевод сохранён только для этого контекста' js/reader-app.js
+          grep -qF 'if (readerLexicalInFlight.has(inFlightKey))' js/reader-app.js
+          grep -qF 'readerPutCachedContextLexical(word, context, payload' js/reader-app.js
+          grep -qF "english: entry.english || en" js/reader/word-lookup.js
+          if grep -qF 'ru: `EN: ${en}`' js/reader/word-lookup.js; then
+            echo 'CC-CEDICT still masks English as Russian' >&2
+            exit 1
+          fi
+          grep -qF 'AS USED IN THIS SPECIFIC CONTEXT' functions/index.js
+          grep -qF 'reader-app.js?v=77.33-deepseek-context' js/app.js
+          grep -qF 'js/app.js?v=77.32-deepseek-context' index.html
+
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('js/reader-app.js').read_text()
+          assert s.count('if (readerLexicalInFlight.has(inFlightKey))') == 1
+          assert s.count('readerLexicalInFlight.set(inFlightKey, p);') == 1
+          assert 'if (!force) readerLexicalInFlight.set(inFlightKey, p);' not in s
+          assert s.count('readerPutCachedContextLexical(word, context, payload') == 2
+          assert s.count('readerPutCachedLexical(word, payload, readerCurrentLang());') == 1
+          print('DeepSeek economy regression: OK')
+          PY
+
+      - name: Commit source patch to feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add js/reader-app.js js/reader/word-lookup.js js/app.js index.html functions/index.js
+          if git diff --cached --quiet; then
+            echo 'No source changes to commit'
+          else
+            git commit -m 'feat(reader): cache DeepSeek meaning per context'
+            git push origin HEAD:feature/77.42-toc104-deepseek-context-cache
+          fi
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            echo "::warning::No shared signing key; install-over may fail."
+            exit 0
+          fi
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Validate Instant Translate remains absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateActivity.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateBridge.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateCaptureService.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateChatAccessibilityService.java
+          test ! -e android/app/src/main/java/space/saintjust/reader/stage1/InstantTranslateChatBridge.java
+          if grep -Eq 'InstantTranslate|screen.textcopy|BIND_ACCESSIBILITY_SERVICE' android/app/src/main/AndroidManifest.xml; then
+            echo 'Manifest contains Instant Translate remnants' >&2
+            exit 1
+          fi
+
+      - name: Wire maintained native translation bridges
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java')
+          s=p.read_text()
+
+          field='    private ChineseResourceBridge chineseResourceBridge;\n'
+          patch=field + (
+              '    private ChineseOfflineTranslateBridge chineseOfflineTranslateBridge;\n'
+              '    private EnglishResidualTranslateBridge englishResidualTranslateBridge;\n'
+              '    private EnglishContextTranslateBridge englishContextTranslateBridge;\n'
+          )
+          assert s.count(field) == 1
+          s=s.replace(field, patch, 1)
+
+          anchor='        webView.addJavascriptInterface(chineseResourceBridge, "ReaderChineseResources");\n'
+          patch=anchor + (
+              '\n        chineseOfflineTranslateBridge = new ChineseOfflineTranslateBridge(this, webView);\n'
+              '        webView.addJavascriptInterface(chineseOfflineTranslateBridge, "ReaderChineseTranslate");\n'
+              '        englishResidualTranslateBridge = new EnglishResidualTranslateBridge(this, webView);\n'
+              '        webView.addJavascriptInterface(englishResidualTranslateBridge, "ReaderEnglishResidualTranslate");\n'
+              '        englishContextTranslateBridge = new EnglishContextTranslateBridge(this, webView);\n'
+              '        webView.addJavascriptInterface(englishContextTranslateBridge, "ReaderEnglishContextTranslate");\n'
+          )
+          assert s.count(anchor) == 1
+          s=s.replace(anchor, patch, 1)
+
+          destroy='        if (chineseResourceBridge != null) {\n            chineseResourceBridge.shutdown();\n            chineseResourceBridge = null;\n        }\n'
+          patch=destroy + (
+              '        if (chineseOfflineTranslateBridge != null) {\n'
+              '            chineseOfflineTranslateBridge.shutdown();\n'
+              '            chineseOfflineTranslateBridge = null;\n'
+              '        }\n'
+              '        if (englishResidualTranslateBridge != null) {\n'
+              '            englishResidualTranslateBridge.shutdown();\n'
+              '            englishResidualTranslateBridge = null;\n'
+              '        }\n'
+              '        if (englishContextTranslateBridge != null) {\n'
+              '            englishContextTranslateBridge.shutdown();\n'
+              '            englishContextTranslateBridge = null;\n'
+              '        }\n'
+          )
+          assert s.count(destroy) == 1
+          s=s.replace(destroy, patch, 1)
+          p.write_text(s)
+          PY
+
+      - name: Prepare toc104 build identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle')
+          s=p.read_text()
+          assert s.count('versionCode 118') == 1
+          assert s.count("versionName '77.42-toc98'") == 1
+          s=s.replace('versionCode 118','versionCode 124',1)
+          s=s.replace("versionName '77.42-toc98'","versionName '77.42-toc104'",1)
+          p.write_text(s)
+          PY
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify toc104 APK and package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF 'readerContextLexicalCacheKey'
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF 'Новый перевод сохранён только для этого контекста'
+          unzip -p "$APK" assets/www/js/reader/word-lookup.js | grep -qF 'English remains a cheap offline hint'
+          if unzip -p "$APK" assets/www/js/reader/word-lookup.js | grep -qF 'ru: `EN: ${en}`'; then
+            echo 'APK still masks English as Russian' >&2
+            exit 1
+          fi
+          unzip -p "$APK" assets/www/js/app.js | grep -qF 'reader-app.js?v=77.33-deepseek-context'
+          unzip -p "$APK" assets/www/index.html | grep -qF 'js/app.js?v=77.32-deepseek-context'
+
+          if unzip -l "$APK" | grep -Eqi 'reader-instant|instant_translate|InstantTranslate'; then
+            echo 'Instant Translate file survived into APK' >&2
+            exit 1
+          fi
+
+          mkdir -p unique-out
+          cp "$APK" unique-out/Reader-AI-77.42-toc104-build124.apk
+          sha256sum unique-out/Reader-AI-77.42-toc104-build124.apk | tee unique-out/SHA256.txt
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc104-build124
+          path: |
+            unique-out/Reader-AI-77.42-toc104-build124.apk
+            unique-out/SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy-reader-ai:
+    needs: build
+    if: github.actor != 'github-actions[bot]'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS }}
+      GCP_SA_KEY_JSON: ${{ secrets.GCP_SA_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc104-deepseek-context-cache
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify contextual readerAI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix functions ci --ignore-scripts
+          node --check functions/index.js
+          grep -qF 'AS USED IN THIS SPECIFIC CONTEXT' functions/index.js
+          grep -qF "thinking: { type: 'disabled' }" functions/index.js
+          grep -qF "response_format: { type: 'json_object' }" functions/index.js
+
+      - name: Build readerAI-only deployment copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path=Path('functions/index.js')
+          source=path.read_text()
+          marker='// Cloud TTS proxy:'
+          marker_at=source.find(marker)
+          if marker_at < 0: raise SystemExit('Cloud TTS marker not found')
+          section_at=source.rfind('// ─', 0, marker_at)
+          if section_at < 0: raise SystemExit('readerAI section boundary not found')
+          source=source[:section_at].rstrip()+'\n'
+          for declaration in (
+              "const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');\n",
+              "const SELFHOST_TTS_STT_URL = defineSecret('SELFHOST_TTS_STT_URL');\n",
+              "const SELFHOST_TOKEN = defineSecret('SELFHOST_TOKEN');\n",
+          ):
+              source=source.replace(declaration,'')
+          for required in ('exports.readerAI = onCall(', "defineSecret('DEEPSEEK_API_KEY')", 'AS USED IN THIS SPECIFIC CONTEXT'):
+              if required not in source: raise SystemExit('missing after trim: '+required)
+          path.write_text(source)
+          PY
+          node --check functions/index.js
+
+      - name: Select deployment credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${FIREBASE_TOKEN}" ]]; then
+            echo "FIREBASE_AUTH_MODE=token" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          credentials="${FIREBASE_SERVICE_ACCOUNT_JSON}"
+          [[ -n "$credentials" ]] || credentials="${GOOGLE_CREDENTIALS_JSON}"
+          [[ -n "$credentials" ]] || credentials="${GCP_SA_KEY_JSON}"
+          if [[ -z "$credentials" ]]; then
+            echo '::error::No Firebase deployment credential configured.'
+            exit 1
+          fi
+          credentials_file="${RUNNER_TEMP}/firebase-service-account.json"
+          printf '%s' "$credentials" > "$credentials_file"
+          chmod 600 "$credentials_file"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=${credentials_file}" >> "$GITHUB_ENV"
+          echo "FIREBASE_AUTH_MODE=adc" >> "$GITHUB_ENV"
+
+      - name: Install Firebase CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cli_root="${RUNNER_TEMP}/firebase-cli"
+          npm --prefix "$cli_root" install --no-save --ignore-scripts firebase-tools@15.24.0
+
+      - name: Deploy contextual readerAI
+        shell: bash
+        run: |
+          set -euo pipefail
+          firebase_cli="${RUNNER_TEMP}/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
+          args=(deploy --only functions:readerAI --project french-da79a --non-interactive)
+          if [[ "${FIREBASE_AUTH_MODE}" == 'token' ]]; then
+            node "$firebase_cli" "${args[@]}" --token "$FIREBASE_TOKEN"
+          else
+            node "$firebase_cli" "${args[@]}"
+          fi
