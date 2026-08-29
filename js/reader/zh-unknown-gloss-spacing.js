@@ -18,7 +18,11 @@ function syncPinyinVisibility() {
 
 function syncLegacyRubyMode(next) {
   const customOn = next === 'unknown';
-  try { localStorage.setItem(BASE_PINYIN_MODE_KEY, customOn ? 'learning' : 'off'); } catch {}
+  // IMPORTANT: custom Unknown mode means native Reader pinyin for ALL new /
+  // unlearned Chinese words. "learning" only shows pinyin for clicked/saved
+  // words and is exactly why toc90 showed duī/bāo/tóng but omitted many other
+  // underlined Unknown words.
+  try { localStorage.setItem(BASE_PINYIN_MODE_KEY, customOn ? 'unknown' : 'off'); } catch {}
   syncPinyinVisibility();
 }
 
