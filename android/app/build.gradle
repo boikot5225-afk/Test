@@ -137,7 +137,7 @@ tasks.register('prepareEnRuWikDict') {
                 connection.connectTimeout = 20_000
                 connection.readTimeout = 120_000
                 connection.inputStream.withCloseable { input ->
-                    raw.withOutputStream { out << input }
+                    raw.withOutputStream { out -> out << input }
                 }
             }
         }
