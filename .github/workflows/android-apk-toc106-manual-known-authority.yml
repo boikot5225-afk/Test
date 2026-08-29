@@ -50,6 +50,8 @@ jobs:
           grep -qF "state?.known === true && status === 'known' && state?.autoKnown === false" js/reader/en-vocab-estimate.js
           grep -qF "classification.source !== 'manual' && el.classList.contains('rw-known')" js/reader/vocab-estimate.js
           grep -qF "info.source !== 'manual' && el.classList.contains('rw-known')" js/reader/en-vocab-estimate.js
+          grep -qF "if (classification.source === 'manual') el.classList.remove('rw-known')" js/reader/vocab-estimate.js
+          grep -qF "if (info.source === 'manual') el.classList.remove('rw-known')" js/reader/en-vocab-estimate.js
           grep -qF "vocab-estimate.js?v=9-manual-known" js/reader/interactions-runtime.js
           grep -qF "en-vocab-estimate.js?v=2-manual-known" js/reader/interactions-runtime.js
           grep -qF "en-manual-knowledge-bridge.js?v=3-manual-known" js/reader/interactions-runtime.js
@@ -85,10 +87,13 @@ jobs:
           assert "state.manualKnowledge = 'known'" in core
           assert "if (classification.source !== 'manual' && el.classList.contains('rw-known'))" in zh
           assert "if (info.source !== 'manual' && el.classList.contains('rw-known'))" in en
-          # Automatic estimators must no longer unconditionally erase core Known.
-          assert "el.classList.remove('rw-known');\n    el.classList.add('rw-migaku-unknown');" not in zh
-          assert "el.classList.remove('rw-known');\n    el.classList.add('rw-migaku-unknown');" not in en
-          print('Known cannot resurrect red: OK')
+          assert "if (classification.source === 'manual') el.classList.remove('rw-known')" in zh
+          assert "if (info.source === 'manual') el.classList.remove('rw-known')" in en
+          # There must be exactly one path that can clear rw-known in each
+          # classifier, and it is guarded by explicit manual Unknown.
+          assert zh.count("el.classList.remove('rw-known');") == 1
+          assert en.count("el.classList.remove('rw-known');") == 1
+          print('Known cannot resurrect red; manual Unknown still works: OK')
           PY
 
       - name: Commit toc106 source patch
