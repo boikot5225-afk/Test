@@ -1,14 +1,17 @@
-// toc91 Chinese Unknown presentation.
+// toc92 Chinese reading aid.
 //
-// Non-negotiable layout rule: Chinese text keeps Reader's native geometry.
-// Reader already owns Hanzi + ruby/pinyin. We only paint ONE short Russian
-// contextual gloss inside the existing word line box. No flex/grid wrappers,
-// no extra pinyin lane, no width reservation, no new line-break behaviour.
+// Layout contract:
+//   - every Chinese token keeps the same Hanzi baseline;
+//   - Reader's native ruby is the only pinyin renderer;
+//   - only confirmed Unknown words receive one short Russian gloss below;
+//   - no English text, dictionary articles or automatic online translation;
+//   - the gloss may reserve a small bounded width, never a phone-sized column.
 
-const STYLE_ID = 'reader-zh-readable-inline-v3';
+const STYLE_ID = 'reader-zh-readable-inline-v4';
 const LEGACY_STYLE_IDS = [
   'reader-zh-readable-inline-v1',
   'reader-zh-readable-inline-v2',
+  'reader-zh-readable-inline-v3',
   'reader-zh-stable-slots-v3',
   'reader-zh-unknown-interlinear-v1',
   'reader-zh-unknown-interlinear-v2',
@@ -16,24 +19,20 @@ const LEGACY_STYLE_IDS = [
   'rd-zh-gloss-stability-v2-style',
   'reader-zh-toc88-inline-style',
 ];
-const APP_URL = '../reader-app.js?v=77.32';
-const CACHE_BASE = 'an2_reader_zh_context_gloss_v5';
-const MAX_CONCURRENT = 3;
-const RETRY_MS = 30_000;
+const RETRY_MS = 20_000;
+const MAX_BATCH = 32;
 
-let appPromise = null;
 let observer = null;
 let observedRoot = null;
 let scanTimer = null;
-let workers = 0;
-let cache = null;
-let cacheKeyInUse = '';
+let batchTimer = null;
+let requestSequence = 0;
+let bridgeBlockedUntil = 0;
 
-const queue = [];
-const queued = new Set();
-const running = new Set();
-const failures = new Map();
-const paragraphTextCache = new WeakMap();
+const offlineRu = new Map();
+const pendingEnglish = new Set();
+const inFlightEnglish = new Set();
+const requestWords = new Map();
 
 function clean(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -51,48 +50,6 @@ function enabled() {
   catch { return view.classList.contains('rd-zh-unknown-gloss'); }
 }
 
-function scopedKey(base) {
-  try { return globalThis.an2ReaderStorageKey?.(base) || base; }
-  catch { return base; }
-}
-
-function textHash(text) {
-  let h = 2166136261;
-  for (const ch of String(text || '')) {
-    h ^= ch.charCodeAt(0);
-    h = Math.imul(h, 16777619);
-  }
-  return (h >>> 0).toString(36);
-}
-
-function contextKey(word, context) {
-  return `${clean(word)}|${textHash(clean(context).slice(0, 360))}`;
-}
-
-function loadCache() {
-  const key = scopedKey(CACHE_BASE);
-  if (cache && cacheKeyInUse === key) return cache;
-  cacheKeyInUse = key;
-  try {
-    const parsed = JSON.parse(localStorage.getItem(key) || '{}');
-    cache = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    cache = {};
-  }
-  return cache;
-}
-
-function saveCache() {
-  if (!cache) return;
-  const entries = Object.entries(cache);
-  if (entries.length > 5000) {
-    entries.sort((a, b) => Number(b[1]?.t || 0) - Number(a[1]?.t || 0));
-    cache = Object.fromEntries(entries.slice(0, 5000));
-  }
-  try { localStorage.setItem(cacheKeyInUse || scopedKey(CACHE_BASE), JSON.stringify(cache)); }
-  catch {}
-}
-
 function firstSense(value) {
   let text = clean(value);
   if (!text) return '';
@@ -106,36 +63,54 @@ function firstSense(value) {
     .trim();
 }
 
-// Final display formatter. One contextual sense, normally one Russian word,
-// max two words. Never dictionary prose or a sentence fragment.
+// A reading hint is a lexical equivalent, not a clipped definition. Rejecting
+// prose is preferable to showing nonsense such as "Металл" for 铜.
 function compactRussian(value) {
   const text = firstSense(value);
   if (!text || !hasRussian(text)) return '';
   const words = text.split(/\s+/).filter(Boolean);
-  if (!words.length) return '';
-  return words.length > 2 ? words.slice(0, 2).join(' ') : text;
-}
-
-// Offline dictionary hints are useful only when they are already concise.
-// Reject encyclopaedic prose instead of degrading "медь" into "Металл".
-function safeDictionaryRussian(value) {
-  const text = firstSense(value);
-  if (!text || !hasRussian(text)) return '';
-  const words = text.split(/\s+/).filter(Boolean);
-  if (!words.length || words.length > 2 || text.length > 20) return '';
+  if (!words.length || words.length > 2 || text.length > 22) return '';
+  if (/(?:также|используется|используют|химическ|обозначени|представляет|состоящ)/i.test(text)) return '';
   if (/^(?:металл|вещество|материал|элемент|предмет|объект|название|термин)$/i.test(text)) return '';
   return text;
 }
 
-// Context service output is accepted only when it is actually a short gloss.
-// A bad verbose answer stays invisible and is retried; it is never painted.
-function contextualRussian(value) {
-  const text = firstSense(value);
-  if (!text || !hasRussian(text)) return '';
-  const words = text.split(/\s+/).filter(Boolean);
-  if (!words.length || words.length > 2 || text.length > 24) return '';
-  if (/^(?:металл|вещество|материал|элемент)$/i.test(text)) return '';
-  return text;
+function compactEnglish(value) {
+  let text = clean(value)
+    .replace(/\bCL:[^/;]+/gi, '')
+    .replace(/^[—–-]\s*/, '');
+  if (!text) return '';
+  text = text.split(/\s*(?:[;；/|·•]|[.!?。！？]|[,，])\s*/)[0] || text;
+  return clean(text
+    .replace(/\s*[（(][^()（）]{0,100}[）)]/g, ' ')
+    .replace(/\s*[（(].*$/, '')
+    .replace(/^to\s+be\s+/i, '')
+    .replace(/^to\s+/i, '')
+    .replace(/^(?:a|an|the)\s+/i, '')
+    .replace(/[;,.]+$/, ''));
+}
+
+function normalizeEnglish(value) {
+  return clean(value)
+    .replace(/[’‘]/g, "'")
+    .replace(/[‐‑‒–—]/g, '-')
+    .replace(/^["'“”]+|["'“”]+$/g, '')
+    .toLocaleLowerCase('en-US');
+}
+
+function englishCandidates(value) {
+  const phrase = normalizeEnglish(compactEnglish(value));
+  const out = [];
+  const push = candidate => {
+    const key = normalizeEnglish(candidate);
+    if (key && !out.includes(key)) out.push(key);
+  };
+  push(phrase);
+  push(phrase.replace(/-/g, ' '));
+  // Phrase entries are not always present in the compact WikDict subset. The
+  // lexical head still gives a useful short Russian hint instead of English.
+  push(phrase.split(/\s+/)[0]);
+  return out;
 }
 
 function wordState(word) {
@@ -144,245 +119,188 @@ function wordState(word) {
   return '';
 }
 
-function wrapperFor(word) {
-  const parent = word?.parentElement;
-  return parent?.classList?.contains('rw-zh-gloss-wrap') ? parent : null;
+function wordForWrapper(wrap) {
+  return wrap?.querySelector?.(':scope > .reader-word') || null;
 }
 
-function paragraphContext(word) {
-  const paragraph = word?.closest?.('.reader-paragraph');
-  if (!paragraph) return clean(word?.dataset?.word || word?.textContent || '');
-  if (paragraphTextCache.has(paragraph)) return paragraphTextCache.get(paragraph) || '';
-
-  let source = '';
-  try {
-    const root = paragraph.querySelector('.reader-paragraph-text') || paragraph;
-    const clone = root.cloneNode(true);
-    clone.querySelectorAll('rt,.rw-zh-readable-ru,.rw-zh-readable-pinyin,.rw-zh-t88-py,.rw-zh-t88-ru')
-      .forEach(node => node.remove());
-    source = clean(clone.textContent).slice(0, 360);
-  } catch {
-    source = clean(paragraph.textContent).slice(0, 360);
-  }
-  paragraphTextCache.set(paragraph, source);
-  return source;
-}
-
-// The gloss lives INSIDE .reader-word as an absolutely positioned child.
-// Therefore it cannot increase token width/height or change line wrapping.
-function ensureRussianLane(word) {
-  let lane = word.querySelector(':scope > .rw-zh-readable-ru');
-  if (!lane) {
-    lane = document.createElement('span');
-    lane.className = 'rw-zh-readable-ru';
-    lane.setAttribute('aria-hidden', 'true');
-    word.appendChild(lane);
-  }
-  return lane;
-}
-
-function setRussianLane(word, value) {
-  const lane = ensureRussianLane(word);
-  const next = compactRussian(value);
-  if (clean(lane.textContent) !== next) lane.textContent = next;
-  lane.hidden = !next;
-}
-
-function clearCustomLanes(word, wrap = wrapperFor(word)) {
-  word?.querySelectorAll?.(':scope > .rw-zh-readable-pinyin,:scope > .rw-zh-t88-py,:scope > .rw-zh-t88-ru')
-    .forEach(node => node.remove());
-  wrap?.querySelectorAll?.(':scope > .rw-zh-readable-ru,:scope > .rw-zh-readable-pinyin,:scope > .rw-zh-t88-py,:scope > .rw-zh-t88-ru')
-    .forEach(node => node.remove());
-  if (!enabled() || wordState(word) !== 'unknown') {
-    word?.querySelector?.(':scope > .rw-zh-readable-ru')?.remove();
-  }
-}
-
-function rawLocalRussian(wrap, word) {
-  const fromWrap = wrap?.dataset?.zhGlossStickyRu
+function localRussian(wrap, word) {
+  const raw = wrap?.dataset?.zhGlossSource === 'en' ? '' : (
+    wrap?.dataset?.zhGlossStickyRu
     || wrap?.dataset?.zhGlossRuReadable
     || wrap?.dataset?.zhGlossRu
-    || '';
-  if (fromWrap) return fromWrap;
+    || ''
+  );
+  const direct = compactRussian(raw);
+  if (direct) return direct;
 
   const surface = clean(word?.dataset?.word || '');
   if (!surface) return '';
   try {
     const entry = globalThis.readerLookupChineseWord?.(surface) || null;
-    return entry?.ru || entry?.russian || entry?.translation_ru || entry?.translation || '';
+    return compactRussian(entry?.ru || entry?.russian || entry?.translation_ru || entry?.translation || '');
   } catch {
     return '';
   }
 }
 
-function localRussian(wrap, word) {
-  return safeDictionaryRussian(rawLocalRussian(wrap, word));
-}
-
-function manualRussian(wrap, word) {
-  if (wrap?.dataset?.zhGlossSource !== 'instant') return '';
-  return contextualRussian(rawLocalRussian(wrap, word)) || safeDictionaryRussian(rawLocalRussian(wrap, word));
-}
-
-function nativePinyin(word, wrap) {
-  return clean(
-    word?.querySelector?.('rt')?.textContent
-    || wrap?.dataset?.zhGlossStickyPinyin
-    || wrap?.dataset?.zhGlossPinyin
-    || '',
-  );
-}
-
-function isVisible(word) {
+function localEnglish(word) {
+  const surface = clean(word?.dataset?.word || '');
+  if (!surface) return '';
   try {
-    const rect = word.getBoundingClientRect();
-    const height = Math.max(document.documentElement?.clientHeight || 0, window.innerHeight || 0);
-    const width = Math.max(document.documentElement?.clientWidth || 0, window.innerWidth || 0);
-    return rect.width > 0 && rect.height > 0
-      && rect.bottom >= -120 && rect.top <= height + 120
-      && rect.right >= -80 && rect.left <= width + 80;
+    const entry = globalThis.readerLookupChineseWord?.(surface) || null;
+    const raw = entry?.en || entry?.english || entry?.definition || entry?.definitions || entry?.gloss || '';
+    return compactEnglish(Array.isArray(raw) ? raw.join('; ') : raw);
   } catch {
-    return true;
+    return '';
   }
 }
 
-function app() {
-  if (!appPromise) appPromise = import(APP_URL);
-  return appPromise;
+function translatedRussian(english) {
+  for (const key of englishCandidates(english)) {
+    const ru = compactRussian(offlineRu.get(key));
+    if (ru) return ru;
+  }
+  return '';
 }
 
-function unwrapAIResult(raw) {
-  if (raw && typeof raw === 'object') return raw;
-  const text = clean(raw);
-  if (!text) return {};
+function glossWidth(value) {
+  const count = Array.from(clean(value)).length;
+  if (!count) return '0em';
+  return `${Math.min(2.65, Math.max(1, count * 0.19)).toFixed(2)}em`;
+}
+
+function ensureLane(word) {
+  let lane = word?.parentElement?.querySelector?.(':scope > .rw-zh-readable-ru');
+  if (!lane && word?.parentElement) {
+    lane = document.createElement('span');
+    lane.className = 'rw-zh-readable-ru';
+    lane.setAttribute('aria-hidden', 'true');
+    word.parentElement.appendChild(lane);
+  }
+  return lane;
+}
+
+function setLane(wrap, word, value) {
+  const ru = compactRussian(value);
+  const lane = ensureLane(word);
+  if (!lane) return;
+  if (clean(lane.textContent) !== ru) lane.textContent = ru;
+  lane.hidden = !ru;
+  wrap.style.setProperty('--rw-zh-readable-width', glossWidth(ru));
+}
+
+function clearLane(wrap) {
+  wrap?.querySelector?.(':scope > .rw-zh-readable-ru')?.remove();
+  wrap?.style?.removeProperty('--rw-zh-readable-width');
+}
+
+function queueEnglish(value) {
+  for (const key of englishCandidates(value)) {
+    if (!offlineRu.has(key) && !inFlightEnglish.has(key)) pendingEnglish.add(key);
+  }
+  clearTimeout(batchTimer);
+  batchTimer = setTimeout(flushEnglish, 30);
+}
+
+function parsePayload(payloadJson) {
   try {
-    const parsed = JSON.parse(text);
-    if (parsed && typeof parsed === 'object') return parsed;
-  } catch {}
-  return { ru: text };
+    const value = typeof payloadJson === 'string' ? JSON.parse(payloadJson) : payloadJson;
+    return value && typeof value === 'object' ? value : {};
+  } catch { return {}; }
 }
 
-function normalizeResult(raw) {
-  const value = unwrapAIResult(raw);
-  return contextualRussian(
-    value?.ru
-    || value?.translation_ru
-    || value?.russian
-    || value?.meaning_ru
-    || value?.translation
-    || '',
-  );
+function acceptTranslation(source, translated) {
+  const key = normalizeEnglish(source);
+  const ru = compactRussian(translated);
+  if (!key) return;
+  inFlightEnglish.delete(key);
+  if (ru) offlineRu.set(key, ru);
 }
 
-async function requestContextMeaning(word, context, pinyin) {
-  const mod = await app();
-  if (typeof mod?.readerAI !== 'function') throw new Error('readerAI unavailable');
-  const raw = await mod.readerAI({
-    task: 'reader_word',
-    sourceLang: 'zh',
-    targetLang: 'ru',
-    word,
-    surface: word,
-    context: clean(context).slice(0, 360) || word,
-    hint: { pinyin },
-    instruction: 'Translate ONLY this Chinese word in this exact context. Return JSON only: {"ru":"..."}. Russian only. Prefer exactly ONE Russian word; use at most TWO only if unavoidable. No English, no examples, no explanation, no sentence translation, no dictionary definition.',
+if (typeof window !== 'undefined') {
+  window.__readerOfflineTranslateProgress = (requestId, source, translated) => {
+    acceptTranslation(source, translated);
+    schedule(10);
+  };
+
+  window.__readerOfflineTranslateResolve = (requestId, ok, payloadJson) => {
+    const id = String(requestId || '');
+    const requested = requestWords.get(id) || [];
+    requestWords.delete(id);
+    requested.forEach(word => inFlightEnglish.delete(normalizeEnglish(word)));
+    const payload = parsePayload(payloadJson);
+    if (ok) {
+      const translations = payload.translations && typeof payload.translations === 'object'
+        ? payload.translations : {};
+      Object.entries(translations).forEach(([source, translated]) => acceptTranslation(source, translated));
+    } else {
+      bridgeBlockedUntil = Date.now() + RETRY_MS;
+      console.warn('[zh readable] встроенный EN→RU словарь недоступен:', payload.message || 'неизвестная ошибка');
+    }
+    schedule(20);
+  };
+}
+
+function flushEnglish() {
+  if (!enabled() || Date.now() < bridgeBlockedUntil) return;
+  const bridge = globalThis.ReaderOfflineTranslate;
+  if (!bridge || typeof bridge.translateBatch !== 'function') return;
+  const words = Array.from(pendingEnglish).slice(0, MAX_BATCH);
+  if (!words.length) return;
+  words.forEach(word => {
+    pendingEnglish.delete(word);
+    inFlightEnglish.add(word);
   });
-  return normalizeResult(raw);
-}
-
-function enqueue(word, key, context, pinyin) {
-  if (!enabled() || queued.has(key) || running.has(key) || !isVisible(word)) return;
-  const lastFailure = Number(failures.get(key) || 0);
-  if (lastFailure && Date.now() - lastFailure < RETRY_MS) return;
-
-  queued.add(key);
-  queue.push({ word, key, context, pinyin });
-  pump();
-}
-
-function pump() {
-  while (enabled() && workers < MAX_CONCURRENT && queue.length) {
-    const job = queue.shift();
-    if (!job) break;
-    queued.delete(job.key);
-    running.add(job.key);
-    workers += 1;
-
-    (async () => {
-      try {
-        const surface = clean(job.word?.dataset?.word || '');
-        if (!surface) throw new Error('empty word');
-        const ru = await requestContextMeaning(surface, job.context, job.pinyin);
-        if (!ru) throw new Error('context service did not return a compact Russian gloss');
-        loadCache()[job.key] = { ru, t: Date.now() };
-        saveCache();
-        failures.delete(job.key);
-        syncKey(job.key);
-      } catch (error) {
-        failures.set(job.key, Date.now());
-        console.warn('[zh readable] contextual gloss failed:', error?.message || error);
-      } finally {
-        running.delete(job.key);
-        workers = Math.max(0, workers - 1);
-        pump();
-      }
-    })();
+  const requestId = `zh-gloss-${Date.now().toString(36)}-${(++requestSequence).toString(36)}`;
+  requestWords.set(requestId, words);
+  try {
+    bridge.translateBatch(requestId, JSON.stringify(words));
+  } catch (error) {
+    requestWords.delete(requestId);
+    words.forEach(word => inFlightEnglish.delete(word));
+    bridgeBlockedUntil = Date.now() + RETRY_MS;
+    console.warn('[zh readable] не удалось запустить встроенный EN→RU словарь:', error?.message || error);
   }
 }
 
-function syncKey(key) {
-  const root = document.getElementById('reader-chapter-text');
-  if (!root) return;
-  root.querySelectorAll('.reader-word[data-lang="zh"][data-word]').forEach(word => {
-    if (word.dataset.zhReadableKey === key) syncWord(word, false);
-  });
-}
+function syncWrap(wrap) {
+  const word = wordForWrapper(wrap);
+  if (!word) return;
+  wrap.querySelectorAll(':scope > .rw-zh-readable-pinyin,:scope > .rw-zh-t88-py,:scope > .rw-zh-t88-ru')
+    .forEach(node => node.remove());
 
-function syncWord(word, allowQueue = true) {
-  if (!word?.classList?.contains('reader-word')) return;
-  const wrap = wrapperFor(word);
-  clearCustomLanes(word, wrap);
+  if (!enabled() || wordState(word) !== 'unknown') {
+    clearLane(wrap);
+    return;
+  }
 
-  if (!enabled() || wordState(word) !== 'unknown') return;
+  const ru = localRussian(wrap, word);
+  if (ru) {
+    setLane(wrap, word, ru);
+    return;
+  }
 
-  const surface = clean(word.dataset.word || '');
-  if (!surface) return;
-  const context = paragraphContext(word) || surface;
-  const key = contextKey(surface, context);
-  word.dataset.zhReadableKey = key;
-
-  const cached = loadCache()[key] || {};
-  const manual = manualRussian(wrap, word);
-  const cachedRu = contextualRussian(cached.ru);
-  const fallback = localRussian(wrap, word);
-  const ru = manual || cachedRu || fallback;
-  setRussianLane(word, ru);
-
-  // Never mutate <rt>. Reader's native pinyin renderer remains authoritative.
-  const pinyin = nativePinyin(word, wrap);
-
-  // Even when a safe dictionary fallback is visible, fetch the one contextual
-  // meaning and replace it once. That is the requested final result.
-  if (!cachedRu && !manual && allowQueue) enqueue(word, key, context, pinyin);
+  const english = localEnglish(word);
+  const translated = translatedRussian(english);
+  setLane(wrap, word, translated);
+  if (!translated && english) queueEnglish(english);
 }
 
 function purgeLegacyVisuals(root = document) {
   LEGACY_STYLE_IDS.forEach(id => document.getElementById(id)?.remove());
   root?.querySelectorAll?.('.rw-zh-readable-pinyin,.rw-zh-t88-py,.rw-zh-t88-ru')
     .forEach(node => node.remove());
-  // toc90 put Russian lanes as siblings in the wrapper. Remove those leftovers;
-  // toc91 keeps the only live lane inside .reader-word.
-  root?.querySelectorAll?.('.rw-zh-gloss-wrap > .rw-zh-readable-ru')
-    .forEach(node => node.remove());
 }
 
 function syncAll() {
+  if (typeof document === 'undefined') return 0;
   const root = document.getElementById('reader-chapter-text');
-  if (!root) return;
+  if (!root) return 0;
   purgeLegacyVisuals(root);
-  paragraphTextCache.clear?.();
-  root.querySelectorAll('.reader-word[data-lang="zh"][data-word]').forEach(word => syncWord(word));
-  pump();
+  const wrappers = root.querySelectorAll('.rw-zh-gloss-wrap');
+  wrappers.forEach(syncWrap);
+  flushEnglish();
+  return wrappers.length;
 }
 
 function schedule(delay = 0) {
@@ -393,23 +311,70 @@ function schedule(delay = 0) {
 function installStyle() {
   purgeLegacyVisuals();
   if (document.getElementById(STYLE_ID)) return;
-
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
-    /* The data wrapper must be geometrically invisible. */
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-paragraph-text {
+      line-height: 2.04 !important;
+    }
+
+    /* Every word owns the same two rows. This is what keeps all Hanzi on one
+       baseline instead of lifting only annotated words out of the sentence. */
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap {
-      display: contents !important;
-      margin: 0 !important;
+      display: inline-grid !important;
+      grid-template-rows: auto .52em !important;
+      grid-template-columns: max-content !important;
+      align-items: end !important;
+      justify-items: center !important;
+      vertical-align: baseline !important;
+      line-height: 1 !important;
+      margin: 0 .018em !important;
       padding: 0 !important;
-      border: 0 !important;
       width: auto !important;
       min-width: 0 !important;
       max-width: none !important;
       height: auto !important;
+      overflow: visible !important;
+      box-sizing: border-box !important;
+      break-inside: avoid !important;
     }
 
-    /* Never resurrect old pseudo-element pinyin / dictionary lanes. */
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
+    .rw-zh-gloss-wrap > .reader-word {
+      grid-row: 1 !important;
+      grid-column: 1 !important;
+      align-self: end !important;
+      justify-self: center !important;
+      position: static !important;
+      margin: 0 !important;
+      padding: 0 1px !important;
+      line-height: 1.12 !important;
+      white-space: nowrap !important;
+      word-break: keep-all !important;
+      overflow-wrap: normal !important;
+      overflow: visible !important;
+      text-overflow: clip !important;
+    }
+
+    /* Reader's native ruby is the single pinyin source. */
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
+    .rw-zh-gloss-wrap > .reader-word ruby.reader-ruby {
+      ruby-position: over !important;
+      ruby-align: center !important;
+    }
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
+    .rw-zh-gloss-wrap > .reader-word rt {
+      font-family: 'IBM Plex Sans', system-ui, sans-serif !important;
+      font-size: .46em !important;
+      font-weight: 400 !important;
+      line-height: 1 !important;
+      letter-spacing: 0 !important;
+      white-space: nowrap !important;
+      word-break: keep-all !important;
+      overflow: visible !important;
+      text-overflow: clip !important;
+    }
+
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap::before,
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-gloss-wrap::after {
       content: none !important;
@@ -417,27 +382,18 @@ function installStyle() {
       visibility: hidden !important;
     }
 
-    /* Positioning context only: relative positioning does not alter geometry. */
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
-    .reader-word.rw-migaku-unknown {
-      position: relative !important;
-      overflow: visible !important;
-    }
-
-    /* One Russian contextual gloss, painted in the spare lower part of the
-       existing CJK word line box. Absolute positioning means zero added width,
-       zero added height, zero change to wrapping/pagination. */
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
-    .reader-word.rw-migaku-unknown > .rw-zh-readable-ru {
-      position: absolute !important;
-      left: 50% !important;
-      top: 1.16em !important;
-      transform: translateX(-50%) !important;
+    /* A complete short Russian equivalent. Its width contribution is capped;
+       long prose is rejected by JS rather than wrapped into a vertical tower. */
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-readable-ru {
+      grid-row: 2 !important;
+      grid-column: 1 !important;
+      align-self: start !important;
+      justify-self: center !important;
       display: block !important;
-      width: max-content !important;
+      width: var(--rw-zh-readable-width, 0em) !important;
       min-width: 0 !important;
-      max-width: none !important;
-      margin: 0 !important;
+      max-width: var(--rw-zh-readable-width, 0em) !important;
+      margin: .07em 0 0 !important;
       padding: 0 !important;
       white-space: nowrap !important;
       word-break: keep-all !important;
@@ -446,18 +402,16 @@ function installStyle() {
       text-overflow: clip !important;
       text-align: center !important;
       font-family: 'IBM Plex Sans', system-ui, sans-serif !important;
-      font-size: .32em !important;
+      font-size: .34em !important;
       font-weight: 400 !important;
       line-height: 1 !important;
       letter-spacing: 0 !important;
       color: var(--text-muted) !important;
       pointer-events: none !important;
       user-select: none !important;
-      z-index: 2 !important;
     }
 
-    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"]
-    .reader-word.rw-migaku-unknown > .rw-zh-readable-ru[hidden] {
+    #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .rw-zh-readable-ru[hidden] {
       display: none !important;
     }
   `;
@@ -472,7 +426,6 @@ function bindObserver() {
     return;
   }
   if (observer && observedRoot === root) return;
-
   observer?.disconnect();
   observedRoot = root;
   observer = new MutationObserver(records => {
@@ -497,20 +450,11 @@ function bindObserver() {
     }
     if (relevant) schedule(20);
   });
-
   observer.observe(root, {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: [
-      'class',
-      'data-zh-gloss-ru',
-      'data-zh-gloss-ru-readable',
-      'data-zh-gloss-sticky-ru',
-      'data-zh-gloss-source',
-      'data-zh-gloss-pinyin',
-      'data-zh-gloss-sticky-pinyin',
-    ],
+    attributeFilter: ['class', 'data-zh-gloss-ru', 'data-zh-gloss-sticky-ru', 'data-zh-gloss-source'],
   });
 }
 
@@ -532,9 +476,9 @@ if (typeof window !== 'undefined') {
 
 export {
   compactRussian,
-  safeDictionaryRussian,
-  contextualRussian,
-  contextKey,
-  syncWord,
+  compactEnglish,
+  englishCandidates,
+  glossWidth,
+  syncWrap,
   syncAll,
 };

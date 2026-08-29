@@ -1,63 +1,48 @@
-// toc91 regression: native pinyin + zero-geometry contextual Russian gloss.
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 
 const glossPath = 'js/reader/zh-unknown-gloss-v4.js';
-const readablePath = 'js/reader/zh-readable-inline.js';
+const layoutPath = 'js/reader/zh-readable-inline.js';
 const spacingPath = 'js/reader/zh-unknown-gloss-spacing.js';
 const runtimePath = 'js/reader/interactions-runtime.js';
-const glossSource = fs.readFileSync(glossPath, 'utf8');
-const readableSource = fs.readFileSync(readablePath, 'utf8');
-const spacingSource = fs.readFileSync(spacingPath, 'utf8');
+
+const gloss = fs.readFileSync(glossPath, 'utf8');
+const layout = fs.readFileSync(layoutPath, 'utf8');
+const spacing = fs.readFileSync(spacingPath, 'utf8');
 const runtime = fs.readFileSync(runtimePath, 'utf8');
 
-assert.match(runtime, /import '\.\/zh-unknown-gloss-v4\.js\?v=\d+';/, 'Chinese Unknown data layer is not loaded');
-assert.match(runtime, /import '\.\/zh-unknown-gloss-spacing\.js\?v=3';/, 'toc91 pinyin mode bridge is not loaded');
-assert.match(runtime, /import '\.\/zh-readable-inline\.js\?v=3';/, 'toc91 readable Chinese presentation is not loaded');
-assert.doesNotMatch(runtime, /import '\.\/zh-unknown-interlinear\.js/, 'retired interlinear presentation must not be loaded');
+assert.match(runtime, /import '\.\/zh-unknown-gloss-v4\.js\?v=\d+';/, 'Chinese data module is not loaded');
+assert.match(runtime, /import '\.\/zh-readable-inline\.js\?v=\d+';/, 'Chinese readable layout is not loaded');
+assert.match(gloss, /localStorage\.getItem\(MODE_KEY\) === 'unknown' \? 'unknown' : 'off'/, 'feature must default to off');
+assert.match(gloss, /classList\.contains\('rw-migaku-known'\)/, 'known-word guard must use Migaku status');
+assert.doesNotMatch(gloss, /const gloss = ru \|\| en/, 'English must never become a visible Chinese gloss');
+assert.doesNotMatch(layout, /readerAI|task:\s*['"]reader_word/, 'reading must not automatically call Instant/AI');
+assert.match(layout, /ReaderOfflineTranslate/, 'missing Russian hints must use the bundled offline EN→RU bridge');
+assert.match(spacing, /customOn \? 'unknown' : 'off'/, 'custom mode must enable native pinyin for every Unknown word');
 
-assert.match(glossSource, /localStorage\.getItem\(MODE_KEY\) === 'unknown' \? 'unknown' : 'off'/, 'feature must default to off');
-assert.match(glossSource, /classList\.contains\('rw-migaku-known'\)/, 'known-word guard must use Migaku status');
-assert.match(glossSource, /reader-instant-word-translation/, 'manual Instant results must update Chinese Unknown glosses');
-assert.doesNotMatch(glossSource, /currentChapter\s*=/, 'optional gloss module must not mutate chapter navigation');
-assert.doesNotMatch(glossSource, /currentParagraph\s*=/, 'optional gloss module must not mutate paragraph navigation');
+// Phone layout contract: all Chinese words share the same two-row inline grid,
+// while the Russian width contribution remains small and bounded.
+assert.match(layout, /\.rw-zh-gloss-wrap \{[\s\S]*display: inline-grid !important;/, 'all Chinese tokens must use the same inline grid');
+assert.match(layout, /grid-template-rows: auto \.52em !important;/, 'all Hanzi must reserve one equal Russian row');
+assert.match(layout, /vertical-align: baseline !important;/, 'Hanzi must share the normal text baseline');
+assert.match(layout, /grid-row: 2 !important;/, 'Russian gloss must occupy the row below Hanzi');
+assert.match(layout, /font-size: \.34em !important;/, 'Russian hint must remain legible without controlling text size');
+assert.doesNotMatch(layout, /46vw|white-space:\s*normal|text-overflow:\s*ellipsis/, 'wide, vertical or clipped gloss columns must not return');
+assert.doesNotMatch(layout, /position:\s*absolute\s*!important/, 'glosses must not float over neighbouring text');
+assert.doesNotMatch(gloss + layout, /currentChapter\s*=|currentParagraph\s*=/, 'optional aid must not mutate navigation');
 
-// The old spacing module is now bridge-only. It must never inject line-height or
-// pseudo annotation CSS again.
-assert.doesNotMatch(spacingSource, /line-height:\s*2\./, 'legacy spacing module must not alter Chinese line height');
-assert.doesNotMatch(spacingSource, /::before|::after/, 'legacy spacing module must not draw annotation pseudo-elements');
-assert.match(spacingSource, /RETIRED_STYLE_ID/, 'bridge must actively remove the retired spacing style');
+const dataModule = await import(pathToFileURL(glossPath).href + '?ci=' + Date.now());
+assert.equal(dataModule.mode(), 'off');
 
-// toc91 core contract: text geometry is native Reader geometry.
-assert.match(readableSource, /Reader already owns Hanzi \+ ruby\/pinyin/, 'toc91 must explicitly reuse native Hanzi/pinyin');
-assert.match(readableSource, /task: 'reader_word'/, 'visible Unknown words must receive contextual word translation');
-assert.match(readableSource, /targetLang: 'ru'/, 'context translation must explicitly target Russian');
-assert.match(readableSource, /Prefer exactly ONE Russian word/, 'context prompt must demand one compact Russian meaning');
-assert.match(readableSource, /display: contents !important/, 'data wrapper must disappear from layout');
-assert.match(readableSource, /position: absolute !important/, 'Russian gloss must be out of normal flow');
-assert.match(readableSource, /top: 1\.16em !important/, 'Russian gloss must stay inside the existing CJK word line box');
-assert.match(readableSource, /word\.appendChild\(lane\)/, 'Russian gloss must anchor inside the native word, not widen the wrapper');
-assert.doesNotMatch(readableSource, /display:\s*inline-flex\s*!important/, 'Unknown words must never become flex items');
-assert.doesNotMatch(readableSource, /display:\s*inline-grid\s*!important/, 'Unknown words must never become grid items');
-assert.doesNotMatch(readableSource, /grid-template|flex-direction/, 'presentation must not rebuild token geometry');
-assert.doesNotMatch(readableSource, /reader-paragraph-text\s*\{[^}]*line-height/s, 'gloss layer must not change paragraph text line-height');
-assert.doesNotMatch(readableSource, /rt\.textContent\s*=/, 'context layer must never rewrite native pinyin');
-assert.doesNotMatch(readableSource, /className = 'rw-zh-readable-pinyin'/, 'a second pinyin DOM lane must never be created');
-assert.doesNotMatch(readableSource, /text-overflow:\s*ellipsis/, 'annotations must not be ellipsized');
-
-const gloss = await import(pathToFileURL(glossPath).href + '?ci=' + Date.now());
-assert.equal(gloss.mode(), 'off', 'without explicit opt-in mode must be off');
-
-const readable = await import(pathToFileURL(readablePath).href + '?ci=' + Date.now());
-assert.equal(readable.compactRussian('куча, груда · складывать, накапливать'), 'куча');
-assert.equal(readable.compactRussian('чистить (кожуру, скорлупу); снимать (шкуру)'), 'чистить');
-assert.equal(readable.compactRussian('чистить (кожуру'), 'чистить');
-assert.equal(readable.safeDictionaryRussian('Металл красноватого цвета, химический элемент (Cu).'), '', 'encyclopedic copper prose must never show as Металл');
-assert.equal(readable.safeDictionaryRussian('медь'), 'медь');
-assert.equal(readable.contextualRussian('бродяга'), 'бродяга');
-assert.equal(readable.contextualRussian('искать доказательства'), 'искать доказательства');
-assert.equal(readable.contextualRussian('это длинное объяснение значения слова'), '', 'verbose AI output must stay invisible');
-assert.notEqual(readable.contextKey('破烂', '我找到了一堆破烂'), readable.contextKey('破烂', '他穿得很破烂'), 'same word in different contexts must not share contextual gloss');
+const presentation = await import(pathToFileURL(layoutPath).href + '?ci=' + Date.now());
+assert.equal(presentation.compactRussian('куча; груда; складывать'), 'куча');
+assert.equal(presentation.compactRussian('Металл красноватого цвета, химический элемент (Cu).'), '');
+assert.equal(presentation.compactRussian('подбирать'), 'подбирать');
+assert.equal(presentation.compactRussian('a copper metal'), '', 'English must never pass the Russian formatter');
+assert.equal(presentation.compactEnglish('to peel; to skin; to shell'), 'peel');
+assert.deepEqual(presentation.englishCandidates('to seek proof'), ['seek proof', 'seek']);
+assert.equal(presentation.glossWidth('подбирать'), '1.71em');
+assert.equal(presentation.glossWidth('оченьдлинныйперевод'), '2.65em');
 
 console.log('reader Chinese unknown-word gloss regression: PASS');

@@ -2,7 +2,7 @@ import './toc-upgrade.js?v=1'; // retired no-op shim; kept for old cache/CI comp
 import './handler-bridge.js?v=1';
 import './zh-unknown-gloss-v4.js?v=3';
 import './zh-offline-word-panel.js?v=1';
-import './zh-unknown-gloss-spacing.js?v=3'; // mode bridge only; no geometry-changing CSS
+import './zh-unknown-gloss-spacing.js?v=3'; // native pinyin for every Unknown word
 import './vocab-estimate.js?v=7';
 import './en-vocab-estimate.js?v=1';
 import './en-manual-knowledge-bridge.js?v=2';
@@ -10,7 +10,7 @@ import './en-unknown-gloss-v2.js?v=3';
 import './en-unknown-gloss-full-fallback.js?v=2';
 import './toc51-stability.js?v=2';
 import './toolbar-scroll.js?v=1';
-import './zh-readable-inline.js?v=3';
+import './zh-readable-inline.js?v=4';
 import { createReaderInteractions } from './interactions.js?v=2';
 
 function getRoot() {

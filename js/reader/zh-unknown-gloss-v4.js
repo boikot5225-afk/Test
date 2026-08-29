@@ -7,7 +7,8 @@ import { normalizeImportKey } from '../utils.js';
 //   1) a translation explicitly requested through Instant,
 //   2) previously cached Russian meaning (including old DeepSeek results),
 //   3) local Russian meaning from Reader's bundled lexicons,
-//   4) bundled CC-CEDICT English definition as a fallback.
+// English definitions are used only as hidden lookup keys for the bundled
+// EN→RU bridge. English is never rendered in the Chinese reading view.
 // Pinyin comes from the bundled dictionary immediately. The full CC-CEDICT
 // map is loaded in the background and rescanned without rebuilding the chapter.
 
@@ -248,8 +249,8 @@ function bestHint(word, context, existingPinyin = '', own = null, lexical = null
     || englishMeaning(oldContextHit)
     || '';
 
-  const gloss = ru || en;
-  const source = ru ? 'ru' : en ? 'en' : '';
+  const gloss = ru;
+  const source = ru ? 'ru' : '';
   return { pinyin, ru, en, gloss, source, local: localHit };
 }
 
@@ -355,7 +356,7 @@ function ensureControl() {
       <span class="rd-dp-label">Китайский · незнакомые слова</span>
       <div class="rd-dp-pills">
         <button type="button" class="rd-dp-pill rd-zh-gloss-mode" data-mode="off">Обычный текст</button>
-        <button type="button" class="rd-dp-pill rd-zh-gloss-mode" data-mode="unknown">Пиньинь + словарь</button>
+        <button type="button" class="rd-dp-pill rd-zh-gloss-mode" data-mode="unknown">Пиньинь + перевод</button>
       </div>`;
     row.querySelectorAll('.rd-zh-gloss-mode').forEach(button => {
       button.addEventListener('click', () => setMode(button.dataset.mode || 'off'));
