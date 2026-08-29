@@ -1,0 +1,147 @@
+name: Android APK toc110 known gloss collapse
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc110-known-gloss-collapse
+    paths:
+      - '.github/workflows/android-apk-toc110-known-gloss-collapse.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reader-toc110-known-gloss-collapse
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc110-known-gloss-collapse
+          fetch-depth: 0
+
+      - name: Apply toc110 known-gloss collapse patch
+        run: python3 scripts/patch-toc110-known-gloss-collapse.py
+
+      - name: Validate immediate Unknown to Known collapse
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in \
+            js/reader/zh-readable-inline.js \
+            js/reader/interactions-runtime.js \
+            js/reader/chapter-render-next.js \
+            js/reader/chapter-render-stage1.js \
+            js/reader/chapter-render-dialogue.js \
+            js/reader/chapter-render.js \
+            js/reader-app.js js/app.js; do
+            node --check "$file"
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('js/reader/zh-readable-inline.js').read_text()
+          generic='''.rw-zh-gloss-wrap > .rw-zh-readable-ru {\n      display: none !important;\n    }'''
+          unknown='''.rw-zh-gloss-wrap:has(> .reader-word.rw-migaku-unknown) > .rw-zh-readable-ru {'''
+          assert generic in s, 'missing default-hidden helper lane rule'
+          assert unknown in s, 'missing Unknown-only helper lane override'
+          assert s.index(generic) < s.index(unknown), 'Unknown override must come after default hidden rule'
+          assert "reader-zh-readable-inline-v7-known-collapse" in s
+          print('toc110 CSS state transition guard: OK')
+          PY
+          grep -qF "./zh-readable-inline.js?v=7-known-collapse" js/reader/interactions-runtime.js
+          grep -qF "./reader-app.js?v=77.39-known-gloss-collapse" js/app.js
+          grep -qF "js/app.js?v=77.38-known-gloss-collapse" index.html
+          # Keep toc109 fixes intact.
+          grep -qF 'readerEnsureNativeChineseSegmentations' js/reader-app.js
+          grep -qF 'contextLexicalEntry' js/reader/zh-unknown-gloss-v4.js
+          grep -qF 'primeSegmentationScores(db, run);' android/app/src/main/java/space/saintjust/reader/stage1/ChineseResourceBridge.java
+
+      - name: Commit toc110 source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            js/reader/zh-readable-inline.js \
+            js/reader/interactions-runtime.js \
+            js/reader/chapter-render-next.js \
+            js/reader/chapter-render-stage1.js \
+            js/reader/chapter-render-dialogue.js \
+            js/reader/chapter-render.js \
+            js/reader-app.js js/app.js index.html
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix(reader): collapse Chinese gloss immediately when Known'
+            git fetch origin feature/77.42-toc110-known-gloss-collapse
+            git rebase origin/feature/77.42-toc110-known-gloss-collapse
+            git push origin HEAD:feature/77.42-toc110-known-gloss-collapse
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Restore signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+            echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+          fi
+
+      - name: Wire maintained native translation bridges
+        run: python3 scripts/wire-toc104-native-bridges.py
+
+      - name: Prepare toc110 build identity
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle'); s=p.read_text()
+          assert s.count('versionCode 118')==1
+          assert s.count("versionName '77.42-toc98'")==1
+          p.write_text(s.replace('versionCode 118','versionCode 130',1).replace("versionName '77.42-toc98'","versionName '77.42-toc110'",1))
+          PY
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify and package APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+          unzip -p "$APK" assets/www/js/reader/zh-readable-inline.js | grep -qF 'reader-zh-readable-inline-v7-known-collapse'
+          unzip -p "$APK" assets/www/js/reader/zh-readable-inline.js | grep -qF '.rw-zh-gloss-wrap > .rw-zh-readable-ru {'
+          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF 'zh-readable-inline.js?v=7-known-collapse'
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF 'readerEnsureNativeChineseSegmentations'
+          unzip -p "$APK" assets/www/js/reader/zh-unknown-gloss-v4.js | grep -qF 'contextLexicalEntry'
+          unzip -l "$APK" | grep -qF 'assets/data/zh_migaku.sqlite3'
+          mkdir -p unique-out
+          cp "$APK" unique-out/Reader-AI-77.42-toc110-build130.apk
+          sha256sum unique-out/Reader-AI-77.42-toc110-build130.apk | tee unique-out/SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc110-build130
+          path: |
+            unique-out/Reader-AI-77.42-toc110-build130.apk
+            unique-out/SHA256.txt
+          retention-days: 30
