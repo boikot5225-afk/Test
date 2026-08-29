@@ -22,7 +22,7 @@ import { wordStateIdbPut, wordStateIdbGet } from './reader/word-state-idb-store.
 import { lexicalCacheIdbPut, lexicalCacheIdbGet } from './reader/lexical-cache-idb-store.js?v=1';
 import { createReaderWordPanel } from './reader/word-panel.js?v=5';
 import { createReaderWordLookup } from './reader/word-lookup.js?v=2-deepseek-fallback';
-import { createReaderWordState } from './reader/word-state.js?v=4';
+import { createReaderWordState } from './reader/word-state.js?v=5-manual-known';
 import { createReaderLibraryStore } from './reader/library-store.js?v=5';
 import { createReaderDisplay } from './reader/display.js?v=5';
 import { createReaderTimeTracker } from './reader/reading-time.js?v=2-per-paragraph-timer-guard';

@@ -202,7 +202,14 @@ function rankIndexForWordSync(word) {
 
 function manualKnowledge(state) {
   const explicit = String(state?.manualKnowledge || '').toLowerCase();
-  return explicit === 'known' || explicit === 'unknown' ? explicit : '';
+  if (explicit === 'known' || explicit === 'unknown') return explicit;
+  const status = String(state?.status || '').trim().toLowerCase();
+  // Core Reader manual Known predates manualKnowledge. autoKnown=false is the
+  // discriminator: automatic/common words must not become sticky overrides.
+  if (state?.known === true && status === 'known' && state?.autoKnown === false) return 'known';
+  // Preserve the old explicit Problem/Hard user decision as manual Unknown.
+  if (state?.known === false && state?.saved === true && (status === 'problem' || status === 'hard')) return 'unknown';
+  return '';
 }
 
 function directStateKey(word) { return `en:${normalizeSurface(word)}`; }
@@ -299,7 +306,13 @@ function applyClassificationToElement(el, info) {
   removeKnowledgeClasses(el);
   if (info?.value === 'known') el.classList.add('rw-migaku-known');
   else if (info?.value === 'unknown') {
-    el.classList.remove('rw-known');
+    // Same hard rule as Chinese: assessment/unranked classification cannot
+    // revoke a core manual Known marker.  Only the user's explicit Unknown can.
+    if (info.source !== 'manual' && el.classList.contains('rw-known')) {
+      el.classList.add('rw-migaku-known');
+      return;
+    }
+    if (info.source === 'manual') el.classList.remove('rw-known');
     el.classList.add('rw-migaku-unknown');
   } else return;
   if (info.source === 'manual') el.dataset.readerManualKnowledge = info.value;

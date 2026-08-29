@@ -149,7 +149,14 @@ function findWordState(word, lang = currentLang(), create = false) {
 
 function manualKnowledge(state) {
   const explicit = String(state?.manualKnowledge || '').toLowerCase();
-  return explicit === 'known' || explicit === 'unknown' ? explicit : '';
+  if (explicit === 'known' || explicit === 'unknown') return explicit;
+  const status = String(state?.status || '').trim().toLowerCase();
+  // Core Reader manual Known predates manualKnowledge. autoKnown=false is the
+  // discriminator: automatic/common words must not become sticky overrides.
+  if (state?.known === true && status === 'known' && state?.autoKnown === false) return 'known';
+  // Preserve the old explicit Problem/Hard user decision as manual Unknown.
+  if (state?.known === false && state?.saved === true && (status === 'problem' || status === 'hard')) return 'unknown';
+  return '';
 }
 
 function showToast(message) {
@@ -299,9 +306,14 @@ function applyClassificationToElement(el, classification) {
   if (classification?.value === 'known') {
     el.classList.add('rw-migaku-known');
   } else if (classification?.value === 'unknown') {
-    // Only explicit Unknown may clear an old legacy Known marker. Automatic
-    // Known never creates rw-known, so the stable Chinese gloss DOM is intact.
-    el.classList.remove('rw-known');
+    // Manual Known outranks every automatic estimate.  A profile/frequency
+    // refresh is advisory and is never allowed to resurrect red after the user
+    // said "Знаю".  Only an explicit manual Unknown may clear rw-known.
+    if (classification.source !== 'manual' && el.classList.contains('rw-known')) {
+      el.classList.add('rw-migaku-known');
+      return;
+    }
+    if (classification.source === 'manual') el.classList.remove('rw-known');
     el.classList.add('rw-migaku-unknown');
   } else {
     return;

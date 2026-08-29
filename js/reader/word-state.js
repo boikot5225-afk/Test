@@ -405,7 +405,20 @@ export function createReaderWordState(opts) {
     if (word && lemma && key(word, lang) !== key(lemma, lang)) { const form = touch(word, lang); delete form.autoRubyVisible; form.saved = true; form.linkedLemma = normalizeWord(lemma, lang); form.lemma = normalizeWord(lemma, lang); form.status = 'learning'; if (ru) form.ru = ru; }
     save();
   };
-  const markKnown = (word, lang = null) => { const state = touch(word, lang); delete state.autoRubyVisible; state.known = true; state.status = 'known'; state.autoKnown = false; save(); };
+  const markKnown = (word, lang = null) => {
+    const language = canonicalLang(lang || currentLang());
+    const state = touch(word, language);
+    delete state.autoRubyVisible;
+    state.known = true;
+    state.status = 'known';
+    state.autoKnown = false;
+    // A user click is final authority.  Keep an explicit sentinel so every
+    // language-specific classifier can distinguish it from estimated/common
+    // Known during later async renders and cache/cloud hydration.
+    state.manualKnowledge = 'known';
+    state.manualKnowledgeAt = state.updatedAt || new Date().toISOString();
+    save();
+  };
 
   // French verb-form detection used to scan the whole verb table every time the
   // same token was painted. Memoize it for the lifetime of this reader store.
