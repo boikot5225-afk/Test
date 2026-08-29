@@ -63,7 +63,6 @@ jobs:
           grep -qF "zh-context-auth-wakeup.js?v=1" js/reader/interactions-runtime.js
           grep -qF "zh-context-batch.js?v=4" js/reader/interactions-runtime.js
 
-          # An incomplete AI item must never be inserted into the completed cache.
           python3 - <<'PY'
           from pathlib import Path
           s=Path('js/reader/zh-context-batch.js').read_text()
@@ -181,8 +180,8 @@ jobs:
           unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF 'zh-context-batch.js?v=4'
           unzip -p "$APK" assets/www/js/reader/zh-context-batch.js | grep -qF 'an2_reader_zh_context_gloss_v3'
           unzip -p "$APK" assets/www/js/reader/zh-direct-ru-fallback.js | grep -qF 'ReaderChineseTranslate'
-          unzip -p "$APK" classes.dex | strings | grep -qF 'ReaderChineseTranslate'
-          unzip -p "$APK" classes.dex | strings | grep -qF 'mlkit_zh_ru_offline'
+          unzip -p "$APK" 'classes*.dex' | strings | grep -qF 'ReaderChineseTranslate'
+          unzip -p "$APK" 'classes*.dex' | strings | grep -qF 'mlkit_zh_ru_offline'
 
           unzip -p "$APK" assets/data/zh_migaku.sqlite3 > /tmp/zh_migaku.sqlite3
           python3 - <<'PY'
