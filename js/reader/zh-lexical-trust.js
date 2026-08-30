@@ -7,6 +7,7 @@
 // its own notion of "done".
 
 const CYRILLIC_RE = /[\u0400-\u052f]/;
+const SINGLE_HAN_RE = /^[\u3400-\u9fff]$/;
 
 export const ZH_GLOSS_TRUST = Object.freeze({
   missing: 0,
@@ -17,7 +18,7 @@ export const ZH_GLOSS_TRUST = Object.freeze({
 });
 
 const CONTEXT_SOURCES = new Set([
-  'context-ai', 'deepseek-context', 'deepseek_batch', 'context-cache', 'manual-deepseek',
+  'context-ai', 'deepseek-context', 'deepseek-batch', 'context-cache', 'manual-deepseek',
 ]);
 const MACHINE_SOURCES = new Set([
   'mlkit-zh-ru', 'mlkit-en-ru', 'en', 'wikdict-en-ru', 'offline-en-ru', 'machine',
@@ -55,6 +56,16 @@ export function lexicalRussian(entry) {
 
 export function normalizeGlossSource(value) {
   return String(value || '').trim().toLowerCase().replace(/_/g, '-');
+}
+
+// Meaning trust and pronunciation trust are deliberately separate. A one-Hanzi
+// Chinese token can have a perfectly good local Russian gloss while its reading
+// is still context-dependent (行/还/重/长/得/着...). Unknown single-Hanzi tokens
+// therefore still deserve the already-batched contextual request. Multi-Hanzi
+// dictionary entries usually determine their own reading and do not pay this
+// extra AI cost unless their Russian meaning itself is provisional/missing.
+export function chinesePinyinNeedsContext(surface) {
+  return SINGLE_HAN_RE.test(String(surface || '').trim());
 }
 
 export function classifyChineseGloss({ wrap = null, entry = null } = {}) {
