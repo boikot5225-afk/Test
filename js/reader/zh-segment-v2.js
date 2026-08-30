@@ -6,7 +6,11 @@
 // rank list as lexical probability evidence. The implementation is deliberately
 // pure enough to run in Node regression tests and in Android WebView.
 
-const DEFAULT_RANK_URL = '/assets/data/zh_jieba_top100k.txt';
+// index.html lives at android_asset/www/index.html while the generated Migaku
+// resources live at android_asset/data/. Fetch URLs are resolved against the
+// document URL, so ../data is the same-origin Android path. An absolute
+// /assets/data URL would incorrectly resolve to file:///assets/data in WebView.
+const DEFAULT_RANK_URL = '../data/zh_jieba_top100k.txt';
 const DEFAULT_UNKNOWN_RANK = 300_000;
 const MAX_WORD_LENGTH = 8;
 const TOKEN_PENALTY = 3.0;
