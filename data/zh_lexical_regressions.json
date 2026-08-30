@@ -33,6 +33,23 @@
     "must": ["太平天国", "辛酉", "十一年", "正月", "二十六日", "至", "二月", "十七日", "之间"]
   },
   {
+    "id": "historical-live-hong-xiuquan",
+    "text": "洪秀全曾实行改政",
+    "mustContain": ["洪秀全", "曾", "实行"],
+    "forbid": ["洪秀全曾实行", "洪秀全曾", "曾实行"]
+  },
+  {
+    "id": "historical-live-era-date",
+    "text": "清咸丰十一年公元1861年3月7日至27日",
+    "mustContain": ["清", "咸丰", "十一年", "公元", "至"]
+  },
+  {
+    "id": "historical-live-state-title-change",
+    "text": "把太平天国国号改为上帝天国",
+    "mustContain": ["太平天国", "国号", "改为", "上帝", "天国"],
+    "forbid": ["国号改为", "太平天国国号"]
+  },
+  {
     "id": "historical-prose",
     "text": "嗣后如有记述太平史实者",
     "must": ["嗣后", "如", "有", "记述", "太平", "史实", "者"]
