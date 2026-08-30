@@ -87,7 +87,7 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Re-sign with v1 v2 v3 compatibility schemes
+      - name: Re-sign and validate modern Android package
         shell: bash
         run: |
           set -euo pipefail
@@ -104,7 +104,7 @@ jobs:
             --ks-key-alias "$ALIAS" \
             --ks-pass "pass:$KSPASS" \
             --key-pass "pass:$KEYPASS" \
-            --v1-signing-enabled true \
+            --v1-signing-enabled false \
             --v2-signing-enabled true \
             --v3-signing-enabled true \
             --out "$OUT" "$APK"
@@ -112,7 +112,6 @@ jobs:
           "${BUILD_TOOLS}/aapt" dump badging "$OUT" | tee unique-out/BADGING.txt
           "${BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$OUT" > unique-out/ZIPALIGN.txt
           unzip -t "$OUT" >/dev/null
-          grep -q "Verified using v1 scheme (JAR signing): true" unique-out/APKSIGNER.txt
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
           grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
           grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
