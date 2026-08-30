@@ -170,20 +170,15 @@ must_sub(
 
 
 # ---------------------------------------------------------------------------
-# 3) Context batch: retry auth readiness, invalidate stale answers, keep Russian
-#    short enough to work as an interlinear gloss rather than a mini paragraph.
+# 3) Context batch: retry auth readiness and invalidate stale answers.
+#    toc113 already aligned compactRu to the 1-3 word server contract; do not
+#    patch that line twice here.
 # ---------------------------------------------------------------------------
 must_replace(
     'js/reader/zh-context-batch.js',
     "const CACHE_BASE_KEY = 'an2_reader_zh_context_gloss_v3';",
     "const CACHE_BASE_KEY = 'an2_reader_zh_context_gloss_v4_quality';",
     'invalidate old contextual Chinese gloss cache',
-)
-must_replace(
-    'js/reader/zh-context-batch.js',
-    "  if (!words.length || words.length > 4) return '';\n",
-    "  if (!words.length || words.length > 3) return '';\n",
-    'keep contextual Russian compact',
 )
 must_replace(
     'js/reader/zh-context-batch.js',
