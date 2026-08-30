@@ -28,20 +28,19 @@ for (const test of corpus) {
   if (!ok) failures.push({ id: test.id, expected: test, actual: han });
 }
 
-// The scorer must prefer the known good path on our two original catastrophic
-// examples. This protects readerChooseBestChineseSegmentation from later
-// reintroducing greedy/remote garbage.
+// The scorer must prefer real lexical paths over catastrophic alternatives.
 for (const [text, good, bad] of [
   ['代以太平军或相应之名称', ['代','以','太平军','或','相应','之','名称'], ['代','以太','平','军','或','相应','之','名称']],
   ['凡有违反本法', ['凡','有','违反','本法'], ['凡','有违','反','本法']],
+  // Live phone screenshot regression: the old fixed unknown-token penalty made
+  // one six-Hanzi blob look cheaper than a person name + adverb + verb.
+  ['洪秀全曾实行', ['洪秀全','曾','实行'], ['洪秀全曾实行']],
 ]) {
   const goodCost = scoreChineseSegmentation(good, { ranks, hasWord });
   const badCost = scoreChineseSegmentation(bad, { ranks, hasWord });
   assert.ok(goodCost < badCost, `${text}: good path ${goodCost} must beat bad ${badCost}`);
 }
 
-// Translation provenance gate. DOM is represented by the tiny surface the
-// trust module actually reads; no browser is needed for this policy test.
 function fakeWrap({ displayed = '', source = '' } = {}) {
   return {
     dataset: { zhGlossSource: source },
@@ -55,8 +54,6 @@ assert.equal(classifyChineseGloss({ wrap: fakeWrap({ displayed: 'Заглави�
 assert.equal(classifyChineseGloss({ wrap: fakeWrap({ displayed: 'название государства', source: 'context-ai' }) }).needsContext, false);
 assert.equal(classifyChineseGloss({ wrap: fakeWrap({ displayed: 'смерть' }), entry: { ru: 'смерть', _source: 'zh_reading' } }).needsContext, false);
 
-// Pronunciation confidence is independent from translation confidence.
-// A trusted RU gloss for 行 must not suppress the contextual háng/xí choice.
 assert.equal(chinesePinyinNeedsContext('行'), true);
 assert.equal(chinesePinyinNeedsContext('还'), true);
 assert.equal(chinesePinyinNeedsContext('国号'), false);
@@ -66,4 +63,4 @@ if (failures.length) {
   console.error(JSON.stringify(failures, null, 2));
   process.exit(1);
 }
-console.log(`Chinese lexical pipeline v2 gate: ${corpus.length}/${corpus.length} segmentation cases + RU/pinyin trust policy PASS`);
+console.log(`Chinese lexical pipeline v3 gate: ${corpus.length}/${corpus.length} segmentation cases + RU/pinyin trust policy PASS`);
