@@ -1,4 +1,4 @@
-name: Android APK toc112 Chinese context inline
+name: Android APK toc113 Chinese context coverage
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reader-toc112-zh-context-inline
+  group: reader-toc113-zh-context-coverage
   cancel-in-progress: false
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Restore signing key exactly like installed vc1000 build
+      - name: Restore signing key exactly like installed vc1001 build
         shell: bash
         run: |
           set -euo pipefail
@@ -61,26 +61,36 @@ jobs:
       - name: Apply toc112 Chinese context-to-inline fix
         run: python3 scripts/patch-toc112-zh-context-inline.py
 
-      - name: Validate toc112 source invariants
+      - name: Apply toc113 Chinese context coverage fix
+        run: python3 scripts/patch-toc113-zh-context-coverage.py
+
+      - name: Validate toc113 source invariants
         shell: bash
         run: |
           set -euo pipefail
           grep -qF "reader:zh-context-gloss" js/reader-app.js
           grep -qF "readerGetCachedChineseContextRuForInline" js/reader-app.js
+          grep -qF "payload.translation_ru" js/reader-app.js
           grep -qF "manualKnowledge = 'unknown'" js/reader-app.js
-          grep -qF "zhGlossContextRu" js/reader/zh-readable-inline.js
-          grep -qF "applyPanelContextGloss" js/reader/zh-readable-inline.js
-          grep -qF "hasContextOverride" js/reader/zh-direct-ru-fallback.js
-          grep -qF "zh-readable-inline.js?v=7-context-card" js/reader/interactions-runtime.js
-          grep -qF "zh-direct-ru-fallback.js?v=2-context-priority" js/reader/interactions-runtime.js
-          grep -qF "reader-app.js?v=77.37-zh-context-inline" js/app.js
-          grep -qF "v77.42-toc112-zh-context-inline" index.html
-          grep -qF "js/app.js?v=77.36-zh-context-inline" index.html
+          grep -qF "words.length > 3 || text.length > 36" js/reader/zh-readable-inline.js
+          grep -qF "reader:pagechange" js/reader/zh-readable-inline.js
+          grep -qF "reader:pagechange" js/reader/zh-context-batch.js
+          grep -qF "const MAX_TARGETS = 24;" js/reader/zh-context-batch.js
+          grep -qF "const RETRY_BATCH_TARGETS = 10;" js/reader/zh-context-batch.js
+          grep -qF "reader:pagechange" js/reader/pages-mode.js
+          grep -qF "zh-readable-inline.js?v=8-context-coverage" js/reader/interactions-runtime.js
+          grep -qF "zh-context-batch.js?v=5-page-coverage" js/reader/interactions-runtime.js
+          grep -qF "pages-mode.js?v=4-context-wakeup" js/reader-app.js
+          grep -qF "reader-app.js?v=77.38-zh-context-coverage" js/app.js
+          grep -qF "v77.42-toc113-zh-context-coverage" index.html
+          grep -qF "js/app.js?v=77.37-zh-context-coverage" index.html
           node --check js/reader/zh-readable-inline.js
+          node --check js/reader/zh-context-batch.js
+          node --check js/reader/pages-mode.js
           node --check js/reader/zh-direct-ru-fallback.js
           node --check js/reader-app.js
 
-      - name: Set toc112 version identity
+      - name: Set toc113 version identity
         shell: bash
         run: |
           set -euo pipefail
@@ -90,8 +100,8 @@ jobs:
           s = p.read_text()
           assert s.count('versionCode 118') == 1
           assert s.count("versionName '77.42-toc98'") == 1
-          s = s.replace('versionCode 118', 'versionCode 1001', 1)
-          s = s.replace("versionName '77.42-toc98'", "versionName '77.42-toc112-zh-context-inline'", 1)
+          s = s.replace('versionCode 118', 'versionCode 1002', 1)
+          s = s.replace("versionName '77.42-toc98'", "versionName '77.42-toc113-zh-context-coverage'", 1)
           p.write_text(s)
           PY
 
@@ -115,21 +125,22 @@ jobs:
           "${BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$APK" > unique-out/ZIPALIGN.txt
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
           grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
-          grep -q "package: name='space.saintjust.reader.semanticstage1clean.formatfix.debug' versionCode='1001'" unique-out/BADGING.txt
+          grep -q "package: name='space.saintjust.reader.semanticstage1clean.formatfix.debug' versionCode='1002'" unique-out/BADGING.txt
           grep -q "sdkVersion:'24'" unique-out/BADGING.txt
           unzip -t "$APK" >/dev/null
           unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "reader:zh-context-gloss"
-          unzip -p "$APK" assets/www/js/reader/zh-readable-inline.js | grep -qF "zhGlossContextRu"
-          unzip -p "$APK" assets/www/js/reader/zh-direct-ru-fallback.js | grep -qF "hasContextOverride"
-          cp "$APK" unique-out/Reader-AI-77.42-toc112-zh-context-inline-vc1001.apk
-          sha256sum unique-out/Reader-AI-77.42-toc112-zh-context-inline-vc1001.apk | tee unique-out/SHA256.txt
+          unzip -p "$APK" assets/www/js/reader/zh-readable-inline.js | grep -qF "words.length > 3 || text.length > 36"
+          unzip -p "$APK" assets/www/js/reader/zh-context-batch.js | grep -qF "const MAX_TARGETS = 24;"
+          unzip -p "$APK" assets/www/js/reader/pages-mode.js | grep -qF "reader:pagechange"
+          cp "$APK" unique-out/Reader-AI-77.42-toc113-zh-context-coverage-vc1002.apk
+          sha256sum unique-out/Reader-AI-77.42-toc113-zh-context-coverage-vc1002.apk | tee unique-out/SHA256.txt
 
       - name: Upload exact Gradle APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-77.42-toc112-zh-context-inline-vc1001
+          name: Reader-AI-77.42-toc113-zh-context-coverage-vc1002
           path: |
-            unique-out/Reader-AI-77.42-toc112-zh-context-inline-vc1001.apk
+            unique-out/Reader-AI-77.42-toc113-zh-context-coverage-vc1002.apk
             unique-out/SHA256.txt
             unique-out/APKSIGNER.txt
             unique-out/BADGING.txt
