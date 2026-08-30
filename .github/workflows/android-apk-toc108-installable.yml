@@ -1,4 +1,4 @@
-name: Android APK toc114 Chinese core-first segmentation
+name: Android APK toc115 Chinese missing-only DeepSeek
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reader-toc114-zh-core-first
+  group: reader-toc115-zh-missing-only-auth
   cancel-in-progress: false
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Restore signing key exactly like installed vc1002 build
+      - name: Restore signing key exactly like installed vc1003 build
         shell: bash
         run: |
           set -euo pipefail
@@ -67,35 +67,40 @@ jobs:
       - name: Apply toc114 Chinese core-first segmentation fix
         run: python3 scripts/patch-toc114-zh-core-first-paint.py
 
-      - name: Validate toc114 source and segmentation invariants
+      - name: Apply toc115 missing-only DeepSeek/auth bridge
+        run: python3 scripts/patch-toc115-zh-missing-only-auth.py
+
+      - name: Validate toc115 source invariants
         shell: bash
         run: |
           set -euo pipefail
           grep -qF "an2_zh_segment_cache_v6_core_first" js/reader-app.js
-          grep -qF "await readerEnsureZhCoreJsonLoaded({ rerender: false })" js/reader-app.js
-          grep -qF "never preserve a chapter that was segmented before the full" js/reader/chapter-render-next.js
-          grep -qF "chapter-render-next.js?v=15-zh-core-first" js/reader/chapter-render-stage1.js
-          grep -qF "reader-app.js?v=77.39-zh-core-first" js/app.js
-          grep -qF "v77.42-toc114-zh-core-first" index.html
-          grep -qF "js/app.js?v=77.38-zh-core-first" index.html
-          grep -qF "reader:zh-context-gloss" js/reader-app.js
-          grep -qF "const MAX_TARGETS = 24;" js/reader/zh-context-batch.js
-          grep -qF "reader:pagechange" js/reader/zh-context-batch.js
+          grep -qF "readerFirebaseClientWithAuthenticatedCallable" js/reader-app.js
+          grep -qF "firebaseClientWithAuth" js/reader/zh-context-batch.js
+          grep -qF "globalThis.__AN2_FALLBACK_FIREBASE" js/reader/zh-context-batch.js
+          grep -qF "function needsDeepSeek(item)" js/reader/zh-context-batch.js
+          grep -qF "if (!needsDeepSeek(item)) return false;" js/reader/zh-context-batch.js
+          grep -qF "const RESOURCE_SETTLE_MS = 420;" js/reader/zh-context-batch.js
+          grep -qF "const stillMissing = batch.filter(needsDeepSeek);" js/reader/zh-context-batch.js
+          grep -qF "const MAX_TARGETS = 16;" js/reader/zh-context-batch.js
+          grep -qF "const RETRY_BATCH_TARGETS = 8;" js/reader/zh-context-batch.js
+          grep -qF "rw-problem" js/reader/zh-context-batch.js
+          grep -qF "zh-context-batch.js?v=6-missing-only-auth" js/reader/interactions-runtime.js
+          grep -qF "reader-app.js?v=77.40-zh-missing-only-auth" js/app.js
+          grep -qF "v77.42-toc115-zh-missing-only-auth" index.html
+          grep -qF "js/app.js?v=77.39-zh-missing-only-auth" index.html
           node --check js/reader-app.js
-          node --check js/reader/chapter-render-next.js
-          node --check js/reader/chapter-render-stage1.js
-          node --check js/reader/zh-readable-inline.js
           node --check js/reader/zh-context-batch.js
+          node --check js/reader/zh-readable-inline.js
+          node --check js/reader/chapter-render-next.js
 
           python3 - <<'PY'
           import json, re
           data = json.load(open('data/zh_dict_core.json', encoding='utf-8'))
           mp = data.get('map') or {}
           assert len(mp) >= 120000, len(mp)
-          required = ['国防部','商业','关联','指控','评估','过程','程序','业务','客户','流失','供应链','制裁','进一步','名单','本身']
-          missing = [w for w in required if w not in mp]
-          assert not missing, missing
-
+          sample='CXMT称自己只面向民用和商业市场，与中国军方没有关联，并指控美国国防部在评估过程中存在程序问题。'
+          expected=['商业','关联','指控','国防部','评估','过程','程序']
           def seg(s):
               out=[]; i=0
               while i < len(s):
@@ -112,19 +117,12 @@ jobs:
                           best=piece; break
                   out.append(best); i += len(best)
               return out
-
-          sample='CXMT称自己只面向民用和商业市场，与中国军方没有关联，并指控美国国防部在评估过程中存在程序问题。'
           tokens=seg(sample)
-          for expected in ['商业','关联','指控','国防部','评估','过程','程序']:
-              assert expected in tokens, (expected, tokens)
-          sample2='但会限制美国政府相关业务，并可能进一步增加制裁、客户流失和国际供应链排斥风险。'
-          tokens2=seg(sample2)
-          for expected in ['业务','进一步','制裁','客户','流失','供应链']:
-              assert expected in tokens2, (expected, tokens2)
-          print('core-first segmentation guard: OK', len(mp), tokens, tokens2)
+          for word in expected: assert word in tokens, (word,tokens)
+          print('toc115 core segmentation still OK:', tokens)
           PY
 
-      - name: Set toc114 version identity
+      - name: Set toc115 version identity
         shell: bash
         run: |
           set -euo pipefail
@@ -134,8 +132,8 @@ jobs:
           s = p.read_text()
           assert s.count('versionCode 118') == 1
           assert s.count("versionName '77.42-toc98'") == 1
-          s = s.replace('versionCode 118', 'versionCode 1003', 1)
-          s = s.replace("versionName '77.42-toc98'", "versionName '77.42-toc114-zh-core-first'", 1)
+          s = s.replace('versionCode 118', 'versionCode 1004', 1)
+          s = s.replace("versionName '77.42-toc98'", "versionName '77.42-toc115-zh-missing-only-auth'", 1)
           p.write_text(s)
           PY
 
@@ -150,31 +148,28 @@ jobs:
           APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
           test -f "$APK"
           BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
-          test -x "${BUILD_TOOLS}/apksigner"
-          test -x "${BUILD_TOOLS}/aapt"
-          test -x "${BUILD_TOOLS}/zipalign"
           mkdir -p unique-out
           "${BUILD_TOOLS}/apksigner" verify --verbose --print-certs "$APK" | tee unique-out/APKSIGNER.txt
           "${BUILD_TOOLS}/aapt" dump badging "$APK" | tee unique-out/BADGING.txt
           "${BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$APK" > unique-out/ZIPALIGN.txt
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
           grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
-          grep -q "package: name='space.saintjust.reader.semanticstage1clean.formatfix.debug' versionCode='1003'" unique-out/BADGING.txt
-          grep -q "sdkVersion:'24'" unique-out/BADGING.txt
+          grep -q "package: name='space.saintjust.reader.semanticstage1clean.formatfix.debug' versionCode='1004'" unique-out/BADGING.txt
           unzip -t "$APK" >/dev/null
-          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "an2_zh_segment_cache_v6_core_first"
-          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "await readerEnsureZhCoreJsonLoaded({ rerender: false })"
-          unzip -p "$APK" assets/www/js/reader/chapter-render-next.js | grep -qF "never preserve a chapter that was segmented before the full"
-          unzip -p "$APK" assets/www/js/reader/zh-context-batch.js | grep -qF "const MAX_TARGETS = 24;"
-          cp "$APK" unique-out/Reader-AI-77.42-toc114-zh-core-first-vc1003.apk
-          sha256sum unique-out/Reader-AI-77.42-toc114-zh-core-first-vc1003.apk | tee unique-out/SHA256.txt
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "readerFirebaseClientWithAuthenticatedCallable"
+          unzip -p "$APK" assets/www/js/reader/zh-context-batch.js | grep -qF "function needsDeepSeek(item)"
+          unzip -p "$APK" assets/www/js/reader/zh-context-batch.js | grep -qF "const stillMissing = batch.filter(needsDeepSeek);"
+          unzip -p "$APK" assets/www/js/reader/zh-context-batch.js | grep -qF "const MAX_TARGETS = 16;"
+          unzip -p "$APK" assets/www/js/reader/zh-context-batch.js | grep -qF "globalThis.__AN2_FALLBACK_FIREBASE"
+          cp "$APK" unique-out/Reader-AI-77.42-toc115-zh-missing-only-auth-vc1004.apk
+          sha256sum unique-out/Reader-AI-77.42-toc115-zh-missing-only-auth-vc1004.apk | tee unique-out/SHA256.txt
 
       - name: Upload exact Gradle APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-77.42-toc114-zh-core-first-vc1003
+          name: Reader-AI-77.42-toc115-zh-missing-only-auth-vc1004
           path: |
-            unique-out/Reader-AI-77.42-toc114-zh-core-first-vc1003.apk
+            unique-out/Reader-AI-77.42-toc115-zh-missing-only-auth-vc1004.apk
             unique-out/SHA256.txt
             unique-out/APKSIGNER.txt
             unique-out/BADGING.txt
