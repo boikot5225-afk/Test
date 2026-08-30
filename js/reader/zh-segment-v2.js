@@ -72,6 +72,10 @@ function tokenCost(word, ranks, unknownRank = DEFAULT_UNKNOWN_RANK) {
   return Math.log(Math.max(1, rank) + 10) + TOKEN_PENALTY;
 }
 
+function lexicalExists(word, ranks, hasWord) {
+  return !!word && (!!ranks?.has?.(word) || !!hasWord?.(word));
+}
+
 function isUnlexicalizedProductiveForm(word, ranks, hasWord) {
   if (word.length < 3 || ranks?.has?.(word)) return false;
   const suffix = word.slice(-1);
@@ -100,6 +104,23 @@ function probableName(run, index) {
   return '';
 }
 
+// A frequency dictionary can contain corpus fragments such as 国号改. In prose
+// that fragment must not steal the verb from a real V+为 predicate: 国号 / 改为.
+// This is a grammatical/lexical boundary test, not a phrase-specific exception:
+// it applies whenever both the left remainder and the V为 bigram are real lexemes.
+function rightBindingWeiPenalty(run, index, size, ranks, hasWord) {
+  if (size < 2) return 0;
+  const end = index + size;
+  if (run[end] !== '为') return 0;
+  const word = run.slice(index, end);
+  const prefix = word.slice(0, -1);
+  const predicate = word.slice(-1) + '为';
+  if (prefix.length < 2) return 0;
+  if (!lexicalExists(prefix, ranks, hasWord)) return 0;
+  if (!lexicalExists(predicate, ranks, hasWord)) return 0;
+  return 14;
+}
+
 function segmentHanRun(run, { ranks, hasWord, maxWordLength = MAX_WORD_LENGTH } = {}) {
   const n = run.length;
   if (!n) return [];
@@ -117,6 +138,7 @@ function segmentHanRun(run, { ranks, hasWord, maxWordLength = MAX_WORD_LENGTH } 
       if (!lexical) continue;
       let own = tokenCost(word, ranks);
       if (word === name && !ranked && !hasWord?.(word)) own = Math.log(75_000) + TOKEN_PENALTY;
+      own += rightBindingWeiPenalty(run, i, size, ranks, hasWord);
       const total = own + costs[i + size];
       if (total < costs[i]) {
         costs[i] = total;
@@ -176,14 +198,29 @@ function unknownPenalty(token, { blockedProductive = false } = {}) {
   return 8 + len * 6 + Math.max(0, len - 4) * 5;
 }
 
+function scoreRightBindingWeiBoundary(tokens, index, ranks, hasWord) {
+  const left = String(tokens[index] || '');
+  const right = String(tokens[index + 1] || '');
+  if (!HAN_RUN_RE.test(left) || left.length < 2 || right !== '为') return 0;
+  const prefix = left.slice(0, -1);
+  const predicate = left.slice(-1) + right;
+  if (prefix.length < 2) return 0;
+  if (!lexicalExists(prefix, ranks, hasWord)) return 0;
+  if (!lexicalExists(predicate, ranks, hasWord)) return 0;
+  return 14;
+}
+
 export function scoreChineseSegmentation(tokens, { ranks = rankMap, hasWord = () => false } = {}) {
   const activeRanks = ranks instanceof Map ? ranks : new Map();
+  const list = Array.isArray(tokens) ? tokens : [];
   let cost = 0;
-  for (const token of Array.isArray(tokens) ? tokens : []) {
+  for (let index = 0; index < list.length; index += 1) {
+    const token = list[index];
     if (!HAN_RUN_RE.test(token)) continue;
     const blockedProductive = isUnlexicalizedProductiveForm(token, activeRanks, hasWord);
     const known = !blockedProductive && (token.length === 1 || activeRanks.has(token) || !!hasWord(token));
     cost += tokenCost(token, activeRanks) + (known ? 0 : unknownPenalty(token, { blockedProductive }));
+    cost += scoreRightBindingWeiBoundary(list, index, activeRanks, hasWord);
   }
   return cost;
 }
