@@ -24,6 +24,9 @@ def wikdictUrl = 'https://download.wikdict.com/dictionaries/sqlite/2_2026-06/en-
 def migakuZhAssetDir = layout.buildDirectory.dir('generated/migakuZhAssets')
 def migakuZhDataDir = layout.buildDirectory.dir('generated/migakuZhAssets/data')
 def migakuZhCacheDir = layout.buildDirectory.dir('migaku-zh-cache')
+def frReaderAssetDir = layout.buildDirectory.dir('generated/frReaderAssets')
+def frReaderDataDir = layout.buildDirectory.dir('generated/frReaderAssets/frreader')
+def frReaderCacheDir = layout.buildDirectory.dir('fr-reader-cache')
 
 android {
     namespace 'space.saintjust.reader.stage1'
@@ -77,6 +80,7 @@ android {
                     layout.buildDirectory.dir('generated/webAssets').get().asFile,
                     wikdictAssetDir.get().asFile,
                     migakuZhAssetDir.get().asFile,
+                    frReaderAssetDir.get().asFile,
             ]
         }
     }
@@ -181,8 +185,33 @@ tasks.register('prepareZhMigakuResources') {
     }
 }
 
+tasks.register('prepareFrReaderResources') {
+    inputs.file(new File(repoRoot, 'scripts/build_fr_reader_resources.py'))
+    outputs.file(layout.buildDirectory.file('generated/frReaderAssets/frreader/fr_vocab_frequency.tsv'))
+    outputs.file(layout.buildDirectory.file('generated/frReaderAssets/frreader/fr_vocab_lemma.tsv'))
+    outputs.file(layout.buildDirectory.file('generated/frReaderAssets/frreader/fr_ru_core.json'))
+    outputs.file(layout.buildDirectory.file('generated/frReaderAssets/frreader/fr_ru_senses.json'))
+    outputs.file(layout.buildDirectory.file('generated/frReaderAssets/frreader/fr_vocab_manifest.json'))
+    outputs.file(layout.buildDirectory.file('generated/frReaderAssets/frreader/NOTICE.txt'))
+
+    doLast {
+        File outputDir = frReaderDataDir.get().asFile
+        File cacheDir = frReaderCacheDir.get().asFile
+        outputDir.mkdirs()
+        cacheDir.mkdirs()
+        logger.lifecycle("Building French frequency/morphology/FR-RU resource layer…")
+        exec {
+            commandLine 'python3',
+                    new File(repoRoot, 'scripts/build_fr_reader_resources.py').absolutePath,
+                    '--output-dir', outputDir.absolutePath,
+                    '--cache-dir', cacheDir.absolutePath
+        }
+    }
+}
+
 tasks.named('preBuild') {
     dependsOn 'syncWebAssets'
     dependsOn 'prepareEnRuWikDict'
     dependsOn 'prepareZhMigakuResources'
+    dependsOn 'prepareFrReaderResources'
 }
