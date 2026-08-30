@@ -58,9 +58,28 @@ must_replace(
     'invalidate greedy segmentation cache',
 )
 
+# readerChineseSegScore and readerSegmentChineseLocal are deliberately patched
+# independently: cache/remote-selection helpers live between them in the real
+# toc107 source, so treating them as one adjacent block is structurally wrong.
 must_sub(
     'js/reader-app.js',
-    r"function readerSegmentChineseLocal\(text\) \{.*?\n\}\n\nfunction readerChineseSegScore\(words\) \{.*?\n\}",
+    r"function readerChineseSegScore\(words\) \{\n  const arr = Array\.isArray\(words\) \? words : \[\];\n  let score = 0;\n  for \(const raw of arr\) \{.*?\n  score -= arr\.length \* 0\.06;\n  return score;\n\}",
+    r'''function readerChineseSegScore(words) {
+  const dynamicDict = readerBuildChineseWordSet();
+  // Existing chooser expects a larger score to mean "better". The v2 lattice
+  // exposes a cost, so negate it here. Unknown multi-Hanzi remote tokens still
+  // remain possible, which lets a better segmenter/NER beat local character soup.
+  return -scoreChineseSegmentation(Array.isArray(words) ? words : [], {
+    hasWord: word => readerChineseWordExistsDirect(word, dynamicDict),
+  });
+}''',
+    'replace Chinese segmentation scoring',
+    flags=re.S,
+)
+
+must_sub(
+    'js/reader-app.js',
+    r"function readerSegmentChineseLocal\(text\) \{\n  const s = String\(text \|\| ''\);\n  const dynamicDict = readerBuildChineseWordSet\(\);\n  const result = \[\];.*?\n  return result\.filter\(x => x !== ''\);\n\}",
     r'''function readerSegmentChineseLocal(text) {
   const source = String(text || '');
   const dynamicDict = readerBuildChineseWordSet();
@@ -74,18 +93,8 @@ must_sub(
   return segmentChineseWeighted(source, {
     hasWord: word => readerChineseWordExistsDirect(word, dynamicDict),
   });
-}
-
-function readerChineseSegScore(words) {
-  const dynamicDict = readerBuildChineseWordSet();
-  // Existing chooser expects a larger score to mean "better". The v2 lattice
-  // exposes a cost, so negate it here. Unknown multi-Hanzi remote tokens still
-  // remain possible, which lets a better segmenter/NER beat local character soup.
-  return -scoreChineseSegmentation(Array.isArray(words) ? words : [], {
-    hasWord: word => readerChineseWordExistsDirect(word, dynamicDict),
-  });
 }''',
-    'replace greedy segmentation and scoring',
+    'replace greedy local Chinese segmentation',
     flags=re.S,
 )
 
