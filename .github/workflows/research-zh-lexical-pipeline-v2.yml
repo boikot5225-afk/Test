@@ -6,6 +6,11 @@ on:
       - feature/77.42-zh-lexical-pipeline-v2
     paths:
       - 'scripts/research-zh-lexical-pipeline-v2.py'
+      - 'scripts/export_zh_jieba_rank_asset.py'
+      - 'scripts/check-zh-lexical-pipeline-v2.mjs'
+      - 'js/reader/zh-segment-v2.js'
+      - 'js/reader/zh-lexical-trust.js'
+      - 'data/zh_lexical_regressions.json'
       - '.github/workflows/research-zh-lexical-pipeline-v2.yml'
   workflow_dispatch:
 
@@ -34,7 +39,18 @@ jobs:
             --cache-dir build/migaku-zh-cache
           test -s android/app/src/main/assets/data/zh_migaku.sqlite3
 
-      - name: Run segmentation and direct ZH-RU benchmark
+      - name: Export compact synchronous segmentation ranks
+        run: |
+          python3 scripts/export_zh_jieba_rank_asset.py \
+            android/app/src/main/assets/data/zh_migaku.sqlite3 \
+            android/app/src/main/assets/data/zh_jieba_top100k.txt \
+            --limit 100000
+          test -s android/app/src/main/assets/data/zh_jieba_top100k.txt
+
+      - name: Gate shipped JS segmentation and trust policy
+        run: node scripts/check-zh-lexical-pipeline-v2.mjs
+
+      - name: Run broader Python research including FreeDict
         id: benchmark
         continue-on-error: true
         run: python3 scripts/research-zh-lexical-pipeline-v2.py
@@ -47,9 +63,3 @@ jobs:
           path: build/zh-lexical-pipeline-v2/
           if-no-files-found: warn
           retention-days: 30
-
-      - name: Enforce benchmark result
-        if: steps.benchmark.outcome != 'success'
-        run: |
-          echo 'Chinese lexical pipeline benchmark did not meet the gate.' >&2
-          exit 1
