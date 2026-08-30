@@ -1,9 +1,9 @@
 // Reader AI Chinese lexical pipeline v2 — deterministic offline segmentation.
 //
 // Old Reader used greedy longest-match: if 以太 existed anywhere in a dictionary,
-// 代以太平军 became 代 / 以太 / 平 / 军.  This module instead builds the local
+// 代以太平军 became 代 / 以太 / 平 / 军. This module instead builds the local
 // word lattice and chooses the lowest-cost path, using the bundled Migaku/Jieba
-// rank list as lexical probability evidence.  The implementation is deliberately
+// rank list as lexical probability evidence. The implementation is deliberately
 // pure enough to run in Node regression tests and in Android WebView.
 
 const DEFAULT_RANK_URL = '/assets/data/zh_jieba_top100k.txt';
@@ -28,11 +28,11 @@ const NAME_FOLLOW = new Set(Array.from('的在任被与和及、，。；：！�
 // Productive grammatical suffixes are different from ordinary lexical tails.
 // A huge dictionary can contain corpus artefacts such as 史实者 even though the
 // sentence is transparently 史实 + 者 ("facts" + nominalizer "one who...").
-// We therefore distrust ONLY an unranked long dictionary token ending in a
-// productive suffix when its stem is independently lexical. Common lexicalized
-// words such as 消费者/领导者 remain untouched because they have a Jieba rank.
+// An unranked X者 whose stem is already an independent lexical item is therefore
+// treated as morphology, not as a word boundary. Genuine lexicalized compounds
+// such as 消费者 / 领导者 / 志愿者 stay whole because their corpus rank is evidence
+// that speakers actually use them as stable words.
 const PRODUCTIVE_SUFFIXES = new Set(['者']);
-const UNRANKED_PRODUCTIVE_SUFFIX_PENALTY = 8.5;
 
 export function ranksFromText(text) {
   const map = new Map();
@@ -83,14 +83,13 @@ function tokenCost(word, ranks, unknownRank = DEFAULT_UNKNOWN_RANK) {
   return Math.log(Math.max(1, rank) + 10) + TOKEN_PENALTY;
 }
 
-function productiveSuffixPenalty(word, ranks, hasWord) {
-  if (word.length < 3 || ranks?.has?.(word)) return 0;
+function isUnlexicalizedProductiveForm(word, ranks, hasWord) {
+  if (word.length < 3 || ranks?.has?.(word)) return false;
   const suffix = word.slice(-1);
-  if (!PRODUCTIVE_SUFFIXES.has(suffix)) return 0;
+  if (!PRODUCTIVE_SUFFIXES.has(suffix)) return false;
   const stem = word.slice(0, -1);
-  if (stem.length < 2) return 0;
-  const stemKnown = !!ranks?.has?.(stem) || !!hasWord?.(stem);
-  return stemKnown ? UNRANKED_PRODUCTIVE_SUFFIX_PENALTY : 0;
+  if (stem.length < 2) return false;
+  return !!ranks?.has?.(stem) || !!hasWord?.(stem);
 }
 
 function probableName(run, index) {
@@ -117,9 +116,10 @@ function segmentHanRun(run, { ranks, hasWord, maxWordLength = MAX_WORD_LENGTH } 
     for (let size = 1; size <= Math.min(maxWordLength, n - i); size += 1) {
       const word = run.slice(i, i + size);
       const ranked = !!ranks?.has?.(word);
-      const lexical = size === 1 || ranked || !!hasWord?.(word) || word === name;
+      const blockedProductive = isUnlexicalizedProductiveForm(word, ranks, hasWord);
+      const lexical = !blockedProductive && (size === 1 || ranked || !!hasWord?.(word) || word === name);
       if (!lexical) continue;
-      let own = tokenCost(word, ranks) + productiveSuffixPenalty(word, ranks, hasWord);
+      let own = tokenCost(word, ranks);
       // Conservative name candidate: strong enough to beat three isolated Hanzi,
       // weaker than an actual ranked lexical entry.
       if (word === name && !ranked && !hasWord?.(word)) own = Math.log(75_000) + TOKEN_PENALTY;
@@ -176,10 +176,9 @@ export function scoreChineseSegmentation(tokens, { ranks = rankMap, hasWord = ()
   let cost = 0;
   for (const token of Array.isArray(tokens) ? tokens : []) {
     if (!HAN_RUN_RE.test(token)) continue;
-    const known = token.length === 1 || activeRanks.has(token) || !!hasWord(token);
-    cost += tokenCost(token, activeRanks)
-      + productiveSuffixPenalty(token, activeRanks, hasWord)
-      + (known ? 0 : 5.5);
+    const blockedProductive = isUnlexicalizedProductiveForm(token, activeRanks, hasWord);
+    const known = !blockedProductive && (token.length === 1 || activeRanks.has(token) || !!hasWord(token));
+    cost += tokenCost(token, activeRanks) + (known ? 0 : blockedProductive ? 12 : 5.5);
   }
   return cost;
 }
@@ -189,5 +188,5 @@ export const ZH_SEGMENT_V2 = Object.freeze({
   rankLimit: 100_000,
   maxWordLength: MAX_WORD_LENGTH,
   tokenPenalty: TOKEN_PENALTY,
-  productiveSuffixPenalty: UNRANKED_PRODUCTIVE_SUFFIX_PENALTY,
+  productiveSuffixes: [...PRODUCTIVE_SUFFIXES],
 });
