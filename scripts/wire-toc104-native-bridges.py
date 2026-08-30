@@ -8,6 +8,7 @@ patch = field + (
     '    private ChineseOfflineTranslateBridge chineseOfflineTranslateBridge;\n'
     '    private EnglishResidualTranslateBridge englishResidualTranslateBridge;\n'
     '    private EnglishContextTranslateBridge englishContextTranslateBridge;\n'
+    '    private FrenchContextTranslateBridge frenchContextTranslateBridge;\n'
 )
 assert s.count(field) == 1
 s = s.replace(field, patch, 1)
@@ -20,6 +21,8 @@ patch = anchor + (
     '        webView.addJavascriptInterface(englishResidualTranslateBridge, "ReaderEnglishResidualTranslate");\n'
     '        englishContextTranslateBridge = new EnglishContextTranslateBridge(this, webView);\n'
     '        webView.addJavascriptInterface(englishContextTranslateBridge, "ReaderEnglishContextTranslate");\n'
+    '        frenchContextTranslateBridge = new FrenchContextTranslateBridge(this, webView);\n'
+    '        webView.addJavascriptInterface(frenchContextTranslateBridge, "ReaderFrenchContextTranslate");\n'
 )
 assert s.count(anchor) == 1
 s = s.replace(anchor, patch, 1)
@@ -43,8 +46,12 @@ patch = destroy + (
     '            englishContextTranslateBridge.shutdown();\n'
     '            englishContextTranslateBridge = null;\n'
     '        }\n'
+    '        if (frenchContextTranslateBridge != null) {\n'
+    '            frenchContextTranslateBridge.shutdown();\n'
+    '            frenchContextTranslateBridge = null;\n'
+    '        }\n'
 )
 assert s.count(destroy) == 1
 s = s.replace(destroy, patch, 1)
 p.write_text(s)
-print('toc104 native translation bridges wired')
+print('toc120 native translation bridges wired')
