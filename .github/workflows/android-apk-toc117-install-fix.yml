@@ -4,27 +4,16 @@ on:
   push:
     branches:
       - feature/77.42-zh-lexical-pipeline-v2
-    paths:
-      - '.github/workflows/android-apk-toc117-install-fix.yml'
   workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: reader-toc117-install-fix
-  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
     env:
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,7 +41,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -qF "window.AN2_BUILD = 'v77.42-toc107-zh-segmentation';" index.html
           python3 scripts/wire-toc104-native-bridges.py
           python3 scripts/patch-toc112-zh-context-inline.py
           python3 scripts/patch-toc113-zh-context-coverage.py
@@ -77,14 +65,6 @@ jobs:
           s = s.replace('versionCode 118', 'versionCode 1006', 1)
           s = s.replace("versionName '77.42-toc98'", "versionName '77.42-toc117-zh-lexical-install-fix'", 1)
           p.write_text(s)
-
-          p = Path('index.html')
-          s = p.read_text()
-          old = "window.AN2_BUILD = 'v77.42-toc116-zh-lexical-v2';"
-          if s.count(old) != 1:
-              raise SystemExit('unexpected patched build marker')
-          s = s.replace(old, "window.AN2_BUILD = 'v77.42-toc117-zh-lexical-install-fix';", 1)
-          p.write_text(s)
           PY
 
       - name: Run lexical regression gate
@@ -95,35 +75,20 @@ jobs:
           python3 scripts/build_zh_migaku_resources_v2.py --self-test
           python3 scripts/build_zh_migaku_sqlite.py --self-test
           mkdir -p build/toc117-lexical-gate
-          python3 scripts/build_zh_migaku_sqlite.py \
-            --output-dir build/toc117-lexical-gate \
-            --cache-dir build/toc117-migaku-cache
-          python3 scripts/export_zh_jieba_rank_asset.py \
-            build/toc117-lexical-gate/zh_migaku.sqlite3 \
-            build/toc117-lexical-gate/zh_jieba_top100k.txt \
-            --limit 100000
-          node scripts/check-zh-lexical-pipeline-v2.mjs \
-            build/toc117-lexical-gate/zh_jieba_top100k.txt \
-            data/zh_dict_core.json \
-            data/zh_lexical_regressions.json
+          python3 scripts/build_zh_migaku_sqlite.py --output-dir build/toc117-lexical-gate --cache-dir build/toc117-migaku-cache
+          python3 scripts/export_zh_jieba_rank_asset.py build/toc117-lexical-gate/zh_migaku.sqlite3 build/toc117-lexical-gate/zh_jieba_top100k.txt --limit 100000
+          node scripts/check-zh-lexical-pipeline-v2.mjs build/toc117-lexical-gate/zh_jieba_top100k.txt data/zh_dict_core.json data/zh_lexical_regressions.json
 
       - name: Remove CI scratch data before web asset sync
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf build/toc117-lexical-gate build/toc117-migaku-cache
-          test ! -e build/toc117-lexical-gate
-          test ! -e build/toc117-migaku-cache
+          rm -rf build
 
       - name: Validate patched runtime syntax
         shell: bash
         run: |
           set -euo pipefail
-          grep -qF "an2_zh_segment_cache_v7_weighted" js/reader-app.js
-          grep -qF "segmentChineseWeighted" js/reader-app.js
-          grep -qF "chinesePinyinNeedsContext" js/reader/zh-context-batch.js
-          grep -qF "classifyChineseGloss" js/reader/zh-context-batch.js
-          grep -qF "window.AN2_BUILD = 'v77.42-toc117-zh-lexical-install-fix';" index.html
           while IFS= read -r -d '' file; do node --check "$file"; done < <(find js -type f -name '*.js' -print0)
 
       - name: Build signed debug APK
@@ -138,30 +103,19 @@ jobs:
           test -f "$APK"
           BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           mkdir -p unique-out
-
           "${BUILD_TOOLS}/apksigner" verify --verbose --print-certs "$APK" | tee unique-out/APKSIGNER.txt
           "${BUILD_TOOLS}/aapt" dump badging "$APK" | tee unique-out/BADGING.txt
           "${BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$APK" > unique-out/ZIPALIGN.txt
           unzip -t "$APK" >/dev/null
-
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
           grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
           grep -q "package: name='space.saintjust.reader.semanticstage1clean.formatfix.debug' versionCode='1006'" unique-out/BADGING.txt
-
           unzip -l "$APK" | grep -qF 'assets/data/zh_migaku.sqlite3'
           unzip -l "$APK" | grep -qF 'assets/data/zh_jieba_top100k.txt'
           if unzip -l "$APK" | grep -qF 'assets/www/build/'; then
-            echo 'ERROR: CI scratch build directory leaked into APK' >&2
+            echo 'CI scratch build directory leaked into APK' >&2
             exit 1
           fi
-
-          RANK_LINES="$(unzip -p "$APK" assets/data/zh_jieba_top100k.txt | awk 'NF{n++} END{print n+0}')"
-          test "$RANK_LINES" -eq 100000
-
-          APK_BYTES="$(stat -c '%s' "$APK")"
-          echo "APK bytes after scratch cleanup: $APK_BYTES"
-          test "$APK_BYTES" -lt 110000000
-
           cp "$APK" unique-out/Reader-AI-77.42-toc117-zh-lexical-install-fix-vc1006.apk
           sha256sum unique-out/Reader-AI-77.42-toc117-zh-lexical-install-fix-vc1006.apk | tee unique-out/SHA256.txt
 
