@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { ranksFromText, segmentChineseWeighted, scoreChineseSegmentation } from '../js/reader/zh-segment-v2.js';
-import { classifyChineseGloss } from '../js/reader/zh-lexical-trust.js';
+import { classifyChineseGloss, chinesePinyinNeedsContext } from '../js/reader/zh-lexical-trust.js';
 
 const rankPath = process.argv[2] || 'android/app/src/main/assets/data/zh_jieba_top100k.txt';
 const corePath = process.argv[3] || 'data/zh_dict_core.json';
@@ -55,8 +55,15 @@ assert.equal(classifyChineseGloss({ wrap: fakeWrap({ displayed: 'Заглави�
 assert.equal(classifyChineseGloss({ wrap: fakeWrap({ displayed: 'название государства', source: 'context-ai' }) }).needsContext, false);
 assert.equal(classifyChineseGloss({ wrap: fakeWrap({ displayed: 'смерть' }), entry: { ru: 'смерть', _source: 'zh_reading' } }).needsContext, false);
 
+// Pronunciation confidence is independent from translation confidence.
+// A trusted RU gloss for 行 must not suppress the contextual háng/xí choice.
+assert.equal(chinesePinyinNeedsContext('行'), true);
+assert.equal(chinesePinyinNeedsContext('还'), true);
+assert.equal(chinesePinyinNeedsContext('国号'), false);
+assert.equal(chinesePinyinNeedsContext('供应链'), false);
+
 if (failures.length) {
   console.error(JSON.stringify(failures, null, 2));
   process.exit(1);
 }
-console.log(`Chinese lexical pipeline v2 gate: ${corpus.length}/${corpus.length} segmentation cases + trust policy PASS`);
+console.log(`Chinese lexical pipeline v2 gate: ${corpus.length}/${corpus.length} segmentation cases + RU/pinyin trust policy PASS`);
