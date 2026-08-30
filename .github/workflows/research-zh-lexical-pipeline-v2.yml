@@ -15,17 +15,41 @@ permissions:
 jobs:
   research:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
           ref: feature/77.42-zh-lexical-pipeline-v2
+
+      - name: Validate and build the exact Migaku SQLite used by Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/build_zh_migaku_resources.py --self-test
+          python3 scripts/build_zh_migaku_resources_v2.py --self-test
+          python3 scripts/build_zh_migaku_sqlite.py --self-test
+          mkdir -p android/app/src/main/assets/data
+          python3 scripts/build_zh_migaku_sqlite.py \
+            --output-dir android/app/src/main/assets/data \
+            --cache-dir build/migaku-zh-cache
+          test -s android/app/src/main/assets/data/zh_migaku.sqlite3
+
       - name: Run segmentation and direct ZH-RU benchmark
+        id: benchmark
+        continue-on-error: true
         run: python3 scripts/research-zh-lexical-pipeline-v2.py
+
       - name: Upload research report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Reader-AI-zh-lexical-pipeline-v2-research
           path: build/zh-lexical-pipeline-v2/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
+
+      - name: Enforce benchmark result
+        if: steps.benchmark.outcome != 'success'
+        run: |
+          echo 'Chinese lexical pipeline benchmark did not meet the gate.' >&2
+          exit 1
