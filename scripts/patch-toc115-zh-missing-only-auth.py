@@ -211,13 +211,11 @@ replace_once(
 )
 
 # The lexical-v2 patch runs immediately after toc115 in the dedicated build.
-# toc112 already bumped these imports, while the v2 patcher intentionally owns
-# the final version strings. Normalize only the cache-bust labels here; module
-# contents are untouched. This keeps the handoff deterministic without making
-# runtime behavior depend on historical ?v= numbers.
+# toc113 has already bumped readable-inline to v8; toc112 bumped direct-RU to
+# v2. Normalize only cache-bust labels here; module contents are untouched.
 replace_once(
     'js/reader/interactions-runtime.js',
-    "import './zh-readable-inline.js?v=7-context-card';\n",
+    "import './zh-readable-inline.js?v=8-context-coverage';\n",
     "import './zh-readable-inline.js?v=6';\n",
     'normalize readable-inline cache-bust for lexical-v2 handoff',
 )
