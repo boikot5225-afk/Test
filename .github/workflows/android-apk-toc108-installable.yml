@@ -1,4 +1,4 @@
-name: Android APK toc113 Chinese context coverage
+name: Android APK toc114 Chinese core-first segmentation
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reader-toc113-zh-context-coverage
+  group: reader-toc114-zh-core-first
   cancel-in-progress: false
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Restore signing key exactly like installed vc1001 build
+      - name: Restore signing key exactly like installed vc1002 build
         shell: bash
         run: |
           set -euo pipefail
@@ -64,33 +64,67 @@ jobs:
       - name: Apply toc113 Chinese context coverage fix
         run: python3 scripts/patch-toc113-zh-context-coverage.py
 
-      - name: Validate toc113 source invariants
+      - name: Apply toc114 Chinese core-first segmentation fix
+        run: python3 scripts/patch-toc114-zh-core-first-paint.py
+
+      - name: Validate toc114 source and segmentation invariants
         shell: bash
         run: |
           set -euo pipefail
+          grep -qF "an2_zh_segment_cache_v6_core_first" js/reader-app.js
+          grep -qF "await readerEnsureZhCoreJsonLoaded({ rerender: false })" js/reader-app.js
+          grep -qF "never preserve a chapter that was segmented before the full" js/reader/chapter-render-next.js
+          grep -qF "chapter-render-next.js?v=15-zh-core-first" js/reader/chapter-render-stage1.js
+          grep -qF "reader-app.js?v=77.39-zh-core-first" js/app.js
+          grep -qF "v77.42-toc114-zh-core-first" index.html
+          grep -qF "js/app.js?v=77.38-zh-core-first" index.html
           grep -qF "reader:zh-context-gloss" js/reader-app.js
-          grep -qF "readerGetCachedChineseContextRuForInline" js/reader-app.js
-          grep -qF "payload.translation_ru" js/reader-app.js
-          grep -qF "manualKnowledge = 'unknown'" js/reader-app.js
-          grep -qF "words.length > 3 || text.length > 36" js/reader/zh-readable-inline.js
-          grep -qF "reader:pagechange" js/reader/zh-readable-inline.js
-          grep -qF "reader:pagechange" js/reader/zh-context-batch.js
           grep -qF "const MAX_TARGETS = 24;" js/reader/zh-context-batch.js
-          grep -qF "const RETRY_BATCH_TARGETS = 10;" js/reader/zh-context-batch.js
-          grep -qF "reader:pagechange" js/reader/pages-mode.js
-          grep -qF "zh-readable-inline.js?v=8-context-coverage" js/reader/interactions-runtime.js
-          grep -qF "zh-context-batch.js?v=5-page-coverage" js/reader/interactions-runtime.js
-          grep -qF "pages-mode.js?v=4-context-wakeup" js/reader-app.js
-          grep -qF "reader-app.js?v=77.38-zh-context-coverage" js/app.js
-          grep -qF "v77.42-toc113-zh-context-coverage" index.html
-          grep -qF "js/app.js?v=77.37-zh-context-coverage" index.html
+          grep -qF "reader:pagechange" js/reader/zh-context-batch.js
+          node --check js/reader-app.js
+          node --check js/reader/chapter-render-next.js
+          node --check js/reader/chapter-render-stage1.js
           node --check js/reader/zh-readable-inline.js
           node --check js/reader/zh-context-batch.js
-          node --check js/reader/pages-mode.js
-          node --check js/reader/zh-direct-ru-fallback.js
-          node --check js/reader-app.js
 
-      - name: Set toc113 version identity
+          python3 - <<'PY'
+          import json, re
+          data = json.load(open('data/zh_dict_core.json', encoding='utf-8'))
+          mp = data.get('map') or {}
+          assert len(mp) >= 120000, len(mp)
+          required = ['国防部','商业','关联','指控','评估','过程','程序','业务','客户','流失','供应链','制裁','进一步','名单','本身']
+          missing = [w for w in required if w not in mp]
+          assert not missing, missing
+
+          def seg(s):
+              out=[]; i=0
+              while i < len(s):
+                  ch=s[i]
+                  if ch.isspace(): out.append(ch); i += 1; continue
+                  if not re.match(r'[\u3400-\u9fff]', ch):
+                      j=i+1
+                      while j < len(s) and (not s[j].isspace()) and not re.match(r'[\u3400-\u9fff]', s[j]): j += 1
+                      out.append(s[i:j]); i=j; continue
+                  best=''
+                  for n in range(min(12, len(s)-i), 0, -1):
+                      piece=s[i:i+n]
+                      if n == 1 or piece in mp:
+                          best=piece; break
+                  out.append(best); i += len(best)
+              return out
+
+          sample='CXMT称自己只面向民用和商业市场，与中国军方没有关联，并指控美国国防部在评估过程中存在程序问题。'
+          tokens=seg(sample)
+          for expected in ['商业','关联','指控','国防部','评估','过程','程序']:
+              assert expected in tokens, (expected, tokens)
+          sample2='但会限制美国政府相关业务，并可能进一步增加制裁、客户流失和国际供应链排斥风险。'
+          tokens2=seg(sample2)
+          for expected in ['业务','进一步','制裁','客户','流失','供应链']:
+              assert expected in tokens2, (expected, tokens2)
+          print('core-first segmentation guard: OK', len(mp), tokens, tokens2)
+          PY
+
+      - name: Set toc114 version identity
         shell: bash
         run: |
           set -euo pipefail
@@ -100,8 +134,8 @@ jobs:
           s = p.read_text()
           assert s.count('versionCode 118') == 1
           assert s.count("versionName '77.42-toc98'") == 1
-          s = s.replace('versionCode 118', 'versionCode 1002', 1)
-          s = s.replace("versionName '77.42-toc98'", "versionName '77.42-toc113-zh-context-coverage'", 1)
+          s = s.replace('versionCode 118', 'versionCode 1003', 1)
+          s = s.replace("versionName '77.42-toc98'", "versionName '77.42-toc114-zh-core-first'", 1)
           p.write_text(s)
           PY
 
@@ -125,22 +159,22 @@ jobs:
           "${BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$APK" > unique-out/ZIPALIGN.txt
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
           grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
-          grep -q "package: name='space.saintjust.reader.semanticstage1clean.formatfix.debug' versionCode='1002'" unique-out/BADGING.txt
+          grep -q "package: name='space.saintjust.reader.semanticstage1clean.formatfix.debug' versionCode='1003'" unique-out/BADGING.txt
           grep -q "sdkVersion:'24'" unique-out/BADGING.txt
           unzip -t "$APK" >/dev/null
-          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "reader:zh-context-gloss"
-          unzip -p "$APK" assets/www/js/reader/zh-readable-inline.js | grep -qF "words.length > 3 || text.length > 36"
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "an2_zh_segment_cache_v6_core_first"
+          unzip -p "$APK" assets/www/js/reader-app.js | grep -qF "await readerEnsureZhCoreJsonLoaded({ rerender: false })"
+          unzip -p "$APK" assets/www/js/reader/chapter-render-next.js | grep -qF "never preserve a chapter that was segmented before the full"
           unzip -p "$APK" assets/www/js/reader/zh-context-batch.js | grep -qF "const MAX_TARGETS = 24;"
-          unzip -p "$APK" assets/www/js/reader/pages-mode.js | grep -qF "reader:pagechange"
-          cp "$APK" unique-out/Reader-AI-77.42-toc113-zh-context-coverage-vc1002.apk
-          sha256sum unique-out/Reader-AI-77.42-toc113-zh-context-coverage-vc1002.apk | tee unique-out/SHA256.txt
+          cp "$APK" unique-out/Reader-AI-77.42-toc114-zh-core-first-vc1003.apk
+          sha256sum unique-out/Reader-AI-77.42-toc114-zh-core-first-vc1003.apk | tee unique-out/SHA256.txt
 
       - name: Upload exact Gradle APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-77.42-toc113-zh-context-coverage-vc1002
+          name: Reader-AI-77.42-toc114-zh-core-first-vc1003
           path: |
-            unique-out/Reader-AI-77.42-toc113-zh-context-coverage-vc1002.apk
+            unique-out/Reader-AI-77.42-toc114-zh-core-first-vc1003.apk
             unique-out/SHA256.txt
             unique-out/APKSIGNER.txt
             unique-out/BADGING.txt
