@@ -69,10 +69,12 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            set -euxo pipefail
+            set -eu
             APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
-            adb install -r "$APK" | tee /tmp/install.txt
+            adb install -r "$APK" > /tmp/install.txt 2>&1 || { cat /tmp/install.txt; exit 1; }
+            cat /tmp/install.txt
             grep -q '^Success$' /tmp/install.txt
             adb shell pm path space.saintjust.reader.semanticstage1clean.formatfix.debug
-            adb shell am start -W -n space.saintjust.reader.semanticstage1clean.formatfix.debug/space.saintjust.reader.stage1.MainActivity | tee /tmp/launch.txt
+            adb shell am start -W -n space.saintjust.reader.semanticstage1clean.formatfix.debug/space.saintjust.reader.stage1.MainActivity > /tmp/launch.txt 2>&1 || { cat /tmp/launch.txt; exit 1; }
+            cat /tmp/launch.txt
             adb shell dumpsys package space.saintjust.reader.semanticstage1clean.formatfix.debug | head -80
