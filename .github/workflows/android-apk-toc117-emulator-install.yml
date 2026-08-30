@@ -60,6 +60,11 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon :app:assembleDebug
 
+      - name: Enable emulator hardware acceleration
+        shell: bash
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+
       - name: Install and launch on clean Android 15 emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -68,13 +73,4 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
-          script: |
-            set -eu
-            APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
-            adb install -r "$APK" > /tmp/install.txt 2>&1 || { cat /tmp/install.txt; exit 1; }
-            cat /tmp/install.txt
-            grep -q '^Success$' /tmp/install.txt
-            adb shell pm path space.saintjust.reader.semanticstage1clean.formatfix.debug
-            adb shell am start -W -n space.saintjust.reader.semanticstage1clean.formatfix.debug/space.saintjust.reader.stage1.MainActivity > /tmp/launch.txt 2>&1 || { cat /tmp/launch.txt; exit 1; }
-            cat /tmp/launch.txt
-            adb shell dumpsys package space.saintjust.reader.semanticstage1clean.formatfix.debug | head -80
+          script: sh -c 'set -eu; APK="$(find android/app/build/outputs/apk/debug -name "*.apk" | head -1)"; test -n "$APK"; echo "Installing $APK"; adb install -r "$APK" > /tmp/install.txt 2>&1 || { cat /tmp/install.txt; exit 1; }; cat /tmp/install.txt; grep -q "^Success$" /tmp/install.txt; adb shell pm path space.saintjust.reader.semanticstage1clean.formatfix.debug; adb shell am start -W -n space.saintjust.reader.semanticstage1clean.formatfix.debug/space.saintjust.reader.stage1.MainActivity > /tmp/launch.txt 2>&1 || { cat /tmp/launch.txt; exit 1; }; cat /tmp/launch.txt; adb shell dumpsys package space.saintjust.reader.semanticstage1clean.formatfix.debug | head -80'
