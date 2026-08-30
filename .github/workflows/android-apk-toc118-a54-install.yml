@@ -1,0 +1,143 @@
+name: Android APK toc118 Galaxy A54 install compatibility
+
+on:
+  push:
+    branches:
+      - fix/77.42-toc118-a54-install
+  workflow_dispatch:
+
+jobs:
+  build-a54:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/77.42-toc118-a54-install
+          fetch-depth: 0
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore established Reader AI signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_KEYSTORE_BASE64}"
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Reproduce maintained Chinese runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/wire-toc104-native-bridges.py
+          python3 scripts/patch-toc112-zh-context-inline.py
+          python3 scripts/patch-toc113-zh-context-coverage.py
+          python3 scripts/patch-toc114-zh-core-first-paint.py
+          python3 scripts/patch-toc115-zh-missing-only-auth.py
+          python3 scripts/patch-zh-lexical-pipeline-v2.py
+          python3 scripts/patch-zh-lexical-global-access.py
+          python3 scripts/patch-zh-context-pinyin-trust.py
+
+      - name: Configure toc118 for Galaxy A54 arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/build.gradle')
+          s = p.read_text()
+          if s.count('versionCode 118') != 1 or s.count("versionName '77.42-toc98'") != 1:
+              raise SystemExit('unexpected Android base identity')
+          s = s.replace('versionCode 118', 'versionCode 1007', 1)
+          s = s.replace("versionName '77.42-toc98'", "versionName '77.42-toc118-a54-arm64'", 1)
+          anchor = "        targetSdk 35\n"
+          if s.count(anchor) != 1:
+              raise SystemExit('targetSdk anchor not unique')
+          s = s.replace(anchor, anchor + "        ndk {\n            abiFilters 'arm64-v8a'\n        }\n", 1)
+          p.write_text(s)
+          PY
+          rm -rf build
+
+      - name: Lexical regression gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/build_zh_migaku_resources.py --self-test
+          python3 scripts/build_zh_migaku_resources_v2.py --self-test
+          python3 scripts/build_zh_migaku_sqlite.py --self-test
+          mkdir -p build/toc118-gate
+          python3 scripts/build_zh_migaku_sqlite.py --output-dir build/toc118-gate --cache-dir build/toc118-cache
+          python3 scripts/export_zh_jieba_rank_asset.py build/toc118-gate/zh_migaku.sqlite3 build/toc118-gate/zh_jieba_top100k.txt --limit 100000
+          node scripts/check-zh-lexical-pipeline-v2.mjs build/toc118-gate/zh_jieba_top100k.txt data/zh_dict_core.json data/zh_lexical_regressions.json
+          rm -rf build
+
+      - name: Build signed arm64 APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Re-sign with v1 v2 v3 compatibility schemes
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+          BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          mkdir -p unique-out
+          OUT=unique-out/Reader-AI-77.42-toc118-a54-arm64-vc1007.apk
+          KSPASS="${ANDROID_KEYSTORE_PASSWORD:-readerai2026}"
+          KEYPASS="${ANDROID_KEY_PASSWORD:-$KSPASS}"
+          ALIAS="${ANDROID_KEY_ALIAS:-reader-ai}"
+          "${BUILD_TOOLS}/apksigner" sign \
+            --ks "${ANDROID_KEYSTORE_PATH}" \
+            --ks-key-alias "$ALIAS" \
+            --ks-pass "pass:$KSPASS" \
+            --key-pass "pass:$KEYPASS" \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out "$OUT" "$APK"
+          "${BUILD_TOOLS}/apksigner" verify --verbose --print-certs "$OUT" | tee unique-out/APKSIGNER.txt
+          "${BUILD_TOOLS}/aapt" dump badging "$OUT" | tee unique-out/BADGING.txt
+          "${BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$OUT" > unique-out/ZIPALIGN.txt
+          unzip -t "$OUT" >/dev/null
+          grep -q "Verified using v1 scheme (JAR signing): true" unique-out/APKSIGNER.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
+          grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
+          grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
+          grep -q "versionCode='1007'" unique-out/BADGING.txt
+          grep -q "native-code: 'arm64-v8a'" unique-out/BADGING.txt
+          if unzip -l "$OUT" | grep -Eq 'lib/(armeabi-v7a|x86|x86_64)/'; then
+            echo 'non-A54 ABI leaked into APK' >&2
+            exit 1
+          fi
+          unzip -l "$OUT" | grep -qF 'lib/arm64-v8a/libtranslate_jni.so'
+          unzip -l "$OUT" | grep -qF 'assets/data/zh_jieba_top100k.txt'
+          unzip -l "$OUT" | grep -qF 'assets/data/zh_migaku.sqlite3'
+          sha256sum "$OUT" | tee unique-out/SHA256.txt
+          wc -c "$OUT" | tee unique-out/SIZE.txt
+
+      - name: Upload exact A54 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc118-a54-arm64-vc1007
+          path: |
+            unique-out/Reader-AI-77.42-toc118-a54-arm64-vc1007.apk
+            unique-out/SHA256.txt
+            unique-out/SIZE.txt
+            unique-out/APKSIGNER.txt
+            unique-out/BADGING.txt
+            unique-out/ZIPALIGN.txt
+          retention-days: 30
+          if-no-files-found: error
