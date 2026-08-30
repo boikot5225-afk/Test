@@ -1,0 +1,31 @@
+name: Research Chinese lexical pipeline v2
+
+on:
+  push:
+    branches:
+      - feature/77.42-zh-lexical-pipeline-v2
+    paths:
+      - 'scripts/research-zh-lexical-pipeline-v2.py'
+      - '.github/workflows/research-zh-lexical-pipeline-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-zh-lexical-pipeline-v2
+      - name: Run segmentation and direct ZH-RU benchmark
+        run: python3 scripts/research-zh-lexical-pipeline-v2.py
+      - name: Upload research report
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-zh-lexical-pipeline-v2-research
+          path: build/zh-lexical-pipeline-v2/
+          if-no-files-found: error
+          retention-days: 30
