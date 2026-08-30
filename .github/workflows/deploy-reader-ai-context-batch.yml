@@ -5,6 +5,7 @@ on:
     branches:
       - feature/77.42-toc97-context-batch
       - feature/77.42-toc99-polyphones
+      - feature/77.42-toc108-installable
     paths:
       - 'functions/zh-context-task.js'
       - 'functions/zh-polyphones-packed.js'
@@ -47,7 +48,7 @@ jobs:
           source = source.replace(prompt_anchor, prompt_patch, 1)
 
           token_anchor = "function maxTokensForTask(task) {\n  if (task === 'generate_verb') return 1400;"
-          token_patch = "function maxTokensForTask(task) {\n  if (task === 'zh_context_batch') return 1200;\n  if (task === 'generate_verb') return 1400;"
+          token_patch = "function maxTokensForTask(task) {\n  if (task === 'zh_context_batch') return 1800;\n  if (task === 'generate_verb') return 1400;"
           if source.count(token_anchor) != 1:
               raise SystemExit(f'maxTokens anchor count={source.count(token_anchor)}')
           source = source.replace(token_anchor, token_patch, 1)
@@ -72,7 +73,7 @@ jobs:
               "exports.readerAI = onCall(",
               "task === 'zh_context_batch'",
               "buildZhContextBatchPrompt(body)",
-              "if (task === 'zh_context_batch') return 1200",
+              "if (task === 'zh_context_batch') return 1800",
               "thinking: { type: 'disabled' }",
               "response_format: { type: 'json_object' }",
           )
@@ -133,7 +134,7 @@ jobs:
           const source = fs.readFileSync('functions/index.js', 'utf8');
           assert.match(source, /task === 'zh_context_batch'/);
           assert.match(source, /buildZhContextBatchPrompt\(body\)/);
-          assert.match(source, /if \(task === 'zh_context_batch'\) return 1200/);
+          assert.match(source, /if \(task === 'zh_context_batch'\) return 1800/);
           assert.equal((source.match(/exports\.readerAI\s*=\s*onCall/g) || []).length, 1);
           NODE
 
