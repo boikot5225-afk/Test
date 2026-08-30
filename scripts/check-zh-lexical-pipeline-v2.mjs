@@ -35,6 +35,9 @@ for (const [text, good, bad] of [
   // Live phone screenshot regression: the old fixed unknown-token penalty made
   // one six-Hanzi blob look cheaper than a person name + adverb + verb.
   ['洪秀全曾实行', ['洪秀全','曾','实行'], ['洪秀全曾实行']],
+  // Frequency corpora can contain fragments like 国号改. Grammar must keep the
+  // lexical V+为 predicate together: 国号 / 改为, not 国号改 / 为.
+  ['国号改为', ['国号','改为'], ['国号改','为']],
 ]) {
   const goodCost = scoreChineseSegmentation(good, { ranks, hasWord });
   const badCost = scoreChineseSegmentation(bad, { ranks, hasWord });
