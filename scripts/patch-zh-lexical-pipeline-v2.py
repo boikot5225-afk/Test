@@ -41,10 +41,13 @@ must_replace(
 # ---------------------------------------------------------------------------
 # 2. Replace greedy longest-match with the tested weighted DAG segmenter.
 # ---------------------------------------------------------------------------
-must_replace(
+# Cache-bust versions on the neighboring reader modules have changed repeatedly
+# across toc107→toc115. Match the semantic import rather than one historical
+# literal line, otherwise a harmless ?v= bump blocks the whole build.
+must_sub(
     'js/reader-app.js',
-    "import { createReaderPagesMode } from './reader/pages-mode.js?v=3';\n",
-    "import { createReaderPagesMode } from './reader/pages-mode.js?v=3';\nimport { ensureZhSegmentRanks, zhSegmentRanksReady, segmentChineseWeighted, scoreChineseSegmentation } from './reader/zh-segment-v2.js?v=1';\n",
+    r"(import\s*\{\s*createReaderPagesMode\s*\}\s*from\s*['\"]\.\/reader\/pages-mode\.js(?:\?v=[^'\"]*)?['\"];\s*\n)",
+    r"\1import { ensureZhSegmentRanks, zhSegmentRanksReady, segmentChineseWeighted, scoreChineseSegmentation } from './reader/zh-segment-v2.js?v=1';\n",
     'import weighted Chinese segmenter',
 )
 
