@@ -210,4 +210,22 @@ replace_once(
     'bust toc115 app entry',
 )
 
+# The lexical-v2 patch runs immediately after toc115 in the dedicated build.
+# toc112 already bumped these imports, while the v2 patcher intentionally owns
+# the final version strings. Normalize only the cache-bust labels here; module
+# contents are untouched. This keeps the handoff deterministic without making
+# runtime behavior depend on historical ?v= numbers.
+replace_once(
+    'js/reader/interactions-runtime.js',
+    "import './zh-readable-inline.js?v=7-context-card';\n",
+    "import './zh-readable-inline.js?v=6';\n",
+    'normalize readable-inline cache-bust for lexical-v2 handoff',
+)
+replace_once(
+    'js/reader/interactions-runtime.js',
+    "import './zh-direct-ru-fallback.js?v=2-context-priority'; // context card/batch outrank raw ML Kit\n",
+    "import './zh-direct-ru-fallback.js?v=1'; // toc100: direct on-device Chinese -> Russian for every visible Unknown\n",
+    'normalize direct-RU cache-bust for lexical-v2 handoff',
+)
+
 print('toc115 Chinese missing-only DeepSeek/auth bridge applied')
