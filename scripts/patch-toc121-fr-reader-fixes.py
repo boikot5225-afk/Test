@@ -239,19 +239,18 @@ s = replace_once(
     "    };",
     'French Russian-only form note',
 )
+english_context_line = "    if (sourceLang === 'en' && hasContext) readerPublishEnglishContextGloss(word, context, payload.ru);"
+french_event = """    if (sourceLang === 'fr' && hasContext) {
+      try {
+        document.dispatchEvent(new CustomEvent('reader:fr-analysis-ready', {
+          detail: { surface: word, word, context, ...payload, context_pos: pos, usage_pos: pos, isProper: pos === 'proper_noun' },
+        }));
+      } catch {}
+    }"""
 s = replace_once(
     s,
-    "    if (sourceLang === 'en' && hasContext) readerPublishEnglishContextGloss(word, context, payload.ru);\n"
-    "    // Re-render so the freshly learned pinyin/furigana appears over the token.",
-    "    if (sourceLang === 'en' && hasContext) readerPublishEnglishContextGloss(word, context, payload.ru);\n"
-    "    if (sourceLang === 'fr' && hasContext) {\n"
-    "      try {\n"
-    "        document.dispatchEvent(new CustomEvent('reader:fr-analysis-ready', {\n"
-    "          detail: { surface: word, word, context, ...payload, context_pos: pos, usage_pos: pos, isProper: pos === 'proper_noun' },\n"
-    "        }));\n"
-    "      } catch {}\n"
-    "    }\n"
-    "    // Re-render so the freshly learned pinyin/furigana appears over the token.",
+    english_context_line,
+    english_context_line + '\n' + french_event,
     'French analysis event',
 )
 s = replace_once(
