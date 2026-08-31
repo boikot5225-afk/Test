@@ -1,0 +1,27 @@
+name: toc123 apply real Unknown audit
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc123-fr-isolated
+    paths:
+      - .github/workflows/toc123-fix-live-audit-v2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc123-fr-isolated
+      - run: python3 scripts/patch_toc123_live_audit_real_unknown.py
+      - run: |
+          git config user.name 'Reader AI CI'
+          git config user.email 'reader-ai-ci@users.noreply.github.com'
+          git add .github/workflows/android-apk-toc123-fr-isolated.yml
+          git commit -m 'test(reader): exercise real French manual Unknown'
+          git push origin HEAD:feature/77.42-toc123-fr-isolated
