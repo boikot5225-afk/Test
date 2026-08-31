@@ -79,14 +79,17 @@ def page_state():
       if(!cur) cur=root?.querySelector(':scope > .rd-page.rd-page-show');
       const first=cur?.querySelector('.reader-paragraph');
       const rect=cur?.getBoundingClientRect();
+      const scroller=document.querySelector('#reader-reading-view .rd-scroll');
       return {
         lang:document.getElementById('reader-reading-view')?.dataset?.readerLang||root?.dataset?.lang||'',
-        pagesMode:!!document.querySelector('#reader-reading-view .rd-scroll')?.classList.contains('rd-pages-mode'),
+        pagesMode:!!scroller?.classList.contains('rd-pages-mode'),
+        animation:scroller?.dataset?.rdPageAnimation||'',
         pageCount:direct.length,
         currentIndex:direct.indexOf(cur),
         paragraphIndex:first?.dataset?.p||first?.dataset?.paragraphIndex||'',
         text:(cur?.innerText||'').replace(/\\s+/g,' ').trim().slice(0,160),
         boundSwipe:root?.dataset?.boundReaderSwipe||'',
+        ranging:!!window.__readerRanging,
         rect:rect?{left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom,width:rect.width,height:rect.height}:null,
       };
     })()""")
@@ -105,7 +108,7 @@ def install_probe():
           document.addEventListener(type,(event)=>{
             const t=event.touches?.[0]||event.changedTouches?.[0]||null;
             const liveRoot=document.getElementById('reader-chapter-text');
-            if(window.__toc122SwipeProbe.length<80){
+            if(window.__toc122SwipeProbe.length<120){
               window.__toc122SwipeProbe.push({
                 type,
                 x:t?.clientX??null,
@@ -139,11 +142,22 @@ def events():
     return ev("window.__toc122SwipeProbe||[]") or []
 
 
-def physical_swipe(coords):
+def physical_swipe(coords, duration_ms):
     subprocess.run([
         'adb','shell','input','touchscreen','swipe',
-        str(coords['x1']),str(coords['y1']),str(coords['x2']),str(coords['y2']),'320'
+        str(coords['x1']),str(coords['y1']),str(coords['x2']),str(coords['y2']),str(duration_ms)
     ], check=True)
+
+
+def clear_probe():
+    ev("window.__toc122SwipeProbe=[]; true")
+
+
+def assert_touch_complete(label, event_list):
+    if not any(e.get('type') == 'touchstart' and e.get('insideRoot') for e in event_list):
+        raise RuntimeError(f'{label}: touchstart never reached Reader root')
+    if not any(e.get('type') == 'touchend' and e.get('insideRoot') for e in event_list):
+        raise RuntimeError(f'{label}: touchend never completed in Reader root')
 
 
 cdp('Runtime.enable')
@@ -160,72 +174,115 @@ lang = ev("document.getElementById('reader-reading-view')?.dataset?.readerLang||
 if lang != 'fr':
     raise RuntimeError(f'Pagination acceptance is not on French reader: {lang!r}')
 
-# Keep this acceptance deterministic: page movement itself is under test, not CSS animation timing.
-ev("window.rdSetPageAnimation?.('none', null); true")
-
-# Use the production public toggle. Do not construct rd-page wrappers from the test.
+# Production page mode and production flip animation. The old acceptance test
+# forced animation=none and therefore skipped the exact race a real user sees.
 for _ in range(2):
     state = page_state()
     if state['pagesMode'] and state['pageCount'] >= 2 and state['currentIndex'] >= 0:
         break
     ev("window.readerTogglePagesMode?.(); true")
     time.sleep(1.0)
+ev("window.rdSetPageAnimation?.('flip', null); true")
+time.sleep(.4)
 
 wait("document.getElementById('reader-chapter-text')?.dataset?.boundReaderSwipe==='1'", 10)
 before = page_state()
 if not before['pagesMode'] or before['pageCount'] < 2 or before['currentIndex'] < 0:
     raise RuntimeError('French page mode did not produce >=2 real pages: ' + json.dumps(before, ensure_ascii=False))
+if before['animation'] != 'flip':
+    raise RuntimeError('Production flip animation is not active: ' + json.dumps(before, ensure_ascii=False))
 
 probe = install_probe()
 (OUT / 'toc122-swipe-environment.json').write_text(json.dumps(probe, ensure_ascii=False, indent=2), encoding='utf-8')
 if not probe.get('ok') or not probe.get('midpointInsideRoot'):
     raise RuntimeError('Physical swipe target is not the visible French page: ' + json.dumps(probe, ensure_ascii=False))
 
-save_screen('02-fr-before-left-swipe.png')
-physical_swipe(probe['leftSwipe'])
+# 1) Human-speed swipe while a stale selection/ranging flag is deliberately set.
+# Old production code discarded this touchend entirely; the old 320ms CI swipe
+# never exercised the human-duration or stale-ranging failure.
+ev("window.__readerRanging=true; true")
+save_screen('02-fr-before-human-left-swipe.png')
+physical_swipe(probe['leftSwipe'], 950)
 time.sleep(1.0)
-after_next = page_state()
-left_events = events()
-(OUT / 'toc122-left-swipe-events.json').write_text(json.dumps(left_events, ensure_ascii=False, indent=2), encoding='utf-8')
-save_screen('03-fr-after-left-swipe.png')
+after_human_next = page_state()
+human_left_events = events()
+(OUT / 'toc122-human-left-swipe-events.json').write_text(json.dumps(human_left_events, ensure_ascii=False, indent=2), encoding='utf-8')
+save_screen('03-fr-after-human-left-swipe.png')
+assert_touch_complete('human left swipe', human_left_events)
+if after_human_next['currentIndex'] != before['currentIndex'] + 1:
+    raise RuntimeError('Human-speed left swipe did not advance exactly one page: ' + json.dumps({'before':before,'after':after_human_next}, ensure_ascii=False))
 
-if not any(e.get('type') == 'touchstart' and e.get('insideRoot') for e in left_events):
-    raise RuntimeError('Android left swipe never reached French reader root')
-if not any(e.get('type') == 'touchend' and e.get('insideRoot') for e in left_events):
-    raise RuntimeError('Android left swipe did not complete in French reader root')
-if after_next['currentIndex'] != before['currentIndex'] + 1:
-    raise RuntimeError('Physical left swipe did not advance exactly one French page: ' + json.dumps({'before':before,'after':after_next}, ensure_ascii=False))
-
-ev("window.__toc122SwipeProbe=[]; true")
-physical_swipe(probe['rightSwipe'])
+clear_probe()
+physical_swipe(probe['rightSwipe'], 950)
 time.sleep(1.0)
-after_prev = page_state()
-right_events = events()
-(OUT / 'toc122-right-swipe-events.json').write_text(json.dumps(right_events, ensure_ascii=False, indent=2), encoding='utf-8')
-save_screen('04-fr-after-right-swipe.png')
+after_human_prev = page_state()
+human_right_events = events()
+assert_touch_complete('human right swipe', human_right_events)
+if after_human_prev['currentIndex'] != before['currentIndex']:
+    raise RuntimeError('Human-speed right swipe did not return exactly one page: ' + json.dumps({'before':before,'after':after_human_prev}, ensure_ascii=False))
 
-if not any(e.get('type') == 'touchstart' and e.get('insideRoot') for e in right_events):
-    raise RuntimeError('Android right swipe never reached French reader root')
-if not any(e.get('type') == 'touchend' and e.get('insideRoot') for e in right_events):
-    raise RuntimeError('Android right swipe did not complete in French reader root')
-if after_prev['currentIndex'] != before['currentIndex']:
-    raise RuntimeError('Physical right swipe did not return to the original French page: ' + json.dumps({'before':before,'after':after_prev}, ensure_ascii=False))
+# 2) Reproduce the real French-reader race: start a normal animated turn, then
+# rebuild the same chapter before the 620ms flip finishes. Background lexical /
+# context work can do exactly this. The user's page-turn decision must survive.
+clear_probe()
+race_before = page_state()
+race_para = int(race_before['paragraphIndex'] or 0)
+physical_swipe(probe['leftSwipe'], 320)
+ev(f"window.readerSelectParagraph?.({race_para}); true")
+time.sleep(1.3)
+race_after = page_state()
+race_events = events()
+(OUT / 'toc122-rerender-race-events.json').write_text(json.dumps(race_events, ensure_ascii=False, indent=2), encoding='utf-8')
+save_screen('04-fr-after-rerender-race.png')
+assert_touch_complete('rerender-race left swipe', race_events)
+if race_after['currentIndex'] != race_before['currentIndex'] + 1:
+    raise RuntimeError('Same-chapter rerender cancelled the animated page turn: ' + json.dumps({'before':race_before,'after':race_after}, ensure_ascii=False))
 
+clear_probe()
+physical_swipe(probe['rightSwipe'], 800)
+time.sleep(1.0)
+race_return = page_state()
+if race_return['currentIndex'] != before['currentIndex']:
+    raise RuntimeError('Reader did not recover after rerender race: ' + json.dumps({'expected':before,'after':race_return}, ensure_ascii=False))
+
+# 3) Repeated human swipes: no latent animating/ranging freeze after recovery.
+cycles = []
+for cycle in range(3):
+    clear_probe()
+    start = page_state()
+    physical_swipe(probe['leftSwipe'], 700)
+    time.sleep(.9)
+    nxt = page_state()
+    if nxt['currentIndex'] != start['currentIndex'] + 1:
+        raise RuntimeError(f'cycle {cycle+1}: left turn froze: ' + json.dumps({'before':start,'after':nxt}, ensure_ascii=False))
+    physical_swipe(probe['rightSwipe'], 700)
+    time.sleep(.9)
+    back = page_state()
+    if back['currentIndex'] != start['currentIndex']:
+        raise RuntimeError(f'cycle {cycle+1}: right turn froze: ' + json.dumps({'before':start,'after':back}, ensure_ascii=False))
+    cycles.append({'before':start,'after_left':nxt,'after_right':back})
+
+save_screen('05-fr-after-page-turn-stress.png')
 result = {
     'ok': True,
     'before': before,
-    'after_next': after_next,
-    'after_prev': after_prev,
+    'after_human_next': after_human_next,
+    'after_human_prev': after_human_prev,
+    'race_before': race_before,
+    'race_after': race_after,
+    'race_return': race_return,
+    'cycles': cycles,
     'assertions': [
         'Visible reader language is French',
-        'Physical Android left swipe reaches Reader root and advances exactly one page',
-        'Physical Android right swipe reaches Reader root and returns exactly one page',
+        'Production flip animation is enabled',
+        '950ms physical swipe works even with stale __readerRanging',
+        'Same-chapter rerender during flip cannot cancel the page turn',
+        'Three repeated left/right human-speed cycles do not freeze',
     ],
 }
 (OUT / 'toc122-pagination-audit.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
 print(json.dumps(result, ensure_ascii=False, indent=2))
 
-# Restore scroll mode so the existing lexical/layout audit observes the same state as before.
 if page_state()['pagesMode']:
     ev("window.readerTogglePagesMode?.(); true")
     time.sleep(.5)
