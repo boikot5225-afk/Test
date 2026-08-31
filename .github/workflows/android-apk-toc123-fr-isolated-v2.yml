@@ -132,7 +132,7 @@ jobs:
           grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
           grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
           grep -q "versionCode='1015'" unique-out/BADGING.txt
-          grep -q "versionName='77.42-toc123-fr-isolated'" unique-out/BADGING.txt
+          grep -q "versionName='77.42-toc123-fr-isolated-debug'" unique-out/BADGING.txt
           grep -q "native-code: 'arm64-v8a'" unique-out/BADGING.txt
           if unzip -l "$OUT" | grep -Eq 'lib/(armeabi-v7a|x86|x86_64)/'; then
             echo 'non-A54 ABI leaked into final package' >&2
