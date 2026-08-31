@@ -123,10 +123,18 @@ jobs:
           assert 'manualMap?.get(normalizeSurface(word))' in vocab
           assert 'rw-fr-proper' in vocab
           assert 'for(const[candidateKey,state]of Object.entries(store))' not in vocab
-          assert 'if (data.rankFold.get(word)) return' in lexical
+          # Global lexical ownership must preserve ranked headwords; exact usage
+          # morphology is deliberately a separate contextual API.
+          assert 'const surfaceHit = data.rankFold.get(word);' in lexical
+          assert "if (Number.isInteger(surfaceHit?.index))" in lexical
+          assert 'globalThis.readerFrenchContextualAnalysisFor = analyzeContext' in lexical
+          assert 'function contextSuggestsParticiple' in lexical
           assert 'chapterProperHeuristic' in lexical
           assert 'mlkit-target-marked' in context
+          assert 'readerFrenchContextualAnalysisFor' in context
+          assert 'sourceContextForElement' in context
           assert 'lookupStillActive' in app and 'requestStillActive' in app
+          assert 'readerFrenchContextualAnalysisFor' in app
           assert 'new FileInputStream(new File(path))' in activity
           print('toc122 architecture gate PASS')
           PY
