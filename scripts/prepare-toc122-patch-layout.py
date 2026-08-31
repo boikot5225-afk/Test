@@ -32,4 +32,24 @@ s, n3 = re.subn(re.escape(stub_apply) + r'\s*function applyClassificationBatch',
 if (n1, n2, n3) != (1, 1, 1):
     raise SystemExit(f'toc122 staging layout failed: find/manual={n1}, manual/classification={n2}, apply/batch={n3}')
 p.write_text(s, encoding='utf-8')
-print('toc122 patch state staging prepared with canonical spacing')
+
+# The same catch body occurs in paragraph analysis and readerTranslateWordAI.
+# toc122 must add requestStillActive() only to the word request. Make every
+# identical catch outside readerTranslateWordAI syntactically unique while
+# preserving its behavior, leaving exactly one anchor for the structural patch.
+app_path = Path('js/reader-app.js')
+app = app_path.read_text(encoding='utf-8')
+needle = "  } catch(e) {\n    const msg = e?.message || String(e);"
+word_start = app.find('async function readerTranslateWordAI')
+if word_start < 0:
+    raise SystemExit('toc122 staging: readerTranslateWordAI not found')
+target = app.find(needle, word_start)
+if target < 0:
+    raise SystemExit('toc122 staging: word AI catch anchor not found')
+commented = "  } catch(e) {\n    /* toc122: unrelated async catch */\n    const msg = e?.message || String(e);"
+app = app[:target].replace(needle, commented) + app[target:target + len(needle)] + app[target + len(needle):].replace(needle, commented)
+if app.count(needle) != 1:
+    raise SystemExit(f'toc122 staging: expected one scoped word AI catch, got {app.count(needle)}')
+app_path.write_text(app, encoding='utf-8')
+
+print('toc122 patch staging prepared: French state + scoped word AI catch')
