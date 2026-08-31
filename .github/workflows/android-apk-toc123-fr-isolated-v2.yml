@@ -104,14 +104,14 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Sign and validate vc1015 A54 APK
+      - name: Sign and validate vc1016 A54 APK
         shell: bash
         run: |
           set -euo pipefail
           APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
           BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           mkdir -p unique-out
-          OUT=unique-out/Reader-AI-77.42-toc123-fr-isolated-a54-vc1015.apk
+          OUT=unique-out/Reader-AI-77.42-toc123-fr-isolated-a54-vc1016.apk
           KSPASS="${ANDROID_KEYSTORE_PASSWORD:-readerai2026}"
           KEYPASS="${ANDROID_KEY_PASSWORD:-$KSPASS}"
           ALIAS="${ANDROID_KEY_ALIAS:-reader-ai}"
@@ -131,11 +131,15 @@ jobs:
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
           grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
           grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
-          grep -q "versionCode='1015'" unique-out/BADGING.txt
+          grep -q "versionCode='1016'" unique-out/BADGING.txt
           grep -q "versionName='77.42-toc123-fr-isolated-debug'" unique-out/BADGING.txt
           grep -q "native-code: 'arm64-v8a'" unique-out/BADGING.txt
           if unzip -l "$OUT" | grep -Eq 'lib/(armeabi-v7a|x86|x86_64)/'; then
             echo 'non-A54 ABI leaked into final package' >&2
+            exit 1
+          fi
+          if unzip -l "$OUT" | grep -q 'assets/www/build/'; then
+            echo 'transient repo build cache leaked into final APK' >&2
             exit 1
           fi
           unzip -l "$OUT" | grep -qF 'assets/frreader/fr_vocab_frequency.tsv'
@@ -147,7 +151,7 @@ jobs:
       - name: Upload verified toc123 A54 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-77.42-toc123-fr-isolated-a54-vc1015
+          name: Reader-AI-77.42-toc123-fr-isolated-a54-vc1016
           path: unique-out/
           if-no-files-found: error
           retention-days: 30
