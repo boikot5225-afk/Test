@@ -16,11 +16,10 @@ import './fr-vocab-estimate.js?v=123-isolated'; // toc123: isolated French Known
 import './fr-unknown-gloss.js?v=123-isolated'; // toc123: isolated bundled FR->RU glosses
 import './toc51-stability.js?v=2';
 import './toolbar-scroll.js?v=1';
-import './zh-readable-inline.js?v=6';
-import './zh-direct-ru-fallback.js?v=1'; // toc100: direct on-device Chinese -> Russian for every visible Unknown
+import './zh-readable-inline.js?v=8-quality';
 import './zh-context-cache-v3.js?v=1'; // one-time reset of pre-polyphone AI pinyin cache
 import './zh-context-auth-wakeup.js?v=1'; // retry context AI as soon as Firebase restores a user
-import './zh-context-batch.js?v=4'; // toc100: retry incomplete visible Chinese glosses; no layout ownership
+import './zh-context-batch.js?v=8-quality'; // toc119: context owns Russian; auth retry; fresh cache
 import { createReaderInteractions } from './interactions.js?v=2';
 
 function getRoot() {

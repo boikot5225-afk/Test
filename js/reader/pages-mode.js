@@ -174,6 +174,11 @@ export function createReaderPagesMode({
     });
     currentPageIndex = index;
     onPageChange?.(currentPageIndex, pages.length);
+    try {
+      window.dispatchEvent(new CustomEvent('reader:pagechange', {
+        detail: { pageIndex: currentPageIndex, pageCount: pages.length },
+      }));
+    } catch {}
   }
 
   function rebuild() {
@@ -341,6 +346,11 @@ export function createReaderPagesMode({
       currentPageIndex = target;
       animating = false;
       onPageChange?.(currentPageIndex, pages.length);
+      try {
+        window.dispatchEvent(new CustomEvent('reader:pagechange', {
+          detail: { pageIndex: currentPageIndex, pageCount: pages.length },
+        }));
+      } catch {}
       // Use the page object captured when the gesture began. Looking up
       // pages[target] here is unsafe because a rebuild can replace the array
       // while CSS animation is still in flight.

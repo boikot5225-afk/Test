@@ -50,6 +50,9 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> fileCallback;
     private boolean serviceWorkerClientInstalled = false;
     private ChineseResourceBridge chineseResourceBridge;
+    private ChineseOfflineTranslateBridge chineseOfflineTranslateBridge;
+    private EnglishResidualTranslateBridge englishResidualTranslateBridge;
+    private EnglishContextTranslateBridge englishContextTranslateBridge;
 
     private Uri pendingImportUri;
     private String pendingImportName = "";
@@ -124,6 +127,13 @@ public class MainActivity extends Activity {
         // SQLite work happens on ChineseResourceBridge's background executor.
         chineseResourceBridge = new ChineseResourceBridge(this, webView);
         webView.addJavascriptInterface(chineseResourceBridge, "ReaderChineseResources");
+
+        chineseOfflineTranslateBridge = new ChineseOfflineTranslateBridge(this, webView);
+        webView.addJavascriptInterface(chineseOfflineTranslateBridge, "ReaderChineseTranslate");
+        englishResidualTranslateBridge = new EnglishResidualTranslateBridge(this, webView);
+        webView.addJavascriptInterface(englishResidualTranslateBridge, "ReaderEnglishResidualTranslate");
+        englishContextTranslateBridge = new EnglishContextTranslateBridge(this, webView);
+        webView.addJavascriptInterface(englishContextTranslateBridge, "ReaderEnglishContextTranslate");
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -421,6 +431,18 @@ public class MainActivity extends Activity {
         if (chineseResourceBridge != null) {
             chineseResourceBridge.shutdown();
             chineseResourceBridge = null;
+        }
+        if (chineseOfflineTranslateBridge != null) {
+            chineseOfflineTranslateBridge.shutdown();
+            chineseOfflineTranslateBridge = null;
+        }
+        if (englishResidualTranslateBridge != null) {
+            englishResidualTranslateBridge.shutdown();
+            englishResidualTranslateBridge = null;
+        }
+        if (englishContextTranslateBridge != null) {
+            englishContextTranslateBridge.shutdown();
+            englishContextTranslateBridge = null;
         }
         if (webView != null) {
             webView.loadUrl("about:blank");

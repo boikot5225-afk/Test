@@ -60,16 +60,16 @@ export function createReaderChapterRenderer({
         if (!current) return;
 
         if (isZh) {
-          // Keep the already-painted Chinese chapter immutable, exactly like
-          // English unknown-gloss v2: late data may improve the NEXT natural
-          // render, but must never replace live reading geometry. Mark this DOM
-          // as an accepted snapshot so paragraph navigation does not force a
-          // delayed full rerender merely because the core became available.
-          const chapterText = document.getElementById('reader-chapter-text');
-          if (chapterText && canonicalLang(getBookLang(current)) === 'zh') {
-            chapterText.dataset.renderedZhCore = String(!!isZhCoreLoaded?.());
-          }
+          // toc114: never preserve a chapter that was segmented before the full
+          // bundled Chinese lexicon became available. readerOpenBook normally
+          // waits for it, but this fallback repairs any other render entry path.
+          const scroller = document.querySelector('#reader-reading-view .rd-scroll');
+          const savedScrollTop = scroller ? scroller.scrollTop : 0;
           try { window.dispatchEvent(new CustomEvent('reader:zh-core-ready')); } catch {}
+          requestAnimationFrame(() => {
+            render();
+            if (scroller) scroller.scrollTop = savedScrollTop;
+          });
           return;
         }
 

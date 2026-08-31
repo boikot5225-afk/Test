@@ -7,12 +7,13 @@
 //   - no English text, dictionary articles or automatic online translation;
 //   - the gloss may reserve a small bounded width, never a phone-sized column.
 
-const STYLE_ID = 'reader-zh-readable-inline-v6';
+const STYLE_ID = 'reader-zh-readable-inline-v8-quality';
 const LEGACY_STYLE_IDS = [
   'reader-zh-readable-inline-v1',
   'reader-zh-readable-inline-v2',
   'reader-zh-readable-inline-v3',
   'reader-zh-readable-inline-v5',
+  'reader-zh-readable-inline-v6',
   'reader-zh-stable-slots-v3',
   'reader-zh-unknown-interlinear-v1',
   'reader-zh-unknown-interlinear-v2',
@@ -76,7 +77,7 @@ function compactRussian(value) {
   const text = firstSense(value);
   if (!text || !hasRussian(text)) return '';
   const words = text.split(/\s+/).filter(Boolean);
-  if (!words.length || words.length > 2 || text.length > 22) return '';
+  if (!words.length || words.length > 3 || text.length > 36) return '';
   if (/(?:также|используется|используют|химическ|обозначени|представляет|состоящ)/i.test(text)) return '';
   if (/^(?:металл|вещество|материал|элемент|предмет|объект|название|термин)$/i.test(text)) return '';
   return text;
@@ -130,20 +131,54 @@ function wordForWrapper(wrap) {
   return wrap?.querySelector?.(':scope > .reader-word') || null;
 }
 
+function cachedPanelContextRussian(wrap, word) {
+  const stored = compactRussian(wrap?.dataset?.zhGlossContextRu || '');
+  if (stored) return stored;
+  const surface = clean(word?.dataset?.word || '');
+  if (!surface) return '';
+  const paragraphIndex = Number(word?.closest?.('.reader-paragraph')?.dataset?.p);
+  try {
+    const value = compactRussian(globalThis.readerGetCachedChineseContextRuForInline?.(surface, paragraphIndex) || '');
+    if (!value) return '';
+    wrap.dataset.zhGlossContextRu = value;
+    if (String(wrap.dataset.zhGlossSource || '') !== 'context-ai') {
+      wrap.dataset.zhGlossStickyRu = value;
+      wrap.dataset.zhGlossSource = 'context-panel';
+    }
+    return value;
+  } catch {
+    return '';
+  }
+}
+
 function localRussian(wrap, word) {
-  const raw = wrap?.dataset?.zhGlossSource === 'en' ? '' : (
-    wrap?.dataset?.zhGlossStickyRu
-    || wrap?.dataset?.zhGlossRuReadable
-    || wrap?.dataset?.zhGlossRu
-    || ''
-  );
-  const direct = compactRussian(raw);
-  if (direct) return direct;
+  const source = clean(wrap?.dataset?.zhGlossSource || '').toLowerCase().replace(/_/g, '-');
+  const provisional = !source
+    ? false
+    : source === 'en'
+      || source.includes('mlkit')
+      || source.includes('machine')
+      || source.includes('wikdict')
+      || source.includes('offline-en');
+
+  if (!provisional) {
+    const raw = wrap?.dataset?.zhGlossStickyRu
+      || wrap?.dataset?.zhGlossRuReadable
+      || wrap?.dataset?.zhGlossRu
+      || '';
+    const direct = compactRussian(raw);
+    if (direct) return direct;
+  }
 
   const surface = clean(word?.dataset?.word || '');
   if (!surface) return '';
   try {
     const entry = globalThis.readerLookupChineseWord?.(surface) || null;
+    const entrySource = clean(entry?._source || '').toLowerCase().replace(/_/g, '-');
+    if (entrySource.includes('mlkit')
+        || entrySource.includes('machine')
+        || entrySource.includes('wikdict-en')
+        || entrySource.includes('offline-en')) return '';
     return compactRussian(entry?.ru || entry?.russian || entry?.translation_ru || entry?.translation || '');
   } catch {
     return '';
@@ -215,7 +250,7 @@ function ensureLane(word) {
 }
 
 function setLane(wrap, word, pinyinValue, russianValue) {
-  const pinyin = clean(pinyinValue);
+  const pinyin = clean(pinyinValue).toLocaleLowerCase('en-US');
   const ru = compactRussian(russianValue);
   const lane = ensureLane(word);
   if (!lane) return;
@@ -319,10 +354,11 @@ function syncWrap(wrap) {
     return;
   }
 
-  const english = localEnglish(word);
-  const translated = translatedRussian(english);
-  setLane(wrap, word, pinyin, translated);
-  if (!translated && english) queueEnglish(english);
+  // v2: do not turn an English dictionary sense into a Russian answer via
+  // another dictionary. That pipeline produced semantically unrelated first
+  // senses (title→заглавие, violate→изнасиловать, supply→запас). Keep pinyin
+  // visible; contextual AI or the delayed direct-ZH fallback owns Russian.
+  setLane(wrap, word, pinyin, '');
 }
 
 function purgeLegacyVisuals(root = document) {
@@ -342,6 +378,39 @@ function syncAll() {
   return wrappers.length;
 }
 
+function applyPanelContextGloss(detail = {}) {
+  if (!enabled()) return 0;
+  const root = document.getElementById('reader-chapter-text');
+  const target = clean(detail.word || detail.surface || '');
+  const translation = compactRussian(detail.ru || detail.translation || detail.meaning || '');
+  if (!root || !target || !translation) return 0;
+
+  const requestedParagraph = Number(detail.paragraphIndex);
+  const scopes = Number.isFinite(requestedParagraph)
+    ? Array.from(root.querySelectorAll('.reader-paragraph')).filter(p => Number(p.dataset.p) === requestedParagraph)
+    : [root];
+  let changed = 0;
+  for (const scope of scopes) {
+    for (const word of scope.querySelectorAll('.reader-word[data-lang="zh"][data-word]')) {
+      const surface = clean(word.dataset.word || word.textContent || '');
+      if (surface !== target) continue;
+      const wrap = word.parentElement?.classList?.contains('rw-zh-gloss-wrap') ? word.parentElement : null;
+      if (!wrap) continue;
+      // Never downgrade the dedicated paragraph-context engine. Otherwise the
+      // card cache is the best known answer and must replace stale ML Kit text.
+      if (String(wrap.dataset.zhGlossSource || '') !== 'context-ai') {
+        wrap.dataset.zhGlossContextRu = translation;
+        wrap.dataset.zhGlossStickyRu = translation;
+        wrap.dataset.zhGlossSource = 'context-panel';
+        if (wordState(word) === 'unknown') setLane(wrap, word, localPinyin(wrap, word), translation);
+      }
+      changed += 1;
+    }
+  }
+  schedule(0);
+  return changed;
+}
+
 function schedule(delay = 0) {
   clearTimeout(scanTimer);
   scanTimer = setTimeout(syncAll, delay);
@@ -354,7 +423,7 @@ function installStyle() {
   style.id = STYLE_ID;
   style.textContent = `
     #reader-reading-view.rd-zh-unknown-gloss[data-reader-lang="zh"] .reader-paragraph-text {
-      line-height: 2.22 !important;
+      line-height: 2.08 !important;
       word-break: normal !important;
       overflow-wrap: normal !important;
     }
@@ -530,7 +599,9 @@ if (typeof window !== 'undefined') {
   window.addEventListener('pageshow', () => { installStyle(); bindObserver(); schedule(20); });
   window.addEventListener('scroll', () => schedule(70), { passive: true });
   window.addEventListener('reader-instant-word-translation', () => schedule(15));
+  window.addEventListener('reader:zh-context-gloss', event => applyPanelContextGloss(event?.detail || {}));
   window.addEventListener('reader:chromechange', () => schedule(15));
+  window.addEventListener('reader:pagechange', () => schedule(10));
 }
 
 export {

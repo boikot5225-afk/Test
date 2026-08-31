@@ -1,3 +1,5 @@
+import { classifyChineseGloss, chinesePinyinNeedsContext } from './zh-lexical-trust.js?v=2';
+
 // toc100: contextual Chinese Unknown glosses for every paragraph visible on screen.
 //
 // toc94 still owns layout, pagination and Known/Unknown. This layer only writes
@@ -6,15 +8,15 @@
 // or filtered glosses are retried in small batches instead of being cached as
 // finished pinyin-only entries.
 
-const CACHE_BASE_KEY = 'an2_reader_zh_context_gloss_v3';
+const CACHE_BASE_KEY = 'an2_reader_zh_context_gloss_v4_quality';
 const STYLE_ID = 'reader-zh-context-batch-style-v3';
-const MAX_TARGETS = 18;
-const RETRY_BATCH_TARGETS = 6;
+const MAX_TARGETS = 16;
+const RETRY_BATCH_TARGETS = 8;
 const MAX_RETRY_ATTEMPTS = 4;
 const RETRY_RESET_MS = 5_000;
 const MAX_VISIBLE_PARAGRAPHS = 5;
 const SCAN_DELAY_MS = 80;
-const RESOURCE_SETTLE_MS = 110;
+const RESOURCE_SETTLE_MS = 420;
 const RETRY_MS = 20_000;
 const CALL_TIMEOUT_MS = 65_000;
 const CACHE_LIMIT = 2200;
@@ -65,7 +67,7 @@ function compactRu(value) {
     .trim();
   if (!/[\u0400-\u052f]/.test(text)) return '';
   const words = text.split(/\s+/).filter(Boolean);
-  if (!words.length || words.length > 4) return '';
+  if (!words.length || words.length > 3 || text.length > 36) return '';
   return text;
 }
 
@@ -114,13 +116,20 @@ function enabled() {
   catch { return view.classList.contains('rd-zh-unknown-gloss'); }
 }
 
+function firebaseClientWithAuth() {
+  const candidates = [globalThis.firebase, globalThis.__AN2_FALLBACK_FIREBASE].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      const auth = typeof candidate.auth === 'function' ? candidate.auth() : null;
+      const app = typeof candidate.app === 'function' ? candidate.app() : null;
+      if (auth?.currentUser && typeof app?.functions === 'function') return candidate;
+    } catch {}
+  }
+  return null;
+}
+
 function firebaseUserReady() {
-  try {
-    const firebase = globalThis.firebase;
-    if (!firebase) return false;
-    const auth = typeof firebase.auth === 'function' ? firebase.auth() : firebase.app?.()?.auth?.();
-    return !!auth?.currentUser;
-  } catch { return false; }
+  return !!firebaseClientWithAuth();
 }
 
 function paragraphContext(paragraph) {
@@ -172,7 +181,11 @@ function unknownOccurrences(paragraph, context) {
   const contextHash = hashText(context);
   const out = [];
   allWords.forEach((word, tokenIndex) => {
-    if (!word.classList.contains('rw-migaku-unknown')) return;
+    const explicitlyUnknown = String(word.dataset.readerManualKnowledge || '').toLowerCase() === 'unknown';
+    const isUnknown = word.classList.contains('rw-migaku-unknown')
+      || word.classList.contains('rw-problem')
+      || explicitlyUnknown;
+    if (!isUnknown) return;
     const surface = clean(word.dataset.word || word.textContent, 32);
     if (!surface || !/[\u3400-\u9fff]/.test(surface)) return;
     const wrap = word.closest('.rw-zh-gloss-wrap');
@@ -250,8 +263,8 @@ function functionRegion() {
 }
 
 async function callBatch(context, occurrences) {
-  const firebase = globalThis.firebase;
-  if (!firebase?.app) throw new Error('Firebase недоступен');
+  const firebase = firebaseClientWithAuth();
+  if (!firebase?.app) throw new Error('Firebase Auth недоступен для DeepSeek batch');
   const fn = firebase.app().functions(functionRegion()).httpsCallable('readerAI');
   const targets = occurrences.map(item => ({ id: item.id, ...dictionaryHint(item.surface) }));
   const work = fn({ task: 'zh_context_batch', sourceLang: 'zh', context, targets });
@@ -309,8 +322,28 @@ function applyCachedForParagraph(paragraph, context) {
   return { all, changed };
 }
 
+function lexicalEntryForOccurrence(item) {
+  const surface = clean(item?.surface || item?.word?.dataset?.word || '', 32);
+  if (!surface) return null;
+  try { return globalThis.readerLookupChineseWord?.(surface) || null; }
+  catch { return null; }
+}
+
+function needsDeepSeek(item) {
+  const surface = clean(item?.surface || item?.word?.dataset?.word || '', 32);
+  // Russian meaning and pronunciation are separate confidence axes. Even a
+  // trusted local RU gloss must not freeze the first dictionary reading of a
+  // one-Hanzi polyphonic candidate; the already-batched context call resolves it.
+  if (chinesePinyinNeedsContext(surface)) return true;
+  return classifyChineseGloss({
+    wrap: item?.wrap || null,
+    entry: lexicalEntryForOccurrence(item),
+  }).needsContext;
+}
+
 function requestCandidates(all, mode) {
   const eligible = all.filter(item => {
+    if (!needsDeepSeek(item)) return false;
     if (hasCompleteCache(item.cacheKey) || state.inFlight.has(item.cacheKey)) return false;
     const attempts = attemptCount(item.cacheKey);
     if (attempts >= MAX_RETRY_ATTEMPTS) return false;
@@ -330,16 +363,28 @@ async function fillOneParagraph(paragraph, context, all, mode = 'fresh') {
     try { globalThis.readerLookupChineseResource?.(item.surface); } catch {}
     state.inFlight.add(item.cacheKey);
     item.wrap.dataset.zhContextPending = '1';
+    if (String(item.wrap.dataset.zhGlossSource || '').includes('mlkit')) {
+      const meaning = item.wrap.querySelector(':scope > .rw-zh-readable-ru .rw-zh-readable-meaning');
+      if (meaning) meaning.hidden = true;
+    }
   });
 
   try {
     await new Promise(resolve => setTimeout(resolve, RESOURCE_SETTLE_MS));
-    const items = await callBatch(context, batch);
+    const stillMissing = batch.filter(needsDeepSeek);
+    for (const occurrence of batch) {
+      if (stillMissing.includes(occurrence)) continue;
+      state.inFlight.delete(occurrence.cacheKey);
+      delete occurrence.wrap?.dataset?.zhContextPending;
+    }
+    if (!stillMissing.length) return false;
+
+    const items = await callBatch(context, stillMissing);
     const byId = new Map(items.map(item => [clean(item?.id, 40), item]));
     let changed = false;
     let cacheChanged = false;
 
-    for (const occurrence of batch) {
+    for (const occurrence of stillMissing) {
       state.inFlight.delete(occurrence.cacheKey);
       const result = byId.get(occurrence.id) || null;
       if (!result) {
@@ -432,7 +477,7 @@ async function runPrepared(prepared, mode) {
 async function processVisibleParagraphs() {
   state.timer = 0;
   if (state.running || !enabled() || Date.now() < state.blockedUntil) return;
-  if (!firebaseUserReady()) return;
+  if (!firebaseUserReady()) { schedule(350); return; }
   state.running = true;
 
   try {
@@ -531,6 +576,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('resize', () => schedule(120), { passive: true });
   window.addEventListener('reader:zh-resource-ready', () => schedule(80));
   window.addEventListener('reader:chromechange', () => schedule(80));
+  window.addEventListener('reader:pagechange', () => schedule(35));
 }
 
 export {

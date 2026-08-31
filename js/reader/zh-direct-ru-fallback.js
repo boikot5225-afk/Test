@@ -8,6 +8,7 @@ const CACHE_KEY = 'an2_reader_zh_mlkit_ru_v1';
 const MAX_BATCH = 40;
 const CACHE_LIMIT = 3000;
 const RETRY_MS = 20_000;
+const CONTEXT_GRACE_MS = 2_200;
 
 const state = globalThis.__readerZhDirectRuV1 || {
   cache: null,
@@ -104,13 +105,33 @@ function visibleUnknowns() {
   return out;
 }
 
+function contextOverrideRu(wrap) {
+  const source = String(wrap?.dataset?.zhGlossSource || '');
+  const explicit = compactRu(wrap?.dataset?.zhGlossContextRu || '');
+  if (explicit) return explicit;
+  if ((source === 'context-ai' || source === 'context-panel') && compactRu(wrap?.dataset?.zhGlossStickyRu)) {
+    return compactRu(wrap.dataset.zhGlossStickyRu);
+  }
+  const word = wrap?.querySelector?.(':scope > .reader-word[data-word]');
+  const surface = clean(word?.dataset?.word || word?.textContent || '', 32);
+  const paragraphIndex = Number(word?.closest?.('.reader-paragraph')?.dataset?.p);
+  if (!surface) return '';
+  try {
+    return compactRu(globalThis.readerGetCachedChineseContextRuForInline?.(surface, paragraphIndex) || '');
+  } catch {
+    return '';
+  }
+}
+
+function hasContextOverride(wrap) {
+  return !!contextOverrideRu(wrap);
+}
+
 function applyToWrap(wrap, ru) {
   if (!wrap?.isConnected) return false;
   const value = compactRu(ru);
   if (!value) return false;
-  if (wrap.dataset.zhGlossSource === 'context-ai' && compactRu(wrap.dataset.zhGlossStickyRu)) {
-    return false;
-  }
+  if (hasContextOverride(wrap)) return false;
   wrap.dataset.zhGlossStickyRu = value;
   wrap.dataset.zhGlossSource = 'mlkit-zh-ru';
   wrap.dataset.zhDirectRu = '1';
@@ -145,7 +166,7 @@ function queueVisible() {
   const cache = loadCache();
   let painted = false;
   for (const item of visibleUnknowns()) {
-    if (item.wrap.dataset.zhGlossSource === 'context-ai' && compactRu(item.wrap.dataset.zhGlossStickyRu)) continue;
+    if (hasContextOverride(item.wrap)) continue;
     const cached = cache.get(item.surface);
     if (cached) {
       painted = applyToWrap(item.wrap, cached) || painted;
@@ -243,14 +264,14 @@ function bindObserver() {
   if (state.observer && state.observedRoot === root) return;
   state.observer?.disconnect();
   state.observedRoot = root;
-  state.observer = new MutationObserver(() => setTimeout(queueVisible, 60));
+  state.observer = new MutationObserver(() => setTimeout(queueVisible, CONTEXT_GRACE_MS));
   state.observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
 }
 
 function install() {
   bindBridgeCallbacks();
   bindObserver();
-  queueVisible();
+  setTimeout(queueVisible, CONTEXT_GRACE_MS);
 }
 
 if (typeof window !== 'undefined') {
@@ -259,7 +280,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('pageshow', () => { bindObserver(); queueVisible(); });
   window.addEventListener('scroll', () => setTimeout(queueVisible, 100), { passive: true });
   window.addEventListener('resize', () => setTimeout(queueVisible, 100), { passive: true });
-  window.addEventListener('reader:zh-resource-ready', () => setTimeout(queueVisible, 60));
+  window.addEventListener('reader:zh-resource-ready', () => setTimeout(queueVisible, CONTEXT_GRACE_MS));
 }
 
 globalThis.readerZhDirectRuStats = () => ({
