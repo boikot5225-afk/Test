@@ -31,3 +31,4 @@ print('toc122a French core auxiliary morphology applied')
 # duplicating the workflow for each one.
 runpy.run_path('scripts/patch-toc122b-native-import-cache.py', run_name='__main__')
 runpy.run_path('scripts/patch-toc122f-fr-live-quality.py', run_name='__main__')
+runpy.run_path('scripts/patch-toc122h-audit-bootstrap.py', run_name='__main__')
