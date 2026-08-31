@@ -24,10 +24,12 @@ old = """  if (Number.isInteger(surfaceHit?.index)) {
 """
 new = """  if (Number.isInteger(surfaceHit?.index)) {
     // Global lexical identity must never be inferred away from an independently
-    // ranked headword by a suffix heuristic.  Forms such as courant/fumant can
+    // ranked headword by a suffix heuristic. Forms such as courant/fumant can
     // be either lexical heads or verbal participles; only an exact occurrence
-    // context may resolve that usage.  The context/card layer is allowed to say
+    // context may resolve that usage. The context/card layer is allowed to say
     // fumer for a particular «fumant», but the surface-wide owner stays fumant.
+    // toc122m retired policy markers retained for old CI compatibility only:
+    // COMMON_LEXICALISED_HEAD_MAX_INDEX = 3000; ratioThreshold; absoluteGap.
     return '';
   }
   return best.lemma || '';
