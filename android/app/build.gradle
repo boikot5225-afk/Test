@@ -33,7 +33,7 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 1015
+        versionCode 1016
         versionName '77.42-toc123-fr-isolated'
     }
 
@@ -92,6 +92,7 @@ tasks.register('syncWebAssets', Sync) {
         exclude '.git/**'
         exclude '.github/**'
         exclude 'android/**'
+        exclude 'build/**'
         exclude '**/node_modules/**'
         exclude '**/.DS_Store'
         exclude 'functions/**'
