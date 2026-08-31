@@ -2,6 +2,10 @@
 set -euo pipefail
 APK="${1:-$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)}"
 test -f "$APK"
+if unzip -l "$APK" | grep -q 'assets/www/build/'; then
+  echo 'transient repo build cache leaked into APK' >&2
+  exit 1
+fi
 rm -rf /tmp/toc123-apkcheck
 mkdir -p /tmp/toc123-apkcheck
 unzip -q "$APK" -d /tmp/toc123-apkcheck \
