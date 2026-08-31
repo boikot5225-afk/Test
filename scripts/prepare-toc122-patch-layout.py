@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 p = Path('js/reader/fr-vocab-estimate.js')
 s = p.read_text(encoding='utf-8')
@@ -11,47 +12,24 @@ s = p.read_text(encoding='utf-8')
 old_find = "function findWordState(word,create=false){const raw=String(word||'').trim(),canonical=lemmaForWordSync(raw)||normalizeSurface(raw),store=wordStateStore();if(!canonical)return{store,key:'',state:null,canonical:''};const key=directStateKey(canonical);if(store[key])return{store,key,state:store[key],canonical};const rawKey=directStateKey(raw);if(store[rawKey])return{store,key:rawKey,state:store[rawKey],canonical};for(const[candidateKey,state]of Object.entries(store)){if(!state||canonicalLang(state.lang)!=='fr')continue;if(lemmaForWordSync(state.word)===canonical)return{store,key:candidateKey,state,canonical};}if(!create)return{store,key,state:null,canonical};store[key]={word:canonical,lang:'fr',seen:0,clicked:0,saved:false,known:false,status:'new',places:{},clickContexts:{},updatedAt:new Date().toISOString()};return{store,key,state:store[key],canonical};}"
 old_manual = "function manualKnowledgeMapSnapshot(store=wordStateStore()){const latest=new Map();for(const state of Object.values(store||{})){if(!state||canonicalLang(state.lang)!=='fr')continue;const explicit=manualKnowledge(state);if(!explicit)continue;const canonical=lemmaForWordSync(state.word);if(!canonical)continue;const stamp=Date.parse(state.updatedAt||'')||0,prev=latest.get(canonical);if(!prev||stamp>=prev.stamp)latest.set(canonical,{value:explicit,stamp});}return new Map(Array.from(latest,([word,info])=>[word,info.value]));}"
 old_apply = "function applyClassificationToElement(el,info){removeKnowledgeClasses(el);if(info?.value==='known')el.classList.add('rw-migaku-known');else if(info?.value==='unknown'){if(info.source!=='manual'&&el.classList.contains('rw-known')){el.classList.add('rw-migaku-known');return;}if(info.source==='manual')el.classList.remove('rw-known');el.classList.add('rw-migaku-unknown');}else return;if(info.source==='manual')el.dataset.readerManualKnowledge=info.value;else el.dataset.readerEstimatedKnowledge=info.value;const surface=normalizeSurface(el.dataset.word||el.textContent||''),lemmaText=info.lemma&&surface!==normalizeSurface(info.lemma)?` · ${info.lemma}`:'',rankText=Number.isInteger(info.rank)?` · частотность #${formatNumber(info.rank)}`:'';el.title=`${info.value==='known'?'Known':'Unknown'}${lemmaText}${rankText}`;}"
+stub_find = 'function findWordState(word,create=false){return null;}'
+stub_manual = 'function manualKnowledgeMapSnapshot(store=wordStateStore()){return new Map();}'
+stub_apply = 'function applyClassificationToElement(el,info){}'
 for label, old, new in [
-    ('findWordState', old_find, 'function findWordState(word,create=false){return null;}'),
-    ('manualKnowledgeMapSnapshot', old_manual, 'function manualKnowledgeMapSnapshot(store=wordStateStore()){return new Map();}'),
-    ('applyClassificationToElement', old_apply, 'function applyClassificationToElement(el,info){}'),
+    ('findWordState', old_find, stub_find),
+    ('manualKnowledgeMapSnapshot', old_manual, stub_manual),
+    ('applyClassificationToElement', old_apply, stub_apply),
 ]:
     if old not in s:
         raise SystemExit(f'missing toc122 staging anchor: {label}')
     s = s.replace(old, new, 1)
-for old, new in {
-    '}function classificationForSnapshot': '}\nfunction classificationForSnapshot',
-    '}function applyClassificationBatch': '}\nfunction applyClassificationBatch',
-}.items():
-    if old not in s and new not in s:
-        raise SystemExit(f'missing toc122 layout anchor: {old}')
-    if old in s:
-        s = s.replace(old, new, 1)
-p.write_text(s, encoding='utf-8')
 
-# The patch file accidentally committed three raw regex literals with doubled
-# backslashes. Normalize those exact literals here before executing it. This is
-# idempotent: if a literal is already correct, nothing is changed.
-patch = Path('scripts/patch-toc122-fr-reader-architecture.py')
-t = patch.read_text(encoding='utf-8')
-fixes = [
-    (
-        r'''r"function findWordState\\(word,create=false\\)\\{.*?\\}function manualKnowledgeMapSnapshot\\(store=wordStateStore\\(\\)\\)\\{.*?\\}\\nfunction classificationForSnapshot"''',
-        r'''r"function findWordState\(word,create=false\)\{.*?\}function manualKnowledgeMapSnapshot\(store=wordStateStore\(\)\)\{.*?\}\nfunction classificationForSnapshot"''',
-    ),
-    (
-        r'''r"function applyClassificationToElement\\(el,info\\)\\{.*?\\}\\nfunction applyClassificationBatch"''',
-        r'''r"function applyClassificationToElement\(el,info\)\{.*?\}\nfunction applyClassificationBatch"''',
-    ),
-    (
-        r'''r"async function markCurrentWord\\(known\\)\\{.*?\\}\\s*function randomNormal"''',
-        r'''r"async function markCurrentWord\(known\)\{.*?\}\s*function randomNormal"''',
-    ),
-]
-changed = 0
-for bad, good in fixes:
-    if bad in t:
-        t = t.replace(bad, good, 1)
-        changed += 1
-patch.write_text(t, encoding='utf-8')
-print(f'toc122 patch state staging prepared; regex literals normalized={changed}')
+# Normalize whitespace exactly to what the structural patch expects. The source
+# has formatting whitespace between otherwise minified function declarations.
+s, n1 = re.subn(re.escape(stub_find) + r'\s*' + re.escape(stub_manual), stub_find + stub_manual, s, count=1)
+s, n2 = re.subn(re.escape(stub_manual) + r'\s*function classificationForSnapshot', stub_manual + '\nfunction classificationForSnapshot', s, count=1)
+s, n3 = re.subn(re.escape(stub_apply) + r'\s*function applyClassificationBatch', stub_apply + '\nfunction applyClassificationBatch', s, count=1)
+if (n1, n2, n3) != (1, 1, 1):
+    raise SystemExit(f'toc122 staging layout failed: find/manual={n1}, manual/classification={n2}, apply/batch={n3}')
+p.write_text(s, encoding='utf-8')
+print('toc122 patch state staging prepared with canonical spacing')
