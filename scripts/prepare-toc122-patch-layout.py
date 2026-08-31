@@ -29,25 +29,24 @@ for old, new in {
         s = s.replace(old, new, 1)
 p.write_text(s, encoding='utf-8')
 
-# Repair the three over-escaped raw regex declarations in the toc122 patcher by
-# replacing the whole source line by prefix, not by trying to match backslash
-# spelling inside the broken line. This is build-time-only source surgery.
+# The first toc122 patch revision wrote regexes with every backslash doubled.
+# Only touch the three regex-bearing source lines, and collapse each doubled
+# backslash pair once. This preserves quotes and all other Python source exactly.
 patch = Path('scripts/patch-toc122-fr-reader-architecture.py')
 lines = patch.read_text(encoding='utf-8').splitlines()
 out = []
 fixed = 0
 for line in lines:
-    if line.startswith('pattern = r"function findWordState'):
-        line = r'''pattern = r"function findWordState\(word,create=false\)\{.*?\}function manualKnowledgeMapSnapshot\(store=wordStateStore\(\)\)\{.*?\}\nfunction classificationForSnapshot"'''
-        fixed += 1
-    elif line.startswith('pattern = r"function applyClassificationToElement'):
-        line = r'''pattern = r"function applyClassificationToElement\(el,info\)\{.*?\}\nfunction applyClassificationBatch"'''
-        fixed += 1
-    elif 're_once(s, r"async function markCurrentWord' in line:
-        line = r'''s = re_once(s, r"async function markCurrentWord\(known\)\{.*?\}\s*function randomNormal", new_mark + '\nfunction randomNormal', 'isolated manual status update', flags=re.S)'''
+    if line.startswith('pattern = r"function findWordState') or \
+       line.startswith('pattern = r"function applyClassificationToElement') or \
+       're_once(s, r"async function markCurrentWord' in line:
+        before = line
+        line = line.replace('\\\\', '\\')
+        if line == before:
+            raise SystemExit('toc122 regex repair found target line but no doubled escapes')
         fixed += 1
     out.append(line)
 if fixed != 3:
     raise SystemExit(f'toc122 regex repair: expected 3 source lines, fixed {fixed}')
 patch.write_text('\n'.join(out) + '\n', encoding='utf-8')
-print('toc122 patch state staging + line-based regex repair prepared')
+print('toc122 patch state staging + doubled-escape collapse prepared')
