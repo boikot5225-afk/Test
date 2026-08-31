@@ -19,7 +19,7 @@ def replace_once(text, old, new, label):
 
 
 def re_once(text, pattern, repl, label, flags=0):
-    out, count = re.subn(pattern, repl, text, count=1, flags=flags)
+    out, count = re.subn(pattern, lambda _match: repl, text, count=1, flags=flags)
     if count != 1:
         raise SystemExit(f'{label}: expected exactly one regex match, got {count}')
     return out
@@ -111,8 +111,8 @@ s = replace_once(
 new_mark = """async function markCurrentWord(known){if(currentLang()!=='fr')return;const word=currentPanelWord();if(!word||word==='—')return;try{await loadFrenchData();}catch{}const found=findWordState(word,true),state=found.state;if(!state)return;const stamp=new Date().toISOString(),manual=known?'known':'unknown';state.word=found.canonical||state.word||word;state.lang='fr';state.manualKnowledge=manual;state.manualKnowledgeAt=stamp;state.known=!!known;state.autoKnown=false;state.saved=!known;state.status=known?'known':'problem';state.updatedAt=stamp;const root=document.getElementById('reader-chapter-text');root?.querySelectorAll('.reader-word[data-word]').forEach(el=>{if(canonicalLang(el.dataset.lang||currentLang())!=='fr')return;const surface=normalizeSurface(el.dataset.word||el.textContent||'');if(!surface||lemmaForWordSync(surface)!==found.canonical)return;const key=directStateKey(surface),alias=found.store[key]||(found.store[key]={word:surface,lang:'fr',seen:0,clicked:0,saved:false,known:false,status:'new',places:{},clickContexts:{},updatedAt:stamp});alias.word=surface;alias.lang='fr';alias.lemma=found.canonical;alias.linkedLemma=found.canonical;alias.manualKnowledge=manual;alias.manualKnowledgeAt=stamp;alias.known=!!known;alias.autoKnown=false;alias.saved=!known;alias.status=known?'known':'problem';alias.updatedAt=stamp;});persistWordState(found.store);root?.querySelectorAll('.reader-word[data-word]').forEach(el=>{if(canonicalLang(el.dataset.lang||currentLang())!=='fr')return;if(lemmaForWordSync(el.dataset.word||'')!==found.canonical)return;applyClassificationToElement(el,classificationFor(el.dataset.word||''));});syncPanelKnowledge();try{window.dispatchEvent(new CustomEvent('reader:fr-vocab-ready'));}catch{}showToast(known?'✓ Знаю':'Не знаю');}"""
 s = re_once(
     s,
-    r"async function markCurrentWord\(known\)\{.*?\}function randomNormal",
-    new_mark + 'function randomNormal',
+    r"async function markCurrentWord\(known\)\{.*?\}\s*function randomNormal",
+    new_mark + '\nfunction randomNormal',
     'French manual authority function',
     flags=re.S,
 )
@@ -175,8 +175,8 @@ p = Path('js/reader/fr-unknown-gloss.js')
 s = read(p)
 s = re_once(
     s,
-    r"function compactRussian\(value\)\{.*?\}function glossFontSize",
-    """function compactRussian(value){let full=String(value||'').replace(/\\s+/g,' ').trim();if(!full||!containsCyrillic(full))return'';try{const shared=globalThis.readerFrenchSanitizeRussian?.(full,72);if(shared)full=shared;}catch{}full=full.replace(/\\[\\[([^\\]]+)\\]\\]/g,'$1').replace(/\\s*\\[[^\\]]*$/g,'').replace(/^[,;:|/\\s]+|[,;:|/\\s]+$/g,'').trim();const first=full.split(/\\s*\\|\\s*|\\s*[;；]\\s*|\\s*\\/\\s*/).filter(Boolean)[0]||full;if(first.length<=34)return first;const words=first.split(/\\s+/).filter(Boolean);let out='';for(const word of words){const next=out?`${out} ${word}`:word;if(next.length>34)break;out=next;}return out||first.slice(0,34).trim();}function glossFontSize""",
+    r"function compactRussian\(value\)\{.*?\}\s*function glossFontSize",
+    """function compactRussian(value){let full=String(value||'').replace(/\\s+/g,' ').trim();if(!full||!containsCyrillic(full))return'';try{const shared=globalThis.readerFrenchSanitizeRussian?.(full,72);if(shared)full=shared;}catch{}full=full.replace(/\\[\\[([^\\]]+)\\]\\]/g,'$1').replace(/\\s*\\[[^\\]]*$/g,'').replace(/^[,;:|/\\s]+|[,;:|/\\s]+$/g,'').trim();const first=full.split(/\\s*\\|\\s*|\\s*[;；]\\s*|\\s*\\/\\s*/).filter(Boolean)[0]||full;if(first.length<=34)return first;const words=first.split(/\\s+/).filter(Boolean);let out='';for(const word of words){const next=out?`${out} ${word}`:word;if(next.length>34)break;out=next;}return out||first.slice(0,34).trim();}\nfunction glossFontSize""",
     'French gloss sanitizer',
     flags=re.S,
 )
