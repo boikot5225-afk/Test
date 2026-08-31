@@ -134,11 +134,16 @@ ev("window.rdSetPageAnimation?.('none', null); true")
 # A page-mode object can legitimately remember `pages` while a just-rendered
 # chapter has not yet been wrapped. Do not assume one toggle means "enable".
 # Observe the actual UI/DOM state and allow at most two public user toggles to
-# reach the required state. The reader source itself remains untouched.
+# reach page mode. IMPORTANT: toc103 deliberately tolerates a single collapsed
+# `.rd-page` here. Its real page-turn path calls ensureLivePagesForTurn(), which
+# recovers bogus WebView geometry by rebuilding long chapters as one paragraph
+# per temporary page. Requiring >=2 wrappers before the physical swipe prevents
+# that production recovery path from ever running and tests the harness instead
+# of Reader AI.
 diags = [mode_diag()]
 for _ in range(2):
     state = diags[-1]
-    if state['scrollerPages'] and state['directPages'] >= 2:
+    if state['scrollerPages'] and state['directPages'] >= 1 and state['descendantParagraphs'] >= 2:
         break
     ev("window.readerTogglePagesMode(); true")
     time.sleep(1.2)
@@ -146,19 +151,21 @@ for _ in range(2):
 
 (OUT / 'page-mode-diagnostics.json').write_text(json.dumps(diags, ensure_ascii=False, indent=2), encoding='utf-8')
 final_mode = diags[-1]
-if not final_mode['scrollerPages'] or final_mode['directPages'] < 2:
+if not final_mode['scrollerPages'] or final_mode['directPages'] < 1 or final_mode['descendantParagraphs'] < 2:
     raise RuntimeError('PAGE MODE DID NOT MATERIALIZE: ' + json.dumps(diags, ensure_ascii=False))
 wait("document.getElementById('reader-chapter-text')?.dataset?.boundReaderSwipe==='1'", 10)
 
 before = page_state()
-if before['pageCount'] < 2 or before['currentIndex'] < 0 or not before['marker']:
-    raise RuntimeError('Pagination did not produce navigable pages: ' + json.dumps(before, ensure_ascii=False))
+if not before['pagesMode'] or before['pageCount'] < 1 or before['currentIndex'] < 0 or not before['marker']:
+    raise RuntimeError('Pagination did not produce a swipeable current page: ' + json.dumps(before, ensure_ascii=False))
 
 # Actual Android touch input. No direct next()/prev() JS calls are accepted.
+# If WebView collapsed the chapter to one giant wrapper, this first real gesture
+# must trigger toc103's ensureLivePagesForTurn() recovery and then advance.
 subprocess.run(['adb','shell','input','swipe','900','1150','180','1150','320'], check=True)
 time.sleep(1.2)
 after_next = page_state()
-if after_next['currentIndex'] <= before['currentIndex'] or after_next['marker'] == before['marker']:
+if after_next['pageCount'] < 2 or after_next['currentIndex'] <= before['currentIndex'] or after_next['marker'] == before['marker']:
     raise RuntimeError('PHYSICAL SWIPE DID NOT TURN PAGE: ' + json.dumps({'before': before, 'after': after_next, 'mode': diags}, ensure_ascii=False))
 
 subprocess.run(['adb','shell','input','swipe','180','1150','900','1150','320'], check=True)
@@ -174,7 +181,11 @@ result = {
     'before': before,
     'after_next': after_next,
     'after_prev': after_prev,
-    'assertions': ['page mode has >=2 pages', 'Android left swipe advances', 'Android right swipe returns'],
+    'assertions': [
+        'page mode is active before input',
+        'Android left swipe advances (including toc103 collapsed-page recovery)',
+        'Android right swipe returns',
+    ],
 }
 (OUT / 'pagination-audit.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
 print(json.dumps(result, ensure_ascii=False, indent=2))
