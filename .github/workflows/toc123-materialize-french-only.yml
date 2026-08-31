@@ -1,0 +1,127 @@
+name: toc123 materialize French modules only
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc123-fr-isolated
+    paths:
+      - .github/workflows/toc123-materialize-french-only.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  materialize-fr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc123-fr-isolated
+          fetch-depth: 0
+
+      - name: Reproduce toc122 in detached worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin feature/77.42-toc122-fr-reader-architecture
+          rm -rf /tmp/toc122-materialized
+          git worktree add --detach /tmp/toc122-materialized origin/feature/77.42-toc122-fr-reader-architecture
+          cd /tmp/toc122-materialized
+          python3 scripts/wire-toc104-native-bridges.py
+          python3 scripts/patch-toc112-zh-context-inline.py
+          python3 scripts/patch-toc113-zh-context-coverage.py
+          python3 scripts/patch-toc114-zh-core-first-paint.py
+          python3 scripts/patch-toc115-zh-missing-only-auth.py
+          python3 scripts/patch-zh-lexical-pipeline-v2.py
+          python3 scripts/patch-zh-lexical-global-access.py
+          python3 scripts/patch-zh-context-pinyin-trust.py
+          python3 scripts/patch-toc119-zh-reader-quality.py
+          python3 scripts/patch-toc121-fr-reader-fixes.py
+          python3 scripts/prepare-toc122-patch-layout.py
+          python3 scripts/patch-toc122-fr-reader-architecture.py
+          python3 scripts/patch-toc122a-fr-core-forms.py
+
+      - name: Copy only French-owned runtime files
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp /tmp/toc122-materialized/js/reader/fr-vocab-estimate.js js/reader/fr-vocab-estimate.js
+          cp /tmp/toc122-materialized/js/reader/fr-lexical-pipeline-v2.js js/reader/fr-lexical-pipeline-v2.js
+          cp /tmp/toc122-materialized/js/reader/fr-unknown-gloss.js js/reader/fr-unknown-gloss.js
+          cp /tmp/toc122-materialized/scripts/build_fr_reader_resources.py scripts/build_fr_reader_resources.py
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('js/reader/interactions-runtime.js')
+          s=p.read_text(encoding='utf-8')
+          old=(
+            "import './fr-vocab-estimate.js?v=123-isolated'; // toc123: isolated French Known/Unknown + lemma\n"
+            "import './fr-unknown-gloss.js?v=123-isolated'; // toc123: isolated bundled FR->RU glosses\n"
+          )
+          new=(
+            "import './fr-vocab-estimate.js?v=123-isolated'; // toc123: isolated French Known/Unknown + lemma\n"
+            "import './fr-lexical-pipeline-v2.js?v=123-isolated'; // toc123: French-only lexical owner\n"
+            "import './fr-unknown-gloss.js?v=123-isolated'; // toc123: isolated bundled FR->RU glosses\n"
+          )
+          if old in s:
+            s=s.replace(old,new,1)
+          elif new not in s:
+            raise SystemExit('French isolated import block missing')
+          p.write_text(s,encoding='utf-8')
+          PY
+
+      - name: Prove French files equal the real toc122 APK result
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' \
+            563ca7f6e73f5f55f5033850572286887a19c02c6077db25c3f5ea7be25fd8a1 js/reader/fr-vocab-estimate.js \
+            d1da657915239ecfabd75ef057a28635af16b81cfcd69f5deef10d972b18af79 js/reader/fr-lexical-pipeline-v2.js \
+            1994a8c7d6b845930ef23df70dfe25d80df6666606137523e5af5aadfa7b161e js/reader/fr-unknown-gloss.js \
+            > /tmp/toc122-fr.sha256
+          sha256sum -c /tmp/toc122-fr.sha256
+
+      - name: Prove Reader core still equals the real toc119 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/toc119-core.sha256 <<'EOF'
+          b709451dec2849b8487b054fd8f52c57ef9fc91dc5f5818ed5720e00dda08ba6  js/reader/interactions.js
+          13ce9f42db4427e1c2442abad7c0e66343aad92d79a4e945376fb42afed8e7d9  js/reader/pages-mode.js
+          202e287af1158b8498e44ae3e9ce28cf43b1a0aaaba9f01b25bfdfa2fde47f04  js/reader-app.js
+          c10f3680fb122c4f04a730ddb298f88165c29d5b24978cc5868560531f752361  js/reader/chapter-render.js
+          8e8f5f6d67929f6b745ec4bd3e1b83010a1460b438886233df8fae34d62bafc1  js/reader/chapter-render-next.js
+          825555b4553bb9d8f6e448fdbf58d2322e54e33cf07fa8ba5f84d888a531c537  js/reader/chapter-render-stage1.js
+          8ca5b6dfdbf03309fadc89339ff4cd12d010a84c56122f5c8ea807b9220f562f  js/reader/display.js
+          896834e059da0a3c59b779e94705bb61187c9b4db31d6590d8c76cc4941770e7  js/reader/epub.js
+          d0ee752392b38822cfaeb0d557f7c359ca4aae166650b8844adfb9012bc38d8c  js/reader/toc-runtime.js
+          EOF
+          sha256sum -c /tmp/toc119-core.sha256
+
+      - name: French lexical regression gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check js/reader/fr-vocab-estimate.js
+          node --check js/reader/fr-lexical-pipeline-v2.js
+          node --check js/reader/fr-unknown-gloss.js
+          python3 scripts/build_fr_reader_resources.py --output-dir /tmp/fr-selftest --cache-dir /tmp/fr-cache --self-test
+          grep -q 'function repairFrenchStateStore' js/reader/fr-vocab-estimate.js
+          grep -q 'for(const\[candidateKey,state\]of Object.entries(store))' js/reader/fr-vocab-estimate.js && { echo 'unsafe whole-store state guessing returned' >&2; exit 1; } || true
+          grep -q 'readerFrenchContextualAnalysisFor' js/reader/fr-lexical-pipeline-v2.js
+          grep -q 'CONTEXT_FIRST' js/reader/fr-unknown-gloss.js
+
+      - name: Commit French-owned materialized source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Reader AI CI'
+          git config user.email 'reader-ai-ci@users.noreply.github.com'
+          git add js/reader/fr-vocab-estimate.js js/reader/fr-lexical-pipeline-v2.js js/reader/fr-unknown-gloss.js js/reader/interactions-runtime.js scripts/build_fr_reader_resources.py
+          if git diff --cached --quiet; then
+            echo 'Nothing to commit'
+            exit 0
+          fi
+          git commit -m 'feat(reader): materialize French-owned modules only [skip ci]'
+          git push origin HEAD:feature/77.42-toc123-fr-isolated
