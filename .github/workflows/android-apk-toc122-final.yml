@@ -128,7 +128,9 @@ jobs:
           assert 'rw-fr-proper' in vocab
           assert 'for(const[candidateKey,state]of Object.entries(store))' not in vocab
           assert 'const surfaceHit = data.rankFold.get(word);' in lexical
-          assert 'strongThreshold' in lexical and 'SAFE_RU_OVERRIDES' in lexical
+          assert 'COMMON_LEXICALISED_HEAD_MAX_INDEX = 3000' in lexical
+          assert 'ratioThreshold' in lexical and 'absoluteGap' in lexical and 'SAFE_RU_OVERRIDES' in lexical
+          assert 'if (!exactContext)' in lexical
           assert 'chapterProperHeuristic' in lexical and 'document.createRange()' in lexical
           assert 'deterministicContextGloss' in context and "provider: 'local-collocation'" in context
           assert "provider: marked ? 'mlkit-target-marked' : 'mlkit-short-phrase'" in context
