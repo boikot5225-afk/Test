@@ -26,5 +26,11 @@ adb exec-out screencap -p > runtime-audit/00-import.png
 PID="$(adb shell pidof "$PKG" | tr -d '\r')"
 test -n "$PID"
 adb forward tcp:9222 "localabstract:webview_devtools_remote_${PID}"
+
+# Reader acceptance comes first. This is a real Android touchscreen gesture on
+# the visible French page, not a JavaScript next()/prev() call.
+python3 scripts/audit_toc122_pagination_live.py
+
+# Then run the existing French lexical/context/layout regression suite.
 python3 scripts/audit_nada_toc122_live.py
-adb exec-out screencap -p > runtime-audit/01-after-audit.png
+adb exec-out screencap -p > runtime-audit/05-after-french-audit.png
