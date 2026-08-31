@@ -29,23 +29,25 @@ for old, new in {
         s = s.replace(old, new, 1)
 p.write_text(s, encoding='utf-8')
 
-# The first toc122 patch revision accidentally double-escaped regex tokens inside
-# Python raw strings (r"\\(" instead of r"\("). Fix those build-time patterns in
-# the workspace before executing the patch. This edits only the patcher, not app
-# runtime source.
+# Repair the three over-escaped raw regex declarations in the toc122 patcher by
+# replacing the whole source line by prefix, not by trying to match backslash
+# spelling inside the broken line. This is build-time-only source surgery.
 patch = Path('scripts/patch-toc122-fr-reader-architecture.py')
-t = patch.read_text(encoding='utf-8')
-replacements = {
-    'pattern = r"function findWordState\\\\(word,create=false\\\\)\\\\{.*?\\\\}function manualKnowledgeMapSnapshot\\\\(store=wordStateStore\\\\(\\\\)\\\\)\\\\{.*?\\\\}\\\\nfunction classificationForSnapshot"':
-    'pattern = r"function findWordState\\(word,create=false\\)\\{.*?\\}function manualKnowledgeMapSnapshot\\(store=wordStateStore\\(\\)\\)\\{.*?\\}\\nfunction classificationForSnapshot"',
-    'pattern = r"function applyClassificationToElement\\\\(el,info\\\\)\\\\{.*?\\\\}\\\\nfunction applyClassificationBatch"':
-    'pattern = r"function applyClassificationToElement\\(el,info\\)\\{.*?\\}\\nfunction applyClassificationBatch"',
-    'r"async function markCurrentWord\\\\(known\\\\)\\\\{.*?\\\\}\\\\s*function randomNormal"':
-    'r"async function markCurrentWord\\(known\\)\\{.*?\\}\\s*function randomNormal"',
-}
-for old, new in replacements.items():
-    if old not in t:
-        raise SystemExit('missing over-escaped toc122 regex anchor: ' + old[:72])
-    t = t.replace(old, new, 1)
-patch.write_text(t, encoding='utf-8')
-print('toc122 patch state staging + regex repair prepared')
+lines = patch.read_text(encoding='utf-8').splitlines()
+out = []
+fixed = 0
+for line in lines:
+    if line.startswith('pattern = r"function findWordState'):
+        line = r'''pattern = r"function findWordState\(word,create=false\)\{.*?\}function manualKnowledgeMapSnapshot\(store=wordStateStore\(\)\)\{.*?\}\nfunction classificationForSnapshot"'''
+        fixed += 1
+    elif line.startswith('pattern = r"function applyClassificationToElement'):
+        line = r'''pattern = r"function applyClassificationToElement\(el,info\)\{.*?\}\nfunction applyClassificationBatch"'''
+        fixed += 1
+    elif 're_once(s, r"async function markCurrentWord' in line:
+        line = r'''s = re_once(s, r"async function markCurrentWord\(known\)\{.*?\}\s*function randomNormal", new_mark + '\nfunction randomNormal', 'isolated manual status update', flags=re.S)'''
+        fixed += 1
+    out.append(line)
+if fixed != 3:
+    raise SystemExit(f'toc122 regex repair: expected 3 source lines, fixed {fixed}')
+patch.write_text('\n'.join(out) + '\n', encoding='utf-8')
+print('toc122 patch state staging + line-based regex repair prepared')
