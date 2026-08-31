@@ -1,0 +1,251 @@
+name: toc121 Nada real runtime audit
+
+on:
+  push:
+    branches:
+      - test/toc121-nada-runtime-audit
+  workflow_dispatch:
+
+jobs:
+  nada-runtime:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/toc121-nada-runtime-audit
+          fetch-depth: 0
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore Reader AI signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_KEYSTORE_BASE64}"
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Reproduce exact toc121 runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/wire-toc104-native-bridges.py
+          python3 scripts/patch-toc112-zh-context-inline.py
+          python3 scripts/patch-toc113-zh-context-coverage.py
+          python3 scripts/patch-toc114-zh-core-first-paint.py
+          python3 scripts/patch-toc115-zh-missing-only-auth.py
+          python3 scripts/patch-zh-lexical-pipeline-v2.py
+          python3 scripts/patch-zh-lexical-global-access.py
+          python3 scripts/patch-zh-context-pinyin-trust.py
+          python3 scripts/patch-toc119-zh-reader-quality.py
+          python3 scripts/patch-toc121-fr-reader-fixes.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('android/app/build.gradle')
+          s = p.read_text()
+          s = s.replace('versionCode 118', 'versionCode 1010', 1)
+          s = s.replace("versionName '77.42-toc98'", "versionName '77.42-toc121-fr-reader-fixes'", 1)
+          p.write_text(s)
+          index = Path('index.html')
+          text = index.read_text()
+          text = text.replace("window.AN2_BUILD = 'v77.42-toc119-zh-reader-quality';", "window.AN2_BUILD = 'v77.42-toc121-fr-reader-fixes';", 1)
+          text = text.replace('<script type="module" src="js/app.js?v=77.42-zh-reader-quality"></script>', '<script type="module" src="js/app.js?v=77.42-fr-reader-fixes"></script>', 1)
+          index.write_text(text)
+          app = Path('js/app.js')
+          text = app.read_text().replace("} from './reader-app.js?v=77.42-zh-reader-quality';", "} from './reader-app.js?v=77.42-fr-reader-fixes';", 1)
+          app.write_text(text)
+          PY
+          rm -rf build android/app/build
+
+      - name: Build exact toc121 universal APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Create small EPUB from exact Nada passages supplied by user
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p runtime-audit
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          root = Path('runtime-audit/epub-src')
+          (root/'META-INF').mkdir(parents=True, exist_ok=True)
+          (root/'OEBPS').mkdir(parents=True, exist_ok=True)
+          (root/'mimetype').write_text('application/epub+zip', encoding='utf-8')
+          (root/'META-INF/container.xml').write_text('''<?xml version="1.0"?>\n<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>''', encoding='utf-8')
+          (root/'OEBPS/content.opf').write_text('''<?xml version="1.0" encoding="utf-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Nada — runtime audit</dc:title><dc:creator>Jean-Patrick Manchette</dc:creator><dc:language>fr</dc:language><dc:identifier id="bookid">nada-runtime-audit</dc:identifier></metadata><manifest><item id="ch1" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="ch1"/></spine></package>''', encoding='utf-8')
+          passages = [
+            "Personne n’en avait. La cloche sonna. Du geste, Treuffais voulut futilement s’opposer au vacarme.",
+            "Treuffais était allongé dans sa chambre, il fumait sans arrêt, la pièce puait le tabac froid.",
+            "Il se rongeait les ongles. Il essayait de lire et n’y parvenait pas.",
+            "Il se leva une fois pour appeler Buenaventura au téléphone, mais il raccrocha avant d’avoir fini de former le numéro de l’hôtel Longuevache.",
+            "L’alcoolique demeura immobile, silencieux, fumant, ne faisant rien, les mains tremblantes.",
+            "Il trouvait soudain la pièce dégueulasse, étriquée, puante et mal foutue.",
+            "Buenaventura s’avança et fut soulagé d’apercevoir l’ivrogne au fond de la pièce.",
+            "Treuffais raccrocha et ouvrit son courrier.",
+            "Le Catalan raccrocha et se retourna vers Épaulard.",
+            "Tout ça, je m’en branle, ajouta Treuffais.",
+            "Le mec est au courant, à présent. Faut voir ce qu’il a dans le ventre.",
+            "Il avait la chair de poule."
+          ]
+          body='\n'.join(f'<p>{p}</p>' for p in passages)
+          (root/'OEBPS/chapter.xhtml').write_text(f'''<?xml version="1.0" encoding="utf-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="fr"><head><title>Nada audit</title></head><body><h1>Nada audit</h1>{body}</body></html>''', encoding='utf-8')
+          out=Path('runtime-audit/nada-runtime.epub')
+          with zipfile.ZipFile(out,'w') as z:
+            z.write(root/'mimetype','mimetype',compress_type=zipfile.ZIP_STORED)
+            for path in [root/'META-INF/container.xml',root/'OEBPS/content.opf',root/'OEBPS/chapter.xhtml']:
+              z.write(path,path.relative_to(root).as_posix(),compress_type=zipfile.ZIP_DEFLATED)
+          print(out, out.stat().st_size)
+          PY
+
+      - name: Enable emulator hardware acceleration
+        shell: bash
+        run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+
+      - name: Run actual Reader AI with Nada EPUB and inspect live WebView
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            PKG=space.saintjust.reader.semanticstage1clean.formatfix.debug
+            ACT=space.saintjust.reader.stage1.MainActivity
+            APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+            adb install -r "$APK"
+            adb shell mkdir -p "/sdcard/Android/data/${PKG}/files"
+            adb push runtime-audit/nada-runtime.epub "/sdcard/Android/data/${PKG}/files/nada-runtime.epub"
+            adb shell am force-stop "$PKG"
+            adb shell am start -W -a android.intent.action.VIEW -d "file:///sdcard/Android/data/${PKG}/files/nada-runtime.epub" -t application/epub+zip -n "${PKG}/${ACT}" | tee runtime-audit/launch.txt
+            sleep 5
+            adb exec-out screencap -p > runtime-audit/00-after-action-view.png
+            PID="$(adb shell pidof "$PKG" | tr -d '\r')"
+            test -n "$PID"
+            adb forward tcp:9222 "localabstract:webview_devtools_remote_${PID}"
+            python3 -m pip install --quiet websocket-client requests
+            python3 - <<'PY'
+            import json, time, requests, websocket, pathlib, sys
+            OUT=pathlib.Path('runtime-audit')
+            pages=[]
+            for _ in range(60):
+              try:
+                pages=requests.get('http://127.0.0.1:9222/json/list',timeout=2).json()
+              except Exception:
+                pages=[]
+              if pages: break
+              time.sleep(.5)
+            if not pages:
+              raise SystemExit('No WebView devtools page')
+            page=next((p for p in pages if 'appassets.androidplatform.net' in p.get('url','')),pages[0])
+            ws=websocket.create_connection(page['webSocketDebuggerUrl'],timeout=10,suppress_origin=True)
+            seq=0
+            def cdp(method,params=None):
+              global seq
+              seq+=1; ident=seq
+              ws.send(json.dumps({'id':ident,'method':method,'params':params or {}}))
+              while True:
+                msg=json.loads(ws.recv())
+                if msg.get('id')==ident:
+                  if 'error' in msg: raise RuntimeError(msg['error'])
+                  return msg.get('result',{})
+            def ev(code, await_promise=True):
+              r=cdp('Runtime.evaluate',{'expression':code,'awaitPromise':await_promise,'returnByValue':True,'userGesture':True})
+              obj=r.get('result',{})
+              if obj.get('exceptionDetails'): raise RuntimeError(obj['exceptionDetails'])
+              return obj.get('value')
+            def wait(code, timeout=30):
+              end=time.time()+timeout
+              last=None
+              while time.time()<end:
+                try:
+                  last=ev(code)
+                  if last: return last
+                except Exception as e: last=str(e)
+                time.sleep(.35)
+              raise RuntimeError(f'wait timeout: {code} last={last}')
+            cdp('Runtime.enable'); cdp('Page.enable')
+            audit={'page':page,'steps':{},'bugs':[]}
+            wait("document.readyState==='complete'")
+            audit['steps']['initial_body']=ev("document.body.innerText.slice(0,2500)")
+            status=wait("(()=>{const e=document.querySelector('#reader-import-status');return e&&/EPUB загружен/.test(e.textContent)?e.textContent:''})()",45)
+            audit['steps']['import_status']=status
+            audit['steps']['import_preview']=ev("document.querySelector('#reader-import-text')?.value?.slice(0,1800)||''")
+            save=ev("(()=>{const b=[...document.querySelectorAll('button')].find(x=>/Сохранить/.test(x.textContent||'')&&x.offsetParent);if(!b)return 'NO_SAVE_BUTTON';b.click();return b.textContent.trim()})()")
+            audit['steps']['save_click']=save
+            wait("(()=>{const v=document.querySelector('#reader-reading-view');return !!(v&&getComputedStyle(v).display!=='none'&&document.querySelectorAll('#reader-chapter-text .reader-word').length>15)})()",30)
+            time.sleep(2)
+            audit['steps']['reading_text']=ev("document.querySelector('#reader-chapter-text')?.innerText?.slice(0,3500)||''")
+            audit['steps']['word_count']=ev("document.querySelectorAll('#reader-chapter-text .reader-word').length")
+            audit['steps']['fr_globals']=ev("({lemma:typeof window.readerFrenchLemmaFor,lex:typeof window.readerFrenchLexicalAnalysisFor,proper:typeof window.readerFrenchIsProperWord,knowledge:typeof window.readerFrenchVocabularyKnowledgeFor})")
+            words=['fumant','raccrocha','était','fumait','puait','parvenait','leva','appeler','fini','former','trouvait','avait']
+            audit['lemma_map']=ev("(()=>{const ws="+json.dumps(words)+";return Object.fromEntries(ws.map(w=>[w,window.readerFrenchLemmaFor?.(w)||null]))})()")
+            lex={}
+            for w in ['fumant','raccrocha','former','pièce','arrêt']:
+              lex[w]=ev(f"(async()=>await window.readerFrenchLexicalAnalysisFor?.({json.dumps(w)})||null)()")
+            audit['lexical']=lex
+            audit['proper_names']=ev("(()=>{const ws=['Treuffais','Buenaventura','Épaulard','Catalan','Longuevache'];return Object.fromEntries(ws.map(w=>{const els=[...document.querySelectorAll('.reader-word[data-word]')].filter(e=>(e.dataset.word||'').toLocaleLowerCase('fr')===w.toLocaleLowerCase('fr'));return [w,{proper:window.readerFrenchIsProperWord?.(w),knowledge:window.readerFrenchVocabularyKnowledgeFor?.(w),classes:els.map(e=>e.className),glosses:els.map(e=>e.querySelector('.rw-fr-gloss-text')?.textContent||'')}]}))})()")
+            # Unknown persistence: mark fumant then pièce; first must remain manual Unknown/red.
+            def click_word(w):
+              return ev(f"(()=>{{const e=[...document.querySelectorAll('.reader-word[data-word]')].find(x=>(x.dataset.word||'').toLocaleLowerCase('fr')==={json.dumps(w.lower())});if(!e)return 'MISSING';e.click();return e.dataset.word}})()")
+            click_word('fumant')
+            wait("document.querySelector('#reader-word-title')?.textContent?.toLocaleLowerCase('fr')==='fumant'",10)
+            time.sleep(1)
+            audit['fumant_panel_before']=ev("({title:document.querySelector('#reader-word-title')?.textContent||'',analysis:document.querySelector('#reader-word-analysis')?.innerText||'',lemma:document.querySelector('#reader-word-lemma')?.value||'',pos:document.querySelector('#reader-word-pos')?.value||'',ru:document.querySelector('#reader-word-ru')?.value||'',source:document.querySelector('#reader-fr-knowledge-source')?.textContent||'',status:document.querySelector('#reader-word-status')?.textContent||''})")
+            ev("document.querySelector('#reader-fr-unknown-btn')?.click();true")
+            time.sleep(1.5)
+            audit['fumant_after_unknown']=ev("(()=>{const e=[...document.querySelectorAll('.reader-word[data-word]')].find(x=>(x.dataset.word||'').toLowerCase()==='fumant');return {class:e?.className||'',color:e?getComputedStyle(e).color:'',knowledge:window.readerFrenchVocabularyKnowledgeFor?.('fumant'),gloss:e?.querySelector('.rw-fr-gloss-text')?.textContent||''}})()")
+            click_word('pièce')
+            wait("document.querySelector('#reader-word-title')?.textContent?.toLocaleLowerCase('fr')==='pièce'",10)
+            ev("document.querySelector('#reader-fr-unknown-btn')?.click();true")
+            time.sleep(1.5)
+            audit['after_second_unknown']=ev("(()=>{function s(w){const e=[...document.querySelectorAll('.reader-word[data-word]')].find(x=>(x.dataset.word||'').toLocaleLowerCase('fr')===w.toLocaleLowerCase('fr'));return {class:e?.className||'',color:e?getComputedStyle(e).color:'',knowledge:window.readerFrenchVocabularyKnowledgeFor?.(w),gloss:e?.querySelector('.rw-fr-gloss-text')?.textContent||''}}return {fumant:s('fumant'),piece:s('pièce')}})()")
+            if 'unknown' not in str(audit['after_second_unknown']['fumant']).lower() and 'problem' not in str(audit['after_second_unknown']['fumant']).lower():
+              audit['bugs'].append('manual Unknown on fumant disappeared after marking pièce')
+            # Context-sensitive words from the actual Nada sample.
+            context_words=['arrêt','former','raccrocha','pièce']
+            context={}
+            for w in context_words:
+              click_word(w)
+              try: wait(f"document.querySelector('#reader-word-title')?.textContent?.toLocaleLowerCase('fr')==={json.dumps(w.lower())}",8)
+              except Exception: pass
+              btn=ev("!!document.querySelector('#reader-fr-unknown-btn')")
+              if btn: ev("document.querySelector('#reader-fr-unknown-btn').click();true")
+              time.sleep(1)
+              immediate=ev(f"(()=>{{const e=[...document.querySelectorAll('.reader-word[data-word]')].find(x=>(x.dataset.word||'').toLocaleLowerCase('fr')==={json.dumps(w.lower())});return {{class:e?.className||'',gloss:e?.querySelector('.rw-fr-gloss-text')?.textContent||'',panel:document.querySelector('#reader-word-analysis')?.innerText||'',status:document.querySelector('#reader-word-status')?.textContent||''}}}})()")
+              context[w]={'immediate':immediate}
+            time.sleep(18)
+            for w in context_words:
+              context[w]['later']=ev(f"(()=>{{const e=[...document.querySelectorAll('.reader-word[data-word]')].find(x=>(x.dataset.word||'').toLocaleLowerCase('fr')==={json.dumps(w.lower())});return {{class:e?.className||'',gloss:e?.querySelector('.rw-fr-gloss-text')?.textContent||'',source:e?.closest('.rw-fr-gloss-wrap')?.dataset?.frGlossSource||e?.parentElement?.dataset?.frGlossSource||''}}}})()")
+            audit['context_words']=context
+            audit['gloss_audit']=ev("(()=>[...document.querySelectorAll('.rw-fr-gloss-text')].map(e=>({word:e.closest('.rw-fr-gloss-wrap')?.querySelector('.reader-word')?.dataset?.word||e.parentElement?.querySelector('.reader-word')?.dataset?.word||'',text:e.textContent||''})).filter(x=>x.text))()")
+            audit['layout']=ev("(()=>{const gs=[...document.querySelectorAll('.rw-fr-gloss-text')];let overlaps=[];for(let i=0;i<gs.length;i++){const a=gs[i].getBoundingClientRect();for(let j=i+1;j<gs.length;j++){const b=gs[j].getBoundingClientRect();if(Math.min(a.right,b.right)-Math.max(a.left,b.left)>2&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>2)overlaps.push([i,j]);}}return {glossCount:gs.length,overlaps:overlaps.slice(0,30),scrollHeight:document.querySelector('#reader-reading-view .rd-scroll')?.scrollHeight||0,clientHeight:document.querySelector('#reader-reading-view .rd-scroll')?.clientHeight||0}})()")
+            OUT.joinpath('audit.json').write_text(json.dumps(audit,ensure_ascii=False,indent=2),encoding='utf-8')
+            print(json.dumps(audit,ensure_ascii=False,indent=2))
+            ws.close()
+            PY
+            adb exec-out screencap -p > runtime-audit/01-reading-after-audit.png
+
+      - name: Upload runtime audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toc121-nada-real-runtime-audit
+          path: runtime-audit/
+          if-no-files-found: error
