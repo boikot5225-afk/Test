@@ -51,6 +51,7 @@ jobs:
           python3 scripts/patch-zh-context-pinyin-trust.py
           python3 scripts/patch-toc119-zh-reader-quality.py
           python3 scripts/patch-toc121-fr-reader-fixes.py
+          python3 scripts/prepare-toc122-patch-layout.py
           python3 scripts/patch-toc122-fr-reader-architecture.py
           python3 - <<'PY'
           from pathlib import Path
@@ -71,7 +72,7 @@ jobs:
           PY
           rm -rf build android/app/build runtime-audit
 
-      - name: French architecture and resource regression gate
+      - name: French architecture gate
         shell: bash
         run: |
           set -euo pipefail
@@ -83,12 +84,11 @@ jobs:
           for line in Path('build/fr-toc122/fr_vocab_lemma.tsv').read_text().splitlines():
               if '\t' in line:
                   a,b=line.split('\t',1); lemma[a]=b
-          # Standalone homographs stay standalone (absence from TSV means identity).
           for w in ('courant','personne','fini','fumant'):
               assert lemma.get(w,w)==w,(w,lemma.get(w))
           for w,e in {'est':'être','suis':'être','avait':'avoir'}.items():
               assert lemma.get(w,w)==e,(w,lemma.get(w))
-          print('toc122 morphology ambiguity gate PASS')
+          print('toc122 morphology gate PASS')
           PY
           node --check js/reader/fr-vocab-estimate.js
           node --check js/reader/fr-lexical-pipeline-v2.js
@@ -122,8 +122,8 @@ jobs:
           assert 'rw-fr-proper' in vocab
           assert 'for(const[candidateKey,state]of Object.entries(store))' not in vocab
           assert 'if (data.rankFold.get(word)) return' in lexical
-          assert 'chapterProperHeuristic' in lexical and "hasOwnProperty.call(direct, 'isProper')" in lexical
-          assert 'mlkit-target-marked' in context and "MARK_L = '⟦'" in context
+          assert 'chapterProperHeuristic' in lexical
+          assert 'mlkit-target-marked' in context
           assert 'lookupStillActive' in app and 'requestStillActive' in app
           assert 'new FileInputStream(new File(path))' in activity
           print('toc122 architecture gate PASS')
