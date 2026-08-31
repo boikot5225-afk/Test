@@ -1,0 +1,194 @@
+name: Android APK toc103 stable installfix
+
+on:
+  push:
+    branches:
+      - fix/77.42-toc103-stable-install-vc1012
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stable-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/77.42-toc103-stable-install-vc1012
+          fetch-depth: 0
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore shared Reader AI signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_KEYSTORE_BASE64}"
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Verify stable toc103 source ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=ebedfe1849ad3ca2572fc60ffc98c2a9aaf94317
+          git merge-base --is-ancestor "$BASE" HEAD
+          # Recovery branch may add only CI/test harness files. App/runtime files
+          # still come byte-for-byte from the stable toc103 checkpoint.
+          if git diff --name-only "$BASE"..HEAD | grep -Ev '^(\.github/workflows/android-apk-toc103-stable-installfix\.yml|scripts/make_toc103_pagination_fixture\.py|scripts/audit_toc103_pagination_live\.py|scripts/run_toc103_stable_emulator\.sh)$' | grep -q .; then
+            echo 'Stable recovery branch changed application source' >&2
+            git diff --name-only "$BASE"..HEAD
+            exit 1
+          fi
+
+      - name: Wire same maintained native bridges as stable build123
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java')
+          s=p.read_text()
+          field='    private ChineseResourceBridge chineseResourceBridge;\n'
+          patch=field + (
+              '    private ChineseOfflineTranslateBridge chineseOfflineTranslateBridge;\n'
+              '    private EnglishResidualTranslateBridge englishResidualTranslateBridge;\n'
+              '    private EnglishContextTranslateBridge englishContextTranslateBridge;\n'
+          )
+          assert s.count(field) == 1
+          s=s.replace(field, patch, 1)
+          anchor='        webView.addJavascriptInterface(chineseResourceBridge, "ReaderChineseResources");\n'
+          patch=anchor + (
+              '\n        chineseOfflineTranslateBridge = new ChineseOfflineTranslateBridge(this, webView);\n'
+              '        webView.addJavascriptInterface(chineseOfflineTranslateBridge, "ReaderChineseTranslate");\n'
+              '        englishResidualTranslateBridge = new EnglishResidualTranslateBridge(this, webView);\n'
+              '        webView.addJavascriptInterface(englishResidualTranslateBridge, "ReaderEnglishResidualTranslate");\n'
+              '        englishContextTranslateBridge = new EnglishContextTranslateBridge(this, webView);\n'
+              '        webView.addJavascriptInterface(englishContextTranslateBridge, "ReaderEnglishContextTranslate");\n'
+          )
+          assert s.count(anchor) == 1
+          s=s.replace(anchor, patch, 1)
+          destroy='        if (chineseResourceBridge != null) {\n            chineseResourceBridge.shutdown();\n            chineseResourceBridge = null;\n        }\n'
+          patch=destroy + (
+              '        if (chineseOfflineTranslateBridge != null) {\n'
+              '            chineseOfflineTranslateBridge.shutdown();\n'
+              '            chineseOfflineTranslateBridge = null;\n'
+              '        }\n'
+              '        if (englishResidualTranslateBridge != null) {\n'
+              '            englishResidualTranslateBridge.shutdown();\n'
+              '            englishResidualTranslateBridge = null;\n'
+              '        }\n'
+              '        if (englishContextTranslateBridge != null) {\n'
+              '            englishContextTranslateBridge.shutdown();\n'
+              '            englishContextTranslateBridge = null;\n'
+              '        }\n'
+          )
+          assert s.count(destroy) == 1
+          p.write_text(s.replace(destroy, patch, 1))
+          PY
+
+      - name: Build vc1011 preinstall package
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle'); s=p.read_text()
+          assert s.count('versionCode 118') == 1
+          assert s.count("versionName '77.42-toc98'") == 1
+          s=s.replace('versionCode 118','versionCode 1011',1)
+          s=s.replace("versionName '77.42-toc98'","versionName '77.42-toc103-stable-preinstall'",1)
+          p.write_text(s)
+          PY
+          (cd android && ./gradlew --no-daemon --stacktrace :app:assembleDebug)
+          mkdir -p test-out
+          cp "$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)" test-out/Reader-AI-toc103-preinstall-vc1011.apk
+
+      - name: Build stable recovery vc1012
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle'); s=p.read_text()
+          assert s.count('versionCode 1011') == 1
+          assert s.count("versionName '77.42-toc103-stable-preinstall'") == 1
+          s=s.replace('versionCode 1011','versionCode 1012',1)
+          s=s.replace("versionName '77.42-toc103-stable-preinstall'","versionName '77.42-toc103-stable-install'",1)
+          p.write_text(s)
+          PY
+          (cd android && ./gradlew --no-daemon --stacktrace :app:assembleDebug)
+          mkdir -p unique-out
+          cp "$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)" unique-out/Reader-AI-77.42-toc103-stable-install-vc1012.apk
+
+      - name: Validate package signature version and universal ABIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=unique-out/Reader-AI-77.42-toc103-stable-install-vc1012.apk
+          BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          "${BUILD_TOOLS}/apksigner" verify --verbose --print-certs "$APK" | tee unique-out/APKSIGNER.txt
+          "${BUILD_TOOLS}/aapt" dump badging "$APK" | tee unique-out/BADGING.txt
+          "${BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$APK" > unique-out/ZIPALIGN.txt
+          unzip -t "$APK" >/dev/null
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
+          grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
+          grep -q "package: name='space.saintjust.reader.semanticstage1clean.formatfix.debug' versionCode='1012'" unique-out/BADGING.txt
+          grep -q "native-code: 'arm64-v8a' 'armeabi-v7a' 'x86' 'x86_64'" unique-out/BADGING.txt
+          test "$(stat -c %s "$APK")" -gt 90000000
+          sha256sum "$APK" | tee unique-out/SHA256.txt
+          stat -c '%n %s bytes' "$APK" | tee unique-out/SIZE.txt
+
+      - name: Prepare pagination acceptance test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/make_toc103_pagination_fixture.py
+          python3 -m pip install --quiet websocket-client requests
+          chmod +x scripts/run_toc103_stable_emulator.sh
+
+      - name: Enable emulator hardware acceleration
+        shell: bash
+        run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+
+      - name: Android 15 install-over and physical page-turn acceptance
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: bash scripts/run_toc103_stable_emulator.sh
+
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toc103-stable-install-pagination-evidence
+          path: runtime-audit/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload stable recovery APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc103-stable-install-vc1012
+          path: unique-out/
+          if-no-files-found: error
+          retention-days: 30
