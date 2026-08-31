@@ -1,0 +1,153 @@
+name: Android APK toc123 isolated French v2
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc123-fr-isolated
+    paths:
+      - '.github/workflows/android-apk-toc123-fr-isolated-v2.yml'
+      - 'scripts/validate_toc123_isolated_source.sh'
+      - 'scripts/verify_toc123_apk_contents.sh'
+      - 'scripts/make_nada_audit_epub_toc123.py'
+      - 'scripts/bootstrap_toc123_french_reader_live.py'
+      - 'scripts/audit_toc123_isolated_live.py'
+      - 'scripts/run_toc123_isolated_emulator.sh'
+      - 'scripts/configure_toc123_a54_abi.py'
+      - 'js/reader/fr-vocab-estimate.js'
+      - 'js/reader/fr-lexical-pipeline-v2.js'
+      - 'js/reader/fr-unknown-gloss.js'
+      - 'js/reader/interactions-runtime.js'
+      - 'android/app/build.gradle'
+  workflow_dispatch:
+
+jobs:
+  isolated-quality:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc123-fr-isolated
+          fetch-depth: 0
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore established Reader AI signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_KEYSTORE_BASE64}"
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Validate frozen toc119 core and isolated French source
+        shell: bash
+        run: bash scripts/validate_toc123_isolated_source.sh
+
+      - name: Build universal APK directly from committed source
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify exact payload inside universal APK
+        shell: bash
+        run: bash scripts/verify_toc123_apk_contents.sh
+
+      - name: Prepare deterministic French live audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/make_nada_audit_epub_toc123.py
+          python3 -m pip install --quiet websocket-client requests
+
+      - name: Enable emulator hardware acceleration
+        shell: bash
+        run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+
+      - name: French UI plus unchanged toc119 swipe on Android 15
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: false
+          script: bash scripts/run_toc123_isolated_emulator.sh
+
+      - name: Upload live evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toc123-isolated-live-evidence
+          path: runtime-audit/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Configure only final A54 ABI packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/configure_toc123_a54_abi.py
+          rm -rf android/app/build
+
+      - name: Build final Galaxy A54 APK directly
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Sign and validate vc1015 A54 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          mkdir -p unique-out
+          OUT=unique-out/Reader-AI-77.42-toc123-fr-isolated-a54-vc1015.apk
+          KSPASS="${ANDROID_KEYSTORE_PASSWORD:-readerai2026}"
+          KEYPASS="${ANDROID_KEY_PASSWORD:-$KSPASS}"
+          ALIAS="${ANDROID_KEY_ALIAS:-reader-ai}"
+          "${BUILD_TOOLS}/apksigner" sign \
+            --ks "${ANDROID_KEYSTORE_PATH}" \
+            --ks-key-alias "$ALIAS" \
+            --ks-pass "pass:$KSPASS" \
+            --key-pass "pass:$KEYPASS" \
+            --v1-signing-enabled false \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out "$OUT" "$APK"
+          "${BUILD_TOOLS}/apksigner" verify --verbose --print-certs "$OUT" | tee unique-out/APKSIGNER.txt
+          "${BUILD_TOOLS}/aapt" dump badging "$OUT" | tee unique-out/BADGING.txt
+          "${BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$OUT" > unique-out/ZIPALIGN.txt
+          unzip -t "$OUT" >/dev/null
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
+          grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
+          grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
+          grep -q "versionCode='1015'" unique-out/BADGING.txt
+          grep -q "versionName='77.42-toc123-fr-isolated'" unique-out/BADGING.txt
+          grep -q "native-code: 'arm64-v8a'" unique-out/BADGING.txt
+          if unzip -l "$OUT" | grep -Eq 'lib/(armeabi-v7a|x86|x86_64)/'; then
+            echo 'non-A54 ABI leaked into final package' >&2
+            exit 1
+          fi
+          unzip -l "$OUT" | grep -qF 'assets/frreader/fr_vocab_frequency.tsv'
+          unzip -l "$OUT" | grep -qF 'assets/frreader/fr_vocab_lemma.tsv'
+          unzip -l "$OUT" | grep -qF 'assets/frreader/fr_ru_core.json'
+          sha256sum "$OUT" | tee unique-out/SHA256.txt
+          stat -c '%n %s bytes' "$OUT" | tee unique-out/SIZE.txt
+
+      - name: Upload verified toc123 A54 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc123-fr-isolated-a54-vc1015
+          path: unique-out/
+          if-no-files-found: error
+          retention-days: 30
