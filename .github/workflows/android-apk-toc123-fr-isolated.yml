@@ -1,0 +1,276 @@
+name: Android APK toc123 isolated French
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc123-fr-isolated
+    paths-ignore:
+      - '.github/workflows/toc123-vendor-fr-isolated.yml'
+      - '.github/workflows/toc123-materialize-toc119.yml'
+      - '.github/workflows/toc123-materialize-french-only.yml'
+  workflow_dispatch:
+
+jobs:
+  isolated-quality:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc123-fr-isolated
+          fetch-depth: 0
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore Reader AI signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_KEYSTORE_BASE64}"
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Hard architecture gate — core is frozen toc119
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/toc119-core.sha256 <<'EOF'
+          b709451dec2849b8487b054fd8f52c57ef9fc91dc5f5818ed5720e00dda08ba6  js/reader/interactions.js
+          13ce9f42db4427e1c2442abad7c0e66343aad92d79a4e945376fb42afed8e7d9  js/reader/pages-mode.js
+          202e287af1158b8498e44ae3e9ce28cf43b1a0aaaba9f01b25bfdfa2fde47f04  js/reader-app.js
+          c10f3680fb122c4f04a730ddb298f88165c29d5b24978cc5868560531f752361  js/reader/chapter-render.js
+          8e8f5f6d67929f6b745ec4bd3e1b83010a1460b438886233df8fae34d62bafc1  js/reader/chapter-render-next.js
+          825555b4553bb9d8f6e448fdbf58d2322e54e33cf07fa8ba5f84d888a531c537  js/reader/chapter-render-stage1.js
+          8ca5b6dfdbf03309fadc89339ff4cd12d010a84c56122f5c8ea807b9220f562f  js/reader/display.js
+          896834e059da0a3c59b779e94705bb61187c9b4db31d6590d8c76cc4941770e7  js/reader/epub.js
+          d0ee752392b38822cfaeb0d557f7c359ca4aae166650b8844adfb9012bc38d8c  js/reader/toc-runtime.js
+          EOF
+          sha256sum -c /tmp/toc119-core.sha256
+          ! grep -q 'maxDurationMs = inPagesMode ? 2200' js/reader/interactions.js
+          ! grep -q 'recovered page turn across same-chapter rebuild' js/reader/pages-mode.js
+          for f in js/reader/fr-vocab-estimate.js js/reader/fr-lexical-pipeline-v2.js js/reader/fr-unknown-gloss.js; do
+            ! grep -Eq 'readerNextParagraph|readerPrevParagraph|readerTogglePagesMode|pages-mode|__readerRanging' "$f"
+          done
+
+      - name: Proven French module gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' \
+            563ca7f6e73f5f55f5033850572286887a19c02c6077db25c3f5ea7be25fd8a1 js/reader/fr-vocab-estimate.js \
+            d1da657915239ecfabd75ef057a28635af16b81cfcd69f5deef10d972b18af79 js/reader/fr-lexical-pipeline-v2.js \
+            1994a8c7d6b845930ef23df70dfe25d80df6666606137523e5af5aadfa7b161e js/reader/fr-unknown-gloss.js \
+            > /tmp/toc122-fr.sha256
+          sha256sum -c /tmp/toc122-fr.sha256
+          node --check js/reader/fr-vocab-estimate.js
+          node --check js/reader/fr-lexical-pipeline-v2.js
+          node --check js/reader/fr-unknown-gloss.js
+          grep -q "fr-lexical-pipeline-v2.js?v=123-isolated" js/reader/interactions-runtime.js
+          ! grep -q 'fr-context-gloss' js/reader/interactions-runtime.js
+
+      - name: Build French lexical assets directly
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf android/app/src/main/assets/frreader build/fr-toc123 build/fr-toc123-cache
+          mkdir -p android/app/src/main/assets/frreader
+          python3 scripts/build_fr_reader_resources.py --output-dir /tmp/fr-selftest --cache-dir /tmp/fr-selftest-cache --self-test
+          python3 scripts/build_fr_reader_resources.py --output-dir android/app/src/main/assets/frreader --cache-dir build/fr-toc123-cache
+          python3 - <<'PY'
+          from pathlib import Path
+          lemma={}
+          for line in Path('android/app/src/main/assets/frreader/fr_vocab_lemma.tsv').read_text(encoding='utf-8').splitlines():
+              if '\t' in line:
+                  a,b=line.split('\t',1); lemma[a]=b
+          for w,e in {'est':'être','suis':'être','étaient':'être','ai':'avoir','avait':'avoir'}.items():
+              assert lemma.get(w,w)==e,(w,lemma.get(w))
+          for w in ('courant','personne','fini','fumant'):
+              assert lemma.get(w,w)==w,(w,lemma.get(w))
+          print('toc123 French morphology gate PASS')
+          PY
+          test -s android/app/src/main/assets/frreader/fr_ru_core.json
+          test -s android/app/src/main/assets/frreader/fr_vocab_frequency.tsv
+          test -s android/app/src/main/assets/frreader/fr_vocab_lemma.tsv
+
+      - name: Build universal APK directly from committed source
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify embedded source before live test
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          rm -rf /tmp/apkcheck && mkdir -p /tmp/apkcheck
+          cd /tmp/apkcheck
+          unzip -q "$GITHUB_WORKSPACE/$APK" \
+            assets/www/js/reader/interactions.js \
+            assets/www/js/reader/pages-mode.js \
+            assets/www/js/reader-app.js \
+            assets/www/js/reader/fr-vocab-estimate.js \
+            assets/www/js/reader/fr-lexical-pipeline-v2.js \
+            assets/www/js/reader/fr-unknown-gloss.js \
+            assets/frreader/fr_vocab_frequency.tsv \
+            assets/frreader/fr_vocab_lemma.tsv \
+            assets/frreader/fr_ru_core.json
+          test "$(sha256sum assets/www/js/reader/interactions.js | cut -d' ' -f1)" = b709451dec2849b8487b054fd8f52c57ef9fc91dc5f5818ed5720e00dda08ba6
+          test "$(sha256sum assets/www/js/reader/pages-mode.js | cut -d' ' -f1)" = 13ce9f42db4427e1c2442abad7c0e66343aad92d79a4e945376fb42afed8e7d9
+          test "$(sha256sum assets/www/js/reader-app.js | cut -d' ' -f1)" = 202e287af1158b8498e44ae3e9ce28cf43b1a0aaaba9f01b25bfdfa2fde47f04
+          test "$(sha256sum assets/www/js/reader/fr-vocab-estimate.js | cut -d' ' -f1)" = 563ca7f6e73f5f55f5033850572286887a19c02c6077db25c3f5ea7be25fd8a1
+          test "$(sha256sum assets/www/js/reader/fr-lexical-pipeline-v2.js | cut -d' ' -f1)" = d1da657915239ecfabd75ef057a28635af16b81cfcd69f5deef10d972b18af79
+          test "$(sha256sum assets/www/js/reader/fr-unknown-gloss.js | cut -d' ' -f1)" = 1994a8c7d6b845930ef23df70dfe25d80df6666606137523e5af5aadfa7b161e
+
+      - name: Prepare isolated French live audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin feature/77.42-toc122-fr-reader-architecture
+          git show origin/feature/77.42-toc122-fr-reader-architecture:scripts/make_nada_audit_epub_toc122.py > /tmp/make_nada.py
+          git show origin/feature/77.42-toc122-fr-reader-architecture:scripts/bootstrap_toc122_french_reader_live.py > /tmp/bootstrap_fr.py
+          python3 /tmp/make_nada.py
+          python3 -m pip install --quiet websocket-client requests
+
+          cat > /tmp/audit_toc123.py <<'PY'
+          import json, subprocess, time, requests, websocket
+          pages=[]
+          for _ in range(100):
+              try: pages=requests.get('http://127.0.0.1:9222/json/list',timeout=2).json()
+              except Exception: pages=[]
+              if pages: break
+              time.sleep(.4)
+          if not pages: raise SystemExit('No Reader WebView')
+          page=next((p for p in pages if 'appassets.androidplatform.net' in p.get('url','')),pages[0])
+          ws=websocket.create_connection(page['webSocketDebuggerUrl'],timeout=25,suppress_origin=True)
+          seq=0
+          def ev(code):
+              global seq
+              seq+=1; ident=seq
+              ws.send(json.dumps({'id':ident,'method':'Runtime.evaluate','params':{'expression':code,'awaitPromise':True,'returnByValue':True,'userGesture':True}}))
+              while True:
+                  msg=json.loads(ws.recv())
+                  if msg.get('id')==ident:
+                      if msg.get('error'): raise RuntimeError(msg['error'])
+                      return msg.get('result',{}).get('result',{}).get('value')
+          for _ in range(80):
+              if ev("document.getElementById('reader-reading-view')?.dataset?.readerLang==='fr'"): break
+              time.sleep(.25)
+          else: raise RuntimeError('French reader not active')
+          info=ev("(async()=>{const d=await window.readerLoadFrenchVocabularyData?.();return {count:d?.entries?.length||0,suis:window.readerFrenchLemmaFor?.('suis'),avait:window.readerFrenchLemmaFor?.('avait'),lex:await window.readerFrenchLexicalAnalysisFor?.('homme')}})()")
+          if info['count']<50000 or info['suis']!='être' or info['avait']!='avoir': raise RuntimeError(info)
+          # Force one visible French word into Unknown only for the audit; this
+          # does not change page-mode or any Reader navigation state.
+          ok=ev("(()=>{const el=[...document.querySelectorAll('#reader-chapter-text .reader-word[data-word]')].find(x=>/[A-Za-zÀ-ÿ]/.test(x.dataset.word||x.textContent||''));if(!el)return false;el.classList.remove('rw-migaku-known');el.classList.add('rw-migaku-unknown');window.dispatchEvent(new CustomEvent('reader:fr-vocab-ready'));return true})()")
+          if not ok: raise RuntimeError('No French word for gloss audit')
+          gloss=''
+          for _ in range(80):
+              gloss=ev("[...document.querySelectorAll('#reader-chapter-text .rw-fr-gloss-text')].map(x=>x.textContent.trim()).find(x=>/[А-Яа-яЁё]/.test(x))||''") or ''
+              if gloss: break
+              time.sleep(.25)
+          if not gloss: raise RuntimeError('No bundled Russian Unknown gloss appeared')
+          # Enter the unchanged toc119 page mode, then perform actual Android
+          # touchscreen swipes. No JS next()/prev() call is used.
+          for _ in range(2):
+              state=ev("(()=>{const s=document.querySelector('#reader-reading-view .rd-scroll');const root=document.getElementById('reader-chapter-text');const ps=[...root.querySelectorAll(':scope > .rd-page')];const cur=root.querySelector(':scope > .rd-page.rd-page-current,:scope > .rd-page.rd-page-show');return {mode:!!s?.classList.contains('rd-pages-mode'),count:ps.length,index:ps.indexOf(cur),rect:(cur||root).getBoundingClientRect().toJSON()}})()")
+              if state['mode'] and state['count']>=2: break
+              ev("window.readerTogglePagesMode?.(); true"); time.sleep(.8)
+          if not state['mode'] or state['count']<2: raise RuntimeError(state)
+          r=state['rect']; dpr=float(ev('window.devicePixelRatio||1'))
+          y=int(((r['top']+r['bottom'])/2)*dpr); x1=int((r['right']-50)*dpr); x2=int((r['left']+50)*dpr)
+          before=state['index']
+          subprocess.run(['adb','shell','input','touchscreen','swipe',str(x1),str(y),str(x2),str(y),'350'],check=True); time.sleep(1)
+          after=ev("(()=>{const root=document.getElementById('reader-chapter-text'),ps=[...root.querySelectorAll(':scope > .rd-page')],cur=root.querySelector(':scope > .rd-page.rd-page-current,:scope > .rd-page.rd-page-show');return ps.indexOf(cur)})()")
+          subprocess.run(['adb','shell','input','touchscreen','swipe',str(x2),str(y),str(x1),str(y),'350'],check=True); time.sleep(1)
+          back=ev("(()=>{const root=document.getElementById('reader-chapter-text'),ps=[...root.querySelectorAll(':scope > .rd-page')],cur=root.querySelector(':scope > .rd-page.rd-page-current,:scope > .rd-page.rd-page-show');return ps.indexOf(cur)})()")
+          if after!=before+1 or back!=before: raise RuntimeError({'before':before,'after':after,'back':back})
+          print(json.dumps({'ok':True,'vocab':info['count'],'suis':info['suis'],'avait':info['avait'],'gloss':gloss,'pages':state['count'],'swipe':[before,after,back]},ensure_ascii=False))
+          ws.close()
+          PY
+
+      - name: Enable emulator hardware acceleration
+        shell: bash
+        run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+
+      - name: Live French + unchanged toc119 swipe on Android 15
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: false
+          script: >-
+            bash -lc 'set -euo pipefail;
+            PKG=space.saintjust.reader.semanticstage1clean.formatfix.debug;
+            ACT=space.saintjust.reader.stage1.MainActivity;
+            APK="$(find android/app/build/outputs/apk/debug -name "*.apk" | head -1)";
+            adb install -r "$APK";
+            adb push runtime-audit/nada-runtime.epub /data/local/tmp/nada-runtime.epub;
+            adb shell run-as "$PKG" cp /data/local/tmp/nada-runtime.epub cache/nada-runtime.epub;
+            adb shell am force-stop "$PKG";
+            adb shell am start -W -a android.intent.action.VIEW -d "file:///data/user/0/${PKG}/cache/nada-runtime.epub" -t application/epub+zip -n "${PKG}/${ACT}";
+            sleep 5;
+            PID="$(adb shell pidof "$PKG" | tr -d "\r")";
+            adb forward tcp:9222 "localabstract:webview_devtools_remote_${PID}";
+            python3 /tmp/bootstrap_fr.py;
+            python3 /tmp/audit_toc123.py'
+
+      - name: Configure final Galaxy A54 arm64 package only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle'); s=p.read_text(encoding='utf-8')
+          anchor='        targetSdk 35\n'
+          if "abiFilters 'arm64-v8a'" not in s:
+              if s.count(anchor)!=1: raise SystemExit('targetSdk anchor not unique')
+              s=s.replace(anchor,anchor+"        ndk {\n            abiFilters 'arm64-v8a'\n        }\n",1)
+          p.write_text(s,encoding='utf-8')
+          PY
+          rm -rf android/app/build
+
+      - name: Build final A54 APK directly
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Sign and validate toc123 A54 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          mkdir -p unique-out
+          OUT=unique-out/Reader-AI-77.42-toc123-fr-isolated-a54-vc1015.apk
+          KSPASS="${ANDROID_KEYSTORE_PASSWORD:-readerai2026}"
+          KEYPASS="${ANDROID_KEY_PASSWORD:-$KSPASS}"
+          ALIAS="${ANDROID_KEY_ALIAS:-reader-ai}"
+          "${BUILD_TOOLS}/apksigner" sign --ks "${ANDROID_KEYSTORE_PATH}" --ks-key-alias "$ALIAS" --ks-pass "pass:$KSPASS" --key-pass "pass:$KEYPASS" --v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled true --out "$OUT" "$APK"
+          "${BUILD_TOOLS}/apksigner" verify --verbose --print-certs "$OUT" | tee unique-out/APKSIGNER.txt
+          "${BUILD_TOOLS}/aapt" dump badging "$OUT" | tee unique-out/BADGING.txt
+          grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
+          grep -q "versionCode='1015'" unique-out/BADGING.txt
+          grep -q "native-code: 'arm64-v8a'" unique-out/BADGING.txt
+          unzip -l "$OUT" | grep -qF 'assets/frreader/fr_vocab_frequency.tsv'
+          unzip -l "$OUT" | grep -qF 'assets/frreader/fr_vocab_lemma.tsv'
+          unzip -l "$OUT" | grep -qF 'assets/frreader/fr_ru_core.json'
+          sha256sum "$OUT" | tee unique-out/SHA256.txt
+          stat -c '%n %s bytes' "$OUT" | tee unique-out/SIZE.txt
+
+      - name: Upload toc123 isolated A54 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc123-fr-isolated-a54-vc1015
+          path: unique-out/
+          retention-days: 30
+          if-no-files-found: error
