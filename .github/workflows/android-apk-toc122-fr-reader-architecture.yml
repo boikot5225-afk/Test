@@ -53,6 +53,7 @@ jobs:
           python3 scripts/patch-toc121-fr-reader-fixes.py
           python3 scripts/prepare-toc122-patch-layout.py
           python3 scripts/patch-toc122-fr-reader-architecture.py
+          python3 scripts/patch-toc122a-fr-core-forms.py
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -87,7 +88,7 @@ jobs:
                   a,b=line.split('\t',1); lemma[a]=b
           for w in ('courant','personne','fini','fumant'):
               assert lemma.get(w,w)==w,(w,lemma.get(w))
-          for w,e in {'est':'être','suis':'être','avait':'avoir'}.items():
+          for w,e in {'est':'être','suis':'être','avait':'avoir','ai':'avoir'}.items():
               assert lemma.get(w,w)==e,(w,lemma.get(w))
           print('toc122 morphology gate PASS')
           PY
