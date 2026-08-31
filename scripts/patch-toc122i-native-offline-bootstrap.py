@@ -5,29 +5,39 @@ import json
 # Native Android must never block Reader AI startup on third-party CDN scripts.
 # The app already ships firebase-sdk-loader.js, which installs an immediate REST
 # Firebase fallback from firebase-config.js. Keep the original synchronous CDN
-# block byte-for-byte for web/PWA, but do not execute it inside the APK shell.
+# Firebase block byte-for-byte for web/PWA, but do not execute it inside the APK.
 p = Path('index.html')
 s = p.read_text(encoding='utf-8')
 start_marker = '<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>'
 xlsx_marker = '<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>'
 if s.count(start_marker) != 1 or s.count(xlsx_marker) != 1:
     raise SystemExit(f'native bootstrap markers: firebase={s.count(start_marker)} xlsx={s.count(xlsx_marker)}')
+
 start = s.index(start_marker)
-xlsx_start = s.index(xlsx_marker, start)
-end = xlsx_start + len(xlsx_marker)
-legacy_block = s[start:end]
-# Avoid a literal </script> inside the wrapping inline script; <\/script> is
-# identical after JS string decoding and safe for the HTML tokenizer.
-legacy_js = json.dumps(legacy_block, ensure_ascii=False).replace('</script>', '<\\/script>')
+build_comment = s.index('// Build marker.', start)
+firebase_end = s.rfind('<script', start, build_comment)
+if firebase_end <= start:
+    raise SystemExit('could not isolate Firebase block before build marker')
+legacy_firebase = s[start:firebase_end]
+legacy_firebase_js = json.dumps(legacy_firebase, ensure_ascii=False).replace('</script>', '<\\/script>')
 replacement = f'''<script>
   // toc122i: Android WebView serves the app from the APK. Startup must not be
-  // held hostage by gstatic/jsDelivr. Web/PWA keeps the exact legacy block.
+  // held hostage by Firebase CDNs. Web/PWA keeps the exact legacy block.
   window.AN2_NATIVE_ANDROID_SHELL = location.hostname === 'appassets.androidplatform.net';
+  if (!window.AN2_NATIVE_ANDROID_SHELL) document.write({legacy_firebase_js});
+</script>
+'''
+s = s[:start] + replacement + s[firebase_end:]
+
+# XLSX is optional reader/import tooling. Keep the synchronous tag on web, but
+# load it only after window.load in the APK so it can never block app bootstrap.
+if s.count(xlsx_marker) != 1:
+    raise SystemExit(f'post-Firebase XLSX marker count={s.count(xlsx_marker)}')
+xlsx_js = json.dumps(xlsx_marker).replace('</script>', '<\\/script>')
+xlsx_replacement = f'''<script>
   if (!window.AN2_NATIVE_ANDROID_SHELL) {{
-    document.write({legacy_js});
+    document.write({xlsx_js});
   }} else {{
-    // XLSX is an optional import helper. Load it after the app has become
-    // usable; a slow/blocked CDN may delay this optional feature, never Reader.
     window.addEventListener('load', () => setTimeout(() => {{
       if (window.XLSX || document.querySelector('script[data-an2-native-xlsx]')) return;
       const x = document.createElement('script');
@@ -39,7 +49,7 @@ replacement = f'''<script>
     }}, 0), {{ once: true }});
   }}
 </script>'''
-s = s[:start] + replacement + s[end:]
+s = s.replace(xlsx_marker, xlsx_replacement, 1)
 p.write_text(s, encoding='utf-8')
 
 # Make a future bootstrap failure self-explanatory rather than another blind
