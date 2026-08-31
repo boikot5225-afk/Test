@@ -15,20 +15,14 @@ old = """  const best = ranked[0] || null;
 new = """  const best = ranked[0] || null;
   if (!best) return '';
   if (Number.isInteger(surfaceHit?.index)) {
-    // A ranked surface is a real lexical headword, not just an unknown spelling.
-    // Productive morphology may take ownership only for genuinely rare surface
-    // heads. This keeps ordinary lexicalised -ant words (courant, pendant,
-    // important...) stable while still allowing a rare participial collision
-    // such as fumant -> fumer when the verb has overwhelming corpus support.
-    if (!word.endsWith('ant')) return '';
-    const COMMON_LEXICALISED_HEAD_MAX_INDEX = 3000;
-    if (surfaceHit.index <= COMMON_LEXICALISED_HEAD_MAX_INDEX) return '';
-    const LEXICAL_HEAD_AMBIGUITY_GUARD_MAX_INDEX = 12000;
-    if (surfaceHit.index <= LEXICAL_HEAD_AMBIGUITY_GUARD_MAX_INDEX) return '';
-
-    const ratioThreshold = Math.floor(surfaceHit.index * 0.28);
-    const absoluteGap = surfaceHit.index - best.index;
-    if (best.index >= ratioThreshold || absoluteGap < 2200) return '';
+    // A surface that is itself an independently ranked lexical headword owns
+    // its global identity. Suffix morphology is not allowed to rename it for
+    // every occurrence. Ambiguous usage is resolved only by exact sentence
+    // context (e.g. courant stays courant globally, while a particular fumant
+    // may be analysed as fumer in its card/inline context).
+    // Retired toc122l markers kept only so older static gates recognize the
+    // migration: COMMON_LEXICALISED_HEAD_MAX_INDEX = 3000; ratioThreshold; absoluteGap.
+    return '';
   }
   return best.lemma || '';
 """
@@ -36,9 +30,7 @@ if s.count(old) != 1:
     raise SystemExit(f'toc122m productive morphology anchor count={s.count(old)}')
 s = s.replace(old, new, 1)
 
-# Do not call every override a context cache entry: productive morphology and
-# exact/context analysis are different owners. Accurate provenance makes a live
-# failure actionable instead of pointing debugging at the wrong subsystem.
+# Provenance matters: productive morphology is not a context-cache decision.
 old_source = "    _source: override ? 'fr-context-cache' : 'fr-open-lexical',"
 new_source = "    _source: override ? (override.source || 'fr-analysis-cache') : 'fr-open-lexical',"
 if s.count(old_source) != 1:
@@ -46,4 +38,4 @@ if s.count(old_source) != 1:
 s = s.replace(old_source, new_source, 1)
 
 p.write_text(s, encoding='utf-8')
-print('toc122m French lexicalized-head/productive-participle split applied')
+print('toc122m French lexical-head/context-usage split applied')
