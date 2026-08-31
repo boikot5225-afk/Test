@@ -97,13 +97,13 @@ def page_state():
       const root=document.getElementById('reader-chapter-text');
       const pages=[...root?.querySelectorAll(':scope > .rd-page')||[]];
       const cur=root?.querySelector(':scope > .rd-page.rd-page-current, :scope > .rd-page.rd-page-show');
-      const marker=(cur?.innerText||'').match(/PAGE_TURN_MARKER_\\d+/)?.[0]||'';
       const first=cur?.querySelector('.reader-paragraph');
+      const text=(cur?.innerText||'').replace(/\\s+/g,' ').trim();
       return {
         pageCount:pages.length,
         currentIndex:pages.indexOf(cur),
-        marker,
         paragraphIndex:first?.dataset?.p||first?.dataset?.paragraphIndex||first?.dataset?.index||'',
+        textSample:text.slice(0,120),
         boundSwipe:root?.dataset?.boundReaderSwipe||'',
         pagesMode:document.querySelector('#reader-reading-view .rd-scroll')?.classList.contains('rd-pages-mode')||false,
       };
@@ -184,10 +184,8 @@ if not ev("document.getElementById('main-app')?.style.display!=='none'"):
 wait("document.getElementById('main-app')?.style.display!=='none'", 30)
 wait("typeof window.showScreen==='function' && typeof window.readerImportFromFile==='function' && typeof window.saveReaderImport==='function'", 30)
 
-# The previous harness imported a book while the app was still on Home. The
-# reader DOM existed in memory, so DOM-only assertions passed, but adb swiped the
-# Home candidate card. Enter the Reader screen first, exactly as the bottom-nav
-# action does, then import and open the fixture.
+# Enter the actual Reader screen before importing. A hidden Reader subtree is
+# not acceptable evidence for a physical Android swipe.
 ev("window.showScreen('reader'); true")
 time.sleep(.8)
 
@@ -204,8 +202,6 @@ if 'EPUB' not in status:
 
 ev("(()=>{const t=document.getElementById('reader-import-title');if(t)t.value='Pagination Acceptance';return window.saveReaderImport?.()})()")
 
-# Require the actual book surface to be visible on screen, not merely present in
-# a hidden Reader subtree.
 wait("""(()=>{
   const v=document.getElementById('reader-reading-view');
   const root=document.getElementById('reader-chapter-text');
@@ -216,9 +212,8 @@ time.sleep(1.5)
 ev("window.rdSetPageAnimation?.('none', null); true")
 save_screen('00-reader-open.png')
 
-# Reach page mode using the public toggle. toc103 may initially collapse the
-# fixture into one .rd-page; that is allowed because the production turn path is
-# responsible for recovering it on the first gesture.
+# Reach page mode only through the public UI function. A single collapsed page
+# is allowed before the first turn because toc103 has a production recovery path.
 diags = [mode_diag()]
 for _ in range(2):
     state = diags[-1]
@@ -237,7 +232,10 @@ if not final_mode.get('rootRect') or final_mode['rootRect']['width'] < 120 or fi
 wait("document.getElementById('reader-chapter-text')?.dataset?.boundReaderSwipe==='1'", 10)
 
 before = page_state()
-if not before['pagesMode'] or before['pageCount'] < 1 or before['currentIndex'] < 0 or not before['marker']:
+# Page identity is the actual current .rd-page index. The Reader tokenizer may
+# split/rewrite fixture text, so synthetic marker strings are deliberately not
+# used as an acceptance prerequisite.
+if not before['pagesMode'] or before['pageCount'] < 2 or before['currentIndex'] < 0:
     raise RuntimeError('Pagination did not produce a swipeable current page: ' + json.dumps(before, ensure_ascii=False))
 
 probe_environment = install_swipe_probe()
@@ -258,8 +256,8 @@ if not any(e.get('type') == 'touchstart' and e.get('insideRoot') for e in left_e
     raise RuntimeError('ANDROID SWIPE DID NOT REACH READER ROOT: ' + json.dumps(gesture, ensure_ascii=False))
 if not any(e.get('type') == 'touchend' and e.get('insideRoot') for e in left_events):
     raise RuntimeError('ANDROID SWIPE DID NOT COMPLETE IN READER ROOT: ' + json.dumps(gesture, ensure_ascii=False))
-if after_next['pageCount'] < 2 or after_next['currentIndex'] <= before['currentIndex'] or after_next['marker'] == before['marker']:
-    raise RuntimeError('PHYSICAL SWIPE DID NOT TURN PAGE: ' + json.dumps({'before':before,'after':after_next,'gesture':gesture,'mode':diags}, ensure_ascii=False))
+if after_next['pageCount'] < 2 or after_next['currentIndex'] != before['currentIndex'] + 1:
+    raise RuntimeError('PHYSICAL SWIPE DID NOT TURN EXACTLY ONE PAGE: ' + json.dumps({'before':before,'after':after_next,'gesture':gesture,'mode':diags}, ensure_ascii=False))
 
 ev("window.__toc103SwipeProbe=[]; true")
 physical_swipe(probe_environment['right'])
@@ -272,7 +270,9 @@ save_screen('03-after-right-swipe.png')
 right_events = reverse_gesture.get('events') or []
 if not any(e.get('type') == 'touchstart' and e.get('insideRoot') for e in right_events):
     raise RuntimeError('REVERSE ANDROID SWIPE DID NOT REACH READER ROOT: ' + json.dumps(reverse_gesture, ensure_ascii=False))
-if after_prev['currentIndex'] != before['currentIndex'] or after_prev['marker'] != before['marker']:
+if not any(e.get('type') == 'touchend' and e.get('insideRoot') for e in right_events):
+    raise RuntimeError('REVERSE ANDROID SWIPE DID NOT COMPLETE IN READER ROOT: ' + json.dumps(reverse_gesture, ensure_ascii=False))
+if after_prev['currentIndex'] != before['currentIndex']:
     raise RuntimeError('REVERSE PHYSICAL SWIPE DID NOT RETURN PAGE: ' + json.dumps({'before':before,'after':after_prev,'gesture':reverse_gesture}, ensure_ascii=False))
 
 result = {
@@ -285,8 +285,8 @@ result = {
     'after_prev': after_prev,
     'assertions': [
         'Reader screen and book surface are physically visible',
-        'Android touchscreen left swipe reaches Reader root and advances',
-        'Android touchscreen right swipe reaches Reader root and returns',
+        'Android touchscreen left swipe reaches Reader root and advances exactly one page',
+        'Android touchscreen right swipe reaches Reader root and returns exactly one page',
     ],
 }
 (OUT / 'pagination-audit.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
