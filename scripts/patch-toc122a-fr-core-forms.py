@@ -27,6 +27,7 @@ p.write_text(s, encoding='utf-8')
 print('toc122a French core auxiliary morphology applied')
 
 # Keep the workflow patch chain linear: toc122a is already invoked immediately
-# after the main toc122 patch, so apply the Android 15 import-cache refinement
-# here rather than duplicating the entire workflow only to add one command.
+# after the main toc122 patch, so refinements are chained here rather than
+# duplicating the workflow for each one.
 runpy.run_path('scripts/patch-toc122b-native-import-cache.py', run_name='__main__')
+runpy.run_path('scripts/patch-toc122f-fr-live-quality.py', run_name='__main__')
