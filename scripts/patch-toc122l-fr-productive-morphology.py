@@ -21,8 +21,10 @@ new = """  const best = ranked[0] || null;
     // important...) stable while still allowing a rare participial collision
     // such as fumant -> fumer when the verb has overwhelming corpus support.
     if (!word.endsWith('ant')) return '';
-    const COMMON_LEXICALISED_HEAD_MAX_INDEX = 12000;
+    const COMMON_LEXICALISED_HEAD_MAX_INDEX = 3000;
     if (surfaceHit.index <= COMMON_LEXICALISED_HEAD_MAX_INDEX) return '';
+    const LEXICAL_HEAD_AMBIGUITY_GUARD_MAX_INDEX = 12000;
+    if (surfaceHit.index <= LEXICAL_HEAD_AMBIGUITY_GUARD_MAX_INDEX) return '';
 
     const ratioThreshold = Math.floor(surfaceHit.index * 0.28);
     const absoluteGap = surfaceHit.index - best.index;
