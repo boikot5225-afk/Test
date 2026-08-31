@@ -4,6 +4,7 @@ import pathlib
 import re
 import subprocess
 import time
+import xml.etree.ElementTree as ET
 import requests
 import websocket
 
@@ -47,6 +48,40 @@ def screenshot(name):
     with (OUT/name).open('wb') as fh:
         subprocess.run(['adb','exec-out','screencap','-p'],stdout=fh,check=True)
 
+def adb_ui_xml():
+    remote='/sdcard/toc123-window.xml'
+    subprocess.run(['adb','shell','uiautomator','dump',remote],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=False)
+    proc=subprocess.run(['adb','shell','cat',remote],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,check=False)
+    return proc.stdout or ''
+
+def tap_wait_button(xml_text):
+    try: root=ET.fromstring(xml_text)
+    except Exception: return False
+    for node in root.iter('node'):
+        text=str(node.attrib.get('text','')).strip().lower()
+        if text!='wait': continue
+        m=re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',node.attrib.get('bounds',''))
+        if not m: continue
+        x1,y1,x2,y2=map(int,m.groups())
+        subprocess.run(['adb','shell','input','tap',str((x1+x2)//2),str((y1+y2)//2)],check=True)
+        return True
+    return False
+
+def dismiss_emulator_anr_overlay():
+    # Fresh API-35 emulators occasionally show a launcher/Quickstep ANR over
+    # the app. That is outside Reader AI and must never be mistaken for a
+    # Reader hit-test/swipe failure.
+    dismissed=False
+    for _ in range(3):
+        xml_text=adb_ui_xml()
+        if not re.search(r"(?:isn't|is not|not)\s+responding|quickstep",xml_text,re.I):
+            return dismissed
+        if not tap_wait_button(xml_text):
+            subprocess.run(['adb','shell','input','keyevent','4'],check=False)
+        dismissed=True
+        time.sleep(.5)
+    return dismissed
+
 def page_state():
     return ev("""(()=>{const s=document.querySelector('#reader-reading-view .rd-scroll');const root=document.getElementById('reader-chapter-text');const ps=[...root?.querySelectorAll(':scope > .rd-page')||[]];const cur=root?.querySelector(':scope > .rd-page.rd-page-current,:scope > .rd-page.rd-page-show');const r=(cur||root)?.getBoundingClientRect();return {mode:!!s?.classList.contains('rd-pages-mode'),count:ps.length,index:ps.indexOf(cur),rect:r?{left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height}:null};})()""")
 
@@ -79,6 +114,12 @@ gloss=wait_value("""(()=>{const el=[...document.querySelectorAll('#reader-chapte
 # genuine Russian gloss here; contextual lexical quality is tested separately.
 if not re.search(r'[А-Яа-яЁё]',str(gloss)):
     raise RuntimeError(f'Expected a Cyrillic bundled French gloss, got {gloss!r}')
+
+# Leave the word-card UI before the navigation test. This is the same Reader
+# close function used by the app; no page/navigation internals are touched.
+ev("window.readerCloseWordPanel?.(); true")
+time.sleep(.25)
+dismissed_anr=dismiss_emulator_anr_overlay()
 screenshot('toc123-01-french-unknown-gloss.png')
 
 # Only now test the unchanged toc119 Reader. No page-turn function is invoked
@@ -93,14 +134,17 @@ state=page_state()
 if not state['mode'] or state['count']<2 or state['index']<0 or not state['rect']:
     raise RuntimeError('Unchanged toc119 page mode did not initialize: '+json.dumps(state,ensure_ascii=False))
 
+dismissed_anr=dismiss_emulator_anr_overlay() or dismissed_anr
 dpr=float(ev('window.devicePixelRatio||1'))
 r=state['rect']
 y_css=max(r['top']+70,min(r['bottom']-70,(r['top']+r['bottom'])/2))
 x_right=max(r['left']+120,r['right']-55)
 x_left=min(r['right']-120,r['left']+55)
 y=int(round(y_css*dpr)); x1=int(round(x_right*dpr)); x2=int(round(x_left*dpr))
-inside=ev(f"""(()=>{{const root=document.getElementById('reader-chapter-text');const hit=document.elementFromPoint({(x_right+x_left)/2},{y_css});return !!(root&&hit&&root.contains(hit));}})()""")
-if not inside: raise RuntimeError('Physical swipe midpoint is not inside Reader')
+inside=ev(f"""(()=>{{const root=document.getElementById('reader-chapter-text');const pts=[[{x_right},{y_css}],[{(x_right+x_left)/2},{y_css}],[{x_left},{y_css}]];return pts.every(([x,y])=>{{const hit=document.elementFromPoint(x,y);return !!(root&&hit&&root.contains(hit));}});}})()""")
+if not inside:
+    screenshot('toc123-02-invalid-swipe-hit-test.png')
+    raise RuntimeError('Physical swipe path is not inside Reader after closing overlays')
 
 # Probe confirms the ADB gesture actually arrived at Reader. This does not alter
 # gesture handling; it only records captured events.
@@ -128,7 +172,7 @@ if back!=before:
     raise RuntimeError(f'Unchanged toc119 right swipe failed: {after} -> {back}, expected {before}')
 screenshot('toc123-04-after-right-swipe.png')
 
-result={'ok':True,'lang':lang,'vocabCount':info['count'],'lemma':{'suis':info['suis'],'avait':info['avait']},'manualUnknown':'elle','gloss':gloss,'pages':state['count'],'swipe':[before,after,back],'leftTouchEvents':len(events_left),'rightTouchEvents':len(events_right),'core':'byte-identical shipped toc119'}
+result={'ok':True,'lang':lang,'vocabCount':info['count'],'lemma':{'suis':info['suis'],'avait':info['avait']},'manualUnknown':'elle','gloss':gloss,'pages':state['count'],'swipe':[before,after,back],'leftTouchEvents':len(events_left),'rightTouchEvents':len(events_right),'dismissedEmulatorAnr':dismissed_anr,'core':'byte-identical shipped toc119'}
 (OUT/'toc123-isolated-live-audit.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
 print(json.dumps(result,ensure_ascii=False,indent=2))
 ws.close()
