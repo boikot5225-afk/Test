@@ -36,3 +36,4 @@ runpy.run_path('scripts/patch-toc122i-native-offline-bootstrap.py', run_name='__
 runpy.run_path('scripts/patch-toc122j-webview-regex.py', run_name='__main__')
 runpy.run_path('scripts/patch-toc122k-context-cache-scope.py', run_name='__main__')
 runpy.run_path('scripts/patch-toc122l-fr-productive-morphology.py', run_name='__main__')
+runpy.run_path('scripts/patch-toc122n-fr-contextual-participles.py', run_name='__main__')
