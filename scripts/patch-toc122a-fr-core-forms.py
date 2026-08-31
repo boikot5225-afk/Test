@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import runpy
 
 p = Path('scripts/build_fr_reader_resources.py')
 s = p.read_text(encoding='utf-8')
@@ -24,3 +25,8 @@ if s.count(old) != 1:
 s = s.replace(old, new, 1)
 p.write_text(s, encoding='utf-8')
 print('toc122a French core auxiliary morphology applied')
+
+# Keep the workflow patch chain linear: toc122a is already invoked immediately
+# after the main toc122 patch, so apply the Android 15 import-cache refinement
+# here rather than duplicating the entire workflow only to add one command.
+runpy.run_path('scripts/patch-toc122b-native-import-cache.py', run_name='__main__')
