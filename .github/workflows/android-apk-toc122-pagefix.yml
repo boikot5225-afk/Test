@@ -55,6 +55,7 @@ jobs:
           python3 scripts/patch-toc122-fr-reader-architecture.py
           python3 scripts/patch-toc122a-fr-core-forms.py
           python3 scripts/patch-toc122-page-turn-reliability.py
+          python3 scripts/patch-toc122-page-turn-book-identity.py
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -80,10 +81,12 @@ jobs:
           set -euo pipefail
           node --check js/reader/interactions.js
           node --check js/reader/pages-mode.js
+          node --check js/reader/chapter-render-next.js
           grep -q "maxDurationMs = inPagesMode ? 2200 : 600" js/reader/interactions.js
           grep -q "window.__readerRanging = false" js/reader/interactions.js
           grep -q "recovered page turn across same-chapter rebuild" js/reader/pages-mode.js
           grep -q "animating = false" js/reader/pages-mode.js
+          grep -q "dataset.readerBookId" js/reader/chapter-render-next.js
 
       - name: French non-regression gate
         shell: bash
