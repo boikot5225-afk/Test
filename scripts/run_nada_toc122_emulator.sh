@@ -4,6 +4,13 @@ PKG=space.saintjust.reader.semanticstage1clean.formatfix.debug
 ACT=space.saintjust.reader.stage1.MainActivity
 APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
 test -f "$APK"
+
+# Match the Galaxy A54 viewport instead of accepting a Pixel-6-only gesture.
+adb shell wm size 1080x2340
+adb shell wm density 420
+adb shell wm size | tee runtime-audit/device-wm-size.txt
+adb shell wm density | tee runtime-audit/device-wm-density.txt
+
 adb install -r "$APK"
 
 # Put the fixture in Reader AI's own private cache. The debug package is
@@ -31,10 +38,11 @@ adb forward tcp:9222 "localabstract:webview_devtools_remote_${PID}"
 # install uses. Keep that setup separate from the actual swipe assertion.
 python3 scripts/bootstrap_toc122_french_reader_live.py
 
-# Reader acceptance comes first. This is a real Android touchscreen gesture on
-# the visible French page, not a JavaScript next()/prev() call.
+# Real page-turn acceptance: production flip animation, human-duration swipes,
+# stale-selection state, a same-chapter re-render during the flip, and repeated
+# left/right turns. No JavaScript next()/prev() is used to perform the gesture.
 python3 scripts/audit_toc122_pagination_live.py
 
 # Then run the existing French lexical/context/layout regression suite.
 python3 scripts/audit_nada_toc122_live.py
-adb exec-out screencap -p > runtime-audit/05-after-french-audit.png
+adb exec-out screencap -p > runtime-audit/06-after-french-audit.png
