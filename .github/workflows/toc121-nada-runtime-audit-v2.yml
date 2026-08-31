@@ -1,0 +1,108 @@
+name: toc121 Nada real runtime audit v2
+
+on:
+  push:
+    branches:
+      - test/toc121-nada-runtime-audit
+  workflow_dispatch:
+
+jobs:
+  nada-live:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/toc121-nada-runtime-audit
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Reproduce exact toc121 runtime and enable test-only WebView inspection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/wire-toc104-native-bridges.py
+          python3 scripts/patch-toc112-zh-context-inline.py
+          python3 scripts/patch-toc113-zh-context-coverage.py
+          python3 scripts/patch-toc114-zh-core-first-paint.py
+          python3 scripts/patch-toc115-zh-missing-only-auth.py
+          python3 scripts/patch-zh-lexical-pipeline-v2.py
+          python3 scripts/patch-zh-lexical-global-access.py
+          python3 scripts/patch-zh-context-pinyin-trust.py
+          python3 scripts/patch-toc119-zh-reader-quality.py
+          python3 scripts/patch-toc121-fr-reader-fixes.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle')
+          s=p.read_text()
+          assert s.count('versionCode 118') == 1
+          s=s.replace('versionCode 118','versionCode 1010',1)
+          s=s.replace("versionName '77.42-toc98'","versionName '77.42-toc121-fr-reader-fixes'",1)
+          p.write_text(s)
+          p=Path('index.html'); s=p.read_text()
+          s=s.replace("window.AN2_BUILD = 'v77.42-toc119-zh-reader-quality';","window.AN2_BUILD = 'v77.42-toc121-fr-reader-fixes';",1)
+          s=s.replace('<script type="module" src="js/app.js?v=77.42-zh-reader-quality"></script>','<script type="module" src="js/app.js?v=77.42-fr-reader-fixes"></script>',1)
+          p.write_text(s)
+          p=Path('js/app.js'); s=p.read_text()
+          s=s.replace("} from './reader-app.js?v=77.42-zh-reader-quality';","} from './reader-app.js?v=77.42-fr-reader-fixes';",1)
+          p.write_text(s)
+          p=Path('android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java'); s=p.read_text()
+          anchor='        super.onCreate(savedInstanceState);\n'
+          assert s.count(anchor) == 1
+          s=s.replace(anchor,anchor+'        WebView.setWebContentsDebuggingEnabled(true); // test-only runtime audit\n',1)
+          p.write_text(s)
+          PY
+          rm -rf build android/app/build
+
+      - name: Build exact toc121 and audit EPUB
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd android && ./gradlew --no-daemon --stacktrace :app:assembleDebug)
+          python3 scripts/make_nada_audit_epub.py
+          python3 -m pip install --quiet websocket-client requests
+
+      - name: Enable emulator hardware acceleration
+        shell: bash
+        run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+
+      - name: Open Nada in actual Reader AI and inspect live DOM
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            set -eu
+            PKG=space.saintjust.reader.semanticstage1clean.formatfix.debug
+            ACT=space.saintjust.reader.stage1.MainActivity
+            APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+            adb install -r "$APK"
+            adb shell mkdir -p "/sdcard/Android/data/${PKG}/files"
+            adb push runtime-audit/nada-runtime.epub "/sdcard/Android/data/${PKG}/files/nada-runtime.epub"
+            adb shell am force-stop "$PKG"
+            adb shell am start -W -a android.intent.action.VIEW -d "file:///sdcard/Android/data/${PKG}/files/nada-runtime.epub" -t application/epub+zip -n "${PKG}/${ACT}" > runtime-audit/launch.txt
+            sleep 5
+            adb exec-out screencap -p > runtime-audit/00-import.png
+            PID="$(adb shell pidof "$PKG" | tr -d '\r')"
+            test -n "$PID"
+            adb forward tcp:9222 "localabstract:webview_devtools_remote_${PID}"
+            python3 scripts/audit_nada_live_webview.py
+            adb exec-out screencap -p > runtime-audit/01-after-audit.png
+
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toc121-nada-live-audit-v2
+          path: runtime-audit/
+          if-no-files-found: error
