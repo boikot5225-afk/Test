@@ -1,0 +1,241 @@
+name: Android APK toc122 final live quality
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc122-fr-reader-architecture
+  workflow_dispatch:
+
+jobs:
+  final-quality:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc122-fr-reader-architecture
+          fetch-depth: 0
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore Reader AI signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_KEYSTORE_BASE64}"
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Apply maintained Reader runtime and toc122 quality patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/wire-toc104-native-bridges.py
+          python3 scripts/patch-toc112-zh-context-inline.py
+          python3 scripts/patch-toc113-zh-context-coverage.py
+          python3 scripts/patch-toc114-zh-core-first-paint.py
+          python3 scripts/patch-toc115-zh-missing-only-auth.py
+          python3 scripts/patch-zh-lexical-pipeline-v2.py
+          python3 scripts/patch-zh-lexical-global-access.py
+          python3 scripts/patch-zh-context-pinyin-trust.py
+          python3 scripts/patch-toc119-zh-reader-quality.py
+          python3 scripts/patch-toc121-fr-reader-fixes.py
+          python3 scripts/prepare-toc122-patch-layout.py
+          python3 scripts/patch-toc122-fr-reader-architecture.py
+          python3 scripts/patch-toc122a-fr-core-forms.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('android/app/build.gradle'); s=p.read_text()
+          assert s.count('versionCode 118') == 1
+          assert s.count("versionName '77.42-toc98'") == 1
+          s=s.replace('versionCode 118','versionCode 1011',1)
+          s=s.replace("versionName '77.42-toc98'","versionName '77.42-toc122-fr-reader-architecture'",1)
+          p.write_text(s)
+          p=Path('index.html'); s=p.read_text()
+          s,n=re.subn(r"window\.AN2_BUILD = 'v77\.42-toc119-zh-reader-quality';","window.AN2_BUILD = 'v77.42-toc122-fr-reader-architecture';",s,count=1); assert n==1
+          s,n=re.subn(r'<script type="module" src="js/app\.js\?v=77\.42-zh-reader-quality"></script>','<script type="module" src="js/app.js?v=77.42-fr-reader-architecture"></script>',s,count=1); assert n==1
+          p.write_text(s)
+          p=Path('js/app.js'); s=p.read_text()
+          s,n=re.subn(r"\} from './reader-app\.js\?v=77\.42-zh-reader-quality';","} from './reader-app.js?v=77.42-fr-reader-architecture';",s,count=1); assert n==1
+          p.write_text(s)
+          PY
+          rm -rf build android/app/build runtime-audit unique-out
+
+      - name: French final architecture and resource gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/fr-toc122
+          python3 scripts/build_fr_reader_resources.py --output-dir build/fr-selftest-unused --cache-dir build/fr-selftest-cache --self-test
+          python3 scripts/build_fr_reader_resources.py --output-dir build/fr-toc122 --cache-dir build/fr-toc122-cache
+          python3 - <<'PY'
+          from pathlib import Path
+          lemma={}
+          for line in Path('build/fr-toc122/fr_vocab_lemma.tsv').read_text().splitlines():
+              if '\t' in line:
+                  a,b=line.split('\t',1); lemma[a]=b
+          for w in ('courant','personne','fini','fumant'):
+              assert lemma.get(w,w)==w,(w,lemma.get(w))
+          for w,e in {'est':'être','suis':'être','avait':'avoir','ai':'avoir'}.items():
+              assert lemma.get(w,w)==e,(w,lemma.get(w))
+          print('toc122 morphology resource gate PASS')
+          PY
+          node --check js/reader/fr-vocab-estimate.js
+          node --check js/reader/fr-lexical-pipeline-v2.js
+          node --check js/reader/fr-unknown-gloss.js
+          node --check js/reader/fr-context-gloss-v3.js
+          node --check js/reader/word-state.js
+          node --check js/reader/word-lookup.js
+          node --check js/reader-app.js
+          cp js/reader/fr-context-gloss-v3.js /tmp/fr-context-gloss-v3.mjs
+          node --input-type=module - <<'JS'
+          const m=await import('file:///tmp/fr-context-gloss-v3.mjs');
+          const cases=[
+            ['он курил без ⟦остановки⟧','sans','без остановки'],
+            ['он был в ⟦курсе⟧ дела','au','в курсе'],
+            ['он ⟦набрал⟧ номер','de','набрал'],
+          ];
+          for(const [translated,prev,expected] of cases){
+            const got=m.extractMarkedGloss(translated,prev);
+            if(got!==expected)throw new Error(`${translated}: ${got} != ${expected}`);
+          }
+          console.log('toc122 marked target extraction PASS');
+          JS
+          python3 - <<'PY'
+          from pathlib import Path
+          runtime=Path('js/reader/interactions-runtime.js').read_text()
+          vocab=Path('js/reader/fr-vocab-estimate.js').read_text()
+          lexical=Path('js/reader/fr-lexical-pipeline-v2.js').read_text()
+          context=Path('js/reader/fr-context-gloss-v3.js').read_text()
+          gloss=Path('js/reader/fr-unknown-gloss.js').read_text()
+          app=Path('js/reader-app.js').read_text()
+          activity=Path('android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java').read_text()
+          assert "fr-context-gloss-v3.js?v=3" in runtime and "fr-context-gloss-v2.js?v=2" not in runtime
+          assert 'function repairFrenchStateStore' in vocab
+          assert 'manualMap?.get(normalizeSurface(word))' in vocab
+          assert 'rw-fr-proper' in vocab
+          assert 'for(const[candidateKey,state]of Object.entries(store))' not in vocab
+          assert 'const surfaceHit = data.rankFold.get(word);' in lexical
+          assert 'strongThreshold' in lexical and 'SAFE_RU_OVERRIDES' in lexical
+          assert 'chapterProperHeuristic' in lexical and 'document.createRange()' in lexical
+          assert 'deterministicContextGloss' in context and "provider: 'local-collocation'" in context
+          assert "provider: marked ? 'mlkit-target-marked' : 'mlkit-short-phrase'" in context
+          assert 'chooseContextToken(item.candidates, translated)' not in context
+          assert 'CONTEXT_FIRST' in gloss
+          assert 'lookupStillActive' in app and 'requestStillActive' in app
+          assert 'new FileInputStream(new File(path))' in activity
+          print('toc122 final architecture gate PASS')
+          PY
+          rm -rf build
+
+      - name: Chinese non-regression gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/build_zh_migaku_resources.py --self-test
+          python3 scripts/build_zh_migaku_resources_v2.py --self-test
+          python3 scripts/build_zh_migaku_sqlite.py --self-test
+          mkdir -p build/toc122-zh-gate
+          python3 scripts/build_zh_migaku_sqlite.py --output-dir build/toc122-zh-gate --cache-dir build/toc122-zh-cache
+          python3 scripts/export_zh_jieba_rank_asset.py build/toc122-zh-gate/zh_migaku.sqlite3 build/toc122-zh-gate/zh_jieba_top100k.txt --limit 100000
+          node scripts/check-zh-lexical-pipeline-v2.mjs build/toc122-zh-gate/zh_jieba_top100k.txt data/zh_dict_core.json data/zh_lexical_regressions.json
+          rm -rf build
+
+      - name: Build universal APK for Android 15 live test
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Prepare Nada live audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/make_nada_audit_epub_toc122.py
+          python3 -m pip install --quiet websocket-client requests
+          chmod +x scripts/run_nada_toc122_emulator.sh
+
+      - name: Enable emulator hardware acceleration
+        shell: bash
+        run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+
+      - name: Live Nada audit on Android 15
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: bash scripts/run_nada_toc122_emulator.sh
+
+      - name: Upload live audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toc122-final-nada-live-audit
+          path: runtime-audit/
+          if-no-files-found: warn
+
+      - name: Configure Galaxy A54 arm64 package
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle'); s=p.read_text(); anchor='        targetSdk 35\n'; assert s.count(anchor)==1
+          p.write_text(s.replace(anchor,anchor+"        ndk {\n            abiFilters 'arm64-v8a'\n        }\n",1))
+          PY
+          rm -rf android/app/build
+
+      - name: Build final A54 arm64 APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Sign and validate final toc122 A54 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          mkdir -p unique-out
+          OUT=unique-out/Reader-AI-77.42-toc122-fr-reader-architecture-a54-vc1011.apk
+          KSPASS="${ANDROID_KEYSTORE_PASSWORD:-readerai2026}"
+          KEYPASS="${ANDROID_KEY_PASSWORD:-$KSPASS}"
+          ALIAS="${ANDROID_KEY_ALIAS:-reader-ai}"
+          "${BUILD_TOOLS}/apksigner" sign --ks "${ANDROID_KEYSTORE_PATH}" --ks-key-alias "$ALIAS" --ks-pass "pass:$KSPASS" --key-pass "pass:$KEYPASS" --v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled true --out "$OUT" "$APK"
+          "${BUILD_TOOLS}/apksigner" verify --verbose --print-certs "$OUT" | tee unique-out/APKSIGNER.txt
+          "${BUILD_TOOLS}/aapt" dump badging "$OUT" | tee unique-out/BADGING.txt
+          "${BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$OUT" > unique-out/ZIPALIGN.txt
+          unzip -t "$OUT" >/dev/null
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
+          grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
+          grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
+          grep -q "versionCode='1011'" unique-out/BADGING.txt
+          grep -q "native-code: 'arm64-v8a'" unique-out/BADGING.txt
+          if unzip -l "$OUT" | grep -Eq 'lib/(armeabi-v7a|x86|x86_64)/'; then echo 'non-A54 ABI leaked' >&2; exit 1; fi
+          unzip -l "$OUT" | grep -qF 'lib/arm64-v8a/libtranslate_jni.so'
+          unzip -l "$OUT" | grep -qF 'assets/frreader/fr_vocab_frequency.tsv'
+          unzip -l "$OUT" | grep -qF 'assets/frreader/fr_vocab_lemma.tsv'
+          unzip -l "$OUT" | grep -qF 'assets/frreader/fr_ru_core.json'
+          unzip -l "$OUT" | grep -qF 'assets/frreader/fr_ru_senses.json'
+          sha256sum "$OUT" | tee unique-out/SHA256.txt
+          stat -c '%n %s bytes' "$OUT"
+
+      - name: Upload final toc122 A54 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc122-fr-reader-architecture-a54-vc1011
+          path: unique-out/
+          if-no-files-found: error
+          retention-days: 30
