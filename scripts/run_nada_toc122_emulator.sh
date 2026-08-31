@@ -38,6 +38,11 @@ adb forward tcp:9222 "localabstract:webview_devtools_remote_${PID}"
 # install uses. Keep that setup separate from the actual swipe assertion.
 python3 scripts/bootstrap_toc122_french_reader_live.py
 
+# Hard stop against the previous false-positive path: if Android/WebView reports
+# reduced motion, pages-mode.js completes flips immediately and we have not
+# exercised the production animation race at all.
+python3 scripts/assert_toc122_real_motion.py | tee runtime-audit/motion-gate.txt
+
 # Real page-turn acceptance: production flip animation, human-duration swipes,
 # stale-selection state, a same-chapter re-render during the flip, and repeated
 # left/right turns. No JavaScript next()/prev() is used to perform the gesture.
