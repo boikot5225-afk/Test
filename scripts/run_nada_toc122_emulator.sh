@@ -12,7 +12,8 @@ adb install -r "$APK"
 # exercising ACTION_VIEW -> native cache bridge -> /android-import/current ->
 # EPUB parser -> actual French reader runtime.
 adb push runtime-audit/nada-runtime.epub /data/local/tmp/nada-runtime.epub
-adb shell run-as "$PKG" sh -c 'cp /data/local/tmp/nada-runtime.epub cache/nada-runtime.epub && test -s cache/nada-runtime.epub'
+adb shell run-as "$PKG" cp /data/local/tmp/nada-runtime.epub cache/nada-runtime.epub
+adb shell run-as "$PKG" ls -l cache/nada-runtime.epub
 PRIVATE_URI="file:///data/user/0/${PKG}/cache/nada-runtime.epub"
 adb shell am force-stop "$PKG"
 adb shell am start -W \
