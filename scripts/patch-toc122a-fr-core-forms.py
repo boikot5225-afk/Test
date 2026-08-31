@@ -33,3 +33,4 @@ runpy.run_path('scripts/patch-toc122b-native-import-cache.py', run_name='__main_
 runpy.run_path('scripts/patch-toc122f-fr-live-quality.py', run_name='__main__')
 runpy.run_path('scripts/patch-toc122h-audit-bootstrap.py', run_name='__main__')
 runpy.run_path('scripts/patch-toc122i-native-offline-bootstrap.py', run_name='__main__')
+runpy.run_path('scripts/patch-toc122j-webview-regex.py', run_name='__main__')
