@@ -11,6 +11,14 @@ adb shell wm density 420
 adb shell wm size | tee runtime-audit/device-wm-size.txt
 adb shell wm density | tee runtime-audit/device-wm-density.txt
 
+# Headless AOSP occasionally shows a launcher/Quickstep ANR over the foreground
+# app. That system dialog consumed the first realistic 950 ms swipe and made the
+# Reader look inert even though the gesture never reached WebView. Suppress such
+# environment dialogs and fail explicitly later if one still appears.
+adb shell settings put global hide_error_dialogs 1 || true
+adb shell settings put global anr_show_background 0 || true
+adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
+
 adb install -r "$APK"
 
 # Put the fixture in Reader AI's own private cache. The debug package is
@@ -29,6 +37,12 @@ adb shell am start -W \
   -t application/epub+zip \
   -n "${PKG}/${ACT}" | tee runtime-audit/launch.txt
 sleep 5
+# Quickstep is irrelevant once Reader AI owns the foreground. If this emulator
+# image has it, stop the flaky launcher process so it cannot raise a late ANR.
+if adb shell pm list packages | grep -q '^package:com.android.launcher3'; then
+  adb shell am force-stop com.android.launcher3 || true
+fi
+adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
 adb exec-out screencap -p > runtime-audit/00-import.png
 PID="$(adb shell pidof "$PKG" | tr -d '\r')"
 test -n "$PID"
