@@ -1,0 +1,115 @@
+name: toc123 materialize exact toc119 runtime
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc123-fr-isolated
+    paths:
+      - .github/workflows/toc123-materialize-toc119.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc123-fr-isolated
+          fetch-depth: 0
+
+      - name: Materialize maintained toc119 runtime once
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/wire-toc104-native-bridges.py
+          python3 scripts/patch-toc112-zh-context-inline.py
+          python3 scripts/patch-toc113-zh-context-coverage.py
+          python3 scripts/patch-toc114-zh-core-first-paint.py
+          python3 scripts/patch-toc115-zh-missing-only-auth.py
+          python3 scripts/patch-zh-lexical-pipeline-v2.py
+          python3 scripts/patch-zh-lexical-global-access.py
+          python3 scripts/patch-zh-context-pinyin-trust.py
+          python3 scripts/patch-toc119-zh-reader-quality.py
+
+          # French is only two additive imports. Re-assert them after the old
+          # toc119 materializer has rewritten interactions-runtime.js.
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('js/reader/interactions-runtime.js')
+          s=p.read_text(encoding='utf-8')
+          block=(
+            "import './fr-vocab-estimate.js?v=123-isolated'; // toc123: isolated French Known/Unknown + lemma\n"
+            "import './fr-unknown-gloss.js?v=123-isolated'; // toc123: isolated bundled FR->RU glosses\n"
+          )
+          anchor="import './en-context-fixes-v1.js?v=2'; // toc105: DeepSeek context has final priority; text-only\n"
+          if block not in s:
+            if anchor not in s: raise SystemExit('English runtime anchor missing after toc119 materialization')
+            s=s.replace(anchor,anchor+block,1)
+          p.write_text(s,encoding='utf-8')
+
+          p=Path('android/app/build.gradle')
+          s=p.read_text(encoding='utf-8')
+          if 'versionCode 118' in s:
+            s=s.replace('versionCode 118','versionCode 1015',1)
+          elif 'versionCode 1008' in s:
+            s=s.replace('versionCode 1008','versionCode 1015',1)
+          else:
+            raise SystemExit('unexpected versionCode before toc123 identity')
+          if "versionName '77.42-toc98'" in s:
+            s=s.replace("versionName '77.42-toc98'","versionName '77.42-toc123-fr-isolated'",1)
+          elif "versionName '77.42-toc119-zh-reader-quality'" in s:
+            s=s.replace("versionName '77.42-toc119-zh-reader-quality'","versionName '77.42-toc123-fr-isolated'",1)
+          else:
+            raise SystemExit('unexpected versionName before toc123 identity')
+          p.write_text(s,encoding='utf-8')
+          PY
+
+      - name: Prove core equals the real shipped toc119 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/toc119-core.sha256 <<'EOF'
+          b709451dec2849b8487b054fd8f52c57ef9fc91dc5f5818ed5720e00dda08ba6  js/reader/interactions.js
+          13ce9f42db4427e1c2442abad7c0e66343aad92d79a4e945376fb42afed8e7d9  js/reader/pages-mode.js
+          202e287af1158b8498e44ae3e9ce28cf43b1a0aaaba9f01b25bfdfa2fde47f04  js/reader-app.js
+          c10f3680fb122c4f04a730ddb298f88165c29d5b24978cc5868560531f752361  js/reader/chapter-render.js
+          8e8f5f6d67929f6b745ec4bd3e1b83010a1460b438886233df8fae34d62bafc1  js/reader/chapter-render-next.js
+          825555b4553bb9d8f6e448fdbf58d2322e54e33cf07fa8ba5f84d888a531c537  js/reader/chapter-render-stage1.js
+          8ca5b6dfdbf03309fadc89339ff4cd12d010a84c56122f5c8ea807b9220f562f  js/reader/display.js
+          896834e059da0a3c59b779e94705bb61187c9b4db31d6590d8c76cc4941770e7  js/reader/epub.js
+          d0ee752392b38822cfaeb0d557f7c359ca4aae166650b8844adfb9012bc38d8c  js/reader/toc-runtime.js
+          c4ad630e243b1d3707a05fa40a74d256ac1bc469ff30ae499fa0fa95262e5faa  js/reader/en-vocab-estimate.js
+          7d6d3933dc23c57280cbbaa2aa8d492130c715923cc0ccd89bbfeecce096e333  js/reader/en-unknown-gloss-v2.js
+          EOF
+          sha256sum -c /tmp/toc119-core.sha256
+
+      - name: No toc122 page-turn surgery allowed
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -q 'maxDurationMs = inPagesMode ? 2200' js/reader/interactions.js
+          ! grep -q 'recovered page turn across same-chapter rebuild' js/reader/pages-mode.js
+          ! test -f scripts/patch-toc122-page-turn-reliability.py
+          node --check js/reader/interactions.js
+          node --check js/reader/pages-mode.js
+          node --check js/reader-app.js
+          node --check js/reader/fr-vocab-estimate.js
+          node --check js/reader/fr-unknown-gloss.js
+
+      - name: Commit materialized runtime source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build runtime-audit unique-out
+          if git diff --quiet && git diff --cached --quiet; then
+            echo 'Nothing to materialize'
+            exit 0
+          fi
+          git config user.name 'Reader AI CI'
+          git config user.email 'reader-ai-ci@users.noreply.github.com'
+          git add -A
+          git commit -m 'refactor(reader): materialize exact toc119 runtime source [skip ci]'
+          git push origin HEAD:feature/77.42-toc123-fr-isolated
