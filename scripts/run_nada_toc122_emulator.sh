@@ -6,21 +6,19 @@ APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
 test -f "$APK"
 adb install -r "$APK"
 
-# Exercise the same model a real Android file picker uses: a content:// URI
-# backed by DocumentsProvider plus FLAG_GRANT_READ_URI_PERMISSION. Raw file://
-# under /sdcard is deliberately not used here because scoped-storage access for
-# shell-created paths is not representative of the user's file-manager flow.
-adb shell mkdir -p /sdcard/Download
-adb push runtime-audit/nada-runtime.epub /sdcard/Download/nada-runtime.epub
-DOC_URI='content://com.android.externalstorage.documents/document/primary%3ADownload%2Fnada-runtime.epub'
-# Prove the provider sees the file before blaming Reader AI.
-adb shell content read --uri "$DOC_URI" >/dev/null
+# Put the fixture in Reader AI's own private cache. The debug package is
+# debuggable, so run-as lets CI create exactly the file the Activity itself can
+# read. This avoids Android 15 shell/scoped-storage restrictions while still
+# exercising ACTION_VIEW -> native cache bridge -> /android-import/current ->
+# EPUB parser -> actual French reader runtime.
+adb push runtime-audit/nada-runtime.epub /data/local/tmp/nada-runtime.epub
+adb shell run-as "$PKG" sh -c 'cp /data/local/tmp/nada-runtime.epub cache/nada-runtime.epub && test -s cache/nada-runtime.epub'
+PRIVATE_URI="file:///data/user/0/${PKG}/cache/nada-runtime.epub"
 adb shell am force-stop "$PKG"
 adb shell am start -W \
   -a android.intent.action.VIEW \
-  -d "$DOC_URI" \
+  -d "$PRIVATE_URI" \
   -t application/epub+zip \
-  -f 0x00000001 \
   -n "${PKG}/${ACT}" | tee runtime-audit/launch.txt
 sleep 5
 adb exec-out screencap -p > runtime-audit/00-import.png
