@@ -1,0 +1,83 @@
+name: toc121 Nada real runtime audit v3
+
+on:
+  push:
+    branches:
+      - test/toc121-nada-runtime-audit
+  workflow_dispatch:
+
+jobs:
+  nada-live-v3:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/toc121-nada-runtime-audit
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+
+      - name: Reproduce exact toc121 runtime and enable audit-only WebView debugging
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/wire-toc104-native-bridges.py
+          python3 scripts/patch-toc112-zh-context-inline.py
+          python3 scripts/patch-toc113-zh-context-coverage.py
+          python3 scripts/patch-toc114-zh-core-first-paint.py
+          python3 scripts/patch-toc115-zh-missing-only-auth.py
+          python3 scripts/patch-zh-lexical-pipeline-v2.py
+          python3 scripts/patch-zh-lexical-global-access.py
+          python3 scripts/patch-zh-context-pinyin-trust.py
+          python3 scripts/patch-toc119-zh-reader-quality.py
+          python3 scripts/patch-toc121-fr-reader-fixes.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle'); s=p.read_text()
+          assert s.count('versionCode 118') == 1
+          s=s.replace('versionCode 118','versionCode 1010',1).replace("versionName '77.42-toc98'","versionName '77.42-toc121-fr-reader-fixes'",1)
+          p.write_text(s)
+          p=Path('index.html'); s=p.read_text()
+          s=s.replace("window.AN2_BUILD = 'v77.42-toc119-zh-reader-quality';","window.AN2_BUILD = 'v77.42-toc121-fr-reader-fixes';",1)
+          s=s.replace('<script type="module" src="js/app.js?v=77.42-zh-reader-quality"></script>','<script type="module" src="js/app.js?v=77.42-fr-reader-fixes"></script>',1)
+          p.write_text(s)
+          p=Path('js/app.js'); s=p.read_text().replace("} from './reader-app.js?v=77.42-zh-reader-quality';","} from './reader-app.js?v=77.42-fr-reader-fixes';",1); p.write_text(s)
+          p=Path('android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java'); s=p.read_text()
+          anchor='        super.onCreate(savedInstanceState);\n'; assert s.count(anchor)==1
+          p.write_text(s.replace(anchor, anchor+'        WebView.setWebContentsDebuggingEnabled(true); // audit-only\n',1))
+          PY
+          rm -rf build android/app/build
+
+      - name: Build toc121 and exact Nada excerpt fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd android && ./gradlew --no-daemon --stacktrace :app:assembleDebug)
+          python3 scripts/make_nada_audit_epub.py
+          python3 -m pip install --quiet websocket-client requests
+          chmod +x scripts/run_nada_emulator_audit.sh
+
+      - name: Enable KVM
+        shell: bash
+        run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+
+      - name: Run actual Reader AI with Nada
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: bash scripts/run_nada_emulator_audit.sh
+
+      - name: Upload runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toc121-nada-live-audit-v3
+          path: runtime-audit/
+          if-no-files-found: error
