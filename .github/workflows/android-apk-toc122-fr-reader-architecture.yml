@@ -77,7 +77,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build/fr-toc122
-          python3 scripts/build_fr_reader_resources.py --output-dir build/fr-toc122 --cache-dir build/fr-toc122-cache --self-test
+          python3 scripts/build_fr_reader_resources.py --output-dir build/fr-selftest-unused --cache-dir build/fr-selftest-cache --self-test
+          python3 scripts/build_fr_reader_resources.py --output-dir build/fr-toc122 --cache-dir build/fr-toc122-cache
           python3 - <<'PY'
           from pathlib import Path
           lemma={}
