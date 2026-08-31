@@ -27,6 +27,10 @@ PID="$(adb shell pidof "$PKG" | tr -d '\r')"
 test -n "$PID"
 adb forward tcp:9222 "localabstract:webview_devtools_remote_${PID}"
 
+# Reach the real visible French Reader via the same guest/import path a clean
+# install uses. Keep that setup separate from the actual swipe assertion.
+python3 scripts/bootstrap_toc122_french_reader_live.py
+
 # Reader acceptance comes first. This is a real Android touchscreen gesture on
 # the visible French page, not a JavaScript next()/prev() call.
 python3 scripts/audit_toc122_pagination_live.py
