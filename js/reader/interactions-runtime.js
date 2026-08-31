@@ -13,6 +13,7 @@ import './en-unknown-gloss-full-fallback.js?v=2';
 import './en-context-gloss-v1.js?v=2'; // toc105: never overwrite DeepSeek context; text-only
 import './en-context-fixes-v1.js?v=2'; // toc105: DeepSeek context has final priority; text-only
 import './fr-vocab-estimate.js?v=123-isolated'; // toc123: isolated French Known/Unknown + lemma
+import './fr-lexical-pipeline-v2.js?v=123-isolated'; // toc123: French-only lexical owner
 import './fr-unknown-gloss.js?v=123-isolated'; // toc123: isolated bundled FR->RU glosses
 import './toc51-stability.js?v=2';
 import './toolbar-scroll.js?v=1';

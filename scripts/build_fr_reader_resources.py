@@ -150,10 +150,22 @@ def build_lexical_assets(rows, output_dir: Path):
             continue
         best_lemma, best_rank = ordered[0]
         second_rank = ordered[1][1]
-        if best_rank <= 1000 and (second_rank >= best_rank * 4 or second_rank - best_rank >= 1500):
-            lemma_map[surface] = best_lemma
-        elif surface == best_lemma:
+        # toc122: if the surface is itself a ranked dictionary headword, keep it
+        # as itself.  French has hundreds of collisions such as courant/courir,
+        # part/partir, montre/montrer and fini/finir; forcing the most frequent
+        # verb here corrupts POS, translation and Known/Unknown before context is
+        # even considered.
+        # Some ultra-common grammatical forms collide with noisy lexical
+        # headwords in subtitle-derived data. Prefer the grammatical analysis
+        # only where the collision is effectively artificial in normal prose.
+        core_form = {'ai': 'avoir'}.get(surface)
+        if core_form and core_form in options:
+            lemma_map[surface] = core_form
+        elif surface in options:
             lemma_map[surface] = surface
+            ambiguous += 1
+        elif best_rank <= 1000 and (second_rank >= best_rank * 4 or second_rank - best_rank >= 1500):
+            lemma_map[surface] = best_lemma
         else:
             ambiguous += 1
 
@@ -170,6 +182,7 @@ def build_lexical_assets(rows, output_dir: Path):
         "language": "fr",
         "ranked_lemmas": len(ranked),
         "mapped_inflected_forms": sum(1 for s, l in lemma_map.items() if s != l),
+        "ambiguous_forms_preserved_or_left_for_context": ambiguous,
         "ambiguous_forms_left_unmapped": ambiguous,
         "top20": [row["lemma"] for row in ranked[:20]],
     }
@@ -259,6 +272,8 @@ def main():
             {"lemma":"être","pos":"AUX","rank":2,"count":100,"cefr":"A1","gender":"","forms":"est:surface;suis:surface;être:surface;étaient:surface"},
             {"lemma":"avoir","pos":"VERB","rank":7,"count":80,"cefr":"A1","gender":"","forms":"ai:pres.1sg;avait:impf.3sg;avoir:surface"},
             {"lemma":"faire","pos":"VERB","rank":20,"count":50,"cefr":"A1","gender":"","forms":"fait:surface;faire:surface"},
+            {"lemma":"fumer","pos":"VERB","rank":40,"count":40,"cefr":"A2","gender":"","forms":"fumant:part;fume:surface;fumer:surface"},
+            {"lemma":"fumant","pos":"ADJ","rank":2400,"count":4,"cefr":"B2","gender":"","forms":"fumant:surface"},
         ]
         import tempfile
         with tempfile.TemporaryDirectory() as td:
@@ -266,7 +281,8 @@ def main():
             assert ranked[0]["lemma"] == "être"
             assert lemma_map["suis"] == "être"
             assert lemma_map["avait"] == "avoir"
-            assert meta["ranked_lemmas"] == 3
+            assert lemma_map["fumant"] == "fumant"
+            assert meta["ranked_lemmas"] == 5
         print("French Reader resource self-test PASS")
         return
 
