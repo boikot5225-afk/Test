@@ -29,7 +29,29 @@ for old, new in {
         s = s.replace(old, new, 1)
 p.write_text(s, encoding='utf-8')
 
-# Regexes in patch-toc122-fr-reader-architecture.py are now stored correctly in
-# the repository.  Do not mutate that source file from CI: this helper only
-# prepares the minified runtime layout for the structural patch.
-print('toc122 patch state staging prepared')
+# The patch file accidentally committed three raw regex literals with doubled
+# backslashes. Normalize those exact literals here before executing it. This is
+# idempotent: if a literal is already correct, nothing is changed.
+patch = Path('scripts/patch-toc122-fr-reader-architecture.py')
+t = patch.read_text(encoding='utf-8')
+fixes = [
+    (
+        r'''r"function findWordState\\(word,create=false\\)\\{.*?\\}function manualKnowledgeMapSnapshot\\(store=wordStateStore\\(\\)\\)\\{.*?\\}\\nfunction classificationForSnapshot"''',
+        r'''r"function findWordState\(word,create=false\)\{.*?\}function manualKnowledgeMapSnapshot\(store=wordStateStore\(\)\)\{.*?\}\nfunction classificationForSnapshot"''',
+    ),
+    (
+        r'''r"function applyClassificationToElement\\(el,info\\)\\{.*?\\}\\nfunction applyClassificationBatch"''',
+        r'''r"function applyClassificationToElement\(el,info\)\{.*?\}\nfunction applyClassificationBatch"''',
+    ),
+    (
+        r'''r"async function markCurrentWord\\(known\\)\\{.*?\\}\\s*function randomNormal"''',
+        r'''r"async function markCurrentWord\(known\)\{.*?\}\s*function randomNormal"''',
+    ),
+]
+changed = 0
+for bad, good in fixes:
+    if bad in t:
+        t = t.replace(bad, good, 1)
+        changed += 1
+patch.write_text(t, encoding='utf-8')
+print(f'toc122 patch state staging prepared; regex literals normalized={changed}')
