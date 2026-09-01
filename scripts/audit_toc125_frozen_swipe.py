@@ -272,7 +272,6 @@ screenshot('toc125-frozen-swipe.png')
 result = {
     'ok': True,
     'pages': s['count'],
-    'direct': [before_direct['index'], after_direct['index'], after_direct_back['index']],
     'swipe': [before, after, back],
     'leftEvents': left,
     'rightEvents': right,
