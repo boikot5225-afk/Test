@@ -53,13 +53,16 @@ export async function readZipEntries(arrayBuffer) {
     const extraLength = zipU16(view, offset + 30);
     const commentLength = zipU16(view, offset + 32);
     const localOffset = zipU32(view, offset + 42);
-    const name = decoder.decode(bytes.slice(offset + 46, offset + 46 + nameLength)).replace(/^\/+/, '');
+    const name = decoder.decode(bytes.subarray(offset + 46, offset + 46 + nameLength)).replace(/^\/+/, '');
 
     if (zipU32(view, localOffset) === 0x04034b50 && !name.endsWith('/')) {
       const localNameLength = zipU16(view, localOffset + 26);
       const localExtraLength = zipU16(view, localOffset + 28);
       const dataStart = localOffset + 30 + localNameLength + localExtraLength;
-      const compressed = bytes.slice(dataStart, dataStart + compressedSize);
+      // subarray is a zero-copy view into the original EPUB ArrayBuffer. The
+      // old slice() duplicated every compressed file and could nearly double
+      // peak JS heap before decompression even started.
+      const compressed = bytes.subarray(dataStart, dataStart + compressedSize);
       entries.set(name, {
         name,
         method,
@@ -131,8 +134,6 @@ export function htmlToParagraphs(html, { lang = null, canonicalLang, chunkLongPa
   const nodes = [...doc.body?.querySelectorAll(blockSelector) || []];
   const paragraphs = [];
   const seen = new Set();
-  // Chinese and Japanese are written without spaces, so a 420-char paragraph is
-  // a wall of text — both get the shorter CJK chunk.
   const isCjk = ['zh', 'ja'].includes(canonicalLang(lang));
 
   const pushParagraph = (raw) => {
@@ -174,8 +175,6 @@ export function htmlToParagraphs(html, { lang = null, canonicalLang, chunkLongPa
   return paragraphs.filter(item => item.length > 1);
 }
 
-// Like htmlToParagraphs but also extracts <img> elements as image items.
-// Returns (string | {type:'image', path:string, alt:string})[]
 export function htmlToMixedItems(html, { lang = null, canonicalLang, chunkLongParagraph, basePath = '' }) {
   const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
   doc.querySelectorAll('script,style,nav,header,footer,svg,iframe,object,form,noscript').forEach(n => n.remove());
@@ -276,7 +275,6 @@ export function extractEpubMeta(opfText, fallbackTitle) {
     const match = String(opfText || '').match(pattern);
     return match ? match[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '';
   };
-  // dc:language is e.g. "en", "fr-FR", "zh-CN" — keep just the primary subtag.
   const lang = get('language').toLowerCase().split(/[-_]/)[0] || '';
   return { title: get('title') || fallbackTitle, author: get('creator') || '', lang };
 }
