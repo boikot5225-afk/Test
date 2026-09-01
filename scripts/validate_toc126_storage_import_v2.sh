@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+python3 - <<'PY'
+from pathlib import Path
+import hashlib
+import re
+
+root = Path('.')
+
+def text(path):
+    return (root / path).read_text(encoding='utf-8')
+
+def sha(path):
+    return hashlib.sha256((root / path).read_bytes()).hexdigest()
+
+# Reader core remains the user-known toc119 navigation/render core.
+frozen = {
+    'js/reader/interactions.js': 'b709451dec2849b8487b054fd8f52c57ef9fc91dc5f5818ed5720e00dda08ba6',
+    'js/reader/pages-mode.js': '13ce9f42db4427e1c2442abad7c0e66343aad92d79a4e945376fb42afed8e7d9',
+    'js/reader-app.js': '202e287af1158b8498e44ae3e9ce28cf43b1a0aaaba9f01b25bfdfa2fde47f04',
+    'js/reader/chapter-render.js': 'c10f3680fb122c4f04a730ddb298f88165c29d5b24978cc5868560531f752361',
+    'js/reader/epub.js': None,  # intentionally changed only for zero-copy ZIP views
+}
+for path, expected in frozen.items():
+    if expected is None:
+        continue
+    got = sha(path)
+    assert got == expected, f'frozen Reader core changed: {path}: {got}'
+
+storage = text('js/reader/library-store.js')
+idb = text('js/reader/library-idb-store.js')
+bridge = text('js/reader/semantic-import-bridge.js')
+semantic = text('js/reader/semantic-import-stage1.js')
+epub = text('js/reader/epub.js')
+external = text('js/reader/android-external-import.js')
+handler = text('js/reader/handler-bridge.js')
+gradle = text('android/app/build.gradle')
+
+assert "versionCode 1019" in gradle
+assert "versionName '77.42-toc126-storage-import-v2'" in gradle
+
+# localStorage is now index/positions only. These old full-snapshot patterns are forbidden.
+for forbidden in [
+    'localStorage.setItem(storageKey(), JSON.stringify(books))',
+    'localStorage.setItem(storageKey(), JSON.stringify(merged))',
+    'saved slim library without AI caches',
+    'localStorage переполнен',
+]:
+    assert forbidden not in storage + bridge, f'forbidden full localStorage path survived: {forbidden}'
+assert '_libraryIndexV2' in storage and 'writeLocalIndex' in storage
+assert 'writeLocalIndex(key, next)' in bridge
+assert 'await libraryIdbPut(key, next)' in bridge
+
+# IDB v2 stores separate book records and preserves the v1 store for non-destructive migration.
+assert "const DB_VERSION = 2" in idb
+assert "const BOOK_STORE = 'book-records'" in idb
+assert "const INDEX_STORE = 'indexes'" in idb
+assert 'readLegacySnapshot' in idb
+assert 'libraryIdbPutBook' in idb and 'libraryIdbDeleteBook' in idb
+
+# One semantic EPUB parse owns text + images + exact NCX/nav TOC.
+assert 'parsePackageToc(entries, packageInfo)' in semantic
+assert 'savedImageKeys' in semantic
+assert 'await imgStorePut(key' in semantic
+assert 'const imageBlobs = new Map()' not in semantic
+assert 'htmlDocuments.set(path, html)' not in semantic
+assert 'toc,' in semantic and '_epubTocExact' in semantic
+assert 'captureEpubTocFile' not in external and 'applyCapturedEpubToc' not in external
+assert "toc-direct.js" not in external
+
+# ZIP central-directory entries must be zero-copy views, not per-entry copies.
+assert 'bytes.subarray(dataStart, dataStart + compressedSize)' in epub
+assert 'bytes.slice(dataStart, dataStart + compressedSize)' not in epub
+
+# Handler bridge must bind to the exact same reader-app module URL used by app.js.
+assert "reader-app.js?v=77.42-zh-reader-quality" in handler
+assert "reader-app.js?v=77.32" not in handler
+
+print('toc126 storage/import source gate: PASS')
+PY
+
+# Parse changed modules as ESM without executing browser APIs.
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+for f in \
+  js/reader/library-idb-store.js \
+  js/reader/library-store.js \
+  js/reader/semantic-import-bridge.js \
+  js/reader/semantic-import-stage1.js \
+  js/reader/epub.js \
+  js/reader/android-external-import.js \
+  js/reader/handler-bridge.js; do
+  cp "$f" "$TMP/$(basename "$f").mjs"
+  node --check "$TMP/$(basename "$f").mjs"
+done
+
+echo 'toc126 JS syntax: PASS'
