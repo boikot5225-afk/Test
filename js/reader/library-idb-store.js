@@ -3,8 +3,10 @@
 // v1 stored the whole library array in a single value. That made every small
 // progress update clone/write every EPUB again and encouraged the app to keep a
 // full localStorage mirror. v2 stores every book separately and keeps only a
-// lightweight index per Reader owner. The legacy v1 store is intentionally kept
-// so migration is non-destructive: it is read only when v2 has no index yet.
+// lightweight index per Reader owner. Normal writes are UPSERT-only: a partial
+// runtime snapshot must never delete an unrelated book. Deletion is an explicit
+// per-book operation through libraryIdbDeleteBook(). The legacy v1 store is kept
+// for non-destructive migration.
 
 const DB_NAME = 'reader-library';
 const DB_VERSION = 2;
@@ -75,8 +77,29 @@ function sameRevision(a, b) {
   return String(a.updatedAt || '') === String(b.updatedAt || '')
     && String(a.importKey || '') === String(b.importKey || '')
     && Number(a.schemaVersion || 0) === Number(b.schemaVersion || 0)
+    && Number(a.currentChapter || 0) === Number(b.currentChapter || 0)
+    && Number(a.currentParagraph || 0) === Number(b.currentParagraph || 0)
     && Number(a.chapterCount || 0) === Number(b.chapterCount || 0)
     && Number(a.paragraphCount || 0) === Number(b.paragraphCount || 0);
+}
+
+function preferNewerIndex(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return new Date(a.updatedAt || 0) >= new Date(b.updatedAt || 0) ? a : b;
+}
+
+function mergeIndexes(previous, incoming) {
+  const byId = new Map();
+  for (const item of Array.isArray(previous) ? previous : []) {
+    if (item?.id) byId.set(String(item.id), item);
+  }
+  for (const item of Array.isArray(incoming) ? incoming : []) {
+    if (!item?.id) continue;
+    const id = String(item.id);
+    byId.set(id, preferNewerIndex(item, byId.get(id)));
+  }
+  return [...byId.values()].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
 }
 
 function openDB() {
@@ -169,12 +192,12 @@ async function readLegacySnapshot(key) {
 export async function libraryIdbPut(key, books) {
   const libraryKey = cleanLibraryKey(key);
   const source = Array.isArray(books) ? books.filter(book => book?.id) : [];
-  const nextIndex = source.map(indexEntry);
+  const incomingIndex = source.map(indexEntry);
   const previousIndex = await libraryIdbGetIndex(libraryKey).catch(() => []);
   const previousById = new Map(previousIndex.map(item => [String(item?.id || ''), item]));
-  const nextIds = new Set(nextIndex.map(item => item.id));
+  const mergedIndex = mergeIndexes(previousIndex, incomingIndex);
   const changedIds = new Set();
-  for (const item of nextIndex) {
+  for (const item of incomingIndex) {
     if (!sameRevision(previousById.get(item.id), item)) changedIds.add(item.id);
   }
 
@@ -189,16 +212,15 @@ export async function libraryIdbPut(key, books) {
       if (!changedIds.has(id)) continue;
       store.put({ key: recordKey(libraryKey, id), libraryKey, bookId: id, book });
     }
-    for (const previous of previousIndex) {
-      const id = String(previous?.id || '');
-      if (id && !nextIds.has(id)) store.delete(recordKey(libraryKey, id));
-    }
-    indexStore.put(nextIndex, libraryKey);
+    // IMPORTANT: no implicit deletes here. During startup, owner switching,
+    // migration or async cloud merge, the caller may temporarily hold only a
+    // subset of the library. Only libraryIdbDeleteBook() may remove records.
+    indexStore.put(mergedIndex, libraryKey);
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error || new Error('[reader] library IndexedDB write failed'));
     tx.onabort = () => reject(tx.error || new Error('[reader] library IndexedDB write aborted'));
   });
-  return nextIndex;
+  return mergedIndex;
 }
 
 export async function libraryIdbPutBook(key, book) {
@@ -206,8 +228,7 @@ export async function libraryIdbPutBook(key, book) {
   const libraryKey = cleanLibraryKey(key);
   const current = await libraryIdbGetIndex(libraryKey).catch(() => []);
   const nextEntry = indexEntry(book);
-  const nextIndex = current.filter(item => String(item?.id || '') !== nextEntry.id);
-  nextIndex.unshift(nextEntry);
+  const nextIndex = mergeIndexes(current, [nextEntry]);
   const db = await openDB();
   await new Promise((resolve, reject) => {
     const tx = db.transaction([BOOK_STORE, INDEX_STORE], 'readwrite');
@@ -238,6 +259,7 @@ export async function libraryIdbDeleteBook(key, bookId) {
     tx.objectStore(INDEX_STORE).put(next, libraryKey);
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error || new Error('[reader] single book delete failed'));
+    tx.onabort = () => reject(tx.error || new Error('[reader] single book delete aborted'));
   });
   return true;
 }
@@ -247,8 +269,6 @@ export async function libraryIdbGet(key) {
   let index = await libraryIdbGetIndex(libraryKey);
   if (index.length) return readBookRecords(libraryKey, index.map(item => item.id));
 
-  // Non-destructive v1 migration. The legacy record remains in place; once v2
-  // records and index are committed successfully, subsequent reads never need it.
   const legacy = await readLegacySnapshot(libraryKey);
   if (!Array.isArray(legacy) || !legacy.length) return null;
   if (!_legacyMigration) {
