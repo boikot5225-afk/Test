@@ -121,6 +121,33 @@ def wait_ranging_clear(timeout=4.0):
         time.sleep(.15)
     return False
 
+def wait_page_index(expected, timeout=3.0):
+    deadline = time.time() + timeout
+    last = state()
+    while time.time() < deadline:
+        last = state()
+        if last['index'] == expected:
+            return last
+        time.sleep(.12)
+    return last
+
+def call_page_turn(expression, expected, timeout=4.0):
+    # The frozen pager deliberately rejects turns while an earlier CSS turn or
+    # an async pagination rebuild is still settling. That is not a navigation
+    # failure. Retry only until the real handler explicitly accepts one turn,
+    # then require the expected page index before proceeding to physical touch.
+    deadline = time.time() + timeout
+    accepted = False
+    while time.time() < deadline:
+        accepted = bool(ev(f'({expression})===true'))
+        if accepted:
+            break
+        time.sleep(.18)
+    if not accepted:
+        return False, state()
+    after = wait_page_index(expected, 3.0)
+    return after['index'] == expected, after
+
 cdp('Runtime.enable')
 if ev("document.getElementById('reader-reading-view')?.dataset?.readerLang||''") != 'fr':
     raise RuntimeError('swipe gate is not in French Reader')
@@ -190,18 +217,14 @@ ev("""(()=>{
 # First prove the frozen page-navigation handler itself works. If this fails,
 # there is no point blaming ADB touch injection.
 before_direct = state()
-ev('window.readerNextParagraph?.(); true')
-time.sleep(1.15)
-after_direct = state()
-if after_direct['index'] != before_direct['index'] + 1:
+direct_ok, after_direct = call_page_turn('window.readerNextParagraph?.()', before_direct['index'] + 1)
+if not direct_ok:
     diag = {'phase': 'direct-next', 'before': before_direct, 'after': after_direct, 'pageChanges': ev('window.__toc125PageChanges||[]') or []}
     write_debug('toc125-swipe-failure.json', diag)
     screenshot('toc125-swipe-direct-next-failed.png')
     raise RuntimeError(f"frozen toc119 direct next failed: {before_direct['index']}->{after_direct['index']}")
-ev('window.readerPrevParagraph?.(); true')
-time.sleep(1.15)
-after_direct_back = state()
-if after_direct_back['index'] != before_direct['index']:
+direct_back_ok, after_direct_back = call_page_turn('window.readerPrevParagraph?.()', before_direct['index'])
+if not direct_back_ok:
     diag = {'phase': 'direct-prev', 'before': before_direct, 'afterNext': after_direct, 'afterBack': after_direct_back, 'pageChanges': ev('window.__toc125PageChanges||[]') or []}
     write_debug('toc125-swipe-failure.json', diag)
     screenshot('toc125-swipe-direct-prev-failed.png')
