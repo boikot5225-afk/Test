@@ -57,6 +57,23 @@ def wait(code, timeout=60, delay=.3):
 
 cdp('Runtime.enable')
 wait("document.readyState==='complete'")
+
+# ACTION_VIEW may cold-start a fresh WebView before the guest-session restore has
+# finished. The native external-import bridge deliberately waits for main-app,
+# so make the test's guest precondition explicit instead of timing out on the
+# login screen. This only reproduces the same user action used during seeding.
+main_visible = bool(ev("document.getElementById('main-app')?.style.display!=='none'"))
+if not main_visible:
+    clicked = ev("""(()=>{
+      const button=[...document.querySelectorAll('button')].find(x=>x.offsetParent&&/Продолжить без регистрации/i.test(x.textContent||''));
+      if(!button)return false;
+      button.click();
+      return true;
+    })()""")
+    if not clicked:
+        raise RuntimeError('external-import cold start is on auth screen but guest button was not found')
+    wait("document.getElementById('main-app')?.style.display!=='none'", 25)
+
 wait("document.getElementById('reader-reading-view') && getComputedStyle(document.getElementById('reader-reading-view')).display!=='none'", 80)
 wait("document.querySelectorAll('#reader-chapter-text .reader-word').length>20", 40)
 
@@ -86,11 +103,14 @@ summary = ev(r"""(async()=>{
     status:String(document.getElementById('reader-import-status')?.textContent||''),
     toast:String(document.getElementById('toast')?.textContent||''),
     canonicalModule:String(globalThis.__readerCanonicalModuleUrl||''),
+    guest:localStorage.getItem('an2_guest')||'',
   };
 })()""")
 
 if not summary:
     raise RuntimeError('empty storage summary')
+if summary['guest'] != '1':
+    raise RuntimeError('guest storage owner was not restored before import: ' + json.dumps(summary, ensure_ascii=False))
 if summary['localBytes'] > 50_000:
     raise RuntimeError(f"localStorage library index is still huge: {summary['localBytes']} bytes")
 if summary['localHasChapters'] or not summary['localAllIndex']:
