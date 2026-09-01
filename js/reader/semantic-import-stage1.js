@@ -235,9 +235,6 @@ function collectImplicitEndnotes(htmlDocuments) {
       found.push({ chapterKey, label, items });
     }
 
-    // A standalone notes/endnotes document normally contains several numbered
-    // entries. Requiring at least two prevents an unrelated file whose name
-    // happens to contain "note" from being removed from the reading order.
     if (found.length < 2) continue;
     documentPaths.add(sourcePath);
     for (const note of found) {
@@ -350,11 +347,7 @@ function preprocessFootnotes(html, sourcePath, knownTargets, implicitEndnotes = 
     removeBacklinks(clone);
     const noteItems = htmlToSemanticItems(`<html><body>${clone.innerHTML}</body></html>`, { basePath })
       .flatMap(item => splitSemanticItemLines(item));
-    footnotes[key] = {
-      id,
-      sourcePath,
-      items: noteItems,
-    };
+    footnotes[key] = { id, sourcePath, items: noteItems };
     node.remove();
   }
 
@@ -423,9 +416,8 @@ function restoreFootnoteRuns(items, references) {
         }
         cursor = match.index + match[0].length;
       }
-      if (!found) {
-        runs.push(run);
-      } else {
+      if (!found) runs.push(run);
+      else {
         const after = text.slice(cursor);
         if (after) runs.push({ ...run, text: after });
       }
@@ -438,7 +430,10 @@ function hasSubstantiveChapterContent(items = []) {
   return items.some(item => item?.type === 'image' || (item?.type !== 'heading' && semanticItemText(item).trim()));
 }
 
-async function resolveImageItems(items, entries, bookId, imageBlobs, missingImages) {
+// Store an image as soon as it is encountered. The old importer kept every
+// decompressed image Blob in a Map until the whole book finished, multiplying
+// peak RAM on image-heavy EPUBs.
+async function resolveImageItems(items, entries, bookId, savedImageKeys, missingImages) {
   const resolved = [];
   for (const item of items || []) {
     if (item?.type !== 'image') {
@@ -454,17 +449,123 @@ async function resolveImageItems(items, entries, bookId, imageBlobs, missingImag
     }
 
     const key = `${bookId}::${path}`;
-    if (!imageBlobs.has(key)) {
+    if (!savedImageKeys.has(key)) {
       const bytes = await entries.get(path).bytes();
-      imageBlobs.set(key, new Blob([bytes], { type: mimeForPath(path) }));
+      await imgStorePut(key, new Blob([bytes], { type: mimeForPath(path) }));
+      savedImageKeys.add(key);
     }
-    resolved.push({
-      ...item,
-      key,
-      path,
-    });
+    resolved.push({ ...item, key, path });
   }
   return resolved;
+}
+
+function directChildren(node, localName) {
+  return [...(node?.children || [])].filter(child => String(child.localName || child.nodeName || '').split(':').pop() === localName);
+}
+
+function splitTocHref(basePath, href) {
+  const raw = String(href || '').trim();
+  const hashIndex = raw.indexOf('#');
+  const pathPart = (hashIndex >= 0 ? raw.slice(0, hashIndex) : raw).split('?')[0];
+  let fragment = hashIndex >= 0 ? raw.slice(hashIndex + 1) : '';
+  try { fragment = decodeURIComponent(fragment); } catch {}
+  return {
+    path: cleanPath(resolveEpubPath(basePath, pathPart)),
+    fragment,
+  };
+}
+
+function normalizeTocRows(rows) {
+  const out = [];
+  const seen = new Set();
+  for (const row of rows || []) {
+    const title = cleanText(row.title) || 'Раздел';
+    const path = cleanPath(row.path);
+    const depth = Math.max(0, Number(row.depth) || 0);
+    if (!path) continue;
+    const key = `${path}#${row.fragment || ''}|${title}|${depth}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ title, path, fragment: row.fragment || '', depth, order: out.length });
+  }
+  for (let index = 0; index < out.length; index += 1) {
+    out[index].hasChildren = Number(out[index + 1]?.depth || 0) > Number(out[index].depth || 0);
+  }
+  return out;
+}
+
+async function parsePackageToc(entries, packageInfo) {
+  const manifest = Object.values(packageInfo?.manifest || {});
+  const navItem = manifest.find(item => Array.isArray(item?.properties) && item.properties.includes('nav'));
+  const ncxItem = manifest.find(item => /application\/x-dtbncx\+xml/i.test(item?.mediaType || '') || /\.ncx$/i.test(item?.href || ''));
+
+  if (navItem?.href && entries.has(navItem.href)) {
+    try {
+      const html = await entries.get(navItem.href).text();
+      const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+      const navs = [...doc.querySelectorAll('nav')];
+      const nav = navs.find(node => /(^|\s)toc(\s|$)/i.test(node.getAttribute('epub:type') || node.getAttribute('type') || '')
+        || /doc-toc/i.test(node.getAttribute('role') || '')) || navs[0];
+      const base = navItem.href.split('/').slice(0, -1).join('/');
+      const rows = [];
+      const walk = (list, depth) => {
+        for (const li of [...(list?.children || [])].filter(node => String(node.tagName || '').toLowerCase() === 'li')) {
+          const anchor = [...li.children].find(node => /^(a|span)$/i.test(node.tagName || '')) || li.querySelector('a');
+          const target = splitTocHref(base, anchor?.tagName?.toLowerCase() === 'a' ? anchor.getAttribute('href') || '' : '');
+          if (target.path) rows.push({ title: cleanText(anchor?.textContent || '') || 'Раздел', depth, ...target });
+          const nested = [...li.children].find(node => /^(ol|ul)$/i.test(node.tagName || ''));
+          if (nested) walk(nested, depth + 1);
+        }
+      };
+      const root = [...(nav?.children || [])].find(node => /^(ol|ul)$/i.test(node.tagName || '')) || nav?.querySelector?.('ol,ul');
+      if (root) walk(root, 0);
+      const normalized = normalizeTocRows(rows);
+      if (normalized.length) return { source: 'EPUB3 nav', rows: normalized };
+    } catch (error) {
+      console.warn('[semantic epub] nav.xhtml parse failed', error);
+    }
+  }
+
+  if (ncxItem?.href && entries.has(ncxItem.href)) {
+    try {
+      const xml = await entries.get(ncxItem.href).text();
+      const doc = new DOMParser().parseFromString(String(xml || ''), 'application/xml');
+      const navMap = [...doc.getElementsByTagNameNS?.('*', 'navMap') || []][0] || doc.querySelector('navMap');
+      const base = ncxItem.href.split('/').slice(0, -1).join('/');
+      const rows = [];
+      const walkPoint = (point, depth) => {
+        const label = [...point.getElementsByTagNameNS?.('*', 'navLabel') || []][0];
+        const textNode = label ? [...label.getElementsByTagNameNS?.('*', 'text') || []][0] : null;
+        const content = [...point.getElementsByTagNameNS?.('*', 'content') || []][0];
+        const target = splitTocHref(base, content?.getAttribute?.('src') || '');
+        if (target.path) rows.push({ title: cleanText(textNode?.textContent || '') || 'Раздел', depth, ...target });
+        for (const child of directChildren(point, 'navPoint')) walkPoint(child, depth + 1);
+      };
+      for (const point of directChildren(navMap, 'navPoint')) walkPoint(point, 0);
+      const normalized = normalizeTocRows(rows);
+      if (normalized.length) return { source: 'EPUB2 NCX', rows: normalized };
+    } catch (error) {
+      console.warn('[semantic epub] NCX parse failed', error);
+    }
+  }
+  return { source: '', rows: [] };
+}
+
+function attachTocToChapters(tocRows, chapters) {
+  const pathToChapter = new Map();
+  for (let index = 0; index < (chapters || []).length; index += 1) {
+    const path = cleanPath(chapters[index]?.sourcePath || '');
+    if (path && !pathToChapter.has(path)) pathToChapter.set(path, index);
+  }
+  const named = new Set();
+  return (tocRows || []).map(row => {
+    const chapterIndex = pathToChapter.has(cleanPath(row.path)) ? pathToChapter.get(cleanPath(row.path)) : null;
+    if (Number.isInteger(chapterIndex) && !named.has(chapterIndex) && chapters[chapterIndex]) {
+      chapters[chapterIndex].title = cleanText(row.title) || chapters[chapterIndex].title;
+      named.add(chapterIndex);
+    }
+    return { ...row, chapterIndex };
+  });
 }
 
 export async function parseSemanticEpubFile(file, {
@@ -489,6 +590,7 @@ export async function parseSemanticEpubFile(file, {
   const opfText = await entries.get(opfPath).text();
   const packageInfo = extractEpubPackageInfo(opfText, { opfPath });
   const fallbackTitle = String(file.name || 'EPUB').replace(/\.epub$/i, '');
+  const packageToc = await parsePackageToc(entries, packageInfo);
 
   const preferredPaths = uniqueExistingPaths(packageInfo.spinePaths, entries);
   const extraPaths = uniqueExistingPaths(packageInfo.htmlPaths, entries)
@@ -502,20 +604,22 @@ export async function parseSemanticEpubFile(file, {
       .sort();
   }
 
-  const htmlDocuments = new Map();
+  // First pass gathers only note IDs. Keep HTML strings only for standalone
+  // notes/endnotes documents; normal chapter HTML is allowed to die immediately.
+  const notesDocuments = new Map();
   const knownFootnoteTargets = new Set();
   for (const path of htmlPaths) {
     try {
       const html = await entries.get(path).text();
-      htmlDocuments.set(path, html);
       for (const target of collectFootnoteTargets(html, path)) knownFootnoteTargets.add(target);
+      if (IMPLICIT_NOTES_PATH_RE.test(cleanPath(path))) notesDocuments.set(path, html);
     } catch {}
   }
-  const implicitEndnotes = collectImplicitEndnotes(htmlDocuments);
+  const implicitEndnotes = collectImplicitEndnotes(notesDocuments);
 
   const chapters = [];
   const footnotes = {};
-  const imageBlobs = new Map();
+  const savedImageKeys = new Set();
   const missingImages = [];
   const diagnostics = [];
   let totalTextChars = 0;
@@ -524,7 +628,7 @@ export async function parseSemanticEpubFile(file, {
     const path = htmlPaths[index];
     onProgress?.(`Разбираю главу ${index + 1}/${htmlPaths.length}...`);
     try {
-      const html = htmlDocuments.get(path) ?? await entries.get(path).text();
+      const html = notesDocuments.get(path) ?? await entries.get(path).text();
       if (implicitEndnotes.documentPaths.has(path)) {
         diagnostics.push({ path, implicitEndnotes: true, skippedAsNotesDocument: true });
         continue;
@@ -535,12 +639,12 @@ export async function parseSemanticEpubFile(file, {
       const parsedWithFootnotes = restoreFootnoteRuns(parsedBase, prepared.references);
       const parsedWithStyles = restoreBlockStyles(parsedWithFootnotes, prepared.blockStyles);
       const parsed = parsedWithStyles.flatMap(item => splitSemanticItemChunksPreservingFootnotes(item));
-      const items = await resolveImageItems(parsed, entries, bookId, imageBlobs, missingImages);
+      const items = await resolveImageItems(parsed, entries, bookId, savedImageKeys, missingImages);
 
       for (const [key, note] of Object.entries(prepared.footnotes)) {
         footnotes[key] = {
           ...note,
-          items: await resolveImageItems(note.items || [], entries, bookId, imageBlobs, missingImages),
+          items: await resolveImageItems(note.items || [], entries, bookId, savedImageKeys, missingImages),
         };
       }
 
@@ -565,15 +669,16 @@ export async function parseSemanticEpubFile(file, {
     throw new Error(`Не найдено читаемых глав${firstErrors.length ? ': ' + firstErrors.join(' · ') : ''}`);
   }
 
-  onProgress?.(`Сохраняю ${imageBlobs.size} изображений...`);
-  for (const [key, blob] of imageBlobs) await imgStorePut(key, blob);
-
   const coverPath = cleanPath(packageInfo.coverPath);
   const coverKey = coverPath && entries.has(coverPath) ? `${bookId}::${coverPath}` : '';
-  if (coverKey && !imageBlobs.has(coverKey)) {
+  if (coverKey && !savedImageKeys.has(coverKey)) {
     const bytes = await entries.get(coverPath).bytes();
     await imgStorePut(coverKey, new Blob([bytes], { type: mimeForPath(coverPath) }));
+    savedImageKeys.add(coverKey);
   }
+
+  const toc = attachTocToChapters(packageToc.rows, chapters);
+  onProgress?.('Завершаю импорт...');
 
   return {
     schemaVersion: 3,
@@ -585,12 +690,17 @@ export async function parseSemanticEpubFile(file, {
     coverKey,
     chapters,
     footnotes,
+    toc,
+    epubTocSource: packageToc.source,
+    _epubTocExact: !!(packageToc.source && toc.length),
     diagnostics: {
       files: entries.size,
       htmlFiles: htmlPaths.length,
       chapters: chapters.length,
-      images: imageBlobs.size + (coverKey && !imageBlobs.has(coverKey) ? 1 : 0),
+      images: savedImageKeys.size,
       footnotes: Object.keys(footnotes).length,
+      tocRows: toc.length,
+      tocSource: packageToc.source,
       missingImages: [...new Set(missingImages.filter(Boolean))],
       textChars: totalTextChars,
       details: diagnostics,
