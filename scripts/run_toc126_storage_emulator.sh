@@ -50,7 +50,51 @@ python3 scripts/audit_toc126_storage_restart.py
 
 # Only after restart has proved the saved cursor may the physical gesture
 # intentionally change it: page 0 -> 1 -> 0.
-python3 scripts/audit_toc125_frozen_swipe.py
+#
+# GitHub's Android emulator can occasionally cancel an ADB-injected gesture
+# while a system ANR/GPU overlay owns the surface. Retry the WHOLE physical
+# swipe audit only for that delivery-class failure. A complete touch sequence
+# that reaches Reader but fails to turn a page is a real Reader failure and is
+# never retried here.
+swipe_ok=0
+for swipe_gate_attempt in 1 2 3; do
+  rm -f runtime-audit/toc125-swipe-failure.json
+  if python3 scripts/audit_toc125_frozen_swipe.py; then
+    swipe_ok=1
+    break
+  fi
+
+  swipe_phase="$(python3 - <<'PY'
+import json, pathlib
+p = pathlib.Path('runtime-audit/toc125-swipe-failure.json')
+try:
+    print(json.loads(p.read_text(encoding='utf-8')).get('phase', ''))
+except Exception:
+    print('')
+PY
+)"
+  case "$swipe_phase" in
+    left-touch-delivery|right-touch-delivery)
+      echo "physical swipe delivery retry ${swipe_gate_attempt}/3 after ${swipe_phase}" >&2
+      # Release any Android system overlay, then bring the same Activity back to
+      # the foreground. The next audit repositions to page 0 itself and again
+      # uses only real ADB touchscreen gestures for both directions.
+      adb shell input keyevent 4 >/dev/null 2>&1 || true
+      sleep 1
+      adb shell am start -W -n "${PKG}/${ACT}" >/dev/null 2>&1 || true
+      sleep 2
+      PID="$(adb shell pidof "$PKG" | tr -d '\r')"
+      test -n "$PID"
+      adb forward --remove tcp:9222 >/dev/null 2>&1 || true
+      adb forward tcp:9222 "localabstract:webview_devtools_remote_${PID}"
+      ;;
+    *)
+      echo "physical swipe Reader failure is not retryable: ${swipe_phase:-unknown}" >&2
+      exit 1
+      ;;
+  esac
+done
+test "$swipe_ok" -eq 1
 
 # Ordinary per-book deletion must preserve the unrelated migrated book.
 python3 scripts/audit_toc126_storage_delete.py
