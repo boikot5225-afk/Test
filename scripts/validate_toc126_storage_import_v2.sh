@@ -28,6 +28,7 @@ for path, expected in frozen.items():
     got = sha(path)
     assert got == expected, f'frozen Reader core changed: {path}: {got}'
 
+app = text('app.js')
 storage = text('js/reader/library-store.js')
 idb = text('js/reader/library-idb-store.js')
 bridge = text('js/reader/semantic-import-bridge.js')
@@ -39,6 +40,25 @@ gradle = text('android/app/build.gradle')
 
 assert "versionCode 1019" in gradle
 assert "versionName '77.42-toc126-storage-import-v2'" in gradle
+
+# Guest cold start is local-first: ACTION_VIEW must not wait on Firebase or a
+# cloud verb dictionary before the Reader shell becomes visible.
+init_pos = app.index('async function init()')
+early_guest_pos = app.index("if (localStorage.getItem('an2_guest') === '1')", init_pos)
+firebase_wait_pos = app.index('// The Firebase SDK loads from a CDN', init_pos)
+assert early_guest_pos < firebase_wait_pos, 'guest auto-login still happens after Firebase wait'
+guest_match = re.search(
+    r'export async function continueAsGuest\(\) \{(.*?)\n\}\n\n// Hide features a guest can.t use',
+    app,
+    re.S,
+)
+assert guest_match, 'continueAsGuest block missing'
+guest_body = guest_match.group(1)
+assert "document.getElementById('main-app').style.display = 'block'" in guest_body
+assert 'restoreVerbsFromCache()' in guest_body
+assert 'loadVerbsFromCloud({ force: true })' in guest_body
+assert 'await withDeadline(() => loadVerbsFromCloud()' not in guest_body
+assert 'cloud dictionaries are an optional background refresh' in guest_body
 
 # localStorage is now index/positions only. These old full-snapshot patterns are forbidden.
 for forbidden in [
@@ -84,6 +104,7 @@ PY
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 for f in \
+  app.js \
   js/reader/library-idb-store.js \
   js/reader/library-store.js \
   js/reader/semantic-import-bridge.js \
