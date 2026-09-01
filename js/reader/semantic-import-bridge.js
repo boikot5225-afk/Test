@@ -1,7 +1,7 @@
 import {
   libraryIdbGet,
   libraryIdbPut,
-} from './library-idb-store.js?v=2';
+} from './library-idb-store.js?v=1';
 import { imgStoreDeleteBook } from './image-store.js?v=1';
 import {
   chapterContentText,
@@ -9,9 +9,16 @@ import {
 } from './semantic-content.js?v=4';
 import { parseSemanticEpubFile } from './semantic-import-stage1.js?v=6-storage';
 
+const READER_APP_URL = '../reader-app.js?v=77.42-zh-reader-quality';
+let canonicalReaderPromise = null;
 let pendingImport = null;
 let pendingLocalLibrary = [];
 let bridgeStarted = false;
+
+function canonicalReaderApp() {
+  if (!canonicalReaderPromise) canonicalReaderPromise = import(READER_APP_URL);
+  return canonicalReaderPromise;
+}
 
 function newBookId() {
   return `book_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -295,18 +302,53 @@ async function savePendingSemanticBook(originalSave) {
 
   const importedBookId = pendingImport.bookId;
   const target = existing || book;
-  pendingImport = null;
-  pendingLocalLibrary = [];
-  try { delete globalThis.__readerGuestLegacyLibrarySnapshot; } catch {}
+
+  // semantic-import used to write IndexedDB/localStorage behind reader-app's
+  // back. The live readerBooks array therefore stayed stale and its delayed
+  // save could immediately shrink the visible library back to the old count.
+  // Re-enter through the exact canonical reader-app module before closing the
+  // modal or claiming success, so memory, the local index and IndexedDB all
+  // describe the same library.
+  let app = null;
+  try {
+    app = await canonicalReaderApp();
+    app.loadReaderBooks?.();
+    await app.hydrateReaderBooksFromIndexedDB?.();
+    const liveBooks = app.loadReaderBooks?.() || [];
+    const liveTarget = Array.isArray(liveBooks)
+      ? liveBooks.find(item => String(item?.id || '') === String(target.id || ''))
+      : null;
+    if (!liveTarget || !Array.isArray(liveTarget.chapters) || !liveTarget.chapters.length) {
+      throw new Error(`saved book ${String(target.id || '')} is absent from canonical readerBooks`);
+    }
+  } catch (error) {
+    console.error('[semantic epub] canonical library refresh failed', error);
+    setStatus(`❌ EPUB сохранён, но библиотека не обновилась: ${String(error?.message || error)}. Окно оставлено открытым — повторное сохранение безопасно.`, 'error');
+    return;
+  }
 
   if (existing && importedBookId !== existing.id) {
     await imgStoreDeleteBook(importedBookId).catch(() => {});
   }
 
-  window.closeReaderImportModal?.();
-  await window.renderReaderScreen?.();
-  await window.readerOpenBook?.(target.id);
+  try {
+    await app.renderReaderScreen?.();
+    await app.readerOpenBook?.(target.id);
+    const opened = app.readerCurrentBook?.();
+    if (!opened || String(opened.id || '') !== String(target.id || '') || !Array.isArray(opened.chapters) || !opened.chapters.length) {
+      throw new Error('Reader не открыл сохранённую книгу');
+    }
+  } catch (error) {
+    console.error('[semantic epub] canonical open failed', error);
+    setStatus(`❌ EPUB сохранён, но Reader не смог открыть его: ${String(error?.message || error)}. Книга уже в библиотеке.`, 'error');
+    return;
+  }
 
+  pendingImport = null;
+  pendingLocalLibrary = [];
+  try { delete globalThis.__readerGuestLegacyLibrarySnapshot; } catch {}
+
+  window.closeReaderImportModal?.();
   window.showToast?.(existing
     ? '📚 Такая книга уже есть — открыта существующая'
     : '📖 EPUB добавлен');
