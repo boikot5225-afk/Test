@@ -2,69 +2,22 @@
 import json
 import pathlib
 import time
-import requests
-import websocket
+
+from reader_cdp import ReaderCDP
 
 OUT = pathlib.Path('runtime-audit')
 OUT.mkdir(exist_ok=True)
-pages = []
-for _ in range(160):
-    try:
-        pages = requests.get('http://127.0.0.1:9222/json/list', timeout=2).json()
-    except Exception:
-        pages = []
-    if pages:
-        break
-    time.sleep(.35)
-if not pages:
-    raise SystemExit('No debuggable Reader AI WebView')
-page = next((p for p in pages if 'appassets.androidplatform.net' in p.get('url', '')), pages[0])
-ws = websocket.create_connection(page['webSocketDebuggerUrl'], timeout=30, suppress_origin=True)
-seq = 0
+cdp = ReaderCDP(connect_timeout=55)
+cdp.connect()
+cdp.wait("document.readyState==='complete'", 55)
 
-def cdp(method, params=None):
-    global seq
-    seq += 1
-    ident = seq
-    ws.send(json.dumps({'id': ident, 'method': method, 'params': params or {}}))
-    while True:
-        msg = json.loads(ws.recv())
-        if msg.get('id') == ident:
-            if 'error' in msg:
-                raise RuntimeError(msg['error'])
-            return msg.get('result', {})
-
-def ev(code):
-    result = cdp('Runtime.evaluate', {
-        'expression': code,
-        'awaitPromise': True,
-        'returnByValue': True,
-        'userGesture': True,
-    })
-    if result.get('exceptionDetails'):
-        raise RuntimeError(str(result['exceptionDetails']))
-    return result.get('result', {}).get('value')
-
-def wait(code, timeout=60, delay=.3):
-    end = time.time() + timeout
-    last = None
-    while time.time() < end:
-        last = ev(code)
-        if last:
-            return last
-        time.sleep(delay)
-    raise RuntimeError(f'timeout: {code}; last={last!r}')
-
-cdp('Runtime.enable')
-wait("document.readyState==='complete'")
-
-# ACTION_VIEW may cold-start a fresh WebView before the guest-session restore has
-# finished. The native external-import bridge deliberately waits for main-app,
-# so make the test's guest precondition explicit instead of timing out on the
-# login screen. This only reproduces the same user action used during seeding.
-main_visible = bool(ev("document.getElementById('main-app')?.style.display!=='none'"))
+# ACTION_VIEW can cold-start or replace the WebView target while the external
+# import bridge is coming up. ReaderCDP follows that target replacement; this
+# UI fallback still reproduces the user's guest action if no remembered guest
+# session exists at all.
+main_visible = bool(cdp.eval("document.getElementById('main-app')?.style.display!=='none'"))
 if not main_visible:
-    clicked = ev("""(()=>{
+    clicked = cdp.eval("""(()=>{
       const button=[...document.querySelectorAll('button')].find(x=>x.offsetParent&&/Продолжить без регистрации/i.test(x.textContent||''));
       if(!button)return false;
       button.click();
@@ -72,12 +25,12 @@ if not main_visible:
     })()""")
     if not clicked:
         raise RuntimeError('external-import cold start is on auth screen but guest button was not found')
-    wait("document.getElementById('main-app')?.style.display!=='none'", 25)
+    cdp.wait("document.getElementById('main-app')?.style.display!=='none'", 25)
 
-wait("document.getElementById('reader-reading-view') && getComputedStyle(document.getElementById('reader-reading-view')).display!=='none'", 80)
-wait("document.querySelectorAll('#reader-chapter-text .reader-word').length>20", 40)
+cdp.wait("document.getElementById('reader-reading-view') && getComputedStyle(document.getElementById('reader-reading-view')).display!=='none'", 80)
+cdp.wait("document.querySelectorAll('#reader-chapter-text .reader-word').length>20", 40)
 
-summary = ev(r"""(async()=>{
+summary = cdp.eval(r"""(async()=>{
   const key=window.an2ReaderStorageKey?.('an2_reader_books_v1')||'an2_reader_books_v1::guest';
   const raw=localStorage.getItem(key)||'';
   let index=[]; try{index=JSON.parse(raw)||[]}catch(e){}
@@ -105,7 +58,7 @@ summary = ev(r"""(async()=>{
     canonicalModule:String(globalThis.__readerCanonicalModuleUrl||''),
     guest:localStorage.getItem('an2_guest')||'',
   };
-})()""")
+})()""", 45)
 
 if not summary:
     raise RuntimeError('empty storage summary')
@@ -129,19 +82,19 @@ if summary['canonicalModule'] and '77.42-zh-reader-quality' not in summary['cano
     raise RuntimeError('runtime handler bridge is bound to a second reader-app module')
 
 # Move the real reading cursor and give the debounced durable save time to land.
-ev("window.readerSelectParagraph?.(6); true")
+cdp.eval("window.readerSelectParagraph?.(6); true")
 time.sleep(1.8)
-position = ev(r"""(async()=>{
+position = cdp.eval(r"""(async()=>{
   const key=window.an2ReaderStorageKey?.('an2_reader_books_v1')||'an2_reader_books_v1::guest';
   const mod=await import('./js/reader/library-idb-store.js?v=2');
   const books=await mod.libraryIdbGet(key)||[];
   const book=books.find(b=>b?.title==='Audit mémoire toc126');
   return {id:book?.id||'',chapter:Number(book?.currentChapter||0),paragraph:Number(book?.currentParagraph||0)};
-})()""")
+})()""", 30)
 if not position or position['paragraph'] < 1:
     raise RuntimeError('reading position was not persisted to IndexedDB: ' + repr(position))
 
 summary['savedPosition'] = position
 (OUT / 'toc126-storage-import-live.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
 print(json.dumps(summary, ensure_ascii=False, indent=2))
-ws.close()
+cdp.close()
