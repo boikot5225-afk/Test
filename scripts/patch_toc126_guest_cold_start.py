@@ -2,24 +2,23 @@
 from pathlib import Path
 import re
 
-path = Path('app.js')
+# Android's syncWebAssets deliberately excludes the legacy root app.js.
+# The actual bundled entry point is js/app.js.
+path = Path('js/app.js')
 source = path.read_text(encoding='utf-8')
 
-# toc126 storage/import must be usable offline. A remembered guest session is
-# a local Reader state and must not wait for Firebase or a cloud verb dictionary
-# before Android ACTION_VIEW can hand an EPUB to the Reader.
 old_guest = re.search(
     r"export async function continueAsGuest\(\) \{.*?\n\}\n\n// Hide features a guest can't use",
     source,
     re.S,
 )
 if not old_guest:
-    raise SystemExit('continueAsGuest block not found')
+    raise SystemExit('continueAsGuest block not found in js/app.js')
 
 new_guest = r'''export async function continueAsGuest() {
   // toc126: guest startup is local-first. Reader/import must be usable with no
   // Firebase/network at all; cloud dictionaries are an optional background refresh.
-  isGuest = true;
+  setIsGuest(true);
   localStorage.setItem('an2_guest', '1');
   currentProfile = 'guest';
   setCurrentProfile('guest');
@@ -27,7 +26,7 @@ new_guest = r'''export async function continueAsGuest() {
   readerSwitchStorageOwner('guest');
 
   const brand = document.querySelector('.nav-brand');
-  if (brand) brand.innerHTML = 'An II <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">гость</span>';
+  if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">гость</span>';
 
   // Never block the Reader shell on a cloud dictionary. Use a local cache when
   // present; an empty trainer dictionary is still a valid state for reading EPUB.
@@ -63,12 +62,14 @@ new_guest = r'''export async function continueAsGuest() {
 // Hide features a guest can't use'''
 source = source[:old_guest.start()] + new_guest + source[old_guest.end():]
 
-needle = '''  initSpeech();
+needle = '''  showLoading('Reader AI — запуск...');
+  initSpeech();
   applyKbMode();
   initTTSEngineUI();
 
   // The Firebase SDK loads from a CDN and sometimes isn't ready when init runs'''
-replacement = '''  initSpeech();
+replacement = '''  showLoading('Reader AI — запуск...');
+  initSpeech();
   applyKbMode();
   initTTSEngineUI();
 
@@ -81,8 +82,8 @@ replacement = '''  initSpeech();
 
   // The Firebase SDK loads from a CDN and sometimes isn't ready when init runs'''
 if needle not in source:
-    raise SystemExit('init Firebase preamble not found')
+    raise SystemExit('init Firebase preamble not found in js/app.js')
 source = source.replace(needle, replacement, 1)
 
 path.write_text(source, encoding='utf-8')
-print('toc126 guest cold-start patch: PASS')
+print('toc126 bundled guest cold-start patch: PASS')
