@@ -121,6 +121,69 @@ def wait_ranging_clear(timeout=4.0):
         time.sleep(.15)
     return False
 
+def touch_delivered(events):
+    return (
+        any(x.get('type') == 'touchstart' and x.get('inside') for x in events)
+        and any(x.get('type') == 'touchend' and x.get('inside') for x in events)
+    )
+
+def physical_swipe_with_delivery_retry(start_x, end_x, y, expected_index, label, max_attempts=3):
+    """Retry only Android/emulator delivery failures, never a delivered Reader failure.
+
+    An attempt is eligible for retry when Android produces no usable start/end
+    sequence (empty events, partial delivery, or touchcancel) and the page did
+    not move. Once a complete physical touchstart+touchend reaches Reader, the
+    caller receives it immediately and must enforce the expected page turn.
+    """
+    attempts = []
+    for attempt in range(1, max_attempts + 1):
+        if not wait_ranging_clear():
+            raise RuntimeError(f'reader ranging guard remained active before {label} swipe attempt {attempt}')
+        dismissed_here = dismiss_anr()
+        if has_anr():
+            raise RuntimeError(f'Android system ANR overlay remained before {label} swipe attempt {attempt}')
+
+        ev('window.__toc125Touch=[]; window.__toc125PageChanges=[]; true')
+        subprocess.run([
+            'adb', 'shell', 'input', 'touchscreen', 'swipe',
+            str(start_x), str(y), str(end_x), str(y), '350'
+        ], check=True)
+        time.sleep(1.15)
+
+        after_state = state()
+        events = ev('window.__toc125Touch||[]') or []
+        page_changes = ev('window.__toc125PageChanges||[]') or []
+        delivered = touch_delivered(events)
+        cancelled = any(x.get('type') == 'touchcancel' for x in events)
+        attempts.append({
+            'attempt': attempt,
+            'beforeIndex': expected_index,
+            'afterIndex': after_state.get('index'),
+            'eventCount': len(events),
+            'delivered': delivered,
+            'cancelled': cancelled,
+            'dismissedAnr': dismissed_here,
+        })
+
+        # A complete physical gesture reached Reader. Do not retry merely
+        # because Reader did not turn the page; that would hide a real bug.
+        if delivered:
+            return after_state, events, page_changes, attempts
+
+        # If the page somehow moved without a complete observed sequence, do
+        # not replay another gesture and accidentally advance twice. Return it
+        # to the strict caller, which will fail on missing delivery evidence.
+        if after_state.get('index') != expected_index:
+            return after_state, events, page_changes, attempts
+
+        if attempt < max_attempts:
+            # GitHub's Android emulator occasionally drops the entire adb input
+            # stream while the GPU surface settles. Give the same unchanged
+            # physical path another chance; no JS gesture is synthesized.
+            time.sleep(.7)
+
+    return after_state, events, page_changes, attempts
+
 cdp('Runtime.enable')
 if ev("document.getElementById('reader-reading-view')?.dataset?.readerLang||''") != 'fr':
     raise RuntimeError('swipe gate is not in French Reader')
@@ -226,33 +289,34 @@ x1 = int(round(xr * dpr))
 x2 = int(round(xl * dpr))
 y = int(round(ycss * dpr))
 before = s['index']
-ev('window.__toc125Touch=[]; window.__toc125PageChanges=[]; true')
 screenshot('toc125-swipe-before-left.png')
-subprocess.run(['adb','shell','input','touchscreen','swipe',str(x1),str(y),str(x2),str(y),'350'], check=True)
-time.sleep(1.15)
-after_state = state()
+after_state, left, left_pages, left_attempts = physical_swipe_with_delivery_retry(
+    x1, x2, y, before, 'left'
+)
 after = after_state['index']
-left = ev('window.__toc125Touch||[]') or []
-left_pages = ev('window.__toc125PageChanges||[]') or []
-if any(x.get('type') == 'touchcancel' for x in left) and after == before:
-    # Android Emulator occasionally cancels an injected gesture while its GPU
-    # surface settles. Retry the same physical path once; never synthesize the
-    # Reader handler and never hide a completed gesture that failed to turn.
-    time.sleep(.7)
-    ev('window.__toc125Touch=[]; window.__toc125PageChanges=[]; true')
-    subprocess.run(['adb','shell','input','touchscreen','swipe',str(x1),str(y),str(x2),str(y),'350'], check=True)
-    time.sleep(1.15)
-    after_state = state()
-    after = after_state['index']
-    left = ev('window.__toc125Touch||[]') or []
-    left_pages = ev('window.__toc125PageChanges||[]') or []
-if not any(x.get('type') == 'touchstart' and x.get('inside') for x in left) or not any(x.get('type') == 'touchend' and x.get('inside') for x in left):
-    diag = {'phase': 'left-touch-delivery', 'before': s, 'after': after_state, 'events': left, 'pageChanges': left_pages, 'anr': has_anr()}
+if not touch_delivered(left):
+    diag = {
+        'phase': 'left-touch-delivery',
+        'before': s,
+        'after': after_state,
+        'events': left,
+        'pageChanges': left_pages,
+        'attempts': left_attempts,
+        'anr': has_anr(),
+    }
     write_debug('toc125-swipe-failure.json', diag)
     screenshot('toc125-swipe-left-not-delivered.png')
-    raise RuntimeError('left swipe did not reach Reader: ' + json.dumps(left))
+    raise RuntimeError('left swipe did not reach Reader after delivery retries: ' + json.dumps(diag, ensure_ascii=False))
 if after != before + 1:
-    diag = {'phase': 'left-no-turn', 'before': s, 'after': after_state, 'events': left, 'pageChanges': left_pages, 'anr': has_anr()}
+    diag = {
+        'phase': 'left-no-turn',
+        'before': s,
+        'after': after_state,
+        'events': left,
+        'pageChanges': left_pages,
+        'attempts': left_attempts,
+        'anr': has_anr(),
+    }
     write_debug('toc125-swipe-failure.json', diag)
     screenshot('toc125-swipe-left-no-turn.png')
     raise RuntimeError(f'frozen toc119 left swipe failed: {before}->{after}; diag={json.dumps(diag, ensure_ascii=False)}')
@@ -262,29 +326,33 @@ if not wait_ranging_clear():
 dismissed = dismiss_anr() or dismissed
 if has_anr():
     raise RuntimeError('Android system ANR overlay returned before right physical swipe')
-ev('window.__toc125Touch=[]; window.__toc125PageChanges=[]; true')
-subprocess.run(['adb','shell','input','touchscreen','swipe',str(x2),str(y),str(x1),str(y),'350'], check=True)
-time.sleep(1.15)
-back_state = state()
+back_state, right, right_pages, right_attempts = physical_swipe_with_delivery_retry(
+    x2, x1, y, after, 'right'
+)
 back = back_state['index']
-right = ev('window.__toc125Touch||[]') or []
-right_pages = ev('window.__toc125PageChanges||[]') or []
-if any(x.get('type') == 'touchcancel' for x in right) and back == after:
-    time.sleep(.7)
-    ev('window.__toc125Touch=[]; window.__toc125PageChanges=[]; true')
-    subprocess.run(['adb','shell','input','touchscreen','swipe',str(x2),str(y),str(x1),str(y),'350'], check=True)
-    time.sleep(1.15)
-    back_state = state()
-    back = back_state['index']
-    right = ev('window.__toc125Touch||[]') or []
-    right_pages = ev('window.__toc125PageChanges||[]') or []
-if not any(x.get('type') == 'touchstart' and x.get('inside') for x in right) or not any(x.get('type') == 'touchend' and x.get('inside') for x in right):
-    diag = {'phase': 'right-touch-delivery', 'afterLeft': after_state, 'afterRight': back_state, 'events': right, 'pageChanges': right_pages, 'anr': has_anr()}
+if not touch_delivered(right):
+    diag = {
+        'phase': 'right-touch-delivery',
+        'afterLeft': after_state,
+        'afterRight': back_state,
+        'events': right,
+        'pageChanges': right_pages,
+        'attempts': right_attempts,
+        'anr': has_anr(),
+    }
     write_debug('toc125-swipe-failure.json', diag)
     screenshot('toc125-swipe-right-not-delivered.png')
-    raise RuntimeError('right swipe did not reach Reader: ' + json.dumps(right))
+    raise RuntimeError('right swipe did not reach Reader after delivery retries: ' + json.dumps(diag, ensure_ascii=False))
 if back != before:
-    diag = {'phase': 'right-no-turn', 'afterLeft': after_state, 'afterRight': back_state, 'events': right, 'pageChanges': right_pages, 'anr': has_anr()}
+    diag = {
+        'phase': 'right-no-turn',
+        'afterLeft': after_state,
+        'afterRight': back_state,
+        'events': right,
+        'pageChanges': right_pages,
+        'attempts': right_attempts,
+        'anr': has_anr(),
+    }
     write_debug('toc125-swipe-failure.json', diag)
     screenshot('toc125-swipe-right-no-turn.png')
     raise RuntimeError(f'frozen toc119 right swipe failed: {after}->{back}; diag={json.dumps(diag, ensure_ascii=False)}')
@@ -298,6 +366,8 @@ result = {
     'rightEvents': right,
     'leftPageChanges': left_pages,
     'rightPageChanges': right_pages,
+    'leftAttempts': left_attempts,
+    'rightAttempts': right_attempts,
     'dismissedAnr': dismissed,
     'canonicalModule': s['canonicalModule'],
 }
