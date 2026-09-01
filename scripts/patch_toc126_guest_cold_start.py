@@ -8,6 +8,16 @@ import runpy
 path = Path('js/app.js')
 source = path.read_text(encoding='utf-8')
 
+# The final toc126 sources may already contain the materialized fixes. Keep the
+# CI step safe to rerun instead of making a second build fail on a missing old
+# preamble after the first successful patch.
+if 'guest startup is local-first' in source:
+    idb_source = Path('js/reader/library-idb-store.js').read_text(encoding='utf-8')
+    if 'toc126 migration commit guard' not in idb_source:
+        runpy.run_path('scripts/patch_toc126_storage_migration_guard.py', run_name='__main__')
+    print('toc126 bundled guest cold-start patch already materialized: PASS')
+    raise SystemExit(0)
+
 old_guest = re.search(
     r"export async function continueAsGuest\(\) \{.*?\n\}\n\n// Hide features a guest can't use",
     source,
