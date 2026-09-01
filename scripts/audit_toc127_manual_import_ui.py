@@ -3,7 +3,6 @@ import base64
 import io
 import json
 import pathlib
-import time
 import zipfile
 
 from reader_cdp import ReaderCDP
@@ -74,8 +73,14 @@ before = cdp.eval(r"""(async()=>{
 result = cdp.eval(f"""(async()=>{{
   const title={json.dumps(TITLE)};
   const author={json.dumps(AUTHOR)};
+  const waitFor=async(fn,timeout=5000)=>{{
+    const start=Date.now();
+    while(Date.now()-start<timeout){{ if(fn()) return true; await new Promise(r=>setTimeout(r,80)); }}
+    return false;
+  }};
+
   window.showScreen?.('reader');
-  await Promise.resolve(window.readerBackToLibrary?.());
+  if(typeof window.readerBackToLibrary==='function') window.readerBackToLibrary();
   await Promise.resolve(window.renderReaderScreen?.());
   window.showReaderImportModal?.();
 
@@ -98,7 +103,10 @@ result = cdp.eval(f"""(async()=>{{
   if(authorEl) authorEl.value=author;
 
   await Promise.resolve(saveHandler());
-  await new Promise(r=>setTimeout(r,900));
+  const openedReady=await waitFor(()=>{{
+    const reading=document.getElementById('reader-reading-view');
+    return reading&&getComputedStyle(reading).display!=='none';
+  }},8000);
 
   const app=await import('./js/reader-app.js?v=77.42-zh-reader-quality');
   const opened=app.readerCurrentBook?.();
@@ -108,15 +116,28 @@ result = cdp.eval(f"""(async()=>{{
   const durable=await mod.libraryIdbGet(key)||[];
   const local=JSON.parse(localStorage.getItem(key)||'[]');
 
-  await Promise.resolve(app.readerBackToLibrary?.());
-  await Promise.resolve(app.renderReaderScreen?.());
-  await new Promise(r=>setTimeout(r,250));
-  const libraryText=String(document.getElementById('reader-library-list')?.textContent||'');
-  const tabText=String(document.getElementById('reader-library-view')?.textContent||'');
+  if(typeof window.readerBackToLibrary!=='function') throw new Error('readerBackToLibrary handler missing');
+  window.readerBackToLibrary();
+  const libraryVisible=await waitFor(()=>{{
+    const library=document.getElementById('reader-library-view');
+    const reading=document.getElementById('reader-reading-view');
+    return library&&reading&&getComputedStyle(library).display!=='none'&&getComputedStyle(reading).display==='none';
+  }},6000);
+  await Promise.resolve(window.renderReaderScreen?.());
+  await new Promise(r=>setTimeout(r,300));
+
+  const libraryView=document.getElementById('reader-library-view');
+  const readingView=document.getElementById('reader-reading-view');
+  const libraryList=document.getElementById('reader-library-list');
+  const libraryText=String(libraryList?.textContent||'');
+  const activeBooksTab=[...(libraryList?.querySelectorAll?.('.lib-tab-btn')||[])].find(x=>/Книги\s*\(/.test(x.textContent||''));
+  const booksTabText=String(activeBooksTab?.textContent||'').replace(/\s+/g,' ').trim();
+  const cardTitles=[...(libraryList?.querySelectorAll?.('.lib-book-title')||[])].map(x=>String(x.textContent||'').trim());
 
   return {{
     parseStatus,
     toast:String(document.getElementById('toast')?.textContent||''),
+    openedReady,
     openedId:String(opened?.id||''),
     openedTitle:String(opened?.title||''),
     openedFull:!!opened?.chapters?.length,
@@ -125,7 +146,12 @@ result = cdp.eval(f"""(async()=>{{
     localHasTitle:Array.isArray(local)&&local.some(b=>String(b?.title||'')===title),
     durableCount:durable.length,
     durableHasTitle:durable.some(b=>String(b?.title||'')===title&&Array.isArray(b?.chapters)&&b.chapters.length>0),
-    libraryHasTitle:libraryText.includes(title)||tabText.includes(title),
+    libraryVisible,
+    libraryDisplay:String(getComputedStyle(libraryView).display||''),
+    readingDisplayAfterBack:String(getComputedStyle(readingView).display||''),
+    booksTabText,
+    cardTitles,
+    libraryHasTitle:libraryText.includes(title)&&cardTitles.includes(title),
     canonicalModule:String(globalThis.__readerCanonicalModuleUrl||''),
   }};
 }})()""", 55)
@@ -136,7 +162,7 @@ print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
 
 if not result:
     raise RuntimeError('manual import UI audit returned no result')
-if result['openedTitle'] != TITLE or not result['openedFull']:
+if not result['openedReady'] or result['openedTitle'] != TITLE or not result['openedFull']:
     raise RuntimeError('manual EPUB was saved but canonical Reader did not open it: ' + repr(summary))
 if result['readingDisplay'] == 'none':
     raise RuntimeError('manual EPUB save did not enter the reading view: ' + repr(summary))
@@ -146,8 +172,12 @@ if not result['localHasTitle']:
     raise RuntimeError('manual EPUB missing from lightweight local index: ' + repr(summary))
 if result['durableCount'] < before['count'] + 1 or result['localCount'] < before['count'] + 1:
     raise RuntimeError('manual EPUB save did not increase library count: ' + repr(summary))
+if not result['libraryVisible'] or result['libraryDisplay'] == 'none' or result['readingDisplayAfterBack'] != 'none':
+    raise RuntimeError('back from imported EPUB did not expose the real library view: ' + repr(summary))
 if not result['libraryHasTitle']:
-    raise RuntimeError('manual EPUB exists in storage but is invisible in rendered library: ' + repr(summary))
+    raise RuntimeError('manual EPUB exists in storage but has no visible library card: ' + repr(summary))
+if f"Книги ({before['count'] + 1})" not in result['booksTabText']:
+    raise RuntimeError('visible books counter did not increase after manual EPUB import: ' + repr(summary))
 if result['canonicalModule'] and '77.42-zh-reader-quality' not in result['canonicalModule']:
     raise RuntimeError('manual import opened through a duplicate Reader module: ' + repr(summary))
 
