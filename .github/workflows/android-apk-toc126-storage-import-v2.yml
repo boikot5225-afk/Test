@@ -15,6 +15,7 @@ on:
       - 'scripts/run_toc126_storage_emulator.sh'
       - 'scripts/audit_toc125_frozen_swipe.py'
       - 'scripts/configure_toc123_a54_abi.py'
+      - 'js/app.js'
       - 'js/reader/library-idb-store.js'
       - 'js/reader/library-store.js'
       - 'js/reader/semantic-import-bridge.js'
@@ -76,11 +77,12 @@ jobs:
           APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
           test -f "$APK"
           unzip -t "$APK" >/dev/null
+          unzip -l "$APK" | grep -qF 'assets/www/js/app.js'
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/library-idb-store.js'
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/semantic-import-stage1.js'
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/semantic-import-bridge.js'
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/android-external-import.js'
-          unzip -p "$APK" assets/www/app.js | grep -qF 'guest startup is local-first'
+          unzip -p "$APK" assets/www/js/app.js | grep -qF 'guest startup is local-first'
           if unzip -l "$APK" | grep -q 'assets/www/build/'; then
             echo 'transient repo build cache leaked into APK' >&2
             exit 1
