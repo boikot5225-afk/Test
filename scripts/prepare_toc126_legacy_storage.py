@@ -72,6 +72,12 @@ result = ev(r"""(()=>{
     chapters:[{id:'ch_0',title:'Ancienne bibliothèque',paragraphs:[huge]}]
   }];
   localStorage.setItem(key, JSON.stringify(legacy));
+  // Storage/migration test only: do not let hundreds of synthetic French words
+  // start DeepSeek while we are measuring import behavior and memory.
+  localStorage.setItem('an2_reader_vocab_estimate_fr_v1::guest', JSON.stringify({
+    language:'fr',version:1,estimate:63548,listLength:63548,
+    conservativeKnownCount:63548,updatedAt:new Date().toISOString()
+  }));
   const raw=localStorage.getItem(key)||'';
   return {key,bytes:new Blob([raw]).size,hasChapters:/\"chapters\"/.test(raw),guest:localStorage.getItem('an2_guest')};
 })()""")
