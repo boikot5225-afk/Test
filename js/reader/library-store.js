@@ -1,7 +1,9 @@
 import { repairBookCursorFromRenderedState } from './navigation-position-guard.js?v=1';
 
 // Reader library storage and sync.
-// UI rendering and import stay outside this module.
+// v2 rule: full book content lives in IndexedDB/cloud; localStorage contains
+// only a tiny library index plus positions/settings. A legacy full localStorage
+// snapshot is never removed until a successful IndexedDB write has completed.
 
 export function createReaderLibraryStore({
   getBooks,
@@ -24,6 +26,9 @@ export function createReaderLibraryStore({
   idbGet = async () => null,
   idbPut = async () => {},
 }) {
+  const INDEX_VERSION = 2;
+  let localContainsLegacyFullBooks = false;
+
   function positionsKey() { return storageKey() + '_pos'; }
 
   function loadPositions() {
@@ -49,17 +54,66 @@ export function createReaderLibraryStore({
     }
   }
 
+  function paragraphCount(book = {}) {
+    if (!Array.isArray(book.chapters)) return Number(book.paragraphCount || 0);
+    return book.chapters.reduce((sum, chapter) => sum + (chapter?.paragraphs?.length || 0), 0);
+  }
+
+  function progressValue(book = {}) {
+    const chapters = book?.chapters || [];
+    if (!chapters.length) return Math.max(0, Math.min(100, Number(book._progressPct || 0)));
+    const total = chapters.reduce((sum, chapter) => sum + (chapter.paragraphs?.length || 0), 0) || 1;
+    let done = 0;
+    const chapterIndex = Math.max(0, Number(book.currentChapter) || 0);
+    for (let index = 0; index < Math.min(chapterIndex, chapters.length); index += 1) {
+      done += chapters[index].paragraphs?.length || 0;
+    }
+    done += Math.min(Math.max(0, Number(book.currentParagraph) || 0), chapters[chapterIndex]?.paragraphs?.length || 0);
+    return Math.max(0, Math.min(100, Math.round(done / total * 100)));
+  }
+
+  function libraryIndexEntry(book = {}) {
+    return {
+      _libraryIndexV2: INDEX_VERSION,
+      id: String(book.id || ''),
+      title: book.title || 'Без названия',
+      author: book.author || '',
+      lang: book.lang || '',
+      sourceLang: book.sourceLang || '',
+      level: book.level || '',
+      format: book.format || 'text',
+      source: book.source || '',
+      importKey: book.importKey || '',
+      schemaVersion: Number(book.schemaVersion || 0),
+      coverKey: book.coverKey || '',
+      coverPath: book.coverPath || '',
+      createdAt: book.createdAt || '',
+      updatedAt: book.updatedAt || '',
+      currentChapter: Math.max(0, Number(book.currentChapter) || 0),
+      currentParagraph: Math.max(0, Number(book.currentParagraph) || 0),
+      chapterCount: Array.isArray(book.chapters) ? book.chapters.length : Number(book.chapterCount || 0),
+      paragraphCount: paragraphCount(book),
+      _progressPct: progressValue(book),
+    };
+  }
+
+  function isIndexOnlyBook(book) {
+    return Number(book?._libraryIndexV2 || 0) >= INDEX_VERSION && !Array.isArray(book?.chapters);
+  }
+
+  function writeLocalIndex(books) {
+    const index = (Array.isArray(books) ? books : []).filter(book => book?.id).map(libraryIndexEntry);
+    localStorage.setItem(storageKey(), JSON.stringify(index));
+    localContainsLegacyFullBooks = false;
+    return index;
+  }
+
   // Async translation/analysis callbacks in reader-app were written when the
   // requested paragraph was still the active one. They await the network and
   // then assign book.currentParagraph = capturedIndex before save(). If the user
   // has meanwhile jumped through the TOC and kept reading, that late assignment
   // is stale. The DOM is still showing the paragraph the user actually chose,
   // so repair the cursor from the rendered surface BEFORE dedupe/persistence.
-  //
-  // Explicit TOC navigation is the inverse situation: readerGoToChapter() saves
-  // before rendering the newly selected position. toc-navigation-fix brackets
-  // that synchronous save with __readerExplicitNavigationDepth, so the old DOM
-  // cannot cancel an intentional same-chapter jump to paragraph 0.
   function repairOpenBookCursorFromRenderedDom(source) {
     const books = Array.isArray(source) ? source : [];
     const currentId = String(getCurrentBookId?.() || '');
@@ -96,16 +150,18 @@ export function createReaderLibraryStore({
     catch { return false; }
   }
 
-  // Dedupe used to choose the duplicate with the greatest historical progress.
-  // That is reasonable for an offline cleanup, but catastrophically wrong while
-  // somebody is actively reading: an explicit TOC jump backwards/elsewhere is a
-  // NEW navigation decision, not "lost progress". The next render calls save(),
-  // dedupe resurrects the farther-ahead duplicate, and the reader teleports to
-  // exactly the place it came from.
-  //
-  // While a book is open, its id + currentChapter/currentParagraph are therefore
-  // authoritative. Duplicates may still contribute richer content/annotations via
-  // dedupeBooks(), but they can never replace the live reading cursor or its id.
+  function preferRicherBook(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    const aFull = Array.isArray(a.chapters) && a.chapters.length;
+    const bFull = Array.isArray(b.chapters) && b.chapters.length;
+    if (aFull && !bFull) return a;
+    if (bFull && !aFull) return b;
+    return new Date(a.updatedAt || 0) >= new Date(b.updatedAt || 0) ? a : b;
+  }
+
+  // While a book is open, its id + currentChapter/currentParagraph are
+  // authoritative. Duplicates can never roll the cursor backwards.
   function dedupePreservingOpenBook(source) {
     const input = Array.isArray(source) ? source : [];
     const currentId = String(getCurrentBookId?.() || '');
@@ -116,52 +172,35 @@ export function createReaderLibraryStore({
     const inInput = currentId
       ? input.find(book => String(book?.id || '') === currentId) || null
       : null;
-    const authoritative = inInput || live;
+    const authoritative = preferRicherBook(inInput, live);
 
     const deduped = dedupeBooks(input);
-    if (!currentId || !authoritative?.id || !Array.isArray(deduped) || !deduped.length) {
-      return deduped;
-    }
+    if (!currentId || !authoritative?.id || !Array.isArray(deduped) || !deduped.length) return deduped;
 
     let index = deduped.findIndex(book => String(book?.id || '') === currentId);
     if (index < 0) index = deduped.findIndex(book => sameBookKey(book, authoritative));
     if (index < 0) return deduped;
 
-    const winner = deduped[index];
-    const winnerId = String(winner?.id || '');
-    const wantedId = String(authoritative.id || '');
-    const beforeChapter = Number(winner?.currentChapter || 0);
-    const beforeParagraph = Number(winner?.currentParagraph || 0);
+    const winner = preferRicherBook(deduped[index], authoritative);
     const wantedChapter = Math.max(0, Number(authoritative.currentChapter) || 0);
     const wantedParagraph = Math.max(0, Number(authoritative.currentParagraph) || 0);
-
     winner.id = authoritative.id;
     winner.currentChapter = wantedChapter;
     winner.currentParagraph = wantedParagraph;
     if (authoritative.updatedAt) winner.updatedAt = authoritative.updatedAt;
-
-    if (winnerId !== wantedId || beforeChapter !== wantedChapter || beforeParagraph !== wantedParagraph) {
-      console.warn('[reader library] blocked stale duplicate position rollback', {
-        bookId: wantedId,
-        from: [beforeChapter, beforeParagraph],
-        to: [wantedChapter, wantedParagraph],
-      });
-    }
+    deduped[index] = winner;
     return deduped;
   }
 
-  // localStorage may hold a stale copy when quota blocks writes; never let it
-  // roll back books that are fresher in memory or drop memory-only books.
+  // A lightweight local index must never replace a full in-memory/IDB book.
   function mergeNewerFromMemory(fromStorage) {
     const inMemory = getBooks();
     if (!Array.isArray(inMemory) || !inMemory.length) return fromStorage;
-    const byId = new Map(fromStorage.map(book => [book.id, book]));
+    const byId = new Map((fromStorage || []).filter(book => book?.id).map(book => [book.id, book]));
     for (const mem of inMemory) {
       if (!mem?.id) continue;
       const stored = byId.get(mem.id);
-      if (!stored || new Date(mem.updatedAt || 0) >= new Date(stored.updatedAt || 0)) {
-        byId.set(mem.id, mem);
-      }
+      byId.set(mem.id, preferRicherBook(mem, stored));
     }
     return dedupePreservingOpenBook([...byId.values()]);
   }
@@ -186,11 +225,8 @@ export function createReaderLibraryStore({
       const raw = localStorage.getItem(storageKey());
       books = raw ? JSON.parse(raw) : [];
       if (!Array.isArray(books)) books = [];
-      const deduped = dedupePreservingOpenBook(books);
-      if (deduped.length !== books.length) {
-        localStorage.setItem(storageKey(), JSON.stringify(deduped));
-      }
-      books = deduped;
+      localContainsLegacyFullBooks = books.some(book => Array.isArray(book?.chapters));
+      books = dedupePreservingOpenBook(books);
     } catch (_) {
       books = [];
     }
@@ -236,33 +272,21 @@ export function createReaderLibraryStore({
     localCommitPending = false;
 
     const current = repairOpenBookCursorFromRenderedDom(getBooks() || []);
-    let books = dedupePreservingOpenBook(current);
+    const books = dedupePreservingOpenBook(current);
     setBooks(books);
     savePositions(books);
 
-    let localOk = true;
-    try {
-      localStorage.setItem(storageKey(), JSON.stringify(books));
-    } catch (error) {
-      onError('[reader] library localStorage cache write failed', error);
-      try {
-        const slim = books.map(({ readerAnalyses, readerTranslations, ...rest }) => rest);
-        localStorage.setItem(storageKey(), JSON.stringify(slim));
-        onError('[reader] saved slim library without AI caches');
-      } catch (retryError) {
-        localOk = false;
-        onError('[reader] slim retry also failed (IndexedDB still holds the data)', retryError);
-        try {
-          localStorage.removeItem(storageKey());
-          onError('[reader] removed oversized library key from localStorage to free quota');
-        } catch (_) {}
-      }
-    }
-
-    writeThroughToIndexedDB(books).catch(error => {
-      onError('[reader] library IndexedDB save failed', error);
-      if (!localOk) onSaveError?.(error);
-    });
+    // Durable content first. Only after it succeeds may the legacy full
+    // localStorage snapshot be replaced by the tiny index.
+    writeThroughToIndexedDB(books)
+      .then(() => {
+        try { writeLocalIndex(books); }
+        catch (error) { onError('[reader] library index save failed', error); }
+      })
+      .catch(error => {
+        onError('[reader] library IndexedDB save failed; keeping previous local snapshot', error);
+        onSaveError?.(error);
+      });
     return books;
   }
 
@@ -285,22 +309,24 @@ export function createReaderLibraryStore({
 
   let idbHydratedOnce = false;
   async function writeThroughToIndexedDB(books) {
+    let mergedBooks = Array.isArray(books) ? books : [];
     if (!idbHydratedOnce) {
       let existing = null;
       try { existing = await idbGet(storageKey()); } catch (_) {}
       if (Array.isArray(existing) && existing.length) {
-        const byId = new Map(books.map(book => [book.id, book]));
+        const byId = new Map(mergedBooks.filter(book => book?.id).map(book => [book.id, book]));
         for (const idbBook of existing) {
           if (!idbBook?.id) continue;
           const mine = byId.get(idbBook.id);
-          if (!mine || new Date(idbBook.updatedAt || 0) > new Date(mine.updatedAt || 0)) {
-            byId.set(idbBook.id, idbBook);
-          }
+          byId.set(idbBook.id, preferRicherBook(mine, idbBook));
         }
-        books = dedupePreservingOpenBook([...byId.values()]);
+        mergedBooks = dedupePreservingOpenBook([...byId.values()]);
+        setBooks(mergedBooks);
       }
     }
-    await idbPut(storageKey(), books);
+    await idbPut(storageKey(), mergedBooks);
+    idbHydratedOnce = true;
+    return mergedBooks;
   }
 
   async function hydrateFromIndexedDB() {
@@ -312,26 +338,40 @@ export function createReaderLibraryStore({
       return false;
     }
     idbHydratedOnce = true;
-    if (!Array.isArray(fromIdb) || !fromIdb.length) return false;
 
     const current = getBooks() || [];
-    const byId = new Map(current.map(book => [book.id, book]));
+    if (!Array.isArray(fromIdb) || !fromIdb.length) {
+      // First v2 launch can have a valid legacy localStorage library but no IDB
+      // data. Migrate it before shrinking the local key.
+      const fullLocal = current.filter(book => Array.isArray(book?.chapters));
+      if (fullLocal.length) {
+        try {
+          await idbPut(storageKey(), fullLocal);
+          writeLocalIndex(fullLocal);
+          return true;
+        } catch (error) {
+          onError('[reader] legacy localStorage migration deferred', error);
+        }
+      }
+      return false;
+    }
+
+    const byId = new Map(current.filter(book => book?.id).map(book => [book.id, book]));
     let changed = false;
     for (const idbBook of fromIdb) {
       if (!idbBook?.id) continue;
       const local = byId.get(idbBook.id);
-      if (!local || new Date(idbBook.updatedAt || 0) > new Date(local.updatedAt || 0)) {
-        byId.set(idbBook.id, idbBook);
-        changed = true;
-      }
+      const winner = preferRicherBook(idbBook, local);
+      if (winner !== local || isIndexOnlyBook(local)) changed = true;
+      byId.set(idbBook.id, winner);
     }
-    if (!changed) return false;
 
     const merged = dedupePreservingOpenBook([...byId.values()]);
     applyPositions(merged);
     setBooks(merged);
-    try { localStorage.setItem(storageKey(), JSON.stringify(merged)); } catch (_) {}
-    return true;
+    try { writeLocalIndex(merged); }
+    catch (error) { onError('[reader] library index refresh failed', error); }
+    return changed || localContainsLegacyFullBooks;
   }
 
   async function loadFromCloud(force = false) {
@@ -350,20 +390,17 @@ export function createReaderLibraryStore({
       if (error) throw error;
 
       const remoteBooks = (data || []).map(row => row.data || {}).filter(book => book.id);
-      const byId = new Map((getBooks() || []).map(book => [book.id, book]));
+      const byId = new Map((getBooks() || []).filter(book => book?.id).map(book => [book.id, book]));
       for (const remote of remoteBooks) {
         const local = byId.get(remote.id);
-        if (!local || new Date(remote.updatedAt || remote.updated_at || 0) > new Date(local.updatedAt || 0)) {
-          byId.set(remote.id, remote);
-        }
+        byId.set(remote.id, preferRicherBook(remote, local));
       }
       const merged = dedupePreservingOpenBook([...byId.values()]);
       applyPositions(merged);
       setBooks(merged);
-      try { localStorage.setItem(storageKey(), JSON.stringify(merged)); } catch (_) {}
-      writeThroughToIndexedDB(merged).catch(error => {
-        onError('[reader] IndexedDB save after cloud load failed', error);
-      });
+      writeThroughToIndexedDB(merged)
+        .then(() => { try { writeLocalIndex(merged); } catch (_) {} })
+        .catch(error => onError('[reader] IndexedDB save after cloud load failed', error));
       setCloudLoadedOnce(true);
 
       if (merged.length !== byId.size) {
@@ -392,8 +429,8 @@ export function createReaderLibraryStore({
     if (!userId || !isCloudReady() || getCloudSaving()) return false;
 
     const current = repairOpenBookCursorFromRenderedDom(getBooks() || []);
-    const books = dedupePreservingOpenBook(current);
-    setBooks(books);
+    const books = dedupePreservingOpenBook(current).filter(book => Array.isArray(book?.chapters));
+    setBooks(dedupePreservingOpenBook(current));
     if (!books.length) {
       if (options.replaceAll) await db().from('reader_books').delete().eq('user_id', userId);
       return false;
@@ -402,11 +439,8 @@ export function createReaderLibraryStore({
     setCloudSaving(true);
     try {
       if (options.replaceAll) {
-        try {
-          await db().from('reader_books').delete().eq('user_id', userId);
-        } catch (error) {
-          onError('[reader cloud] replaceAll delete skipped:', error?.message || error);
-        }
+        try { await db().from('reader_books').delete().eq('user_id', userId); }
+        catch (error) { onError('[reader cloud] replaceAll delete skipped:', error?.message || error); }
       }
 
       const rows = books.map(raw => {
@@ -437,17 +471,7 @@ export function createReaderLibraryStore({
     return books.find(book => book.id === getCurrentBookId()) || null;
   }
 
-  function progress(book) {
-    const chapters = book?.chapters || [];
-    const total = chapters.reduce((sum, chapter) => sum + (chapter.paragraphs?.length || 0), 0) || 1;
-    let done = 0;
-    const chapterIndex = book.currentChapter || 0;
-    for (let index = 0; index < Math.min(chapterIndex, chapters.length); index += 1) {
-      done += chapters[index].paragraphs?.length || 0;
-    }
-    done += Math.min(book.currentParagraph || 0, chapters[chapterIndex]?.paragraphs?.length || 0);
-    return Math.max(0, Math.min(100, Math.round(done / total * 100)));
-  }
+  function progress(book) { return progressValue(book); }
 
   function continueBook() {
     const books = getBooks() || [];
