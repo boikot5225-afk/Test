@@ -1051,6 +1051,18 @@ export async function continueAsGuest() {
   setSbUser(null);
   readerSwitchStorageOwner('guest');
 
+  // Capture a legacy full library synchronously, before any startup task can
+  // compact localStorage to an index. ACTION_VIEW import may begin only after
+  // several async module/file steps, so the import bridge consumes this
+  // one-shot snapshot after its durable IDB merge succeeds.
+  try {
+    const key = window.an2ReaderStorageKey?.('an2_reader_books_v1') || 'an2_reader_books_v1::guest';
+    const raw = localStorage.getItem(key) || '';
+    if (/"chapters"\s*:/.test(raw)) {
+      globalThis.__readerGuestLegacyLibrarySnapshot = { key, raw };
+    }
+  } catch (_) {}
+
   const brand = document.querySelector('.nav-brand');
   if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">гость</span>';
 
