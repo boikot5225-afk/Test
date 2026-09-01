@@ -33,18 +33,33 @@ cdp.wait("document.querySelectorAll('#reader-chapter-text .reader-word').length>
 summary = cdp.eval(r"""(async()=>{
   const key=window.an2ReaderStorageKey?.('an2_reader_books_v1')||'an2_reader_books_v1::guest';
   const raw=localStorage.getItem(key)||'';
-  let index=[]; try{index=JSON.parse(raw)||[]}catch(e){}
+  let local=[]; try{local=JSON.parse(raw)||[]}catch(e){}
   const mod=await import('./js/reader/library-idb-store.js?v=2');
-  const books=await mod.libraryIdbGet(key)||[];
-  const imported=books.find(b=>b?.title==='Audit mémoire toc126');
-  const legacy=books.find(b=>b?.id==='legacy_seed_toc126');
+  const durableIndex=await mod.libraryIdbGetIndex(key).catch(()=>[]);
+  const legacyDirect=await mod.libraryIdbGetBook(key,'legacy_seed_toc126').catch(()=>null);
+  let books=[];
+  let durableGetError='';
+  try { books=await mod.libraryIdbGet(key)||[]; }
+  catch (error) { durableGetError=String(error?.message||error); }
+  const imported=books.find(b=>b?.title==='Audit mémoire toc126')
+    || await mod.libraryIdbGetBook(key, durableIndex.find(x=>x?.title==='Audit mémoire toc126')?.id||'').catch(()=>null);
+  const legacy=books.find(b=>b?.id==='legacy_seed_toc126') || legacyDirect;
   return {
     key,
     localBytes:new Blob([raw]).size,
-    localCount:index.length,
-    localAllIndex:index.every(b=>b?._libraryIndexV2===2&&!Object.prototype.hasOwnProperty.call(b,'chapters')),
+    localCount:local.length,
+    localIds:local.map(b=>String(b?.id||'')),
+    localAllIndex:local.every(b=>b?._libraryIndexV2===2&&!Object.prototype.hasOwnProperty.call(b,'chapters')),
     localHasChapters:/\"chapters\"/.test(raw),
+    durableGetError,
+    durableIndexCount:durableIndex.length,
+    durableIndexIds:durableIndex.map(b=>String(b?.id||'')),
+    durableIndexLegacy:durableIndex.find(b=>b?.id==='legacy_seed_toc126')||null,
     durableCount:books.length,
+    durableIds:books.map(b=>String(b?.id||'')),
+    legacyDirectExists:!!legacyDirect,
+    legacyDirectHasChapters:!!legacyDirect?.chapters?.length,
+    legacyDirectParagraphChars:String(legacyDirect?.chapters?.[0]?.paragraphs?.[0]||'').length,
     durableImportedChapters:imported?.chapters?.length||0,
     durableImportedParagraphs:(imported?.chapters||[]).reduce((n,ch)=>n+(ch?.paragraphs?.length||0),0),
     durableLegacyFull:!!legacy?.chapters?.[0]?.paragraphs?.[0],
@@ -62,8 +77,15 @@ summary = cdp.eval(r"""(async()=>{
 
 if not summary:
     raise RuntimeError('empty storage summary')
+# Always persist evidence BEFORE the first assertion. A red run must tell us
+# exactly whether the local index, IDB index or full per-book record is missing.
+(OUT / 'toc126-storage-import-live.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
+print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
+
 if summary['guest'] != '1':
     raise RuntimeError('guest storage owner was not restored before import: ' + json.dumps(summary, ensure_ascii=False))
+if summary['durableGetError']:
+    raise RuntimeError('durable library read failed: ' + summary['durableGetError'])
 if summary['localBytes'] > 50_000:
     raise RuntimeError(f"localStorage library index is still huge: {summary['localBytes']} bytes")
 if summary['localHasChapters'] or not summary['localAllIndex']:
@@ -71,7 +93,7 @@ if summary['localHasChapters'] or not summary['localAllIndex']:
 if summary['durableImportedChapters'] != 12 or summary['durableImportedParagraphs'] < 300:
     raise RuntimeError('full imported book missing from IndexedDB: ' + json.dumps(summary, ensure_ascii=False))
 if not summary['durableLegacyFull']:
-    raise RuntimeError('legacy localStorage book was not migrated durably')
+    raise RuntimeError('legacy localStorage book was not migrated durably: ' + json.dumps(summary, ensure_ascii=False))
 if summary['tocRows'] != 12 or not summary['tocExact'] or summary['tocSource'] != 'EPUB3 nav':
     raise RuntimeError('exact TOC was not persisted from the single semantic parse: ' + json.dumps(summary, ensure_ascii=False))
 if summary['imageCount'] != 12:
