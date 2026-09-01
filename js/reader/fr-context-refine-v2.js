@@ -175,7 +175,19 @@ function paragraphWords(paragraph) {
   return Array.from(paragraph?.querySelectorAll?.('.reader-word[data-word]') || []);
 }
 
+// Contextual morphology needs the punctuation from the book itself. Rebuilding
+// a sentence from .reader-word nodes loses commas/semicolons, which made a
+// detached participle such as "..., fumant ..." indistinguishable from an
+// adjective. Clone the rendered paragraph, strip only our Russian annotation
+// nodes, and read the original French text including punctuation.
 function sourceContext(paragraph) {
+  if (!paragraph) return '';
+  try {
+    const clone = paragraph.cloneNode(true);
+    clone.querySelectorAll('.rw-fr-v2-gloss').forEach(node => node.remove());
+    const text = String(clone.textContent || '').replace(/\s+/g, ' ').trim();
+    if (text) return text;
+  } catch {}
   return paragraphWords(paragraph).map(surface).filter(Boolean).join(' ');
 }
 
@@ -387,72 +399,45 @@ if (typeof window !== 'undefined') {
 async function refine(reason = 'event') {
   if (currentLang() !== 'fr') return;
   if (passRunning) { rerun = true; return; }
-  const root = document.getElementById('reader-chapter-text');
-  if (!root) return;
   passRunning = true;
+  rerun = false;
   try {
+    const root = document.getElementById('reader-chapter-text');
+    if (!root) return;
+    const scope = visibleScope(root);
     const dict = await loadSenses();
-    const cache = readCache();
-    const allParagraphs = Array.from(root.querySelectorAll('.reader-paragraph'));
-    for (const paragraph of allParagraphs) {
-      const phraseMap = phraseOverrides(paragraph);
-      for (const el of paragraphWords(paragraph)) {
-        if (!el.classList.contains('rw-migaku-unknown')) continue;
-        const key = occurrenceKey(el, paragraph);
-        const cached = cleanRu(cache[key]?.ru || '');
-        if (cached) {
-          setGloss(el, cached, cache[key]?.provider || 'quality:cache', key);
-          continue;
+    const paragraphs = Array.from(scope.querySelectorAll('.reader-paragraph'));
+    let contextRequests = 0;
+    for (const paragraph of paragraphs) {
+      const overrides = phraseOverrides(paragraph);
+      const unknown = Array.from(paragraph.querySelectorAll('.reader-word.rw-migaku-unknown[data-word]'));
+      for (const el of unknown) {
+        const result = await localFallback(el, dict, overrides.get(el));
+        if (result?.resolved || result?.protected) continue;
+        if (contextRequests >= MAX_CONTEXT_REQUESTS_PER_PASS) continue;
+        if (requestContext(el, result?.candidates || [], result?.key || occurrenceKey(el, paragraph))) {
+          setPending(el, result?.key || '');
+          contextRequests += 1;
         }
-        await localFallback(el, dict, phraseMap.get(el));
       }
     }
-
-    // Context inference is deliberately limited to the visible page and starts
-    // only after every Unknown has a local value. It therefore cannot cause the
-    // old first-paint stalls even when the French ML Kit model is not installed.
-    const scope = visibleScope(root);
-    let requested = 0;
-    for (const el of scope.querySelectorAll('.reader-word.rw-migaku-unknown[data-word]')) {
-      if (requested >= MAX_CONTEXT_REQUESTS_PER_PASS || active >= MAX_ACTIVE) break;
-      const pair = glossPair(el);
-      if (!pair.wrap || !pair.node) continue;
-      const provider = String(pair.wrap.dataset.frProvider || '');
-      if (provider.startsWith('quality:phrase') || provider === 'quality:safe-surface' || provider === 'surface-context' || provider.startsWith('phrase:')) continue;
-      const raw = surface(el);
-      const candidates = candidateSenses(dict, raw, lemma(raw));
-      const existing = cleanRu(pair.node.textContent || '');
-      const ambiguous = candidates.length >= 2;
-      if (!existing) setPending(el, occurrenceKey(el, el.closest('.reader-paragraph')));
-      if (!ambiguous && existing) continue;
-      const key = occurrenceKey(el, el.closest('.reader-paragraph'));
-      if (requestContext(el, candidates, key)) requested += 1;
-    }
-
-    try {
-      window.dispatchEvent(new CustomEvent('reader:fr-quality-ready', { detail: { reason } }));
-    } catch {}
   } finally {
     passRunning = false;
-    if (rerun) { rerun = false; schedule('rerun', 0); }
+    if (rerun) schedule('rerun', 20);
   }
 }
 
-function schedule(reason = 'event', delay = 45) {
+function schedule(reason = 'event', delay = 40) {
   clearTimeout(scheduled);
-  scheduled = setTimeout(() => { void refine(reason); }, Math.max(0, Number(delay) || 0));
+  scheduled = setTimeout(() => refine(reason), Math.max(0, delay));
 }
 
 if (typeof window !== 'undefined' && !window.__readerFrContextRefineV2) {
   window.__readerFrContextRefineV2 = true;
-  window.readerFrenchQualityRefresh = (reason = 'external') => schedule(reason, 0);
-  window.addEventListener('reader:fr-pipeline-v2-ready', event => schedule(event?.detail?.reason || 'pipeline', 0));
-  document.addEventListener('reader:fr-analysis-ready', () => schedule('analysis', 0));
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => schedule('boot', 180), { once: true });
-  } else {
-    schedule('boot', 180);
-  }
+  window.addEventListener('reader:fr-pipeline-v2-ready', () => schedule('pipeline-ready', 140));
+  window.addEventListener('reader:pagechange', () => schedule('pagechange', 180));
+  window.addEventListener('reader:fr-lexical-corrected', () => schedule('lexical-corrected', 80));
+  window.addEventListener('reader:word-state-changed', () => schedule('word-state', 100));
 }
 
-export { normalize, cleanRu, candidateSenses, phraseOverrides, refine };
+export { normalize, cleanRu, refine, sourceContext };
