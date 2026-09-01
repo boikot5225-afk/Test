@@ -11,13 +11,18 @@ on:
       - 'scripts/make_fr_v2_audit_epub_toc124.py'
       - 'scripts/bootstrap_toc123_french_reader_live.py'
       - 'scripts/audit_toc124_fr_pipeline_v2_live.py'
+      - 'scripts/audit_toc124_fr_quality_gate.py'
       - 'scripts/run_toc124_fr_pipeline_v2_emulator.sh'
       - 'scripts/configure_toc123_a54_abi.py'
+      - 'scripts/patch_toc124_french_native_context.py'
       - 'scripts/build_fr_reader_resources.py'
       - 'js/reader/fr-reader-pipeline-v2.js'
+      - 'js/reader/fr-context-refine-v2.js'
       - 'js/reader/fr-vocab-estimate.js'
       - 'js/reader/fr-lexical-pipeline-v2.js'
       - 'js/reader/interactions-runtime.js'
+      - 'android/app/src/main/java/space/saintjust/reader/stage1/FrenchContextTranslateBridge.java'
+      - 'android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java'
       - 'android/app/build.gradle'
   workflow_dispatch:
 
@@ -52,6 +57,10 @@ jobs:
           printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
           echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
 
+      - name: Wire isolated French native context bridge
+        shell: bash
+        run: python3 scripts/patch_toc124_french_native_context.py
+
       - name: Validate frozen core and French v2 architecture
         shell: bash
         run: bash scripts/validate_toc124_fr_pipeline_v2.sh
@@ -75,7 +84,7 @@ jobs:
         shell: bash
         run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
 
-      - name: French v2 context + performance + frozen swipe on Android 15
+      - name: French v2 quality + performance + frozen swipe on Android 15
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -144,6 +153,7 @@ jobs:
             exit 1
           fi
           unzip -l "$OUT" | grep -qF 'assets/www/js/reader/fr-reader-pipeline-v2.js'
+          unzip -l "$OUT" | grep -qF 'assets/www/js/reader/fr-context-refine-v2.js'
           unzip -l "$OUT" | grep -qF 'assets/frreader/fr_ru_senses.json'
           sha256sum "$OUT" | tee unique-out/SHA256.txt
           stat -c '%n %s bytes' "$OUT" | tee unique-out/SIZE.txt
