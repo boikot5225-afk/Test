@@ -7,7 +7,7 @@
 // the DOM immediately, and repeatedly strips any stale rehydrate while the cloud
 // delete is in flight.
 
-import { libraryIdbDeleteBook } from './library-idb-store.js?v=2';
+import { libraryIdbDeleteBook } from './library-idb-store.js?v=1';
 import { imgStoreDeleteBook } from './image-store.js?v=1';
 import { audioStoreDelete } from './audio-store.js?v=1';
 import { sb, sbGetCurrentUserId, isSupabaseReady } from '../supabase.js';
