@@ -120,6 +120,10 @@ parse = bridge.index('const result = await parseSemanticEpubFile(file')
 assert barrier < parse, 'ACTION_VIEW EPUB parse must wait for durable legacy migration'
 assert 'libraryIdbDeleteBook(storageKey, wantedId)' in delete_fix
 assert 'localStorage.setItem(storageKey, JSON.stringify(books))' not in delete_fix
+# Delete is part of the frozen Reader runtime and must share reader-app's storage
+# module instance. Changing only a query-string cache key creates independent
+# module-level migration snapshots and can compact legacy localStorage too early.
+assert "import { libraryIdbDeleteBook } from './library-idb-store.js?v=1';" in delete_fix
 for runtime_path in (root / 'js').rglob('*.js'):
     runtime_source = runtime_path.read_text(encoding='utf-8')
     assert 'reader-app.js?v=77.32' not in runtime_source, f'duplicate Reader module identity survived: {runtime_path}'
@@ -138,7 +142,8 @@ for f in \
   js/reader/semantic-import-stage1.js \
   js/reader/epub.js \
   js/reader/android-external-import.js \
-  js/reader/handler-bridge.js; do
+  js/reader/handler-bridge.js \
+  js/reader/delete-fix.js; do
   target="$TMP/$(echo "$f" | tr '/' '_').mjs"
   cp "$f" "$target"
   node --check "$target"
