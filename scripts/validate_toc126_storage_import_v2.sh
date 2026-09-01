@@ -75,7 +75,9 @@ for forbidden in [
 assert '_libraryIndexV2' in storage and 'writeLocalIndex' in storage
 assert 'writeLocalIndex(key, next)' in bridge
 assert 'await libraryIdbPut(key, next)' in bridge
-assert 'pendingLocalLibrary = readStoredBooks(storageKey())' in bridge
+assert '__readerGuestLegacyLibrarySnapshot' in app
+assert 'readGuestStartupSnapshot(key)' in bridge
+assert 'pendingLocalLibrary = mergeBookLists(readGuestStartupSnapshot(key), readStoredBooks(key))' in bridge
 assert 'mergeBookLists(pendingLocalLibrary, readStoredBooks(key))' in bridge
 
 # IDB v2 stores separate book records and preserves the v1 store for non-destructive migration.
