@@ -6,6 +6,7 @@
       "**/.*",
       "**/node_modules/**",
       "functions/**",
+      "functions-fr-context/**",
       "supabase/**"
     ]
   },
@@ -16,6 +17,17 @@
     {
       "source": "functions",
       "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    },
+    {
+      "source": "functions-fr-context",
+      "codebase": "frcontext",
       "ignore": [
         "node_modules",
         ".git",
