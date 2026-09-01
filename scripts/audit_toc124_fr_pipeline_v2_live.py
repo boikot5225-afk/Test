@@ -80,8 +80,9 @@ def page_state():
     return ev("""(()=>{const s=document.querySelector('#reader-reading-view .rd-scroll');const root=document.getElementById('reader-chapter-text');const ps=[...root?.querySelectorAll(':scope > .rd-page')||[]];const cur=root?.querySelector(':scope > .rd-page.rd-page-current,:scope > .rd-page.rd-page-show');const r=(cur||root)?.getBoundingClientRect();return {mode:!!s?.classList.contains('rd-pages-mode'),count:ps.length,index:ps.indexOf(cur),rect:r?{left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height}:null};})()""")
 
 def paragraph_tokens(needle):
-    needle_json=json.dumps(needle,ensure_ascii=False)
-    return ev(f"""(()=>{{const p=[...document.querySelectorAll('#reader-chapter-text .reader-paragraph')].find(x=>(x.textContent||'').includes({needle_json}));if(!p)return null;return [...p.querySelectorAll('.reader-word[data-word]')].map((el,i)=>({{i,s:String(el.dataset.word||el.textContent||'').trim(),lemma:window.readerFrenchLemmaFor?.(el.dataset.word||el.textContent||'')||'',unknown:el.classList.contains('rw-migaku-unknown'),gloss:el.parentElement?.classList.contains('rw-fr-v2-wrap')?(el.parentElement.querySelector(':scope > .rw-fr-v2-gloss')?.textContent?.trim()||''):'',provider:el.parentElement?.dataset?.frProvider||''}}));}})()""")
+    needle_words=[part.lower() for part in re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿŒœÆæÇç'’-]+",needle) if part]
+    needle_json=json.dumps(needle_words,ensure_ascii=False)
+    return ev(f"""(()=>{{const wanted={needle_json};const paragraphs=[...document.querySelectorAll('#reader-chapter-text .reader-paragraph')];const p=paragraphs.find(x=>{{const words=[...x.querySelectorAll('.reader-word[data-word]')].map(el=>String(el.dataset.word||el.textContent||'').trim().toLocaleLowerCase('fr-FR'));if(!wanted.length)return false;for(let i=0;i<=words.length-wanted.length;i++){{let ok=true;for(let j=0;j<wanted.length;j++){{const actual=words[i+j].replace(/[’‘`´]/g,"'");const expected=String(wanted[j]).replace(/[’‘`´]/g,"'");if(actual!==expected){{ok=false;break;}}}}if(ok)return true;}}return false;}});if(!p)return null;return [...p.querySelectorAll('.reader-word[data-word]')].map((el,i)=>({{i,s:String(el.dataset.word||el.textContent||'').trim(),lemma:window.readerFrenchLemmaFor?.(el.dataset.word||el.textContent||'')||'',unknown:el.classList.contains('rw-migaku-unknown'),gloss:el.parentElement?.classList.contains('rw-fr-v2-wrap')?(el.parentElement.querySelector(':scope > .rw-fr-v2-gloss')?.textContent?.trim()||''):'',provider:el.parentElement?.dataset?.frProvider||''}}));}})()""")
 
 def find_token(tokens,predicate,label):
     if not tokens: raise RuntimeError(f'Paragraph missing for {label}')
@@ -96,8 +97,6 @@ if lang!='fr': raise RuntimeError(f'Expected French Reader, got {lang!r}')
 wait_value("!!window.__readerFrPipelineV2",timeout=8)
 wait_value("typeof window.readerLoadFrenchVocabularyData==='function'",timeout=8)
 
-# Deterministic all-Unknown profile for the fixture. This uses the exact stored
-# profile format of Measure my level; no CSS classes are painted by the test.
 ev("""(()=>{const owner=localStorage.getItem('an2_reader_active_owner_v1')||'guest';localStorage.setItem(`an2_reader_vocab_estimate_fr_v1::${owner}`,JSON.stringify({language:'fr',version:1,estimate:0,listLength:63548,conservativeKnownCount:0,updatedAt:new Date().toISOString()}));window.readerFrenchRefresh?.('audit-profile',true);return owner;})()""")
 wait_value("document.querySelectorAll('#reader-chapter-text .reader-word.rw-migaku-unknown').length>20",timeout=12)
 wait_value("document.querySelectorAll('#reader-chapter-text .rw-fr-v2-wrap .rw-fr-v2-gloss').length>10",timeout=12)
@@ -123,7 +122,6 @@ faut=find_token(courant_tokens,lambda s,l:s=='faut' or l=='falloir','il faut')
 if courant.get('gloss')!='в курсе': raise RuntimeError('au courant context failed: '+json.dumps(courant,ensure_ascii=False))
 if faut.get('gloss')!='нужно': raise RuntimeError('il faut context failed: '+json.dumps(faut,ensure_ascii=False))
 
-# No old observer-owned wrappers are allowed and refresh must be idempotent.
 layout=ev("""(()=>({old:document.querySelectorAll('#reader-chapter-text .rw-fr-gloss-wrap').length,v2:document.querySelectorAll('#reader-chapter-text .rw-fr-v2-wrap').length,nested:document.querySelectorAll('#reader-chapter-text .rw-fr-v2-wrap .rw-fr-v2-wrap').length,blank:[...document.querySelectorAll('#reader-chapter-text .reader-word.rw-migaku-unknown')].filter(el=>{const w=el.parentElement;return w?.classList.contains('rw-fr-v2-wrap')&&!String(w.querySelector(':scope > .rw-fr-v2-gloss')?.textContent||'').trim();}).length}))()""")
 if layout['old']!=0 or layout['nested']!=0: raise RuntimeError('French wrapper architecture invalid: '+json.dumps(layout))
 
@@ -133,7 +131,6 @@ if perf['noop']>120: raise RuntimeError('French no-op refresh too slow: '+json.d
 if perf['nested']!=0: raise RuntimeError('Repeated refresh nested wrappers: '+json.dumps(perf))
 screenshot('toc124-01-context-glosses.png')
 
-# Physical swipe remains the untouched toc119 gesture path.
 ev("window.readerCloseWordPanel?.(); true")
 time.sleep(.2)
 dismissed_anr=dismiss_emulator_anr_overlay()
