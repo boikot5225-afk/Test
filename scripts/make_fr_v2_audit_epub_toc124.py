@@ -15,6 +15,7 @@ shutil.rmtree(root,ignore_errors=True)
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>French Reader v2 audit</dc:title><dc:creator>Reader AI fixture</dc:creator><dc:language>fr</dc:language><dc:identifier id="bookid">toc124-fr-v2-audit</dc:identifier></metadata><manifest><item id="ch1" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref id="ch1"/></spine></package>''',encoding='utf-8')
 passages=[
     "Tendre la joue, c'est bien joli, mais que veux-tu faire si cela t'ennuiera demain ?",
+    "Il tend la corde et vérifie le nœud.",
     "Le mec est au courant, à présent. Il faut voir ce qu'il a dans le ventre.",
     "Elle rapportait tout à la ferme et rangeait les provisions.",
     "Treuffais restait dans sa chambre, fumant sans arrêt; la pièce sentait mauvais.",
