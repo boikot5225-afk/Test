@@ -18,6 +18,18 @@ const IDB_READ_TIMEOUT_MS = 5000;
 let _db = null;
 const _legacyMigrations = new Map();
 const _localLegacyMigrated = new Set();
+// Capture full legacy payloads at module evaluation, before any asynchronous
+// startup hydrator can compact localStorage to a lightweight v2 index.
+const _bootLegacyLocal = new Map();
+try {
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!String(key || '').startsWith('an2_reader_books_v1')) continue;
+    const parsed = JSON.parse(localStorage.getItem(key) || '[]');
+    const full = Array.isArray(parsed) ? parsed.filter(book => book?.id && Array.isArray(book?.chapters) && book.chapters.length > 0) : [];
+    if (full.length) _bootLegacyLocal.set(cleanLibraryKey(key), full);
+  }
+} catch (_) {}
 
 function timeoutError(op) {
   return new Error(`[reader] library IndexedDB ${op} timed out`);
@@ -222,13 +234,17 @@ async function readLegacySnapshot(key) {
 }
 
 function readLegacyLocalStorageSnapshot(key) {
-  if (typeof localStorage === 'undefined') return [];
+  const libraryKey = cleanLibraryKey(key);
+  const boot = _bootLegacyLocal.get(libraryKey) || [];
+  if (typeof localStorage === 'undefined') return boot;
   try {
-    const parsed = JSON.parse(localStorage.getItem(cleanLibraryKey(key)) || '[]');
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(book => book?.id && Array.isArray(book?.chapters) && book.chapters.length > 0);
+    const parsed = JSON.parse(localStorage.getItem(libraryKey) || '[]');
+    const live = Array.isArray(parsed) ? parsed.filter(book => book?.id && Array.isArray(book?.chapters) && book.chapters.length > 0) : [];
+    const byId = new Map(boot.filter(book => book?.id).map(book => [String(book.id), book]));
+    for (const book of live) byId.set(String(book.id), preferRicherBook(byId.get(String(book.id)), book));
+    return [...byId.values()];
   } catch {
-    return [];
+    return boot;
   }
 }
 
@@ -353,6 +369,7 @@ async function migrateLegacySources(key) {
     // Mark only after every legacy full record has committed. The caller may
     // now safely replace localStorage with the tiny v2 index.
     _localLegacyMigrated.add(libraryKey);
+    _bootLegacyLocal.delete(libraryKey);
   })()
     .catch(error => {
       console.warn('[reader] legacy library migration deferred', error);

@@ -84,6 +84,8 @@ assert 'mergeBookLists(pendingLocalLibrary, readStoredBooks(key))' in bridge
 assert "const DB_VERSION = 2" in idb
 assert "const BOOK_STORE = 'book-records'" in idb
 assert "const INDEX_STORE = 'indexes'" in idb
+assert 'const _bootLegacyLocal = new Map()' in idb
+assert '_bootLegacyLocal.delete(libraryKey)' in idb
 assert 'readLegacySnapshot' in idb
 assert 'libraryIdbPutBook' in idb and 'libraryIdbDeleteBook' in idb
 # A lightweight index must never be treated as proof that chapters are durable.
