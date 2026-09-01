@@ -1,5 +1,3 @@
-import { captureEpubTocFile, applyCapturedEpubToc } from './toc-direct.js?v=2';
-
 const SUPPORTED_EXTENSIONS = new Set(['epub', 'fb2', 'txt', 'text', 'md']);
 
 function wait(ms) {
@@ -84,10 +82,9 @@ export async function readerImportAndroidFile(payload = {}) {
       lastModified: Number(payload.lastModified || Date.now()),
     });
 
-    // Parse the package TOC from the actual Android File before the legacy text
-    // importer touches it. The record survives duplicate detection in saveReaderImport.
-    const tocRecord = extension === 'epub' ? captureEpubTocFile(file) : null;
-
+    // EPUB now has one owner: semantic-import-stage1. It parses text, images and
+    // exact NCX/nav.xhtml from the same ZIP entries. Do not run toc-direct over
+    // this File a second time — that used to double peak memory on Android.
     await importHandler({ target: { files: [file], value: '' }, androidExternal: true });
     const status = document.getElementById('reader-import-status');
     if (String(status?.textContent || '').trim().startsWith('❌')) return false;
@@ -95,16 +92,7 @@ export async function readerImportAndroidFile(payload = {}) {
     const selectedLang = document.getElementById('reader-import-lang');
     if (selectedLang && !selectedLang.value) selectedLang.value = globalThis.AN2_LANG || 'fr';
 
-    const title = String(document.getElementById('reader-import-title')?.value || '').trim();
-    const author = String(document.getElementById('reader-import-author')?.value || '').trim();
     await Promise.resolve(saveHandler());
-
-    if (tocRecord) {
-      setExternalStatus('⏳ Применяю NCX/nav.xhtml из EPUB...');
-      const applied = await applyCapturedEpubToc({ title, author, record: tocRecord });
-      if (!applied?.ok) throw new Error(`оглавление не применено: ${applied?.reason || 'неизвестная ошибка'}`);
-      setExternalStatus(`✅ ${applied.source}: ${applied.rows} пунктов · ${applied.mapped} переходов`, 'ok');
-    }
     return true;
   } catch (error) {
     const message = String(error?.message || error);
