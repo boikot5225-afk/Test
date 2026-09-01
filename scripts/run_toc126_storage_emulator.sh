@@ -38,9 +38,6 @@ adb exec-out screencap -p > runtime-audit/toc126-01-after-import.png
 python3 scripts/audit_toc126_storage_import_live.py
 adb shell dumpsys meminfo "$PKG" > runtime-audit/toc126-meminfo-after-import.txt || true
 
-# Frozen Reader gesture still has to work after the storage/import rewrite.
-python3 scripts/audit_toc125_frozen_swipe.py
-
 # Real process restart: IDB must restore the full book and cursor from the small index.
 adb shell am force-stop "$PKG"
 adb shell am start -W -n "${PKG}/${ACT}" | tee runtime-audit/toc126-launch-restart.txt
@@ -50,4 +47,11 @@ test -n "$PID"
 adb forward --remove tcp:9222 >/dev/null 2>&1 || true
 adb forward tcp:9222 "localabstract:webview_devtools_remote_${PID}"
 python3 scripts/audit_toc126_storage_restart.py
+
+# Only after restart has proved the saved cursor may the physical gesture
+# intentionally change it: page 0 -> 1 -> 0.
+python3 scripts/audit_toc125_frozen_swipe.py
+
+# Ordinary per-book deletion must preserve the unrelated migrated book.
+python3 scripts/audit_toc126_storage_delete.py
 adb exec-out screencap -p > runtime-audit/toc126-99-after-restart-delete.png

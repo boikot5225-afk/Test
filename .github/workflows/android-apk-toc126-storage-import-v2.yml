@@ -12,6 +12,7 @@ on:
       - 'scripts/prepare_toc126_legacy_storage.py'
       - 'scripts/audit_toc126_storage_import_live.py'
       - 'scripts/audit_toc126_storage_restart.py'
+      - 'scripts/audit_toc126_storage_delete.py'
       - 'scripts/run_toc126_storage_emulator.sh'
       - 'scripts/audit_toc125_frozen_swipe.py'
       - 'scripts/configure_toc123_a54_abi.py'
