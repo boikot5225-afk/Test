@@ -34,6 +34,17 @@ function readStoredBooks(key) {
   }
 }
 
+function readGuestStartupSnapshot(key) {
+  try {
+    const snapshot = globalThis.__readerGuestLegacyLibrarySnapshot;
+    if (!snapshot || String(snapshot.key || '') !== String(key || '')) return [];
+    const parsed = JSON.parse(snapshot.raw || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function mergeBookLists(...lists) {
   const byId = new Map();
   for (const list of lists) {
@@ -147,7 +158,8 @@ async function handleSemanticEpub(event, originalImport) {
   // Capture the legacy full localStorage library before the multi-megabyte EPUB
   // parse yields. Startup hydration may compact that key to a v2 index while
   // parsing; keeping this in-memory snapshot closes the migration/import race.
-  pendingLocalLibrary = readStoredBooks(storageKey());
+  const key = storageKey();
+  pendingLocalLibrary = mergeBookLists(readGuestStartupSnapshot(key), readStoredBooks(key));
   const preview = document.getElementById('reader-import-text');
   if (preview) preview.value = '';
 
@@ -275,6 +287,7 @@ async function savePendingSemanticBook(originalSave) {
   const target = existing || book;
   pendingImport = null;
   pendingLocalLibrary = [];
+  try { delete globalThis.__readerGuestLegacyLibrarySnapshot; } catch {}
 
   if (existing && importedBookId !== existing.id) {
     await imgStoreDeleteBook(importedBookId).catch(() => {});
