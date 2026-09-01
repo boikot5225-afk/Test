@@ -38,6 +38,7 @@ semantic = text('js/reader/semantic-import-stage1.js')
 epub = text('js/reader/epub.js')
 external = text('js/reader/android-external-import.js')
 handler = text('js/reader/handler-bridge.js')
+delete_fix = text('js/reader/delete-fix.js')
 gradle = text('android/app/build.gradle')
 
 assert "versionCode 1019" in gradle
@@ -117,6 +118,8 @@ assert "reader-app.js?v=77.32" not in handler
 barrier = bridge.index('const startupDurableLibrary = await readDurableBooks(key)')
 parse = bridge.index('const result = await parseSemanticEpubFile(file')
 assert barrier < parse, 'ACTION_VIEW EPUB parse must wait for durable legacy migration'
+assert 'libraryIdbDeleteBook(storageKey, wantedId)' in delete_fix
+assert 'localStorage.setItem(storageKey, JSON.stringify(books))' not in delete_fix
 for runtime_path in (root / 'js').rglob('*.js'):
     runtime_source = runtime_path.read_text(encoding='utf-8')
     assert 'reader-app.js?v=77.32' not in runtime_source, f'duplicate Reader module identity survived: {runtime_path}'

@@ -7,7 +7,7 @@
 // the DOM immediately, and repeatedly strips any stale rehydrate while the cloud
 // delete is in flight.
 
-import { libraryIdbPut } from './library-idb-store.js?v=1';
+import { libraryIdbDeleteBook } from './library-idb-store.js?v=2';
 import { imgStoreDeleteBook } from './image-store.js?v=1';
 import { audioStoreDelete } from './audio-store.js?v=1';
 import { sb, sbGetCurrentUserId, isSupabaseReady } from '../supabase.js';
@@ -71,6 +71,35 @@ function stripDeletedFromArray(books) {
   return books;
 }
 
+function paragraphCount(book = {}) {
+  return (book.chapters || []).reduce((sum, chapter) => sum + (chapter?.paragraphs?.length || 0), 0);
+}
+
+function writeLocalIndex(books) {
+  const index = (Array.isArray(books) ? books : []).filter(book => book?.id).map(book => ({
+    _libraryIndexV2: 2,
+    id: String(book.id),
+    title: book.title || 'Без названия',
+    author: book.author || '',
+    lang: book.lang || '',
+    sourceLang: book.sourceLang || '',
+    level: book.level || '',
+    format: book.format || 'text',
+    source: book.source || '',
+    importKey: book.importKey || '',
+    schemaVersion: Number(book.schemaVersion || 0),
+    coverKey: book.coverKey || '',
+    coverPath: book.coverPath || '',
+    createdAt: book.createdAt || '',
+    updatedAt: book.updatedAt || '',
+    currentChapter: Math.max(0, Number(book.currentChapter) || 0),
+    currentParagraph: Math.max(0, Number(book.currentParagraph) || 0),
+    chapterCount: Array.isArray(book.chapters) ? book.chapters.length : Number(book.chapterCount || 0),
+    paragraphCount: Array.isArray(book.chapters) ? paragraphCount(book) : Number(book.paragraphCount || 0),
+  }));
+  localStorage.setItem(scopedKey(BOOKS_BASE_KEY), JSON.stringify(index));
+}
+
 async function persistFilteredBooks({ render = false } = {}) {
   if (!moduleRef) return false;
   const deleted = new Set(Object.keys(readTombstones()));
@@ -83,9 +112,11 @@ async function persistFilteredBooks({ render = false } = {}) {
   for (const id of deleted) removePosition(id);
 
   const storageKey = scopedKey(BOOKS_BASE_KEY);
-  try { localStorage.setItem(storageKey, JSON.stringify(books)); } catch {}
-  try { await libraryIdbPut(storageKey, books); }
-  catch (error) { console.warn('[reader delete] IndexedDB write failed', error); }
+  try { writeLocalIndex(books); } catch {}
+  for (const id of deleted) {
+    try { await libraryIdbDeleteBook(storageKey, id); }
+    catch (error) { console.warn('[reader delete] IndexedDB delete failed', id, error); }
+  }
 
   if (render && document.getElementById('reader-reading-view')?.style.display !== 'flex') {
     try { await moduleRef.renderReaderScreen?.(); } catch {}
@@ -158,9 +189,9 @@ async function installDeleteFix() {
       removePosition(wantedId);
 
       const storageKey = scopedKey(BOOKS_BASE_KEY);
-      try { localStorage.setItem(storageKey, JSON.stringify(books)); } catch {}
-      try { await libraryIdbPut(storageKey, books); }
-      catch (error) { console.warn('[reader delete] immediate IndexedDB write failed', error); }
+      try { writeLocalIndex(books); } catch {}
+      try { await libraryIdbDeleteBook(storageKey, wantedId); }
+      catch (error) { console.warn('[reader delete] immediate IndexedDB delete failed', error); }
 
       // Do NOT call saveReaderBooks() here: its deferred cloud/local save is the
       // exact mechanism that used to race this explicit delete.

@@ -21,7 +21,7 @@ if not book_id:
     raise RuntimeError('imported book missing before delete gate')
 
 cdp.eval("window.confirm=()=>true; true")
-cdp.eval(f"window.readerDeleteBook?.({json.dumps(book_id)}); true")
+cdp.eval(f"(async()=>await window.readerDeleteBook?.({json.dumps(book_id)}))()", 30)
 time.sleep(2.0)
 after=cdp.eval(r"""(async()=>{
   const key=window.an2ReaderStorageKey?.('an2_reader_books_v1')||'an2_reader_books_v1::guest';
