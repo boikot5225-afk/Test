@@ -28,7 +28,9 @@ for path, expected in frozen.items():
     got = sha(path)
     assert got == expected, f'frozen Reader core changed: {path}: {got}'
 
-app = text('app.js')
+# Android syncWebAssets excludes the legacy root app.js. js/app.js is the real
+# bundled application entry, so startup validation must target that file.
+app = text('js/app.js')
 storage = text('js/reader/library-store.js')
 idb = text('js/reader/library-idb-store.js')
 bridge = text('js/reader/semantic-import-bridge.js')
@@ -40,6 +42,7 @@ gradle = text('android/app/build.gradle')
 
 assert "versionCode 1019" in gradle
 assert "versionName '77.42-toc126-storage-import-v2'" in gradle
+assert "exclude { it.relativePath.toString() == 'app.js' }" in gradle
 
 # Guest cold start is local-first: ACTION_VIEW must not wait on Firebase or a
 # cloud verb dictionary before the Reader shell becomes visible.
@@ -52,8 +55,9 @@ guest_match = re.search(
     app,
     re.S,
 )
-assert guest_match, 'continueAsGuest block missing'
+assert guest_match, 'continueAsGuest block missing from bundled js/app.js'
 guest_body = guest_match.group(1)
+assert 'setIsGuest(true)' in guest_body
 assert "document.getElementById('main-app').style.display = 'block'" in guest_body
 assert 'restoreVerbsFromCache()' in guest_body
 assert 'loadVerbsFromCloud({ force: true })' in guest_body
@@ -93,7 +97,8 @@ assert "toc-direct.js" not in external
 assert 'bytes.subarray(dataStart, dataStart + compressedSize)' in epub
 assert 'bytes.slice(dataStart, dataStart + compressedSize)' not in epub
 
-# Handler bridge must bind to the exact same reader-app module URL used by app.js.
+# Handler bridge must bind to the exact same reader-app module URL used by js/app.js.
+assert "reader-app.js?v=77.42-zh-reader-quality" in app
 assert "reader-app.js?v=77.42-zh-reader-quality" in handler
 assert "reader-app.js?v=77.32" not in handler
 
@@ -104,7 +109,7 @@ PY
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 for f in \
-  app.js \
+  js/app.js \
   js/reader/library-idb-store.js \
   js/reader/library-store.js \
   js/reader/semantic-import-bridge.js \
@@ -112,8 +117,9 @@ for f in \
   js/reader/epub.js \
   js/reader/android-external-import.js \
   js/reader/handler-bridge.js; do
-  cp "$f" "$TMP/$(basename "$f").mjs"
-  node --check "$TMP/$(basename "$f").mjs"
+  target="$TMP/$(echo "$f" | tr '/' '_').mjs"
+  cp "$f" "$target"
+  node --check "$target"
 done
 
 echo 'toc126 JS syntax: PASS'
