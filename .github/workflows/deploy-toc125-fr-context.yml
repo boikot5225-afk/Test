@@ -52,6 +52,13 @@ jobs:
           console.log('isolated frContextBatch source PASS');
           NODE
 
+      - name: Install isolated function dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix functions-fr-context install --ignore-scripts --no-audit --no-fund
+          node -e "require('./functions-fr-context/node_modules/firebase-functions')"
+
       - name: Select deployment credential
         shell: bash
         run: |
