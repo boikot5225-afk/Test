@@ -234,6 +234,18 @@ after_state = state()
 after = after_state['index']
 left = ev('window.__toc125Touch||[]') or []
 left_pages = ev('window.__toc125PageChanges||[]') or []
+if any(x.get('type') == 'touchcancel' for x in left) and after == before:
+    # Android Emulator occasionally cancels an injected gesture while its GPU
+    # surface settles. Retry the same physical path once; never synthesize the
+    # Reader handler and never hide a completed gesture that failed to turn.
+    time.sleep(.7)
+    ev('window.__toc125Touch=[]; window.__toc125PageChanges=[]; true')
+    subprocess.run(['adb','shell','input','touchscreen','swipe',str(x1),str(y),str(x2),str(y),'350'], check=True)
+    time.sleep(1.15)
+    after_state = state()
+    after = after_state['index']
+    left = ev('window.__toc125Touch||[]') or []
+    left_pages = ev('window.__toc125PageChanges||[]') or []
 if not any(x.get('type') == 'touchstart' and x.get('inside') for x in left) or not any(x.get('type') == 'touchend' and x.get('inside') for x in left):
     diag = {'phase': 'left-touch-delivery', 'before': s, 'after': after_state, 'events': left, 'pageChanges': left_pages, 'anr': has_anr()}
     write_debug('toc125-swipe-failure.json', diag)
@@ -257,6 +269,15 @@ back_state = state()
 back = back_state['index']
 right = ev('window.__toc125Touch||[]') or []
 right_pages = ev('window.__toc125PageChanges||[]') or []
+if any(x.get('type') == 'touchcancel' for x in right) and back == after:
+    time.sleep(.7)
+    ev('window.__toc125Touch=[]; window.__toc125PageChanges=[]; true')
+    subprocess.run(['adb','shell','input','touchscreen','swipe',str(x2),str(y),str(x1),str(y),'350'], check=True)
+    time.sleep(1.15)
+    back_state = state()
+    back = back_state['index']
+    right = ev('window.__toc125Touch||[]') or []
+    right_pages = ev('window.__toc125PageChanges||[]') or []
 if not any(x.get('type') == 'touchstart' and x.get('inside') for x in right) or not any(x.get('type') == 'touchend' and x.get('inside') for x in right):
     diag = {'phase': 'right-touch-delivery', 'afterLeft': after_state, 'afterRight': back_state, 'events': right, 'pageChanges': right_pages, 'anr': has_anr()}
     write_debug('toc125-swipe-failure.json', diag)
