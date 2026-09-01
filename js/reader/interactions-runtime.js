@@ -12,9 +12,8 @@ import './en-unknown-gloss-v2.js?v=5'; // toc105: context/DeepSeek overrides out
 import './en-unknown-gloss-full-fallback.js?v=2';
 import './en-context-gloss-v1.js?v=2'; // toc105: never overwrite DeepSeek context; text-only
 import './en-context-fixes-v1.js?v=2'; // toc105: DeepSeek context has final priority; text-only
-import './fr-vocab-estimate.js?v=123-isolated'; // toc123: isolated French Known/Unknown + lemma
-import './fr-lexical-pipeline-v2.js?v=123-isolated'; // toc123: French-only lexical owner
-import './fr-unknown-gloss.js?v=123-isolated'; // toc123: isolated bundled FR->RU glosses
+import './fr-reader-pipeline-v2.js?v=1'; // toc124: event-driven French Known/Unknown + glosses; no DOM observer loops
+import './fr-lexical-pipeline-v2.js?v=124'; // French word-card lexical owner; occurrence context stays local
 import './toc51-stability.js?v=2';
 import './toolbar-scroll.js?v=1';
 import './zh-readable-inline.js?v=8-quality';
@@ -53,6 +52,16 @@ function hasNativeSelection() {
   return contains(selection.anchorNode) || contains(selection.focusNode);
 }
 
+function refreshFrench(reason) {
+  try { window.readerFrenchRefresh?.(reason, true); } catch {}
+}
+
+function afterFrenchRenderAction(reason, fn) {
+  const result = fn?.();
+  setTimeout(() => refreshFrench(reason), 0);
+  return result;
+}
+
 const readerInteractions = createReaderInteractions({
   getRoot,
   hasNativeSelection,
@@ -60,10 +69,10 @@ const readerInteractions = createReaderInteractions({
   getCurrentBook: () => ({ currentParagraph: activeParagraphIndex() }),
   openWordPanel: (word, index) => window.readerOpenWordPanel?.(word, index),
   runAction: (event, action, index) => window.readerAction?.(event, action, index),
-  selectParagraph: (index) => window.readerSelectParagraph?.(index),
+  selectParagraph: (index) => afterFrenchRenderAction('select-paragraph', () => window.readerSelectParagraph?.(index)),
   toggleChrome: toggleReadingChrome,
-  nextParagraph: () => window.readerNextParagraph?.(),
-  previousParagraph: () => window.readerPrevParagraph?.(),
+  nextParagraph: () => afterFrenchRenderAction('next-page', () => window.readerNextParagraph?.()),
+  previousParagraph: () => afterFrenchRenderAction('previous-page', () => window.readerPrevParagraph?.()),
 });
 
 export function bindReaderInteractions() {
