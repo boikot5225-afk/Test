@@ -1042,32 +1042,47 @@ export function loginProfile(name) {
 // Generation and AI-checking are disabled (they cost money / are admin-only),
 // but everything else — including TTS — works.
 export async function continueAsGuest() {
-  try {
-    setIsGuest(true);
-    localStorage.setItem('an2_guest', '1');
-    currentProfile = 'guest';
-    setCurrentProfile('guest');
-    setSbUser(null);
-    readerSwitchStorageOwner('guest');
+  // toc126: guest startup is local-first. Reader/import must be usable with no
+  // Firebase/network at all; cloud dictionaries are an optional background refresh.
+  setIsGuest(true);
+  localStorage.setItem('an2_guest', '1');
+  currentProfile = 'guest';
+  setCurrentProfile('guest');
+  setSbUser(null);
+  readerSwitchStorageOwner('guest');
 
-    const brand = document.querySelector('.nav-brand');
-    if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">гость</span>';
+  const brand = document.querySelector('.nav-brand');
+  if (brand) brand.innerHTML = 'Reader AI <span style="font-size:0.65rem;opacity:0.6;font-style:normal;margin-left:6px">гость</span>';
 
-    showLoading('Загружаем глаголы...');
-    const verbsOk = await withDeadline(() => loadVerbsFromCloud(), CORE_LOAD_TIMEOUT_MS + 3000, 'Глаголы');
-    if (!verbsOk || !VERBS_LOADED) throw new Error('Не удалось загрузить базу глаголов.');
-
-    document.getElementById('screen-profile').style.display = 'none';
-    document.getElementById('main-app').style.display = 'block';
-    applyGuestRestrictions();
-    resetTrainer();
-    showScreen('home');
-    startPhrasesBackgroundLoad();
-  } catch (e) {
-    alert('Ошибка входа гостем: ' + getErrorMessage(e));
-  } finally {
-    hideLoading();
+  // Never block the Reader shell on a cloud dictionary. Use a local cache when
+  // present; an empty trainer dictionary is still a valid state for reading EPUB.
+  if (!restoreVerbsFromCache()) {
+    VERBS.length = 0;
+    VERBS_LOADED = true;
+    saveCache(VERBS_CACHE_KEY, VERBS);
   }
+
+  document.getElementById('screen-profile').style.display = 'none';
+  document.getElementById('main-app').style.display = 'block';
+  applyGuestRestrictions();
+  hideLoading();
+  try { resetTrainer(); } catch (e) { console.warn('[guest] resetTrainer skipped:', getErrorMessage(e)); }
+  try { showScreen('home'); } catch (e) { console.warn('[guest] home render skipped:', getErrorMessage(e)); }
+  startPhrasesBackgroundLoad();
+
+  // Best-effort refresh only. It must never hold up cold start or Android file import.
+  Promise.resolve().then(async () => {
+    if (!isSupabaseReady()) return;
+    const ok = await runOptional(
+      'Глаголы (фон, гость)',
+      () => loadVerbsFromCloud({ force: true }),
+      CORE_LOAD_TIMEOUT_MS + 3000,
+    );
+    if (ok && document.getElementById('screen-home')?.classList.contains('active')) {
+      try { renderHome(); } catch (_) {}
+    }
+  }).catch((e) => console.warn('[guest-bg] verbs refresh skipped:', getErrorMessage(e)));
+  return true;
 }
 
 // Hide features a guest can't use (generation, AI phrase check)
@@ -1391,6 +1406,13 @@ async function init() {
   initSpeech();
   applyKbMode();
   initTTSEngineUI();
+
+  // toc126: a remembered guest session is fully local. Enter it before any
+  // Firebase SDK/session work so ACTION_VIEW EPUB import also works offline.
+  if (localStorage.getItem('an2_guest') === '1') {
+    await continueAsGuest();
+    return;
+  }
 
   // The Firebase SDK loads from a CDN and sometimes isn't ready when init runs
   // (this caused the "works every other time" symptom). Retry a few times
