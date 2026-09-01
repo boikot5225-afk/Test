@@ -55,7 +55,7 @@ d=json.loads(Path('android/app/src/main/assets/frreader/fr_ru_core.json').read_t
 assert d.get('elle','').strip().lower()=='она', d.get('elle')
 assert re.search('[А-Яа-яЁё]',d.get('homme','')), d.get('homme')
 b=Path('android/app/build.gradle').read_text(encoding='utf-8')
-assert re.search(r'versionCode\s+1015\b',b)
+assert re.search(r'versionCode\s+1016\b',b)
 assert "versionName '77.42-toc123-fr-isolated'" in b
 print('toc123 source architecture + French assets PASS')
 PY
