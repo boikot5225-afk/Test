@@ -41,8 +41,8 @@ handler = text('js/reader/handler-bridge.js')
 delete_fix = text('js/reader/delete-fix.js')
 gradle = text('android/app/build.gradle')
 
-assert "versionCode 1019" in gradle
-assert "versionName '77.42-toc126-storage-import-v2'" in gradle
+assert "versionCode 1020" in gradle
+assert "versionName '77.42-toc127-manual-import-fix'" in gradle
 assert "exclude { it.relativePath.toString() == 'app.js' }" in gradle
 
 # Guest cold start is local-first: ACTION_VIEW must not wait on Firebase or a
@@ -111,10 +111,16 @@ assert "toc-direct.js" not in external
 assert 'bytes.subarray(dataStart, dataStart + compressedSize)' in epub
 assert 'bytes.slice(dataStart, dataStart + compressedSize)' not in epub
 
-# Handler bridge must bind to the exact same reader-app module URL used by js/app.js.
+# Handler bridge and manual semantic save must bind to the exact same
+# reader-app and library-idb module identities as js/app.js. A different query
+# string creates a second live module with stale readerBooks/migration state.
 assert "reader-app.js?v=77.42-zh-reader-quality" in app
 assert "reader-app.js?v=77.42-zh-reader-quality" in handler
+assert "reader-app.js?v=77.42-zh-reader-quality" in bridge
 assert "reader-app.js?v=77.32" not in handler
+assert "from './library-idb-store.js?v=1';" in bridge
+assert 'await app.hydrateReaderBooksFromIndexedDB?.()' in bridge
+assert 'saved book ${String(target.id || \'\')} is absent from canonical readerBooks' in bridge
 barrier = bridge.index('const startupDurableLibrary = await readDurableBooks(key)')
 parse = bridge.index('const result = await parseSemanticEpubFile(file')
 assert barrier < parse, 'ACTION_VIEW EPUB parse must wait for durable legacy migration'
@@ -128,7 +134,7 @@ for runtime_path in (root / 'js').rglob('*.js'):
     runtime_source = runtime_path.read_text(encoding='utf-8')
     assert 'reader-app.js?v=77.32' not in runtime_source, f'duplicate Reader module identity survived: {runtime_path}'
 
-print('toc126 storage/import source gate: PASS')
+print('toc127 manual-import/storage source gate: PASS')
 PY
 
 # Parse changed modules as ESM without executing browser APIs.
@@ -149,4 +155,4 @@ for f in \
   node --check "$target"
 done
 
-echo 'toc126 JS syntax: PASS'
+echo 'toc127 JS syntax: PASS'
