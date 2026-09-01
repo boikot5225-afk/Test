@@ -19,7 +19,7 @@ unzip -q "$APK" -d /tmp/toc125-apkcheck \
   assets/www/js/reader/epub.js \
   assets/www/js/reader/toc-runtime.js \
   assets/www/js/reader/fr-reader-pipeline-v2.js \
-  assets/www/js/reader/fr-context-batch-v4.js \
+  assets/www/js/reader/fr-context-batch-v5.js \
   assets/www/js/reader/fr-lexical-pipeline-v2.js \
   assets/www/js/reader/interactions-runtime.js \
   assets/frreader/fr_vocab_frequency.tsv \
@@ -36,17 +36,19 @@ d0ee752392b38822cfaeb0d557f7c359ca4aae166650b8844adfb9012bc38d8c  assets/www/js/
 EOF
 sha256sum -c /tmp/toc125-apk-core.sha256
 node --check assets/www/js/reader/fr-reader-pipeline-v2.js
-node --check assets/www/js/reader/fr-context-batch-v4.js
+node --check assets/www/js/reader/fr-context-batch-v5.js
 node --check assets/www/js/reader/fr-lexical-pipeline-v2.js
 node --check assets/www/js/reader/interactions-runtime.js
 
-grep -q "fr-context-batch-v4.js?v=1" assets/www/js/reader/interactions-runtime.js
+grep -q "fr-context-batch-v5.js?v=1" assets/www/js/reader/interactions-runtime.js
 ! grep -q "fr-context-refine-v2.js" assets/www/js/reader/interactions-runtime.js
+! grep -q "fr-context-batch-v4.js" assets/www/js/reader/interactions-runtime.js
 ! grep -q "fr-context-batch-v3.js" assets/www/js/reader/interactions-runtime.js
-! grep -q "new MutationObserver" assets/www/js/reader/fr-context-batch-v4.js
-grep -q "task: 'fr_context_batch'" assets/www/js/reader/fr-context-batch-v4.js
-grep -q "httpsCallable('readerAI')" assets/www/js/reader/fr-context-batch-v4.js
-grep -q "signInAnonymously" assets/www/js/reader/fr-context-batch-v4.js
+! grep -q "new MutationObserver" assets/www/js/reader/fr-context-batch-v5.js
+! grep -q "signInAnonymously" assets/www/js/reader/fr-context-batch-v5.js
+! grep -q "auth.currentUser" assets/www/js/reader/fr-context-batch-v5.js
+grep -q "task: 'fr_context_batch'" assets/www/js/reader/fr-context-batch-v5.js
+grep -q "httpsCallable('readerAI')" assets/www/js/reader/fr-context-batch-v5.js
 
 test -s assets/frreader/fr_vocab_frequency.tsv
 test -s assets/frreader/fr_vocab_lemma.tsv
@@ -58,5 +60,5 @@ from pathlib import Path
 core=json.loads(Path('assets/frreader/fr_ru_core.json').read_text(encoding='utf-8'))
 for word in ('elle','tendre','vouloir','user','ennuyer','préciser'):
     assert core.get(word,'').strip(), (word,core.get(word))
-print('toc125 APK payload: frozen Reader + French paragraph context batch PASS')
+print('toc125 APK payload: frozen Reader + guest-safe French paragraph context batch PASS')
 PY
