@@ -55,3 +55,11 @@ python3 scripts/audit_toc125_frozen_swipe.py
 # Ordinary per-book deletion must preserve the unrelated migrated book.
 python3 scripts/audit_toc126_storage_delete.py
 adb exec-out screencap -p > runtime-audit/toc126-99-after-restart-delete.png
+
+# Regression from the real Galaxy A54 recording: importing from the normal
+# Library -> Add -> Choose File dialog used to show "EPUB added" while the
+# rendered library stayed at the old count. Exercise that manual handler path
+# after the ACTION_VIEW book has been deleted, so the new title must increase
+# both the durable and visible library by one.
+python3 scripts/audit_toc127_manual_import_ui.py
+adb exec-out screencap -p > runtime-audit/toc127-100-after-manual-import.png
