@@ -1,17 +1,20 @@
-// IndexedDB-backed durable store for the reader book library.
-// localStorage caps out at ~5MB/origin in most browsers, which the book
-// library (transcripts, translations, analyses) can exceed after enough
-// imports — writes then fail silently, silently rolling back to whatever
-// snapshot last fit. IndexedDB has a much larger practical quota (hundreds
-// of MB to low GB), so it's used here as the durable backing store; the
-// existing localStorage-based code path keeps working as a fast in-session
-// cache on top of the in-memory books array.
+// IndexedDB-backed durable store for the Reader library.
+//
+// v1 stored the whole library array in a single value. That made every small
+// progress update clone/write every EPUB again and encouraged the app to keep a
+// full localStorage mirror. v2 stores every book separately and keeps only a
+// lightweight index per Reader owner. The legacy v1 store is intentionally kept
+// so migration is non-destructive: it is read only when v2 has no index yet.
 
 const DB_NAME = 'reader-library';
-const STORE_NAME = 'books';
-const BLOB_KEY = 'all-books';
+const DB_VERSION = 2;
+const LEGACY_STORE = 'books';
+const BOOK_STORE = 'book-records';
+const INDEX_STORE = 'indexes';
+const LEGACY_BLOB_KEY = 'all-books';
+const IDB_READ_TIMEOUT_MS = 5000;
 let _db = null;
-const IDB_READ_TIMEOUT_MS = 1200;
+let _legacyMigration = null;
 
 function timeoutError(op) {
   return new Error(`[reader] library IndexedDB ${op} timed out`);
@@ -32,16 +35,65 @@ function withDeadline(executor, timeoutMs = IDB_READ_TIMEOUT_MS) {
   });
 }
 
+function cleanLibraryKey(key) {
+  return String(key || LEGACY_BLOB_KEY);
+}
+
+function recordKey(libraryKey, bookId) {
+  return `${cleanLibraryKey(libraryKey)}\u0000${String(bookId || '')}`;
+}
+
+function bookParagraphCount(book = {}) {
+  return (book.chapters || []).reduce((sum, chapter) => sum + (chapter?.paragraphs?.length || 0), 0);
+}
+
+function indexEntry(book = {}) {
+  return {
+    id: String(book.id || ''),
+    title: book.title || 'Без названия',
+    author: book.author || '',
+    lang: book.lang || '',
+    sourceLang: book.sourceLang || '',
+    level: book.level || '',
+    format: book.format || 'text',
+    source: book.source || '',
+    importKey: book.importKey || '',
+    schemaVersion: Number(book.schemaVersion || 0),
+    coverKey: book.coverKey || '',
+    coverPath: book.coverPath || '',
+    createdAt: book.createdAt || '',
+    updatedAt: book.updatedAt || '',
+    currentChapter: Math.max(0, Number(book.currentChapter) || 0),
+    currentParagraph: Math.max(0, Number(book.currentParagraph) || 0),
+    chapterCount: Array.isArray(book.chapters) ? book.chapters.length : Number(book.chapterCount || 0),
+    paragraphCount: Array.isArray(book.chapters) ? bookParagraphCount(book) : Number(book.paragraphCount || 0),
+  };
+}
+
+function sameRevision(a, b) {
+  if (!a || !b) return false;
+  return String(a.updatedAt || '') === String(b.updatedAt || '')
+    && String(a.importKey || '') === String(b.importKey || '')
+    && Number(a.schemaVersion || 0) === Number(b.schemaVersion || 0)
+    && Number(a.chapterCount || 0) === Number(b.chapterCount || 0)
+    && Number(a.paragraphCount || 0) === Number(b.paragraphCount || 0);
+}
+
 function openDB() {
   if (_db) return Promise.resolve(_db);
   return withDeadline((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(LEGACY_STORE)) db.createObjectStore(LEGACY_STORE);
+      if (!db.objectStoreNames.contains(BOOK_STORE)) {
+        const books = db.createObjectStore(BOOK_STORE, { keyPath: 'key' });
+        books.createIndex('libraryKey', 'libraryKey', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(INDEX_STORE)) db.createObjectStore(INDEX_STORE);
     };
-    req.onsuccess = (e) => {
-      const db = e.target.result;
+    req.onsuccess = (event) => {
+      const db = event.target.result;
       db.onversionchange = () => {
         try { db.close(); } catch {}
         if (_db === db) _db = null;
@@ -54,23 +106,157 @@ function openDB() {
   });
 }
 
-export async function libraryIdbPut(key, books) {
+export async function libraryIdbGetIndex(key) {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(books, key || BLOB_KEY);
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
+  const libraryKey = cleanLibraryKey(key);
+  return withDeadline((resolve, reject) => {
+    const tx = db.transaction(INDEX_STORE, 'readonly');
+    const req = tx.objectStore(INDEX_STORE).get(libraryKey);
+    req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+    req.onerror = () => reject(req.error || tx.error || new Error('[reader] library index read failed'));
+    tx.onabort = () => reject(tx.error || new Error('[reader] library index read aborted'));
   });
 }
 
-export async function libraryIdbGet(key) {
+async function readBookRecords(key, ids) {
+  if (!Array.isArray(ids) || !ids.length) return [];
   const db = await openDB();
+  const libraryKey = cleanLibraryKey(key);
   return withDeadline((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    const req = tx.objectStore(STORE_NAME).get(key || BLOB_KEY);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error || tx.error || new Error('[reader] library IndexedDB read failed'));
-    tx.onabort = () => reject(tx.error || new Error('[reader] library IndexedDB read aborted'));
+    const tx = db.transaction(BOOK_STORE, 'readonly');
+    const store = tx.objectStore(BOOK_STORE);
+    const out = new Array(ids.length);
+    let remaining = ids.length;
+    let failed = false;
+    ids.forEach((id, index) => {
+      const req = store.get(recordKey(libraryKey, id));
+      req.onsuccess = () => {
+        if (failed) return;
+        out[index] = req.result?.book || null;
+        remaining -= 1;
+        if (!remaining) resolve(out.filter(Boolean));
+      };
+      req.onerror = () => {
+        if (failed) return;
+        failed = true;
+        reject(req.error || tx.error || new Error('[reader] library book read failed'));
+      };
+    });
+    tx.onabort = () => {
+      if (!failed) reject(tx.error || new Error('[reader] library book read aborted'));
+    };
+  }, Math.max(IDB_READ_TIMEOUT_MS, 1000 + ids.length * 60));
+}
+
+export async function libraryIdbGetBook(key, bookId) {
+  const rows = await readBookRecords(key, [bookId]);
+  return rows[0] || null;
+}
+
+async function readLegacySnapshot(key) {
+  const db = await openDB();
+  if (!db.objectStoreNames.contains(LEGACY_STORE)) return null;
+  const libraryKey = cleanLibraryKey(key);
+  return withDeadline((resolve, reject) => {
+    const tx = db.transaction(LEGACY_STORE, 'readonly');
+    const store = tx.objectStore(LEGACY_STORE);
+    const req = store.get(libraryKey);
+    req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : null);
+    req.onerror = () => reject(req.error || tx.error || new Error('[reader] legacy library read failed'));
+  }).catch(() => null);
+}
+
+export async function libraryIdbPut(key, books) {
+  const libraryKey = cleanLibraryKey(key);
+  const source = Array.isArray(books) ? books.filter(book => book?.id) : [];
+  const nextIndex = source.map(indexEntry);
+  const previousIndex = await libraryIdbGetIndex(libraryKey).catch(() => []);
+  const previousById = new Map(previousIndex.map(item => [String(item?.id || ''), item]));
+  const nextIds = new Set(nextIndex.map(item => item.id));
+  const changedIds = new Set();
+  for (const item of nextIndex) {
+    if (!sameRevision(previousById.get(item.id), item)) changedIds.add(item.id);
+  }
+
+  const db = await openDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction([BOOK_STORE, INDEX_STORE], 'readwrite');
+    const store = tx.objectStore(BOOK_STORE);
+    const indexStore = tx.objectStore(INDEX_STORE);
+
+    for (const book of source) {
+      const id = String(book.id || '');
+      if (!changedIds.has(id)) continue;
+      store.put({ key: recordKey(libraryKey, id), libraryKey, bookId: id, book });
+    }
+    for (const previous of previousIndex) {
+      const id = String(previous?.id || '');
+      if (id && !nextIds.has(id)) store.delete(recordKey(libraryKey, id));
+    }
+    indexStore.put(nextIndex, libraryKey);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error || new Error('[reader] library IndexedDB write failed'));
+    tx.onabort = () => reject(tx.error || new Error('[reader] library IndexedDB write aborted'));
   });
+  return nextIndex;
+}
+
+export async function libraryIdbPutBook(key, book) {
+  if (!book?.id) return false;
+  const libraryKey = cleanLibraryKey(key);
+  const current = await libraryIdbGetIndex(libraryKey).catch(() => []);
+  const nextEntry = indexEntry(book);
+  const nextIndex = current.filter(item => String(item?.id || '') !== nextEntry.id);
+  nextIndex.unshift(nextEntry);
+  const db = await openDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction([BOOK_STORE, INDEX_STORE], 'readwrite');
+    tx.objectStore(BOOK_STORE).put({
+      key: recordKey(libraryKey, nextEntry.id),
+      libraryKey,
+      bookId: nextEntry.id,
+      book,
+    });
+    tx.objectStore(INDEX_STORE).put(nextIndex, libraryKey);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error || new Error('[reader] single book write failed'));
+    tx.onabort = () => reject(tx.error || new Error('[reader] single book write aborted'));
+  });
+  return true;
+}
+
+export async function libraryIdbDeleteBook(key, bookId) {
+  const libraryKey = cleanLibraryKey(key);
+  const id = String(bookId || '');
+  if (!id) return false;
+  const current = await libraryIdbGetIndex(libraryKey).catch(() => []);
+  const next = current.filter(item => String(item?.id || '') !== id);
+  const db = await openDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction([BOOK_STORE, INDEX_STORE], 'readwrite');
+    tx.objectStore(BOOK_STORE).delete(recordKey(libraryKey, id));
+    tx.objectStore(INDEX_STORE).put(next, libraryKey);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error || new Error('[reader] single book delete failed'));
+  });
+  return true;
+}
+
+export async function libraryIdbGet(key) {
+  const libraryKey = cleanLibraryKey(key);
+  let index = await libraryIdbGetIndex(libraryKey);
+  if (index.length) return readBookRecords(libraryKey, index.map(item => item.id));
+
+  // Non-destructive v1 migration. The legacy record remains in place; once v2
+  // records and index are committed successfully, subsequent reads never need it.
+  const legacy = await readLegacySnapshot(libraryKey);
+  if (!Array.isArray(legacy) || !legacy.length) return null;
+  if (!_legacyMigration) {
+    _legacyMigration = libraryIdbPut(libraryKey, legacy)
+      .catch(error => console.warn('[reader] legacy IndexedDB migration deferred', error))
+      .finally(() => { _legacyMigration = null; });
+  }
+  await _legacyMigration;
+  index = await libraryIdbGetIndex(libraryKey).catch(() => []);
+  return index.length ? readBookRecords(libraryKey, index.map(item => item.id)) : legacy;
 }
