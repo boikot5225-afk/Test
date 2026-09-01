@@ -52,6 +52,21 @@ jobs:
               raise SystemExit(f'maxTokens anchor count={source.count(token_anchor)}')
           source = source.replace(token_anchor, token_patch, 1)
 
+          # Guest reading is a supported Reader mode. Only the bounded French
+          # paragraph-context task may call readerAI without Firebase Auth;
+          # every other task keeps the existing authentication requirement.
+          auth_anchor = """  async (request) => {\n    if (!request.auth?.uid) {\n      throw new HttpsError('unauthenticated', 'Нужно войти в Firebase Auth.');\n    }\n\n    const body = request.data || {};\n    const task = String(body.task || '').trim();\n    if (!task) throw new HttpsError('invalid-argument', 'Missing task');\n"""
+          auth_patch = """  async (request) => {\n    const body = request.data || {};\n    const task = String(body.task || '').trim();\n    if (!task) throw new HttpsError('invalid-argument', 'Missing task');\n\n    const guestFrenchContext = task === 'fr_context_batch' && sourceLang(body) === 'fr';\n    if (!request.auth?.uid && !guestFrenchContext) {\n      throw new HttpsError('unauthenticated', 'Нужно войти в Firebase Auth.');\n    }\n"""
+          if source.count(auth_anchor) != 1:
+              raise SystemExit(f'readerAI auth anchor count={source.count(auth_anchor)}')
+          source = source.replace(auth_anchor, auth_patch, 1)
+
+          usage_anchor = "    await enforceDailyLimit(request.auth.uid, task);"
+          usage_patch = "    await enforceDailyLimit(request.auth?.uid || 'guest_fr_context', task);"
+          if source.count(usage_anchor) != 1:
+              raise SystemExit(f'usage anchor count={source.count(usage_anchor)}')
+          source = source.replace(usage_anchor, usage_patch, 1)
+
           # Deploy only readerAI from a source that exposes only readerAI so
           # unrelated TTS/STT functions and secrets cannot be changed here.
           marker = '// Cloud TTS proxy:'
@@ -77,6 +92,9 @@ jobs:
               "task === 'fr_context_batch'",
               "buildFrContextBatchPrompt(body)",
               "if (task === 'fr_context_batch') return 1500",
+              "const guestFrenchContext = task === 'fr_context_batch' && sourceLang(body) === 'fr'",
+              "if (!request.auth?.uid && !guestFrenchContext)",
+              "request.auth?.uid || 'guest_fr_context'",
               "thinking: { type: 'disabled' }",
               "response_format: { type: 'json_object' }",
           )
@@ -120,8 +138,10 @@ jobs:
           const source = fs.readFileSync('functions/index.js','utf8');
           assert.match(source, /task === 'zh_context_batch'/);
           assert.match(source, /task === 'fr_context_batch'/);
+          assert.match(source, /guestFrenchContext/);
+          assert.match(source, /guest_fr_context/);
           assert.equal((source.match(/exports\.readerAI\s*=\s*onCall/g)||[]).length,1);
-          console.log('readerAI zh + fr context batch deploy source PASS');
+          console.log('readerAI zh + guest-safe fr context batch deploy source PASS');
           NODE
 
       - name: Select deployment credential
