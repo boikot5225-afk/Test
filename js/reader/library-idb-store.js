@@ -100,6 +100,13 @@ function preferRicherBook(a, b) {
   return new Date(a.updatedAt || 0) >= new Date(b.updatedAt || 0) ? a : b;
 }
 
+// toc126 migration commit guard: an index row is metadata, never proof that
+// the corresponding full EPUB payload exists. Only a record with chapters is
+// allowed to satisfy legacy migration before localStorage is compacted.
+function isFullBook(book) {
+  return !!(book?.id && Array.isArray(book?.chapters) && book.chapters.length > 0);
+}
+
 function mergeIndexes(previous, incoming) {
   const byId = new Map();
   for (const item of Array.isArray(previous) ? previous : []) {
@@ -182,6 +189,20 @@ async function readBookRecords(key, ids) {
   }, Math.max(IDB_READ_TIMEOUT_MS, 1000 + ids.length * 60));
 }
 
+async function verifyFullRecords(key, books) {
+  const expected = (Array.isArray(books) ? books : []).filter(isFullBook);
+  if (!expected.length) return true;
+  const rows = await readBookRecords(key, expected.map(book => String(book.id)));
+  const byId = new Map(rows.filter(book => book?.id).map(book => [String(book.id), book]));
+  const missing = expected
+    .filter(book => !isFullBook(byId.get(String(book.id))))
+    .map(book => String(book.id));
+  if (missing.length) {
+    throw new Error(`[reader] durable full-book verification failed: ${missing.join(',')}`);
+  }
+  return true;
+}
+
 export async function libraryIdbGetBook(key, bookId) {
   const rows = await readBookRecords(key, [bookId]);
   return rows[0] || null;
@@ -231,7 +252,12 @@ export async function libraryIdbPut(key, books) {
 
     for (const book of source) {
       const id = String(book.id || '');
-      if (!changedIds.has(id)) continue;
+      const full = isFullBook(book);
+      // A full payload must always refresh the record even when its lightweight
+      // index revision happens to match. That exact state can occur when an
+      // index-only write races legacy migration; skipping here creates a ghost
+      // index with no chapters and loses the old book on compaction.
+      if (!full) continue;
       store.put({ key: recordKey(libraryKey, id), libraryKey, bookId: id, book });
     }
     // IMPORTANT: no implicit deletes here. During startup, owner switching,
@@ -242,14 +268,23 @@ export async function libraryIdbPut(key, books) {
     tx.onerror = () => reject(tx.error || new Error('[reader] library IndexedDB write failed'));
     tx.onabort = () => reject(tx.error || new Error('[reader] library IndexedDB write aborted'));
   });
+  // Transaction completion alone is not enough for migration safety: prove
+  // every full source book round-trips from book-records before any caller is
+  // allowed to shrink localStorage to an index.
+  await verifyFullRecords(libraryKey, source);
   return mergedIndex;
 }
 
 export async function libraryIdbPutBook(key, book) {
   if (!book?.id) return false;
   const libraryKey = cleanLibraryKey(key);
+  const existing = await libraryIdbGetBook(libraryKey, book.id).catch(() => null);
+  const durableBook = preferRicherBook(existing, book);
+  if (!isFullBook(durableBook)) {
+    throw new Error(`[reader] refusing index-only book record: ${String(book.id)}`);
+  }
   const current = await libraryIdbGetIndex(libraryKey).catch(() => []);
-  const nextEntry = indexEntry(book);
+  const nextEntry = indexEntry(durableBook);
   const nextIndex = mergeIndexes(current, [nextEntry]);
   const db = await openDB();
   await new Promise((resolve, reject) => {
@@ -258,13 +293,14 @@ export async function libraryIdbPutBook(key, book) {
       key: recordKey(libraryKey, nextEntry.id),
       libraryKey,
       bookId: nextEntry.id,
-      book,
+      book: durableBook,
     });
     tx.objectStore(INDEX_STORE).put(nextIndex, libraryKey);
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error || new Error('[reader] single book write failed'));
     tx.onabort = () => reject(tx.error || new Error('[reader] single book write aborted'));
   });
+  await verifyFullRecords(libraryKey, [durableBook]);
   return true;
 }
 
@@ -331,18 +367,41 @@ async function migrateLegacySources(key) {
 export async function libraryIdbGet(key) {
   const libraryKey = cleanLibraryKey(key);
 
-  // Do this BEFORE trusting an existing v2 index. A partial index is not proof
-  // that migration completed; it may have been created by a new import racing
-  // with startup migration.
-  await migrateLegacySources(libraryKey).catch(() => {});
+  // Never report a migration source as durable until it has actually
+  // round-tripped through book-records. Callers use successful idbGet() as the
+  // signal that it is safe to compact the legacy localStorage snapshot.
+  let migrationError = null;
+  try {
+    await migrateLegacySources(libraryKey);
+  } catch (error) {
+    migrationError = error;
+  }
 
   let index = await libraryIdbGetIndex(libraryKey);
-  if (index.length) return readBookRecords(libraryKey, index.map(item => item.id));
+  let records = index.length
+    ? await readBookRecords(libraryKey, index.map(item => item.id))
+    : [];
 
-  // Last-resort compatibility if both migrations were temporarily unavailable.
+  const legacyLocal = readLegacyLocalStorageSnapshot(libraryKey);
+  if (legacyLocal.length) {
+    const byId = new Map(records.filter(book => book?.id).map(book => [String(book.id), book]));
+    const missing = legacyLocal
+      .filter(book => !isFullBook(byId.get(String(book.id))))
+      .map(book => String(book.id));
+    if (missing.length) {
+      throw migrationError || new Error(`[reader] legacy migration incomplete: ${missing.join(',')}`);
+    }
+  }
+
+  if (migrationError) throw migrationError;
+  if (index.length) return records;
+
+  // Last-resort v1 IndexedDB compatibility. libraryIdbPut now verifies the
+  // round-trip, so success here is safe for callers to treat as durable.
   const legacy = await readLegacySnapshot(libraryKey);
   if (!Array.isArray(legacy) || !legacy.length) return null;
-  await libraryIdbPut(libraryKey, legacy).catch(() => {});
-  index = await libraryIdbGetIndex(libraryKey).catch(() => []);
-  return index.length ? readBookRecords(libraryKey, index.map(item => item.id)) : legacy;
+  await libraryIdbPut(libraryKey, legacy);
+  index = await libraryIdbGetIndex(libraryKey);
+  records = index.length ? await readBookRecords(libraryKey, index.map(item => item.id)) : [];
+  return records.length ? records : null;
 }
