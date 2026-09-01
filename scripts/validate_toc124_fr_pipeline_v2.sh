@@ -17,19 +17,27 @@ EOF
 sha256sum -c /tmp/toc119-core.sha256
 
 node --check js/reader/fr-reader-pipeline-v2.js
+node --check js/reader/fr-context-refine-v2.js
 node --check js/reader/fr-lexical-pipeline-v2.js
 node --check js/reader/interactions-runtime.js
+python3 -m py_compile scripts/patch_toc124_french_native_context.py scripts/audit_toc124_fr_quality_gate.py
 
 grep -q "fr-reader-pipeline-v2.js?v=1" js/reader/interactions-runtime.js
+grep -q "fr-context-refine-v2.js?v=1" js/reader/interactions-runtime.js
 ! grep -q "^import './fr-vocab-estimate.js" js/reader/interactions-runtime.js
 ! grep -q "^import './fr-unknown-gloss.js" js/reader/interactions-runtime.js
 ! grep -q "new MutationObserver" js/reader/fr-reader-pipeline-v2.js
+! grep -q "new MutationObserver" js/reader/fr-context-refine-v2.js
 ! grep -q "CONTEXT_FIRST" js/reader/fr-reader-pipeline-v2.js
 
 grep -q "tendre-la-joue" js/reader/fr-reader-pipeline-v2.js
 grep -q "veux-tu" js/reader/fr-reader-pipeline-v2.js
 grep -q "t'ennuiera" js/reader/fr-reader-pipeline-v2.js
 grep -q "Context is allowed to replace, never to suppress" js/reader/fr-reader-pipeline-v2.js
+grep -q "\['mec', 'парень'\]" js/reader/fr-context-refine-v2.js
+grep -q "a-present" js/reader/fr-context-refine-v2.js
+grep -q "ReaderFrenchContextTranslate" js/reader/fr-context-refine-v2.js
+grep -q "class FrenchContextTranslateBridge" android/app/src/main/java/space/saintjust/reader/stage1/FrenchContextTranslateBridge.java
 
 grep -q "nextParagraph: () => afterFrenchRenderAction('next-page'" js/reader/interactions-runtime.js
 grep -q "previousParagraph: () => afterFrenchRenderAction('previous-page'" js/reader/interactions-runtime.js
@@ -60,5 +68,5 @@ assert core.get('vouloir','').strip(), core.get('vouloir')
 b=Path('android/app/build.gradle').read_text(encoding='utf-8')
 assert re.search(r'versionCode\s+1017\b',b)
 assert "versionName '77.42-toc124-fr-pipeline-v2'" in b
-print('toc124 frozen core + event-driven French pipeline v2 PASS')
+print('toc124 frozen core + event-driven French quality pipeline PASS')
 PY
