@@ -2,13 +2,6 @@ plugins {
     id 'com.android.application'
 }
 
-// Android refuses to install a package over one signed by a different key, and
-// the debug keystore Gradle generates when none exists is created fresh on
-// every machine — so each CI run produced an APK that could not replace the
-// previous one. A keystore handed in through the environment keeps the
-// signature identical across builds and machines; without it the build still
-// works and falls back to the local debug key, which is fine for one machine
-// but not across runners.
 def sharedKeystorePath = System.getenv('ANDROID_KEYSTORE_PATH')
 def sharedKeystorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD') ?: 'readerai2026'
 def sharedKeyAlias = System.getenv('ANDROID_KEY_ALIAS') ?: 'reader-ai'
@@ -33,8 +26,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 1018
-        versionName '77.42-toc125-fr-context-batch'
+        versionCode 1019
+        versionName '77.42-toc126-storage-import-v2'
     }
 
     buildFeatures {
