@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import re
+import runpy
 
 # Android's syncWebAssets deliberately excludes the legacy root app.js.
 # The actual bundled entry point is js/app.js.
@@ -87,3 +88,8 @@ source = source.replace(needle, replacement, 1)
 
 path.write_text(source, encoding='utf-8')
 print('toc126 bundled guest cold-start patch: PASS')
+
+# The same build-time materialization point owns the toc126 storage migration
+# guard. Keeping both before the source gate guarantees the APK cannot be built
+# with the cold-start fix but without the data-loss fix.
+runpy.run_path('scripts/patch_toc126_storage_migration_guard.py', run_name='__main__')
