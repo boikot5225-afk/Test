@@ -15,6 +15,7 @@ unzip -q "$APK" -d /tmp/toc124-apkcheck \
   assets/www/js/reader/epub.js \
   assets/www/js/reader/toc-runtime.js \
   assets/www/js/reader/fr-reader-pipeline-v2.js \
+  assets/www/js/reader/fr-context-refine-v2.js \
   assets/www/js/reader/fr-vocab-estimate.js \
   assets/www/js/reader/fr-lexical-pipeline-v2.js \
   assets/www/js/reader/fr-unknown-gloss.js \
@@ -33,13 +34,16 @@ d0ee752392b38822cfaeb0d557f7c359ca4aae166650b8844adfb9012bc38d8c  assets/www/js/
 EOF
 sha256sum -c /tmp/toc124-core.sha256
 node --check assets/www/js/reader/fr-reader-pipeline-v2.js
+node --check assets/www/js/reader/fr-context-refine-v2.js
 node --check assets/www/js/reader/fr-lexical-pipeline-v2.js
 node --check assets/www/js/reader/interactions-runtime.js
 
 grep -q "fr-reader-pipeline-v2.js?v=1" assets/www/js/reader/interactions-runtime.js
+grep -q "fr-context-refine-v2.js?v=1" assets/www/js/reader/interactions-runtime.js
 ! grep -q "^import './fr-vocab-estimate.js" assets/www/js/reader/interactions-runtime.js
 ! grep -q "^import './fr-unknown-gloss.js" assets/www/js/reader/interactions-runtime.js
 ! grep -q "new MutationObserver" assets/www/js/reader/fr-reader-pipeline-v2.js
+! grep -q "new MutationObserver" assets/www/js/reader/fr-context-refine-v2.js
 
 test -s assets/frreader/fr_vocab_frequency.tsv
 test -s assets/frreader/fr_vocab_lemma.tsv
@@ -52,5 +56,5 @@ core=json.loads(Path('assets/frreader/fr_ru_core.json').read_text(encoding='utf-
 assert core.get('elle','').strip(), core.get('elle')
 assert core.get('tendre','').strip(), core.get('tendre')
 assert core.get('vouloir','').strip(), core.get('vouloir')
-print('toc124 APK payload: frozen Reader + French pipeline v2 PASS')
+print('toc124 APK payload: frozen Reader + French quality pipeline PASS')
 PY
