@@ -1,13 +1,13 @@
 import {
   libraryIdbGet,
   libraryIdbPut,
-} from './library-idb-store.js?v=1';
+} from './library-idb-store.js?v=2';
 import { imgStoreDeleteBook } from './image-store.js?v=1';
 import {
   chapterContentText,
   firstReadableContentIndex,
 } from './semantic-content.js?v=4';
-import { parseSemanticEpubFile } from './semantic-import-stage1.js?v=5';
+import { parseSemanticEpubFile } from './semantic-import-stage1.js?v=6-storage';
 
 let pendingImport = null;
 let bridgeStarted = false;
@@ -39,7 +39,10 @@ function mergeBookLists(...lists) {
     for (const book of Array.isArray(list) ? list : []) {
       if (!book?.id) continue;
       const previous = byId.get(book.id);
-      if (!previous || new Date(book.updatedAt || 0) >= new Date(previous.updatedAt || 0)) {
+      const previousFull = Array.isArray(previous?.chapters) && previous.chapters.length;
+      const currentFull = Array.isArray(book?.chapters) && book.chapters.length;
+      if (!previous || (currentFull && !previousFull)
+          || (currentFull === previousFull && new Date(book.updatedAt || 0) >= new Date(previous.updatedAt || 0))) {
         byId.set(book.id, book);
       }
     }
@@ -55,6 +58,53 @@ function hashText(value) {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(36);
+}
+
+function paragraphCount(book = {}) {
+  return (book.chapters || []).reduce((sum, chapter) => sum + (chapter?.paragraphs?.length || 0), 0);
+}
+
+function progressPct(book = {}) {
+  const chapters = book.chapters || [];
+  const total = paragraphCount(book) || 1;
+  let done = 0;
+  const chapterIndex = Math.max(0, Number(book.currentChapter) || 0);
+  for (let index = 0; index < Math.min(chapterIndex, chapters.length); index += 1) {
+    done += chapters[index]?.paragraphs?.length || 0;
+  }
+  done += Math.min(Math.max(0, Number(book.currentParagraph) || 0), chapters[chapterIndex]?.paragraphs?.length || 0);
+  return Math.max(0, Math.min(100, Math.round(done / total * 100)));
+}
+
+function indexEntry(book = {}) {
+  return {
+    _libraryIndexV2: 2,
+    id: String(book.id || ''),
+    title: book.title || 'Без названия',
+    author: book.author || '',
+    lang: book.lang || '',
+    sourceLang: book.sourceLang || '',
+    level: book.level || '',
+    format: book.format || 'text',
+    source: book.source || '',
+    importKey: book.importKey || '',
+    schemaVersion: Number(book.schemaVersion || 0),
+    coverKey: book.coverKey || '',
+    coverPath: book.coverPath || '',
+    createdAt: book.createdAt || '',
+    updatedAt: book.updatedAt || '',
+    currentChapter: Math.max(0, Number(book.currentChapter) || 0),
+    currentParagraph: Math.max(0, Number(book.currentParagraph) || 0),
+    chapterCount: Array.isArray(book.chapters) ? book.chapters.length : Number(book.chapterCount || 0),
+    paragraphCount: Array.isArray(book.chapters) ? paragraphCount(book) : Number(book.paragraphCount || 0),
+    _progressPct: Array.isArray(book.chapters) ? progressPct(book) : Number(book._progressPct || 0),
+  };
+}
+
+function writeLocalIndex(key, books) {
+  const index = (Array.isArray(books) ? books : []).filter(book => book?.id).map(indexEntry);
+  localStorage.setItem(key, JSON.stringify(index));
+  return index;
 }
 
 function statusElement() {
@@ -133,7 +183,7 @@ async function readDurableBooks(key) {
     const value = await libraryIdbGet(key);
     return Array.isArray(value) ? value : [];
   } catch (error) {
-    console.warn('[semantic epub] IndexedDB read failed; preserving local snapshot', error);
+    console.warn('[semantic epub] IndexedDB read failed', error);
     return [];
   }
 }
@@ -183,32 +233,33 @@ async function savePendingSemanticBook(originalSave) {
   };
 
   const key = storageKey();
-  const localBooks = readStoredBooks(key);
+  const localIndex = readStoredBooks(key);
   const durableBooks = await readDurableBooks(key);
-  const books = mergeBookLists(durableBooks, localBooks);
-  const existing = books.find(item => item?.importKey === importKey);
+  const books = mergeBookLists(durableBooks, localIndex);
+  const existing = books.find(item => item?.importKey === importKey && Array.isArray(item?.chapters));
   const next = existing
     ? books
     : mergeBookLists([book], books.filter(item => item?.id !== book.id));
 
-  let localSaved = false;
-  let durableSaved = false;
+  // Full content has exactly one local authority: IndexedDB. Do not close the
+  // import modal and do not shrink the legacy localStorage snapshot until this
+  // write succeeds.
   try {
-    localStorage.setItem(key, JSON.stringify(next));
-    localSaved = true;
-  } catch (error) {
-    console.warn('[semantic epub] localStorage write failed', error);
-  }
-  try {
+    setStatus('⏳ Сохраняю книгу…');
     await libraryIdbPut(key, next);
-    durableSaved = true;
   } catch (error) {
-    console.warn('[semantic epub] IndexedDB write failed', error);
+    console.error('[semantic epub] durable save failed', error);
+    setStatus(`❌ Книга разобрана, но не сохранилась в IndexedDB: ${String(error?.message || error)}. Импорт оставлен открытым — можно повторить.`, 'error');
+    return;
   }
 
-  if (!localSaved && !durableSaved) {
-    setStatus('Не удалось сохранить книгу ни в localStorage, ни в IndexedDB. Импорт не закрыт — можно повторить.', 'error');
-    return;
+  try {
+    writeLocalIndex(key, next);
+  } catch (error) {
+    // The durable book is safe. A tiny index failure must not make us write the
+    // huge book back into localStorage; Reader will rebuild the index from IDB.
+    console.warn('[semantic epub] lightweight local index write failed', error);
+    try { localStorage.removeItem(key); } catch {}
   }
 
   const importedBookId = pendingImport.bookId;
@@ -223,15 +274,9 @@ async function savePendingSemanticBook(originalSave) {
   await window.renderReaderScreen?.();
   await window.readerOpenBook?.(target.id);
 
-  if (existing) {
-    window.showToast?.('📚 Такая книга уже есть — открыта существующая');
-  } else if (localSaved && durableSaved) {
-    window.showToast?.('📖 EPUB добавлен в семантическом формате');
-  } else if (durableSaved) {
-    window.showToast?.('📖 EPUB сохранён в IndexedDB; localStorage переполнен');
-  } else {
-    window.showToast?.('📖 EPUB сохранён локально; резервная запись IndexedDB не сработала');
-  }
+  window.showToast?.(existing
+    ? '📚 Такая книга уже есть — открыта существующая'
+    : '📖 EPUB добавлен');
 }
 
 function realHandler(name) {
