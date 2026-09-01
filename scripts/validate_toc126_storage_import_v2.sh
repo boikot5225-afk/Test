@@ -111,14 +111,18 @@ assert "toc-direct.js" not in external
 assert 'bytes.subarray(dataStart, dataStart + compressedSize)' in epub
 assert 'bytes.slice(dataStart, dataStart + compressedSize)' not in epub
 
-# Handler bridge and manual semantic save must bind to the exact same
-# reader-app and library-idb module identities as js/app.js. A different query
-# string creates a second live module with stale readerBooks/migration state.
+# The semantic bridge must re-enter the exact canonical reader-app after a
+# manual save so the live readerBooks array is refreshed. Its IDB import is
+# intentionally a DISTINCT ES-module identity (?v=2): that gives ACTION_VIEW
+# its own boot-time legacy snapshot/migration barrier. The fully green toc126
+# used this split; collapsing the bridge onto reader-app's ?v=1 reintroduced a
+# race that compacted legacy localStorage before its full book was durable.
 assert "reader-app.js?v=77.42-zh-reader-quality" in app
 assert "reader-app.js?v=77.42-zh-reader-quality" in handler
 assert "reader-app.js?v=77.42-zh-reader-quality" in bridge
 assert "reader-app.js?v=77.32" not in handler
-assert "from './library-idb-store.js?v=1';" in bridge
+assert "from './library-idb-store.js?v=2';" in bridge
+assert "from './library-idb-store.js?v=1';" not in bridge
 assert 'await app.hydrateReaderBooksFromIndexedDB?.()' in bridge
 assert 'saved book ${String(target.id || \'\')} is absent from canonical readerBooks' in bridge
 barrier = bridge.index('const startupDurableLibrary = await readDurableBooks(key)')
@@ -126,9 +130,9 @@ parse = bridge.index('const result = await parseSemanticEpubFile(file')
 assert barrier < parse, 'ACTION_VIEW EPUB parse must wait for durable legacy migration'
 assert 'libraryIdbDeleteBook(storageKey, wantedId)' in delete_fix
 assert 'localStorage.setItem(storageKey, JSON.stringify(books))' not in delete_fix
-# Delete is part of the frozen Reader runtime and must share reader-app's storage
-# module instance. Changing only a query-string cache key creates independent
-# module-level migration snapshots and can compact legacy localStorage too early.
+# Ordinary delete belongs to the canonical Reader runtime and therefore MUST
+# share reader-app's ?v=1 module identity. Unlike import migration, it must not
+# create an independent boot snapshot while deleting a normal library item.
 assert "import { libraryIdbDeleteBook } from './library-idb-store.js?v=1';" in delete_fix
 for runtime_path in (root / 'js').rglob('*.js'):
     runtime_source = runtime_path.read_text(encoding='utf-8')
