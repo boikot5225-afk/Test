@@ -1,3 +1,8 @@
+import {
+  libraryIdbGet,
+  libraryIdbPut,
+} from './library-idb-store.js?v=2';
+
 const SUPPORTED_EXTENSIONS = new Set(['epub', 'fb2', 'txt', 'text', 'md']);
 
 function wait(ms) {
@@ -53,6 +58,81 @@ function setExternalStatus(message, kind = 'progress') {
   status.textContent = message;
 }
 
+function externalLibraryKey() {
+  try {
+    return window.an2ReaderStorageKey?.('an2_reader_books_v1') || 'an2_reader_books_v1::guest';
+  } catch {
+    return 'an2_reader_books_v1::guest';
+  }
+}
+
+function fullBooksFromRaw(raw) {
+  try {
+    const rows = JSON.parse(String(raw || '[]'));
+    return Array.isArray(rows)
+      ? rows.filter(book => book?.id && Array.isArray(book?.chapters) && book.chapters.length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function mergeFullBooks(...lists) {
+  const byId = new Map();
+  for (const list of lists) {
+    for (const book of Array.isArray(list) ? list : []) {
+      if (!book?.id || !Array.isArray(book?.chapters) || !book.chapters.length) continue;
+      const id = String(book.id);
+      const previous = byId.get(id);
+      if (!previous || new Date(book.updatedAt || 0) >= new Date(previous.updatedAt || 0)) byId.set(id, book);
+    }
+  }
+  return [...byId.values()];
+}
+
+// ACTION_VIEW starts on a fresh WebView. The normal Reader startup can compact
+// a legacy full localStorage library while the Android file bridge is still
+// fetching/constructing the incoming File. Do not let the new EPUB enter that
+// race: this module is loaded statically before app init, so its ?v=2 IDB
+// module has already captured the old local payload. Once guest startup has
+// also published its synchronous snapshot, persist every full legacy book and
+// prove it round-trips before handing the new file to semantic import.
+async function ensureExternalLegacyMigrationBarrier() {
+  const key = externalLibraryKey();
+  let liveRaw = '';
+  try { liveRaw = localStorage.getItem(key) || ''; } catch {}
+  const snapshot = globalThis.__readerGuestLegacyLibrarySnapshot;
+  const snapshotRaw = snapshot && String(snapshot.key || '') === String(key)
+    ? String(snapshot.raw || '')
+    : '';
+  const legacyFull = mergeFullBooks(
+    fullBooksFromRaw(snapshotRaw),
+    fullBooksFromRaw(liveRaw),
+  );
+
+  // libraryIdbGet() still runs the IDB module's own boot-snapshot migration.
+  // The explicit put below additionally covers the app-level guest snapshot,
+  // so correctness no longer depends on which module instance won startup.
+  let durable = await libraryIdbGet(key);
+  durable = Array.isArray(durable) ? durable : [];
+  if (legacyFull.length) {
+    await libraryIdbPut(key, mergeFullBooks(durable, legacyFull));
+    durable = await libraryIdbGet(key);
+    durable = Array.isArray(durable) ? durable : [];
+  }
+
+  if (!legacyFull.length) return durable;
+  const durableById = new Map(durable.filter(book => book?.id).map(book => [String(book.id), book]));
+  const missing = legacyFull
+    .filter(book => !Array.isArray(durableById.get(String(book.id))?.chapters)
+      || !durableById.get(String(book.id)).chapters.length)
+    .map(book => String(book.id));
+  if (missing.length) {
+    throw new Error(`Старая библиотека не перенеслась в IndexedDB: ${missing.join(', ')}`);
+  }
+  return durable;
+}
+
 export async function readerImportAndroidFile(payload = {}) {
   const name = safeFileName(payload.name);
   const extension = extensionOf(name);
@@ -63,6 +143,7 @@ export async function readerImportAndroidFile(payload = {}) {
 
   try {
     const { importHandler, saveHandler } = await waitUntilReady();
+    await ensureExternalLegacyMigrationBarrier();
     window.showScreen?.('reader');
     window.showReaderImportModal?.();
 
