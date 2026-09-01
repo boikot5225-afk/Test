@@ -92,6 +92,42 @@ replace_once(
 reader = Path('js/reader/fr-reader-pipeline-v2.js')
 replace_once(
     reader,
+    "function paragraphContext(paragraph) {\n"
+    "  return Array.from(paragraph.querySelectorAll('.reader-word[data-word]'))\n"
+    "    .map(wordSurface).filter(Boolean).join(' ');\n"
+    "}\n",
+    "function paragraphContext(paragraph) {\n"
+    "  return Array.from(paragraph.querySelectorAll('.reader-word[data-word]'))\n"
+    "    .map(wordSurface).filter(Boolean).join(' ');\n"
+    "}\n\n"
+    "function sourceParagraphContext(paragraph) {\n"
+    "  if (!paragraph) return '';\n"
+    "  try {\n"
+    "    const clone = paragraph.cloneNode(true);\n"
+    "    clone.querySelectorAll('.rw-fr-v2-gloss').forEach(node => node.remove());\n"
+    "    const text = String(clone.textContent || '').replace(/\\s+/g, ' ').trim();\n"
+    "    if (text) return text;\n"
+    "  } catch {}\n"
+    "  return paragraphContext(paragraph);\n"
+    "}\n\n"
+    "function contextualLemmaFromCore(surface, context, core) {\n"
+    "  const word = normalize(surface);\n"
+    "  if (!word || !word.endsWith('ant') || word.length <= 5) return '';\n"
+    "  const source = normalize(context);\n"
+    "  if (!source) return '';\n"
+    "  const escaped = word.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n"
+    "  const strong = new RegExp(`(?:^|[,;:]\\\\s*|\\\\ben\\\\s+)${escaped}(?=\\\\s|[,;:.!?]|$)`, 'iu');\n"
+    "  if (!strong.test(source)) return '';\n"
+    "  const stem = word.slice(0, -3);\n"
+    "  for (const candidate of [stem + 'er', stem + 'ir', stem + 're']) {\n"
+    "    if (compactRussian(core?.[candidate] || '')) return candidate;\n"
+    "  }\n"
+    "  return '';\n"
+    "}\n",
+    'French first-paint participle helpers',
+)
+replace_once(
+    reader,
     "function isLikelyProper(el) {\n"
     "  const shown = String(el?.textContent || el?.dataset?.word || '').trim();\n"
     "  if (!/^[A-ZÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸŒÆ]/u.test(shown)) return false;\n"
@@ -124,9 +160,27 @@ replace_once(
 )
 replace_once(
     reader,
+    "    const context = paragraphContext(paragraph);\n"
+    "    const overrides = phraseOverrides(paragraph);\n",
+    "    const context = paragraphContext(paragraph);\n"
+    "    const sourceContext = sourceParagraphContext(paragraph);\n"
+    "    const overrides = phraseOverrides(paragraph);\n",
+    'French source context first paint',
+)
+replace_once(
+    reader,
     "      if (isLikelyProper(el)) {\n",
     "      if (isLikelyProper(el, data.core)) {\n",
     'French proper-name call',
+)
+replace_once(
+    reader,
+    "      const lemma = normalize(contextual?.lemma || lemmaFor(surface));\n"
+    "      const immediate = directTranslation(surface, lemma, data.core);\n",
+    "      const contextLemma = contextualLemmaFromCore(surface, sourceContext, data.core);\n"
+    "      const lemma = normalize(contextual?.lemma || contextLemma || lemmaFor(surface));\n"
+    "      const immediate = directTranslation(surface, lemma, data.core);\n",
+    'French context lemma first paint',
 )
 
 print('toc124 native French context bridge + final lexical gaps wired')
