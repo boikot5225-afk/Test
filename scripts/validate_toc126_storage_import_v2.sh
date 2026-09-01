@@ -112,6 +112,9 @@ assert 'bytes.slice(dataStart, dataStart + compressedSize)' not in epub
 assert "reader-app.js?v=77.42-zh-reader-quality" in app
 assert "reader-app.js?v=77.42-zh-reader-quality" in handler
 assert "reader-app.js?v=77.32" not in handler
+for runtime_path in (root / 'js').rglob('*.js'):
+    runtime_source = runtime_path.read_text(encoding='utf-8')
+    assert 'reader-app.js?v=77.32' not in runtime_source, f'duplicate Reader module identity survived: {runtime_path}'
 
 print('toc126 storage/import source gate: PASS')
 PY

@@ -4,7 +4,7 @@
 
 import { readZipEntries, resolveEpubPath } from './epub.js?v=3';
 
-const READER_APP_URL = '../reader-app.js?v=77.32';
+const READER_APP_URL = '../reader-app.js?v=77.42-zh-reader-quality';
 let appPromise = null;
 let pending = null;
 let pendingSeq = 0;

@@ -8,7 +8,7 @@
 // — which updates the CURRENT library book, skips leading image-only items,
 // saves, renders, and scrolls. Route TOC clicks through that API instead.
 
-const READER_APP_URL = '../reader-app.js?v=77.32';
+const READER_APP_URL = '../reader-app.js?v=77.42-zh-reader-quality';
 let appPromise = null;
 let navigating = false;
 

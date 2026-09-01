@@ -15,7 +15,7 @@ import { normalizeImportKey } from '../utils.js';
 
 const MODE_KEY = 'an2_reader_zh_unknown_gloss_mode_v1';
 const CACHE_BASE_KEY = 'an2_reader_zh_unknown_gloss_cache_v1';
-const READER_APP_URL = '../reader-app.js?v=77.32';
+const READER_APP_URL = '../reader-app.js?v=77.42-zh-reader-quality';
 const MAX_CACHE = 3200;
 const MAX_CONCURRENT = 4;
 const PREFETCH_PAGE_COUNT = 2;

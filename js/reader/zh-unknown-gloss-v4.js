@@ -15,7 +15,7 @@ import { normalizeImportKey } from '../utils.js';
 const MODE_KEY = 'an2_reader_zh_unknown_gloss_mode_v1';
 const CACHE_BASE_KEY = 'an2_reader_zh_unknown_gloss_cache_v1';
 const INSTANT_WORD_CACHE_KEY = 'an2_instant_translate_word_cache_v1';
-const READER_APP_URL = '../reader-app.js?v=77.32';
+const READER_APP_URL = '../reader-app.js?v=77.42-zh-reader-quality';
 const PREFETCH_PAGE_COUNT = 2;
 
 let appPromise = null;

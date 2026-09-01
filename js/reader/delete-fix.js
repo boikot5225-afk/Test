@@ -142,7 +142,7 @@ function scheduleDeleteGuards() {
 async function installDeleteFix() {
   if (installPromise) return installPromise;
   installPromise = (async () => {
-    moduleRef = await import('../reader-app.js?v=77.32');
+    moduleRef = await import('../reader-app.js?v=77.42-zh-reader-quality');
 
     durableDelete = async function readerDeleteBookDurable(id) {
       const wantedId = String(id || '');

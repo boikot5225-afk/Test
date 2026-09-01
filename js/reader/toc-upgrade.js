@@ -6,7 +6,7 @@
 // wrappers and never mutates a book.
 
 // Keep the canonical reader-app URL visible to the module-identity guard.
-const readerAppIdentityOnly = () => import('../reader-app.js?v=77.32');
+const readerAppIdentityOnly = () => import('../reader-app.js?v=77.42-zh-reader-quality');
 void readerAppIdentityOnly;
 
 // Legacy guard markers retained for old CI until the workflow is cleaned up.

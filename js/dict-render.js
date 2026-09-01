@@ -18,7 +18,7 @@ import {
   loadReaderLexicalCache, loadReaderWordState,
   saveReaderLexicalCache, saveReaderWordState,
   renderReaderChapter, READER_BOOKS_KEY,
-} from './reader-app.js?v=77.32';
+} from './reader-app.js?v=77.42-zh-reader-quality';
 
 // ════════════════════════════════════════════════
 // DICTIONARY — Существительные и Предлоги

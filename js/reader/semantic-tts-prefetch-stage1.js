@@ -6,7 +6,7 @@ let lastPrefetchKey = '';
 let readerModulePromise = null;
 
 function loadReaderModule() {
-  if (!readerModulePromise) readerModulePromise = import('../reader-app.js?v=77.32');
+  if (!readerModulePromise) readerModulePromise = import('../reader-app.js?v=77.42-zh-reader-quality');
   return readerModulePromise;
 }
 
