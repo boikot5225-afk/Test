@@ -27,3 +27,5 @@ test -n "$PID"
 adb forward tcp:9222 "localabstract:webview_devtools_remote_${PID}"
 python3 scripts/bootstrap_toc123_french_reader_live.py
 python3 scripts/audit_toc124_fr_pipeline_v2_live.py
+python3 scripts/audit_toc124_fr_quality_gate.py
+adb exec-out screencap -p > runtime-audit/toc124-03-quality-gate.png
