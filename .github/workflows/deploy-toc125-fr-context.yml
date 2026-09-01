@@ -1,0 +1,94 @@
+name: Deploy toc125 French context batch
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc125-fr-context-batch
+    paths:
+      - 'functions-fr-context/**'
+      - 'firebase.json'
+      - '.github/workflows/deploy-toc125-fr-context.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-toc125-fr-context
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS }}
+      GCP_SA_KEY_JSON: ${{ secrets.GCP_SA_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify isolated function source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check functions-fr-context/index.js
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const source = fs.readFileSync('functions-fr-context/index.js', 'utf8');
+          for (const required of [
+            'exports.frContextBatch = onCall(',
+            "defineSecret('DEEPSEEK_API_KEY')",
+            'user la force',
+            "tu t'ennuieras",
+            'one item for EVERY supplied id',
+          ]) {
+            if (!source.includes(required)) throw new Error(`missing: ${required}`);
+          }
+          const firebase = JSON.parse(fs.readFileSync('firebase.json', 'utf8'));
+          const entry = firebase.functions.find(x => x.codebase === 'frcontext');
+          if (!entry || entry.source !== 'functions-fr-context') throw new Error('frcontext codebase not registered');
+          console.log('isolated frContextBatch source PASS');
+          NODE
+
+      - name: Select deployment credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${FIREBASE_TOKEN}" ]]; then
+            echo "FIREBASE_AUTH_MODE=token" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          credentials="${FIREBASE_SERVICE_ACCOUNT_JSON}"
+          [[ -n "$credentials" ]] || credentials="${GOOGLE_CREDENTIALS_JSON}"
+          [[ -n "$credentials" ]] || credentials="${GCP_SA_KEY_JSON}"
+          if [[ -z "$credentials" ]]; then
+            echo '::error::No Firebase deployment credential configured.'
+            exit 1
+          fi
+          credentials_file="${RUNNER_TEMP}/firebase-service-account.json"
+          printf '%s' "$credentials" > "$credentials_file"
+          chmod 600 "$credentials_file"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=${credentials_file}" >> "$GITHUB_ENV"
+          echo "FIREBASE_AUTH_MODE=adc" >> "$GITHUB_ENV"
+
+      - name: Install Firebase CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cli_root="${RUNNER_TEMP}/firebase-cli"
+          npm --prefix "$cli_root" install --no-save --ignore-scripts firebase-tools@15.24.0
+          node "$cli_root/node_modules/firebase-tools/lib/bin/firebase.js" --version
+
+      - name: Deploy isolated frcontext codebase
+        shell: bash
+        run: |
+          set -euo pipefail
+          firebase_cli="${RUNNER_TEMP}/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
+          args=(deploy --only functions:frcontext --project french-da79a --non-interactive)
+          if [[ "${FIREBASE_AUTH_MODE}" == "token" ]]; then
+            node "$firebase_cli" "${args[@]}" --token "$FIREBASE_TOKEN"
+          else
+            node "$firebase_cli" "${args[@]}"
+          fi
