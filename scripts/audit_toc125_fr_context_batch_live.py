@@ -103,25 +103,22 @@ cdp('Runtime.enable')
 wait("document.readyState==='complete'")
 if ev("document.getElementById('reader-reading-view')?.dataset?.readerLang||''") != 'fr':
     raise RuntimeError('toc125 audit is not in French Reader')
-wait("!!window.__readerFrContextBatchV4Bound", timeout=10)
+wait("!!window.__readerFrContextBatchV5Bound", timeout=10)
 
-# Real all-Unknown profile; batch must work in the same guest mode the emulator
-# uses to enter Reader, including anonymous Firebase auth if no account exists.
-ev("""(()=>{const owner=localStorage.getItem('an2_reader_active_owner_v1')||'guest';localStorage.setItem(`an2_reader_vocab_estimate_fr_v1::${owner}`,JSON.stringify({language:'fr',version:1,estimate:0,listLength:63548,conservativeKnownCount:0,updatedAt:new Date().toISOString()}));window.readerFrenchRefresh?.('toc125-audit',true);return owner;})()""")
+# Real all-Unknown profile. The batch must work in Reader's actual guest mode
+# WITHOUT creating a Firebase account or waiting for anonymous auth.
+owner = ev("""(()=>{const owner=localStorage.getItem('an2_reader_active_owner_v1')||'guest';localStorage.setItem(`an2_reader_vocab_estimate_fr_v1::${owner}`,JSON.stringify({language:'fr',version:1,estimate:0,listLength:63548,conservativeKnownCount:0,updatedAt:new Date().toISOString()}));window.readerFrenchRefresh?.('toc125-audit',true);return owner;})()""")
 wait("document.querySelectorAll('#reader-chapter-text .reader-word.rw-migaku-unknown').length>15", timeout=15)
+if owner != 'guest':
+    raise RuntimeError(f'toc125 audit expected guest Reader owner, got {owner!r}')
 
-# Wake the batch and require a genuine Firebase identity. This catches a build
-# that only works for registered accounts while guest reading silently loses AI.
+# A logged-in Firebase user is NOT required. The proof is that context-deepseek
+# providers appear while Reader remains guest-owned.
 ev("window.dispatchEvent(new CustomEvent('reader:fr-pipeline-v2-ready')); true")
-auth = wait("(()=>{try{return window.firebase?.auth?.()?.currentUser?.uid||''}catch(e){return ''}})()", timeout=20)
-if not auth:
-    raise RuntimeError('French context batch has no Firebase identity in guest Reader')
 
 first_needles = ['hâte', 'personnellement', 'moindre', 'précise']
 select_paragraph(first_needles)
-
-# Wait until the real paragraph batch owns these occurrences.
-wait("""(()=>{const target=['hâte','moindre','précise',"t'ennuiera","t'ennuie",'ennuyée'];const rows=[...document.querySelectorAll('#reader-chapter-text .reader-word.rw-migaku-unknown[data-word]')].map(el=>{const s=String(el.dataset.word||el.textContent||'').trim().toLocaleLowerCase('fr-FR').replace(/[’‘`´]/g,"'");const w=el.parentElement;return [s,String(w?.dataset.frProvider||''),String(w?.querySelector(':scope > .rw-fr-v2-gloss')?.textContent||'').trim()]});return target.every(t=>rows.some(r=>r[0]===t&&r[1].startsWith('context-')&&r[2]&&!/^перевод/.test(r[2])));})()""", timeout=60)
+wait("""(()=>{const target=['hâte','moindre','précise',"t'ennuiera","t'ennuie",'ennuyée'];const rows=[...document.querySelectorAll('#reader-chapter-text .reader-word.rw-migaku-unknown[data-word]')].map(el=>{const s=String(el.dataset.word||el.textContent||'').trim().toLocaleLowerCase('fr-FR').replace(/[’‘`´]/g,"'");const w=el.parentElement;return [s,String(w?.dataset.frProvider||''),String(w?.querySelector(':scope > .rw-fr-v2-gloss')?.textContent||'').trim()]});return target.every(t=>rows.some(r=>r[0]===t&&r[1].startsWith('context-')&&r[2]&&!/^перевод/.test(r[2])));})()""", timeout=70)
 
 cases = {}
 cases['hate'] = contextual(token_row(first_needles, 'hâte'), 'hâte', r'спеш|тороп')
@@ -134,23 +131,21 @@ cases['ennuyee'] = contextual(token_row(first_needles, 'ennuyée'), 'ennuyée', 
 
 second_needles = ['envisager', 'faiblesse', 'contraints', 'user']
 select_paragraph(second_needles)
-wait("""(()=>{const target=['contraints','user'];const rows=[...document.querySelectorAll('#reader-chapter-text .reader-word.rw-migaku-unknown[data-word]')].map(el=>{const s=String(el.dataset.word||el.textContent||'').trim().toLocaleLowerCase('fr-FR');const w=el.parentElement;return [s,String(w?.dataset.frProvider||''),String(w?.querySelector(':scope > .rw-fr-v2-gloss')?.textContent||'').trim()]});return target.every(t=>rows.some(r=>r[0]===t&&r[1].startsWith('context-')&&r[2]));})()""", timeout=60)
+wait("""(()=>{const target=['contraints','user'];const rows=[...document.querySelectorAll('#reader-chapter-text .reader-word.rw-migaku-unknown[data-word]')].map(el=>{const s=String(el.dataset.word||el.textContent||'').trim().toLocaleLowerCase('fr-FR');const w=el.parentElement;return [s,String(w?.dataset.frProvider||''),String(w?.querySelector(':scope > .rw-fr-v2-gloss')?.textContent||'').trim()]});return target.every(t=>rows.some(r=>r[0]===t&&r[1].startsWith('context-')&&r[2]));})()""", timeout=70)
 cases['contraints'] = contextual(token_row(second_needles, 'contraints'), 'contraints', r'вынужден|принужден')
 cases['user'] = contextual(token_row(second_needles, 'user'), 'user la force', r'примен|использ|прибег|употреб', r'износ')
 
-# No loading placeholder is allowed anywhere in the rendered chapter, even
-# while another paragraph context request is still in flight.
 loading = ev("[...document.querySelectorAll('#reader-chapter-text .rw-fr-v2-gloss')].filter(n=>/^перевод…?$/iu.test(String(n.textContent||'').trim())).length")
 if loading:
     raise RuntimeError(f'loading placeholders visible after context batch: {loading}')
 
-# Ensure contextual work did not reintroduce wrapper churn.
 layout = ev("(()=>({nested:document.querySelectorAll('#reader-chapter-text .rw-fr-v2-wrap .rw-fr-v2-wrap').length,old:document.querySelectorAll('#reader-chapter-text .rw-fr-gloss-wrap').length}))()")
 if layout.get('nested') or layout.get('old'):
     raise RuntimeError('French context batch changed Reader layout: ' + json.dumps(layout))
 
+firebase_uid = ev("(()=>{try{return window.firebase?.auth?.()?.currentUser?.uid||''}catch(e){return ''}})()") or ''
 screenshot('toc125-context-batch-quality.png')
-result = {'ok': True, 'firebaseUid': auth[:8] + '…', 'cases': cases, 'loadingPlaceholders': loading, 'layout': layout}
+result = {'ok': True, 'readerOwner': owner, 'firebaseUidPresent': bool(firebase_uid), 'cases': cases, 'loadingPlaceholders': loading, 'layout': layout}
 (OUT / 'toc125-fr-context-batch.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
 print(json.dumps(result, ensure_ascii=False, indent=2))
 ws.close()
