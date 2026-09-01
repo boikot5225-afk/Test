@@ -82,6 +82,13 @@ assert "const BOOK_STORE = 'book-records'" in idb
 assert "const INDEX_STORE = 'indexes'" in idb
 assert 'readLegacySnapshot' in idb
 assert 'libraryIdbPutBook' in idb and 'libraryIdbDeleteBook' in idb
+# A lightweight index must never be treated as proof that chapters are durable.
+assert 'toc126 migration commit guard' in idb
+assert 'await verifyFullRecords(libraryKey, source)' in idb
+assert 'durable full-book verification failed' in idb
+assert 'legacy migration incomplete' in idb
+assert 'if (!full) continue;' in idb
+assert 'refusing index-only book record' in idb
 
 # One semantic EPUB parse owns text + images + exact NCX/nav TOC.
 assert 'parsePackageToc(entries, packageInfo)' in semantic
