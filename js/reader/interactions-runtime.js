@@ -13,6 +13,7 @@ import './en-unknown-gloss-full-fallback.js?v=2';
 import './en-context-gloss-v1.js?v=2'; // toc105: never overwrite DeepSeek context; text-only
 import './en-context-fixes-v1.js?v=2'; // toc105: DeepSeek context has final priority; text-only
 import './fr-reader-pipeline-v2.js?v=1'; // toc124: event-driven French Known/Unknown + glosses; no DOM observer loops
+import './fr-context-refine-v2.js?v=1'; // toc124: occurrence-local missing/ambiguous refinement; no layout ownership
 import './fr-lexical-pipeline-v2.js?v=124'; // French word-card lexical owner; occurrence context stays local
 import './toc51-stability.js?v=2';
 import './toolbar-scroll.js?v=1';
