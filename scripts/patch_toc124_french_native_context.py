@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
 from pathlib import Path
 
+
+def replace_once(path: Path, old: str, new: str, label: str) -> None:
+    text = path.read_text(encoding='utf-8')
+    if new in text:
+        return
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f'{label} anchor count={count}')
+    path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+
+# Native offline FR->RU context bridge.
 p = Path('android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java')
 s = p.read_text(encoding='utf-8')
 
@@ -26,4 +38,97 @@ if shutdown not in s:
     s = s.replace(anchor, anchor + shutdown, 1)
 
 p.write_text(s, encoding='utf-8')
-print('toc124 native French context bridge wired')
+
+# French lexical close-out: conservative irregular morphology + detached
+# participles that have a valid infinitive even when the surface form itself is
+# absent from the frequency list. This feeds both Known/Unknown and inline gloss
+# through readerFrenchLexicalOverrideLemmaFor / readerFrenchContextualAnalysisFor.
+lex = Path('js/reader/fr-lexical-pipeline-v2.js')
+replace_once(
+    lex,
+    "const SAFE_RU_OVERRIDES = new Map([['mec', 'парень']]);\n",
+    "const SAFE_RU_OVERRIDES = new Map([['mec', 'парень']]);\n"
+    "const CONSERVATIVE_IRREGULAR_LEMMAS = new Map([\n"
+    "  ['dit', 'dire'],\n"
+    "]);\n",
+    'French irregular lemma map',
+)
+replace_once(
+    lex,
+    "  if (!best || !Number.isInteger(surfaceHit?.index)) return '';\n"
+    "  // Context is the primary signal. Frequency is only a safety rail against\n"
+    "  // accidentally deriving a rare verb from a common lexical adjective/noun.\n"
+    "  const ceiling = Math.max(2200, Math.floor(surfaceHit.index * 0.65));\n"
+    "  return best.index < ceiling ? (best.lemma || '') : '';\n",
+    "  if (!best) return '';\n"
+    "  // A detached -ant form can be absent from the frequency headword list\n"
+    "  // even when its infinitive is present (fumant -> fumer). In the strong\n"
+    "  // syntactic frames accepted by contextSuggestsParticiple, that is enough.\n"
+    "  if (!Number.isInteger(surfaceHit?.index)) return best.lemma || '';\n"
+    "  // Context is the primary signal. Frequency is only a safety rail against\n"
+    "  // accidentally deriving a rare verb from a common lexical adjective/noun.\n"
+    "  const ceiling = Math.max(2200, Math.floor(surfaceHit.index * 0.65));\n"
+    "  return best.index < ceiling ? (best.lemma || '') : '';\n",
+    'French detached participle fallback',
+)
+replace_once(
+    lex,
+    "function overrideLemma(surface) {\n"
+    "  const normalized = normalize(surface);\n"
+    "  const direct = deepSeekOverrides.get(normalized);\n"
+    "  return direct?.lemma || '';\n"
+    "}\n",
+    "function overrideLemma(surface) {\n"
+    "  const normalized = normalize(surface);\n"
+    "  const direct = deepSeekOverrides.get(normalized);\n"
+    "  if (direct?.lemma) return direct.lemma;\n"
+    "  return CONSERVATIVE_IRREGULAR_LEMMAS.get(normalized) || '';\n"
+    "}\n",
+    'French irregular override export',
+)
+
+# Primary first paint must reject unknown capitalized names before creating an
+# empty gloss slot. Mid-sentence capitals keep the existing heuristic; at a
+# sentence start we only suppress a token when it has no local Russian lexical
+# evidence and no morphology to another lemma.
+reader = Path('js/reader/fr-reader-pipeline-v2.js')
+replace_once(
+    reader,
+    "function isLikelyProper(el) {\n"
+    "  const shown = String(el?.textContent || el?.dataset?.word || '').trim();\n"
+    "  if (!/^[A-ZÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸŒÆ]/u.test(shown)) return false;\n"
+    "  const paragraph = el.closest?.('.reader-paragraph');\n"
+    "  if (!paragraph) return false;\n"
+    "  const words = Array.from(paragraph.querySelectorAll('.reader-word[data-word]'));\n"
+    "  const index = words.indexOf(el);\n"
+    "  if (index <= 0) return false;\n"
+    "  const previous = String(words[index - 1]?.textContent || '').trim();\n"
+    "  return !/[.!?…]$/u.test(previous);\n"
+    "}\n",
+    "function isLikelyProper(el, core) {\n"
+    "  const shown = String(el?.textContent || el?.dataset?.word || '').trim();\n"
+    "  if (!/^[A-ZÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸŒÆ]/u.test(shown)) return false;\n"
+    "  const paragraph = el.closest?.('.reader-paragraph');\n"
+    "  if (!paragraph) return false;\n"
+    "  const words = Array.from(paragraph.querySelectorAll('.reader-word[data-word]'));\n"
+    "  const index = words.indexOf(el);\n"
+    "  if (index > 0) {\n"
+    "    const previous = String(words[index - 1]?.textContent || '').trim();\n"
+    "    if (!/[.!?…]$/u.test(previous)) return true;\n"
+    "  }\n"
+    "  const raw = normalize(wordSurface(el));\n"
+    "  const lemma = lemmaFor(raw);\n"
+    "  if (!raw || raw.length < 4 || lemma !== raw) return false;\n"
+    "  const lexical = compactRussian(core?.[raw] || core?.[lemma] || '');\n"
+    "  return !lexical;\n"
+    "}\n",
+    'French proper-name first paint',
+)
+replace_once(
+    reader,
+    "      if (isLikelyProper(el)) {\n",
+    "      if (isLikelyProper(el, data.core)) {\n",
+    'French proper-name call',
+)
+
+print('toc124 native French context bridge + final lexical gaps wired')
