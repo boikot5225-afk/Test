@@ -168,8 +168,9 @@ async function handleSemanticEpub(event, originalImport) {
     const diag = result.diagnostics || {};
     const missing = diag.missingImages?.length || 0;
     const footnotePart = diag.footnotes ? ` · ${diag.footnotes} сносок` : '';
+    const tocPart = diag.tocRows ? ` · ${diag.tocRows} пунктов TOC (${diag.tocSource})` : '';
     setStatus(
-      `✅ EPUB проверен: ${diag.chapters || 0} глав · ${diag.images || 0} изображений${footnotePart} · ${diag.textChars || 0} знаков${missing ? ` · не найдено изображений: ${missing}` : ''}. Нажми «Сохранить».`,
+      `✅ EPUB проверен: ${diag.chapters || 0} глав · ${diag.images || 0} изображений${footnotePart}${tocPart} · ${diag.textChars || 0} знаков${missing ? ` · не найдено изображений: ${missing}` : ''}. Нажми «Сохранить».`,
       missing ? 'progress' : 'ok',
     );
   } catch (error) {
@@ -208,6 +209,8 @@ async function savePendingSemanticBook(originalSave) {
   const footnoteCount = Object.keys(footnotes).length;
   const importKey = `semantic-v3:${language}:${hashText(`${title}|${author}|${chapters.length}|${charCount}|${footnoteCount}`)}`;
 
+  const toc = Array.isArray(pendingImport.toc) ? pendingImport.toc : [];
+  const tocSource = String(pendingImport.epubTocSource || '');
   const book = {
     id: pendingImport.bookId,
     schemaVersion: 3,
@@ -227,6 +230,11 @@ async function savePendingSemanticBook(originalSave) {
     currentParagraph: firstReadableContentIndex(firstItems),
     chapters,
     footnotes,
+    toc,
+    epubTocSource: tocSource,
+    _epubTocExact: !!pendingImport._epubTocExact,
+    _epubTocFile: pendingImport.fileName || '',
+    _epubTocCount: toc.length,
     _semanticLineItemsV1: true,
     _semanticTextChunksV1: true,
     epubDiagnostics: pendingImport.diagnostics,
@@ -241,9 +249,6 @@ async function savePendingSemanticBook(originalSave) {
     ? books
     : mergeBookLists([book], books.filter(item => item?.id !== book.id));
 
-  // Full content has exactly one local authority: IndexedDB. Do not close the
-  // import modal and do not shrink the legacy localStorage snapshot until this
-  // write succeeds.
   try {
     setStatus('⏳ Сохраняю книгу…');
     await libraryIdbPut(key, next);
@@ -256,8 +261,6 @@ async function savePendingSemanticBook(originalSave) {
   try {
     writeLocalIndex(key, next);
   } catch (error) {
-    // The durable book is safe. A tiny index failure must not make us write the
-    // huge book back into localStorage; Reader will rebuild the index from IDB.
     console.warn('[semantic epub] lightweight local index write failed', error);
     try { localStorage.removeItem(key); } catch {}
   }
