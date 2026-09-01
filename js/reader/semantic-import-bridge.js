@@ -10,6 +10,7 @@ import {
 import { parseSemanticEpubFile } from './semantic-import-stage1.js?v=6-storage';
 
 let pendingImport = null;
+let pendingLocalLibrary = [];
 let bridgeStarted = false;
 
 function newBookId() {
@@ -143,6 +144,10 @@ async function handleSemanticEpub(event, originalImport) {
   }
 
   pendingImport = null;
+  // Capture the legacy full localStorage library before the multi-megabyte EPUB
+  // parse yields. Startup hydration may compact that key to a v2 index while
+  // parsing; keeping this in-memory snapshot closes the migration/import race.
+  pendingLocalLibrary = readStoredBooks(storageKey());
   const preview = document.getElementById('reader-import-text');
   if (preview) preview.value = '';
 
@@ -175,6 +180,7 @@ async function handleSemanticEpub(event, originalImport) {
     );
   } catch (error) {
     pendingImport = null;
+    pendingLocalLibrary = [];
     setStatus(`❌ EPUB не импортировался: ${String(error?.message || error)}`, 'error');
   }
 }
@@ -241,7 +247,7 @@ async function savePendingSemanticBook(originalSave) {
   };
 
   const key = storageKey();
-  const localIndex = readStoredBooks(key);
+  const localIndex = mergeBookLists(pendingLocalLibrary, readStoredBooks(key));
   const durableBooks = await readDurableBooks(key);
   const books = mergeBookLists(durableBooks, localIndex);
   const existing = books.find(item => item?.importKey === importKey && Array.isArray(item?.chapters));
@@ -268,6 +274,7 @@ async function savePendingSemanticBook(originalSave) {
   const importedBookId = pendingImport.bookId;
   const target = existing || book;
   pendingImport = null;
+  pendingLocalLibrary = [];
 
   if (existing && importedBookId !== existing.id) {
     await imgStoreDeleteBook(importedBookId).catch(() => {});
