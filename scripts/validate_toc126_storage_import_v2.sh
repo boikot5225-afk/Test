@@ -77,7 +77,7 @@ assert 'writeLocalIndex(key, next)' in bridge
 assert 'await libraryIdbPut(key, next)' in bridge
 assert '__readerGuestLegacyLibrarySnapshot' in app
 assert 'readGuestStartupSnapshot(key)' in bridge
-assert 'pendingLocalLibrary = mergeBookLists(readGuestStartupSnapshot(key), readStoredBooks(key))' in bridge
+assert 'const startupLocalLibrary = mergeBookLists(readGuestStartupSnapshot(key), readStoredBooks(key))' in bridge
 assert 'mergeBookLists(pendingLocalLibrary, readStoredBooks(key))' in bridge
 
 # IDB v2 stores separate book records and preserves the v1 store for non-destructive migration.
@@ -112,6 +112,9 @@ assert 'bytes.slice(dataStart, dataStart + compressedSize)' not in epub
 assert "reader-app.js?v=77.42-zh-reader-quality" in app
 assert "reader-app.js?v=77.42-zh-reader-quality" in handler
 assert "reader-app.js?v=77.32" not in handler
+barrier = bridge.index('const startupDurableLibrary = await readDurableBooks(key)')
+parse = bridge.index('const result = await parseSemanticEpubFile(file')
+assert barrier < parse, 'ACTION_VIEW EPUB parse must wait for durable legacy migration'
 for runtime_path in (root / 'js').rglob('*.js'):
     runtime_source = runtime_path.read_text(encoding='utf-8')
     assert 'reader-app.js?v=77.32' not in runtime_source, f'duplicate Reader module identity survived: {runtime_path}'

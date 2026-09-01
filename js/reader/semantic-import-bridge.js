@@ -159,7 +159,17 @@ async function handleSemanticEpub(event, originalImport) {
   // parse yields. Startup hydration may compact that key to a v2 index while
   // parsing; keeping this in-memory snapshot closes the migration/import race.
   const key = storageKey();
-  pendingLocalLibrary = mergeBookLists(readGuestStartupSnapshot(key), readStoredBooks(key));
+  const startupLocalLibrary = mergeBookLists(readGuestStartupSnapshot(key), readStoredBooks(key));
+  // ACTION_VIEW can deliver the file before normal Reader hydration begins.
+  // Force the legacy library through the durable migration barrier before the
+  // new EPUB parse/save is allowed to create or compact the v2 index.
+  const startupDurableLibrary = await readDurableBooks(key);
+  pendingLocalLibrary = mergeBookLists(
+    startupDurableLibrary,
+    startupLocalLibrary,
+    readGuestStartupSnapshot(key),
+    readStoredBooks(key),
+  );
   const preview = document.getElementById('reader-import-text');
   if (preview) preview.value = '';
 
