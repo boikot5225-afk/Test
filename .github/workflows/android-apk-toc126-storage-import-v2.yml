@@ -6,6 +6,7 @@ on:
       - feature/77.42-toc126-storage-import-v2
     paths:
       - '.github/workflows/android-apk-toc126-storage-import-v2.yml'
+      - 'scripts/patch_toc126_guest_cold_start.py'
       - 'scripts/validate_toc126_storage_import_v2.sh'
       - 'scripts/make_toc126_storage_audit_epub.py'
       - 'scripts/prepare_toc126_legacy_storage.py'
@@ -56,11 +57,15 @@ jobs:
           printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
           echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
 
+      - name: Materialize offline guest cold-start fix
+        shell: bash
+        run: python3 scripts/patch_toc126_guest_cold_start.py
+
       - name: Validate frozen Reader and storage/import architecture
         shell: bash
         run: bash scripts/validate_toc126_storage_import_v2.sh
 
-      - name: Build universal APK directly from committed source
+      - name: Build universal APK directly from validated source
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
@@ -75,6 +80,7 @@ jobs:
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/semantic-import-stage1.js'
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/semantic-import-bridge.js'
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/android-external-import.js'
+          unzip -p "$APK" assets/www/app.js | grep -qF 'guest startup is local-first'
           if unzip -l "$APK" | grep -q 'assets/www/build/'; then
             echo 'transient repo build cache leaked into APK' >&2
             exit 1
