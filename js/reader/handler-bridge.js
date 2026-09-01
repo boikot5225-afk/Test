@@ -1,16 +1,10 @@
 // Runtime handler bridge for Reader AI 77.42.
-// toc23 invariant: every navigation handler is rebound to the same reader-app module instance.
-//
-// index.html installs buffering stubs and app.js later copies real handlers to
-// window.__real_NAME. Reader TOC/delete upgrades are installed asynchronously,
-// so the copied __real_* handlers can otherwise keep pointing at the pre-upgrade
-// functions. Android external import also used __real_* preferentially.
-//
-// Keep both handler namespaces on the same implementation and make TOC opening
-// recover the active book from the rendered DOM if an async owner/storage switch
-// cleared readerCurrentBookId while the chapter is still visible.
+// Every navigation/import handler must use the SAME reader-app module instance.
+// A different query string creates a second ES-module instance with independent
+// readerBooks/currentBook/import state, so keep this URL byte-for-byte aligned
+// with app.js.
 
-const READER_APP_URL = '../reader-app.js?v=77.32';
+const READER_APP_URL = '../reader-app.js?v=77.42-zh-reader-quality';
 let appPromise = null;
 let tocBridgeInstalled = false;
 
@@ -56,9 +50,6 @@ async function recoverVisibleBook(app) {
 
 function installTocBridge() {
   if (tocBridgeInstalled) return true;
-  // readerTocDiagnostics is installed by toc-upgrade.js together with the
-  // upgraded readerOpenToc handler. Wait for that marker so we never capture
-  // the legacy flat handler by mistake.
   if (typeof window.readerTocDiagnostics !== 'function') return false;
   const upgraded = liveHandler('readerOpenToc');
   if (!upgraded) return false;
@@ -110,9 +101,6 @@ function syncCanonicalReaderHandlers() {
 function syncUpgradedHandlers() {
   syncCanonicalReaderHandlers().catch(error => console.warn('[reader handlers] canonical navigation bind failed', error));
   installTocBridge();
-  // TOC/import wrappers and the durable delete patch are asynchronous. Once
-  // they are present, mirror them into __real_* so old stubs/native bridges do
-  // not bypass the fixes.
   for (const name of ['readerImportFromFile', 'saveReaderImport', 'readerDeleteBook']) syncReal(name);
   if (tocBridgeInstalled) syncReal('readerOpenToc');
 }
