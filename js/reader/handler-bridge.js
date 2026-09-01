@@ -5,8 +5,10 @@
 // with app.js.
 
 const READER_APP_URL = '../reader-app.js?v=77.42-zh-reader-quality';
+const LIBRARY_IDB_URL = './library-idb-store.js?v=2';
 let appPromise = null;
 let tocBridgeInstalled = false;
+let deleteBridgeInstalled = false;
 
 function appModule() {
   if (!appPromise) appPromise = import(READER_APP_URL);
@@ -22,6 +24,23 @@ function syncReal(name) {
   const fn = liveHandler(name);
   if (fn) window[`__real_${name}`] = fn;
   return fn;
+}
+
+function currentLibraryKey() {
+  try {
+    return window.an2ReaderStorageKey?.('an2_reader_books_v1') || 'an2_reader_books_v1';
+  } catch {
+    return 'an2_reader_books_v1';
+  }
+}
+
+function localIndexHasBook(key, id) {
+  try {
+    const rows = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(rows) && rows.some(book => String(book?.id || '') === String(id || ''));
+  } catch {
+    return false;
+  }
 }
 
 async function recoverVisibleBook(app) {
@@ -76,6 +95,48 @@ function installTocBridge() {
   return true;
 }
 
+// IDB v2 never infers deletion from a missing item in an arbitrary runtime
+// snapshot. A startup/owner-switch snapshot can be partial. Therefore deletion
+// becomes explicit: only after the existing UI handler really removed the id
+// from the small local library index do we delete that exact IDB record.
+function installDurableDeleteBridge() {
+  const current = liveHandler('readerDeleteBook');
+  if (!current) return false;
+  if (current.__readerDurableDeleteV2) {
+    deleteBridgeInstalled = true;
+    window.__real_readerDeleteBook = current;
+    return true;
+  }
+
+  const wrapped = function readerDeleteBookDurableV2(id, ...args) {
+    const key = currentLibraryKey();
+    const bookId = String(id || '');
+    const existedBefore = !!bookId && localIndexHasBook(key, bookId);
+    const result = current.call(this, id, ...args);
+
+    // readerDeleteBook() schedules its lightweight index commit. If the user
+    // cancelled confirm(), the id remains and nothing durable is removed.
+    if (existedBefore) {
+      setTimeout(async () => {
+        try {
+          if (localIndexHasBook(key, bookId)) return;
+          const store = await import(LIBRARY_IDB_URL);
+          await store.libraryIdbDeleteBook?.(key, bookId);
+        } catch (error) {
+          console.warn('[reader handlers] durable book delete deferred', error);
+        }
+      }, 1400);
+    }
+    return result;
+  };
+  wrapped.__readerDurableDeleteV2 = true;
+  wrapped.__upgraded = current;
+  window.readerDeleteBook = wrapped;
+  window.__real_readerDeleteBook = wrapped;
+  deleteBridgeInstalled = true;
+  return true;
+}
+
 const CANONICAL_READER_HANDLER_NAMES = [
   'readerOpenBook', 'readerBackToLibrary',
   'readerNextParagraph', 'readerPrevParagraph',
@@ -101,7 +162,9 @@ function syncCanonicalReaderHandlers() {
 function syncUpgradedHandlers() {
   syncCanonicalReaderHandlers().catch(error => console.warn('[reader handlers] canonical navigation bind failed', error));
   installTocBridge();
-  for (const name of ['readerImportFromFile', 'saveReaderImport', 'readerDeleteBook']) syncReal(name);
+  installDurableDeleteBridge();
+  for (const name of ['readerImportFromFile', 'saveReaderImport']) syncReal(name);
+  if (deleteBridgeInstalled) syncReal('readerDeleteBook');
   if (tocBridgeInstalled) syncReal('readerOpenToc');
 }
 
