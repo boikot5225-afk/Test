@@ -1,7 +1,7 @@
 import {
   libraryIdbGet,
   libraryIdbPut,
-} from './library-idb-store.js?v=1';
+} from './library-idb-store.js?v=2';
 import { imgStoreDeleteBook } from './image-store.js?v=1';
 import {
   chapterContentText,
