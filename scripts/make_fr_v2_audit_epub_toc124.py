@@ -12,7 +12,7 @@ shutil.rmtree(root,ignore_errors=True)
 (root/'META-INF/container.xml').write_text('''<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>''',encoding='utf-8')
 (root/'OEBPS/content.opf').write_text('''<?xml version="1.0" encoding="utf-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>French Reader v2 audit</dc:title><dc:creator>Reader AI fixture</dc:creator><dc:language>fr</dc:language><dc:identifier id="bookid">toc124-fr-v2-audit</dc:identifier></metadata><manifest><item id="ch1" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref id="ch1"/></spine></package>''',encoding='utf-8')
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Audit du lecteur français</dc:title><dc:creator>Reader AI fixture</dc:creator><dc:language>fr</dc:language><dc:identifier id="bookid">toc124-fr-v2-audit</dc:identifier></metadata><manifest><item id="ch1" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref id="ch1"/></spine></package>''',encoding='utf-8')
 passages=[
     "Tendre la joue, c'est bien joli, mais que veux-tu faire si cela t'ennuiera demain ?",
     "Il tend la corde et vérifie le nœud.",
@@ -26,7 +26,7 @@ passages=[
 ]
 body='\n'.join(f'<p>{p}</p>' for p in passages)
 (root/'OEBPS/chapter.xhtml').write_text(f'''<?xml version="1.0" encoding="utf-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="fr"><head><title>French v2 audit</title></head><body><h1>French v2 audit</h1>{body}</body></html>''',encoding='utf-8')
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="fr"><head><title>Audit du lecteur français</title></head><body>{body}</body></html>''',encoding='utf-8')
 out=base/'fr-v2-toc124.epub'
 with zipfile.ZipFile(out,'w') as zf:
     zf.write(root/'mimetype','mimetype',compress_type=zipfile.ZIP_STORED)
