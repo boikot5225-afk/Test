@@ -14,25 +14,28 @@ EOF
 sha256sum -c /tmp/toc125-core.sha256
 
 node --check js/reader/fr-reader-pipeline-v2.js
-node --check js/reader/fr-context-batch-v4.js
+node --check js/reader/fr-context-batch-v5.js
 node --check js/reader/fr-lexical-pipeline-v2.js
 node --check js/reader/interactions-runtime.js
 node --check functions/fr-context-task.js
 python3 -m py_compile scripts/make_fr_context_batch_audit_epub_toc125.py scripts/audit_toc125_fr_context_batch_live.py scripts/audit_toc125_frozen_swipe.py scripts/bootstrap_toc123_french_reader_live.py
 
 grep -q "fr-reader-pipeline-v2.js?v=1" js/reader/interactions-runtime.js
-grep -q "fr-context-batch-v4.js?v=1" js/reader/interactions-runtime.js
+grep -q "fr-context-batch-v5.js?v=1" js/reader/interactions-runtime.js
 ! grep -q "^import './fr-context-refine-v2.js" js/reader/interactions-runtime.js
+! grep -q "^import './fr-context-batch-v4.js" js/reader/interactions-runtime.js
 ! grep -q "^import './fr-context-batch-v3.js" js/reader/interactions-runtime.js
 ! grep -q "^import './fr-vocab-estimate.js" js/reader/interactions-runtime.js
 ! grep -q "^import './fr-unknown-gloss.js" js/reader/interactions-runtime.js
 ! grep -q "new MutationObserver" js/reader/fr-reader-pipeline-v2.js
-! grep -q "new MutationObserver" js/reader/fr-context-batch-v4.js
-! grep -q "node.textContent = 'перевод" js/reader/fr-context-batch-v4.js
+! grep -q "new MutationObserver" js/reader/fr-context-batch-v5.js
+! grep -q "node.textContent = 'перевод" js/reader/fr-context-batch-v5.js
+! grep -q "signInAnonymously" js/reader/fr-context-batch-v5.js
+! grep -q "auth.currentUser" js/reader/fr-context-batch-v5.js
 
-grep -q "task: 'fr_context_batch'" js/reader/fr-context-batch-v4.js
-grep -q "httpsCallable('readerAI')" js/reader/fr-context-batch-v4.js
-grep -q "signInAnonymously" js/reader/fr-context-batch-v4.js
+grep -q "task: 'fr_context_batch'" js/reader/fr-context-batch-v5.js
+grep -q "httpsCallable('readerAI')" js/reader/fr-context-batch-v5.js
+grep -q "MAX_TARGETS = 24" js/reader/fr-context-batch-v5.js
 grep -q "user la force" functions/fr-context-task.js
 grep -q "NEVER \"износить\"" functions/fr-context-task.js
 grep -q "t'ennuiera" functions/fr-context-task.js
@@ -62,5 +65,5 @@ for word in ('elle','tendre','vouloir','user','ennuyer','préciser'):
 b=Path('android/app/build.gradle').read_text(encoding='utf-8')
 assert re.search(r'versionCode\s+1018\b',b)
 assert "versionName '77.42-toc125-fr-context-batch'" in b
-print('toc125 frozen Reader + paragraph context batch source PASS')
+print('toc125 frozen Reader + guest-safe paragraph context batch source PASS')
 PY
