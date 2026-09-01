@@ -105,12 +105,15 @@ result = cdp.eval(f"""(async()=>{{
   await Promise.resolve(saveHandler());
   const openedReady=await waitFor(()=>{{
     const reading=document.getElementById('reader-reading-view');
-    return reading&&getComputedStyle(reading).display!=='none';
+    const modal=document.getElementById('reader-import-modal');
+    return reading&&getComputedStyle(reading).display!=='none'&&(!modal||getComputedStyle(modal).display==='none');
   }},8000);
 
   const app=await import('./js/reader-app.js?v=77.42-zh-reader-quality');
   const opened=app.readerCurrentBook?.();
   const readingDisplay=getComputedStyle(document.getElementById('reader-reading-view')).display;
+  const modalAfterSave=document.getElementById('reader-import-modal');
+  const modalDisplayAfterSave=modalAfterSave?getComputedStyle(modalAfterSave).display:'none';
   const key=window.an2ReaderStorageKey?.('an2_reader_books_v1')||'an2_reader_books_v1::guest';
   const mod=await import('./js/reader/library-idb-store.js?v=1');
   const durable=await mod.libraryIdbGet(key)||[];
@@ -121,13 +124,18 @@ result = cdp.eval(f"""(async()=>{{
   const libraryVisible=await waitFor(()=>{{
     const library=document.getElementById('reader-library-view');
     const reading=document.getElementById('reader-reading-view');
-    return library&&reading&&getComputedStyle(library).display!=='none'&&getComputedStyle(reading).display==='none';
+    const modal=document.getElementById('reader-import-modal');
+    return library&&reading
+      &&getComputedStyle(library).display!=='none'
+      &&getComputedStyle(reading).display==='none'
+      &&(!modal||getComputedStyle(modal).display==='none');
   }},6000);
   await Promise.resolve(window.renderReaderScreen?.());
-  await new Promise(r=>setTimeout(r,300));
+  await new Promise(r=>setTimeout(r,500));
 
   const libraryView=document.getElementById('reader-library-view');
   const readingView=document.getElementById('reader-reading-view');
+  const modalView=document.getElementById('reader-import-modal');
   const libraryList=document.getElementById('reader-library-list');
   const libraryText=String(libraryList?.textContent||'');
   const activeBooksTab=[...(libraryList?.querySelectorAll?.('.lib-tab-btn')||[])].find(x=>/Книги\s*\(/.test(x.textContent||''));
@@ -142,6 +150,7 @@ result = cdp.eval(f"""(async()=>{{
     openedTitle:String(opened?.title||''),
     openedFull:!!opened?.chapters?.length,
     readingDisplay,
+    modalDisplayAfterSave,
     localCount:Array.isArray(local)?local.length:-1,
     localHasTitle:Array.isArray(local)&&local.some(b=>String(b?.title||'')===title),
     durableCount:durable.length,
@@ -149,6 +158,7 @@ result = cdp.eval(f"""(async()=>{{
     libraryVisible,
     libraryDisplay:String(getComputedStyle(libraryView).display||''),
     readingDisplayAfterBack:String(getComputedStyle(readingView).display||''),
+    modalDisplayAfterBack:modalView?String(getComputedStyle(modalView).display||''):'none',
     booksTabText,
     cardTitles,
     libraryHasTitle:libraryText.includes(title)&&cardTitles.includes(title),
@@ -163,17 +173,17 @@ print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
 if not result:
     raise RuntimeError('manual import UI audit returned no result')
 if not result['openedReady'] or result['openedTitle'] != TITLE or not result['openedFull']:
-    raise RuntimeError('manual EPUB was saved but canonical Reader did not open it: ' + repr(summary))
-if result['readingDisplay'] == 'none':
-    raise RuntimeError('manual EPUB save did not enter the reading view: ' + repr(summary))
+    raise RuntimeError('manual EPUB was saved but canonical Reader did not open it cleanly: ' + repr(summary))
+if result['readingDisplay'] == 'none' or result['modalDisplayAfterSave'] != 'none':
+    raise RuntimeError('manual EPUB save left the import modal open or failed to enter reading view: ' + repr(summary))
 if not result['durableHasTitle']:
     raise RuntimeError('manual EPUB missing from durable IndexedDB: ' + repr(summary))
 if not result['localHasTitle']:
     raise RuntimeError('manual EPUB missing from lightweight local index: ' + repr(summary))
 if result['durableCount'] < before['count'] + 1 or result['localCount'] < before['count'] + 1:
     raise RuntimeError('manual EPUB save did not increase library count: ' + repr(summary))
-if not result['libraryVisible'] or result['libraryDisplay'] == 'none' or result['readingDisplayAfterBack'] != 'none':
-    raise RuntimeError('back from imported EPUB did not expose the real library view: ' + repr(summary))
+if not result['libraryVisible'] or result['libraryDisplay'] == 'none' or result['readingDisplayAfterBack'] != 'none' or result['modalDisplayAfterBack'] != 'none':
+    raise RuntimeError('back from imported EPUB did not expose a clean library view: ' + repr(summary))
 if not result['libraryHasTitle']:
     raise RuntimeError('manual EPUB exists in storage but has no visible library card: ' + repr(summary))
 if f"Книги ({before['count'] + 1})" not in result['booksTabText']:
