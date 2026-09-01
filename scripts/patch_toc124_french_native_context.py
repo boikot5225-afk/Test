@@ -61,14 +61,12 @@ replace_once(
     "  const ceiling = Math.max(2200, Math.floor(surfaceHit.index * 0.65));\n"
     "  return best.index < ceiling ? (best.lemma || '') : '';\n",
     "  if (!best) return '';\n"
-    "  // A detached -ant form can be absent from the frequency headword list\n"
-    "  // even when its infinitive is present (fumant -> fumer). In the strong\n"
-    "  // syntactic frames accepted by contextSuggestsParticiple, that is enough.\n"
-    "  if (!Number.isInteger(surfaceHit?.index)) return best.lemma || '';\n"
-    "  // Context is the primary signal. Frequency is only a safety rail against\n"
-    "  // accidentally deriving a rare verb from a common lexical adjective/noun.\n"
-    "  const ceiling = Math.max(2200, Math.floor(surfaceHit.index * 0.65));\n"
-    "  return best.index < ceiling ? (best.lemma || '') : '';\n",
+    "  // contextSuggestsParticiple already proved a high-confidence detached\n"
+    "  // participial/gerund frame (for example ', fumant' or 'en courant').\n"
+    "  // Do not let the globally ranked adjective/headword identity suppress\n"
+    "  // the contextual verb lemma here; ordinary 'un plat fumant' never enters\n"
+    "  // this function through the context gate.\n"
+    "  return best.lemma || '';\n",
     'French detached participle fallback',
 )
 replace_once(
