@@ -61,7 +61,16 @@ result = cdp.eval(r"""(async()=>{
   try {
     const mod=await import('./js/reader/en-context-batch-v2.js?v=77.42-toc132-live-audit');
     localStorage.removeItem(globalThis.an2ReaderStorageKey?.('an2_reader_en_context_batch_v2')||'an2_reader_en_context_batch_v2');
-    if(globalThis.__readerEnContextBatchV2) globalThis.__readerEnContextBatchV2.cache=null;
+    const shared=globalThis.__readerEnContextBatchV2;
+    if(shared){
+      shared.cache=null;
+      shared.active=0;
+      shared.inFlight?.clear?.();
+      clearTimeout(shared.timer);
+      clearTimeout(shared.retryTimer);
+      shared.timer=0;
+      shared.retryTimer=0;
+    }
     await mod.refine('live-audit');
     await new Promise(r=>setTimeout(r,1400));
 
@@ -92,7 +101,7 @@ if abs(float(result.get('threshold', 0)) - 0.84) > 1e-9:
     raise RuntimeError('English context confidence gate changed: ' + repr(result))
 rows = {row['p']: row for row in result.get('rows', [])}
 if rows.get('0', {}).get('ru') != 'берег' or rows.get('0', {}).get('provider') != 'deepseek-context':
-    raise RuntimeError('River-bank contextual gloss failed: ' + repr(result))
+    raise RuntimeError('river-bank contextual gloss failed: ' + repr(result))
 if rows.get('1', {}).get('ru') != 'банк' or rows.get('1', {}).get('provider') != 'deepseek-context':
     raise RuntimeError('Financial-bank contextual gloss failed: ' + repr(result))
 if rows.get('0', {}).get('key') == rows.get('1', {}).get('key'):
