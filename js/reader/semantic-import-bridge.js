@@ -1,5 +1,6 @@
 import {
   libraryIdbGet,
+  libraryIdbGetBook,
   libraryIdbPut,
 } from './library-idb-store.js?v=2';
 import { imgStoreDeleteBook } from './image-store.js?v=1';
@@ -331,7 +332,16 @@ async function savePendingSemanticBook(originalSave) {
       ? liveBooks.find(item => String(item?.id || '') === String(target.id || ''))
       : null;
     if (!liveTarget || !Array.isArray(liveTarget.chapters) || !liveTarget.chapters.length) {
-      console.warn('[semantic epub] saved book not visible in this readerBooks snapshot yet; deferring to readerOpenBook', String(target.id || ''));
+      // Not visible in the in-memory snapshot is not the same as not saved.
+      // That snapshot depends on the WHOLE library deserialising in time, so a
+      // big library made this miss routine. Ask storage about the one book that
+      // actually matters — a single record read — and only fail if that says
+      // the book cannot be read back.
+      const durableTarget = await libraryIdbGetBook(key, target.id).catch(() => null);
+      if (!durableTarget || !Array.isArray(durableTarget.chapters) || !durableTarget.chapters.length) {
+        throw new Error(`saved book ${String(target.id || '')} cannot be read back from storage`);
+      }
+      console.warn('[semantic epub] saved book is durable but not in the readerBooks snapshot yet; continuing', String(target.id || ''));
     }
   } catch (error) {
     console.error('[semantic epub] canonical library refresh failed', error);

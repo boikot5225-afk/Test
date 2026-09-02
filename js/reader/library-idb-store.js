@@ -171,34 +171,54 @@ export async function libraryIdbGetIndex(key) {
   });
 }
 
+// Full book records are megabytes each, not index rows: structured-clone
+// deserialisation of a real library on a mid-range phone takes seconds, and
+// this read runs right after an import while the device is still busy parsing
+// the EPUB and warming language data. The old budget (5s for the WHOLE
+// library, +60ms per book) was sized for index rows and quietly expired on any
+// real library -- and because a rejected read is indistinguishable from an
+// empty one to hydrateFromIndexedDB(), the live library then stayed at the
+// chapters-less local index and a book that had just been saved looked lost.
+function bookReadDeadline(ids) {
+  return Math.max(30000, 5000 + ids.length * 5000);
+}
+
 async function readBookRecords(key, ids) {
   if (!Array.isArray(ids) || !ids.length) return [];
   const db = await openDB();
   const libraryKey = cleanLibraryKey(key);
-  return withDeadline((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const tx = db.transaction(BOOK_STORE, 'readonly');
     const store = tx.objectStore(BOOK_STORE);
     const out = new Array(ids.length);
     let remaining = ids.length;
-    let failed = false;
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
+    // One slow or oversized record must never erase the books that did load.
+    // Hand back what arrived; callers merge, and the missing ones are re-read
+    // on the next pass instead of the whole library reading as empty.
+    const timer = setTimeout(() => {
+      const partial = out.filter(Boolean);
+      console.warn('[reader] library book read timed out; returning', partial.length, 'of', ids.length);
+      finish(resolve, partial);
+    }, bookReadDeadline(ids));
     ids.forEach((id, index) => {
       const req = store.get(recordKey(libraryKey, id));
       req.onsuccess = () => {
-        if (failed) return;
+        if (settled) return;
         out[index] = req.result?.book || null;
         remaining -= 1;
-        if (!remaining) resolve(out.filter(Boolean));
+        if (!remaining) finish(resolve, out.filter(Boolean));
       };
-      req.onerror = () => {
-        if (failed) return;
-        failed = true;
-        reject(req.error || tx.error || new Error('[reader] library book read failed'));
-      };
+      req.onerror = () => finish(reject, req.error || tx.error || new Error('[reader] library book read failed'));
     });
-    tx.onabort = () => {
-      if (!failed) reject(tx.error || new Error('[reader] library book read aborted'));
-    };
-  }, Math.max(IDB_READ_TIMEOUT_MS, 1000 + ids.length * 60));
+    tx.onabort = () => finish(reject, tx.error || new Error('[reader] library book read aborted'));
+  });
 }
 
 async function verifyFullRecords(key, books) {
