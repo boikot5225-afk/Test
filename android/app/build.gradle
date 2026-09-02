@@ -17,6 +17,9 @@ def wikdictUrl = 'https://download.wikdict.com/dictionaries/sqlite/2_2026-06/en-
 def migakuZhAssetDir = layout.buildDirectory.dir('generated/migakuZhAssets')
 def migakuZhDataDir = layout.buildDirectory.dir('generated/migakuZhAssets/data')
 def migakuZhCacheDir = layout.buildDirectory.dir('migaku-zh-cache')
+def frenchReaderAssetDir = layout.buildDirectory.dir('generated/frenchReaderAssets')
+def frenchReaderOutputDir = layout.buildDirectory.dir('generated/frenchReaderAssets/frreader')
+def frenchReaderCacheDir = new File(repoRoot, 'build/fr-reader-cache')
 
 android {
     namespace 'space.saintjust.reader.stage1'
@@ -26,8 +29,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 1022
-        versionName '77.42-toc129-import-supersede'
+        versionCode 1023
+        versionName '77.42-toc130-fr-assets'
     }
 
     buildFeatures {
@@ -70,6 +73,7 @@ android {
                     layout.buildDirectory.dir('generated/webAssets').get().asFile,
                     wikdictAssetDir.get().asFile,
                     migakuZhAssetDir.get().asFile,
+                    frenchReaderAssetDir.get().asFile,
             ]
         }
     }
@@ -185,8 +189,38 @@ tasks.register('prepareZhMigakuResources') {
     }
 }
 
+tasks.register('prepareFrenchReaderResources') {
+    inputs.file(new File(repoRoot, 'scripts/build_fr_reader_resources.py'))
+    outputs.file(layout.buildDirectory.file('generated/frenchReaderAssets/frreader/fr_vocab_frequency.tsv'))
+    outputs.file(layout.buildDirectory.file('generated/frenchReaderAssets/frreader/fr_vocab_lemma.tsv'))
+    outputs.file(layout.buildDirectory.file('generated/frenchReaderAssets/frreader/fr_vocab_manifest.json'))
+    outputs.file(layout.buildDirectory.file('generated/frenchReaderAssets/frreader/fr_ru_core.json'))
+    outputs.file(layout.buildDirectory.file('generated/frenchReaderAssets/frreader/fr_ru_senses.json'))
+    outputs.file(layout.buildDirectory.file('generated/frenchReaderAssets/frreader/NOTICE.txt'))
+
+    doLast {
+        File outputDir = frenchReaderOutputDir.get().asFile
+        outputDir.mkdirs()
+        frenchReaderCacheDir.mkdirs()
+        logger.lifecycle("Building mandatory French Reader lexical resources…")
+        exec {
+            commandLine 'python3',
+                    new File(repoRoot, 'scripts/build_fr_reader_resources.py').absolutePath,
+                    '--output-dir', outputDir.absolutePath,
+                    '--cache-dir', frenchReaderCacheDir.absolutePath
+        }
+        ['fr_vocab_frequency.tsv', 'fr_vocab_lemma.tsv', 'fr_ru_core.json', 'fr_ru_senses.json'].each { name ->
+            File generated = new File(outputDir, name)
+            if (!generated.exists() || generated.length() == 0L) {
+                throw new GradleException("Missing mandatory French Reader asset: ${name}")
+            }
+        }
+    }
+}
+
 tasks.named('preBuild') {
     dependsOn 'syncWebAssets'
     dependsOn 'prepareEnRuWikDict'
     dependsOn 'prepareZhMigakuResources'
+    dependsOn 'prepareFrenchReaderResources'
 }
