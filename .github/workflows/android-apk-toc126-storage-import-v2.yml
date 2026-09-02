@@ -1,4 +1,4 @@
-name: Android APK toc131 EPUB integrity + French/import gates
+name: Android APK toc132 English context + EPUB/French/import gates
 
 on:
   push:
@@ -18,7 +18,9 @@ on:
       - 'scripts/audit_toc128_audio_epub_reuse.py'
       - 'scripts/audit_toc130_french_assets_live.py'
       - 'scripts/audit_toc131_epub_dropcap_live.py'
+      - 'scripts/audit_toc132_english_context_live.py'
       - 'scripts/build_fr_reader_resources.py'
+      - 'scripts/export_en_ru_wikdict_json.py'
       - 'scripts/run_toc126_storage_emulator.sh'
       - 'scripts/audit_toc125_frozen_swipe.py'
       - 'scripts/configure_toc123_a54_abi.py'
@@ -32,7 +34,15 @@ on:
       - 'js/reader/android-external-import.js'
       - 'js/reader/handler-bridge.js'
       - 'js/reader/audio-epub-import-isolation.js'
+      - 'js/reader/interactions-runtime.js'
+      - 'js/reader/en-context-batch-v2.js'
+      - 'js/reader/en-vocab-estimate.js'
+      - 'js/reader/en-morphology-resolver.js'
+      - 'js/reader/en-unknown-gloss-v2.js'
+      - 'js/reader/en-context-gloss-v1.js'
+      - 'js/reader/en-context-fixes-v1.js'
       - 'js/reader/fr-vocab-estimate.js'
+      - 'functions/en-context-task.js'
       - 'android/app/build.gradle'
   workflow_dispatch:
 
@@ -72,7 +82,7 @@ jobs:
         shell: bash
         run: python3 scripts/patch_toc126_guest_cold_start.py
 
-      - name: Validate frozen Reader, EPUB integrity, import and French architecture
+      - name: Validate frozen Reader, English context, EPUB, import and French architecture
         shell: bash
         run: bash scripts/validate_toc126_storage_import_v2.sh
 
@@ -80,7 +90,7 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Verify toc131 payload inside universal APK
+      - name: Verify toc132 payload inside universal APK
         shell: bash
         run: |
           set -euo pipefail
@@ -95,6 +105,26 @@ jobs:
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/android-external-import.js'
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/handler-bridge.js'
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/audio-epub-import-isolation.js'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/interactions-runtime.js'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/en-context-batch-v2.js'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/en-vocab-estimate.js'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/en-morphology-resolver.js'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/en-unknown-gloss-v2.js'
+          unzip -l "$APK" | grep -qF 'assets/wikdict/en_ru_core.json'
+          unzip -l "$APK" | grep -qF 'assets/wikdict/en_ru_senses.json'
+          unzip -p "$APK" assets/wikdict/en_ru_senses.json > /tmp/en_ru_senses.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/en_ru_senses.json',encoding='utf-8'))
+          assert isinstance(d,dict) and len(d)>=1000, len(d)
+          for word in ['bank','charge','right']:
+              assert isinstance(d.get(word),list) and len(d[word])>=2, (word,d.get(word))
+          print('English sense asset:',len(d),'ambiguous lemmas')
+          PY
+          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF "en-context-batch-v2.js?v=1"
+          unzip -p "$APK" assets/www/js/reader/en-context-batch-v2.js | grep -qF 'const MIN_CONFIDENCE = 0.84'
+          unzip -p "$APK" assets/www/js/reader/en-context-batch-v2.js | grep -qF "task: 'en_context_batch'"
+          unzip -p "$APK" assets/www/js/reader/en-context-batch-v2.js | grep -qF "wrap.dataset.enContextProvider = 'deepseek-context'"
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/fr-vocab-estimate.js'
           unzip -l "$APK" | grep -qF 'assets/frreader/fr_vocab_frequency.tsv'
           unzip -l "$APK" | grep -qF 'assets/frreader/fr_vocab_lemma.tsv'
@@ -136,7 +166,7 @@ jobs:
         shell: bash
         run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
 
-      - name: Android 15 toc131 EPUB integrity plus toc129 import and French regressions
+      - name: Android 15 toc132 English context after toc131 EPUB, toc129 import and French regressions
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -146,11 +176,11 @@ jobs:
           disable-animations: false
           script: bash scripts/run_toc126_storage_emulator.sh
 
-      - name: Upload toc131 live evidence
+      - name: Upload toc132 live evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: toc131-epub-import-french-live-evidence
+          name: toc132-en-context-epub-import-french-live-evidence
           path: runtime-audit/
           if-no-files-found: warn
           retention-days: 90
@@ -166,14 +196,14 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Sign and validate vc1024 A54 APK
+      - name: Sign and validate vc1025 A54 APK
         shell: bash
         run: |
           set -euo pipefail
           APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
           BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           mkdir -p unique-out
-          OUT=unique-out/Reader-AI-77.42-toc131-epub-integrity-a54-vc1024.apk
+          OUT=unique-out/Reader-AI-77.42-toc132-en-context-batch-a54-vc1025.apk
           KSPASS="${ANDROID_KEYSTORE_PASSWORD:-readerai2026}"
           KEYPASS="${ANDROID_KEY_PASSWORD:-$KSPASS}"
           ALIAS="${ANDROID_KEY_ALIAS:-reader-ai}"
@@ -190,6 +220,9 @@ jobs:
           "${BUILD_TOOLS}/aapt" dump badging "$OUT" | tee unique-out/BADGING.txt
           "${BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$OUT" > unique-out/ZIPALIGN.txt
           unzip -t "$OUT" >/dev/null
+          unzip -l "$OUT" | grep -qF 'assets/www/js/reader/en-context-batch-v2.js'
+          unzip -l "$OUT" | grep -qF 'assets/wikdict/en_ru_core.json'
+          unzip -l "$OUT" | grep -qF 'assets/wikdict/en_ru_senses.json'
           unzip -l "$OUT" | grep -qF 'assets/www/js/reader/epub-stage1-real.js'
           unzip -p "$OUT" assets/www/js/reader/epub-stage1-real.js | grep -qF 'normalizeDropCapWrappers'
           unzip -l "$OUT" | grep -qF 'assets/frreader/fr_vocab_frequency.tsv'
@@ -199,8 +232,8 @@ jobs:
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
           grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
           grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
-          grep -q "versionCode='1024'" unique-out/BADGING.txt
-          grep -q "versionName='77.42-toc131-epub-integrity-debug'" unique-out/BADGING.txt
+          grep -q "versionCode='1025'" unique-out/BADGING.txt
+          grep -q "versionName='77.42-toc132-en-context-batch-debug'" unique-out/BADGING.txt
           grep -q "native-code: 'arm64-v8a'" unique-out/BADGING.txt
           if unzip -l "$OUT" | grep -Eq 'lib/(armeabi-v7a|x86|x86_64)/'; then
             echo 'non-A54 ABI leaked into final package' >&2
@@ -213,10 +246,10 @@ jobs:
           sha256sum "$OUT" | tee unique-out/SHA256.txt
           stat -c '%n %s bytes' "$OUT" | tee unique-out/SIZE.txt
 
-      - name: Upload verified toc131 A54 APK
+      - name: Upload verified toc132 A54 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-77.42-toc131-epub-integrity-a54-vc1024
+          name: Reader-AI-77.42-toc132-en-context-batch-a54-vc1025
           path: unique-out/
           if-no-files-found: error
           retention-days: 30
