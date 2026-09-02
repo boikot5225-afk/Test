@@ -16,6 +16,19 @@ function currentHandler(name) {
   return typeof real === 'function' && !real.__isStub ? real : null;
 }
 
+function actionViewImportHandler(handler) {
+  // toc128: the audio→EPUB reset/single-flight wrapper belongs only to a real
+  // in-app file-picker transition. ACTION_VIEW already owns a cold-start legacy
+  // migration barrier below; invoking the reset wrapper here can compact the
+  // legacy localStorage snapshot before that migration is durably verified.
+  // The wrapper exposes its semantic importer as __upgraded, so ACTION_VIEW
+  // deliberately reuses the exact pre-toc128 semantic path.
+  if (handler?.__readerAudioEpubIsolationV1 && typeof handler.__upgraded === 'function') {
+    return handler.__upgraded;
+  }
+  return handler;
+}
+
 async function waitUntilReady(timeoutMs = 60000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -143,6 +156,7 @@ export async function readerImportAndroidFile(payload = {}) {
 
   try {
     const { importHandler, saveHandler } = await waitUntilReady();
+    const actionViewHandler = actionViewImportHandler(importHandler);
     await ensureExternalLegacyMigrationBarrier();
     window.showScreen?.('reader');
     window.showReaderImportModal?.();
@@ -166,7 +180,7 @@ export async function readerImportAndroidFile(payload = {}) {
     // EPUB now has one owner: semantic-import-stage1. It parses text, images and
     // exact NCX/nav.xhtml from the same ZIP entries. Do not run toc-direct over
     // this File a second time — that used to double peak memory on Android.
-    await importHandler({ target: { files: [file], value: '' }, androidExternal: true });
+    await actionViewHandler({ target: { files: [file], value: '' }, androidExternal: true });
     const status = document.getElementById('reader-import-status');
     if (String(status?.textContent || '').trim().startsWith('❌')) return false;
 
