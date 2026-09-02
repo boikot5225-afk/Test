@@ -107,6 +107,10 @@ test "$swipe_ok" -eq 1
 python3 scripts/audit_toc126_storage_delete.py
 adb exec-out screencap -p > runtime-audit/toc126-99-after-restart-delete.png
 
+# Concurrent independent library-store module instances must not clobber the
+# shared IndexedDB index. This mirrors the real ?v=1/?v=2 coexistence.
+python3 scripts/audit_toc132_idb_index_race.py | tee runtime-audit/toc132-idb-index-race.json
+
 # Manual Library -> Add EPUB regression.
 python3 scripts/audit_toc127_manual_import_ui.py
 adb exec-out screencap -p > runtime-audit/toc127-100-after-manual-import.png
