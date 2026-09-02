@@ -29,8 +29,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 1023
-        versionName '77.42-toc130-fr-assets'
+        versionCode 1024
+        versionName '77.42-toc131-epub-integrity'
     }
 
     buildFeatures {
