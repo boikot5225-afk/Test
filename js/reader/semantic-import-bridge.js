@@ -303,21 +303,31 @@ async function savePendingSemanticBook(originalSave) {
   const importedBookId = pendingImport.bookId;
   const target = existing || book;
 
-  // semantic-import used to write IndexedDB/localStorage behind reader-app's
-  // back. The live readerBooks array therefore stayed stale and its delayed
-  // save could immediately shrink the visible library back to the old count.
-  // Re-enter through the exact canonical reader-app module before closing the
-  // modal or claiming success, so memory, the local index and IndexedDB all
-  // describe the same library.
+  // The durable write above already round-tripped the complete book. Normally
+  // canonical reader-app hydration sees it immediately. On Android WebView the
+  // canonical IDB module can still be finishing its own startup migration and
+  // miss this just-saved record on the first hydrate. In that case, hand the
+  // already-durable full object directly to the exact array that reader-app
+  // assigned as readerBooks. No full EPUB is written back to localStorage.
   let app = null;
   try {
     app = await canonicalReaderApp();
     app.loadReaderBooks?.();
     await app.hydrateReaderBooksFromIndexedDB?.();
     const liveBooks = app.loadReaderBooks?.() || [];
-    const liveTarget = Array.isArray(liveBooks)
+    let liveTarget = Array.isArray(liveBooks)
       ? liveBooks.find(item => String(item?.id || '') === String(target.id || ''))
       : null;
+
+    if ((!liveTarget || !Array.isArray(liveTarget.chapters) || !liveTarget.chapters.length)
+        && Array.isArray(liveBooks)) {
+      const index = liveBooks.findIndex(item => String(item?.id || '') === String(target.id || ''));
+      if (index >= 0) liveBooks[index] = target;
+      else liveBooks.unshift(target);
+      liveTarget = target;
+      globalThis.__readerCanonicalImportAdoptions = Number(globalThis.__readerCanonicalImportAdoptions || 0) + 1;
+    }
+
     if (!liveTarget || !Array.isArray(liveTarget.chapters) || !liveTarget.chapters.length) {
       throw new Error(`saved book ${String(target.id || '')} is absent from canonical readerBooks`);
     }
