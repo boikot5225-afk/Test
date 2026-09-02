@@ -7,6 +7,7 @@
 let activeManualEpubImport = null;
 let installedWrapper = null;
 let resetQueue = Promise.resolve();
+let manualSelectionGeneration = 0;
 
 const importIsolationStats = globalThis.__readerImportIsolationStats || {
   epubStarts: 0,
@@ -116,21 +117,26 @@ function installIsolation() {
       return activeManualEpubImport.promise;
     }
 
-    if (activeManualEpubImport) importIsolationStats.supersededCalls += 1;
+    const selectionGeneration = ++manualSelectionGeneration;
+    if (activeManualEpubImport) {
+      importIsolationStats.supersededCalls += 1;
+      // Invalidate the old semantic generation NOW, before waiting even for the
+      // tiny private-audio reset. This prevents a stale parser from repainting
+      // progress/title in the gap between the user's second selection and the
+      // second parser starting.
+      try { semanticImport.call(this, { __readerSupersedeSemanticImport: true }); } catch {}
+    }
 
     clearStaleImportUi();
     setStatus(`⏳ Открываю ${file.name}...`);
 
-    // Private-state resets are tiny but must never overlap each other. They do
-    // NOT serialize EPUB parsing: after its own reset, the newly selected EPUB
-    // immediately enters semanticImport, whose generation guard supersedes the
-    // previous parser.
     const resetTask = resetQueue.then(() => resetCanonicalPendingAudio(canonicalImport));
     resetQueue = resetTask.catch(() => {});
 
     let promise;
     promise = (async () => {
       await resetTask;
+      if (selectionGeneration !== manualSelectionGeneration) return null;
       clearStaleImportUi();
       setStatus(`⏳ Открываю ${file.name}...`);
       importIsolationStats.epubStarts += 1;
@@ -140,6 +146,7 @@ function installIsolation() {
     });
 
     activeManualEpubImport = {
+      generation: selectionGeneration,
       fingerprint: key,
       name: String(file.name || 'EPUB'),
       promise,
