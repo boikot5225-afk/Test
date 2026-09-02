@@ -4,19 +4,16 @@
 // readerBooks/currentBook/import state, so keep this URL byte-for-byte aligned
 // with app.js.
 
+// toc128 manual-only audio→EPUB protection. The dependency has no imports and
+// does not touch Reader/IDB during startup; ACTION_VIEW events pass straight
+// through to the established semantic route.
+import './audio-epub-import-isolation.js?v=1';
+
 const READER_APP_URL = '../reader-app.js?v=77.42-zh-reader-quality';
 const LIBRARY_IDB_URL = './library-idb-store.js?v=2';
 let appPromise = null;
 let tocBridgeInstalled = false;
 let deleteBridgeInstalled = false;
-let activeEpubImport = null;
-const importIsolationStats = {
-  epubStarts: 0,
-  canonicalResets: 0,
-  dedupedCalls: 0,
-  blockedConcurrent: 0,
-};
-globalThis.__readerImportIsolationStats = importIsolationStats;
 
 function appModule() {
   if (!appPromise) appPromise = import(READER_APP_URL);
@@ -49,128 +46,6 @@ function localIndexHasBook(key, id) {
   } catch {
     return false;
   }
-}
-
-function importFile(event) {
-  return event?.target?.files?.[0] || null;
-}
-
-function epubFingerprint(file) {
-  return `${String(file?.name || '')}|${Number(file?.size || 0)}|${Number(file?.lastModified || 0)}`;
-}
-
-function setImportStatus(message) {
-  const status = document.getElementById('reader-import-status');
-  if (!status) return;
-  status.style.display = 'block';
-  status.style.color = 'var(--accent)';
-  status.textContent = message;
-}
-
-function clearStaleImportUi() {
-  for (const id of ['reader-import-title', 'reader-import-author', 'reader-import-text']) {
-    const element = document.getElementById(id);
-    if (element) element.value = '';
-  }
-  const audioStatus = document.getElementById('reader-import-audio-status');
-  if (audioStatus) {
-    audioStatus.style.display = 'none';
-    audioStatus.textContent = '';
-  }
-  const stopBtn = document.getElementById('reader-audio-stop-btn');
-  if (stopBtn) stopBtn.style.display = 'none';
-}
-
-// reader-app keeps the audio attachment/timestamp fields private. The canonical
-// text-file import path already clears them synchronously at its start, so use a
-// harmless in-memory text file only as a state reset before semantic EPUB takes
-// ownership. Nothing is saved and the reset result is cleared before EPUB paint.
-async function resetCanonicalPendingImport(canonicalImport) {
-  const resetFile = new File([''], '__reader_import_state_reset__.txt', {
-    type: 'text/plain',
-    lastModified: 1,
-  });
-  try {
-    await canonicalImport({
-      target: { files: [resetFile], value: '' },
-      __readerImportStateReset: true,
-    });
-  } catch (error) {
-    console.warn('[reader import isolation] canonical state reset parser result', error);
-  }
-  importIsolationStats.canonicalResets += 1;
-}
-
-// Semantic EPUB bypasses reader-app's normal file-import entry point. That used
-// to leave audio-pending state behind after transcription, and repeated file
-// events could launch two ZIP parsers over the same EPUB. Keep manual semantic
-// parsing single-flight and explicitly run the canonical reset before a new EPUB.
-// Android ACTION_VIEW is deliberately excluded: its cold-start path already has
-// the toc126 durable migration barrier and has no previous in-modal audio state.
-function installImportIsolationBridge() {
-  const current = liveHandler('readerImportFromFile');
-  if (!current) return false;
-  if (current.__readerAudioEpubIsolationV1) {
-    window.__real_readerImportFromFile = current;
-    return true;
-  }
-  if (!current.__semanticStage1 || typeof current.__semanticOriginal !== 'function') return false;
-
-  const semanticImport = current;
-  const canonicalImport = current.__semanticOriginal;
-
-  const wrapped = function readerImportAudioEpubIsolated(event, ...args) {
-    const file = importFile(event);
-    const isEpub = !!file && String(file.name || '').toLowerCase().endsWith('.epub');
-    if (!isEpub) return semanticImport.call(this, event, ...args);
-
-    // Preserve the already-green cold ACTION_VIEW migration path byte-for-byte
-    // in behavior. Running the synthetic manual reset here can compact the
-    // legacy full localStorage snapshot before semantic-import's durable barrier.
-    if (event?.androidExternal === true) {
-      return semanticImport.call(this, event, ...args);
-    }
-
-    const fingerprint = epubFingerprint(file);
-    if (activeEpubImport) {
-      if (activeEpubImport.fingerprint === fingerprint) {
-        importIsolationStats.dedupedCalls += 1;
-        return activeEpubImport.promise;
-      }
-      importIsolationStats.blockedConcurrent += 1;
-      setImportStatus(`⏳ Уже разбираю ${activeEpubImport.name}. Дождись завершения перед выбором другого EPUB.`);
-      return activeEpubImport.promise;
-    }
-
-    clearStaleImportUi();
-    setImportStatus(`⏳ Открываю ${file.name}...`);
-
-    let promise;
-    promise = (async () => {
-      await resetCanonicalPendingImport(canonicalImport);
-      clearStaleImportUi();
-      setImportStatus(`⏳ Открываю ${file.name}...`);
-      importIsolationStats.epubStarts += 1;
-      return semanticImport.call(this, event, ...args);
-    })().finally(() => {
-      if (activeEpubImport?.promise === promise) activeEpubImport = null;
-    });
-
-    activeEpubImport = {
-      fingerprint,
-      name: String(file.name || 'EPUB'),
-      promise,
-    };
-    return promise;
-  };
-
-  wrapped.__readerAudioEpubIsolationV1 = true;
-  wrapped.__semanticStage1 = true;
-  wrapped.__semanticOriginal = canonicalImport;
-  wrapped.__upgraded = semanticImport;
-  window.readerImportFromFile = wrapped;
-  window.__real_readerImportFromFile = wrapped;
-  return true;
 }
 
 async function recoverVisibleBook(app) {
@@ -293,14 +168,13 @@ function syncUpgradedHandlers() {
   syncCanonicalReaderHandlers().catch(error => console.warn('[reader handlers] canonical navigation bind failed', error));
   installTocBridge();
   installDurableDeleteBridge();
-  installImportIsolationBridge();
-  syncReal('saveReaderImport');
+  for (const name of ['readerImportFromFile', 'saveReaderImport']) syncReal(name);
   if (deleteBridgeInstalled) syncReal('readerDeleteBook');
   if (tocBridgeInstalled) syncReal('readerOpenToc');
 }
 
 function scheduleSync() {
-  for (const delay of [0, 50, 150, 400, 1000, 2500, 6000, 9000, 11000]) {
+  for (const delay of [0, 50, 150, 400, 1000, 2500, 6000]) {
     setTimeout(syncUpgradedHandlers, delay);
   }
 }
