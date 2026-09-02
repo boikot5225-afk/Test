@@ -156,14 +156,15 @@ reset_call = audio_isolation.index('await resetCanonicalPendingAudio(canonicalIm
 assert android_bypass < manual_file < reset_call, 'ACTION_VIEW must bypass toc128 manual reset before file/reset work'
 assert 'activeManualEpubImport.fingerprint === key' in audio_isolation
 assert 'return activeManualEpubImport.promise' in audio_isolation
-assert "semanticImport.__semanticStage1" in audio_isolation
-assert "typeof semanticImport.__semanticOriginal" not in audio_isolation  # canonical is captured only after semanticHandler validation
+assert 'current.__semanticStage1' in audio_isolation
+assert "typeof current.__semanticOriginal !== 'function'" in audio_isolation
 assert "__reader_import_state_reset__.txt" in audio_isolation
 assert "reader-import-audio-status" in audio_isolation
 assert "audioStatus.style.display = 'none'" in audio_isolation
 assert 'importIsolationStats.epubStarts += 1' in audio_isolation
 assert 'importIsolationStats.dedupedCalls += 1' in audio_isolation
 assert 'scripts/audit_toc128_audio_epub_reuse.py' in runner
+assert '__readerAudioEpubIsolationV2' in audio_epub_audit
 assert 'epubStartsDelta' in audio_epub_audit
 assert 'openedHasOriginalAudio' in audio_epub_audit
 assert 'durableMatches' in audio_epub_audit
