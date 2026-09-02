@@ -14,6 +14,16 @@ let canonicalReaderPromise = null;
 let pendingImport = null;
 let pendingLocalLibrary = [];
 let bridgeStarted = false;
+let activeSemanticImport = null;
+let semanticImportGeneration = 0;
+
+const semanticImportStats = globalThis.__readerSemanticImportStats || {
+  starts: 0,
+  deduped: 0,
+  superseded: 0,
+  cancelled: 0,
+};
+globalThis.__readerSemanticImportStats = semanticImportStats;
 
 function canonicalReaderApp() {
   if (!canonicalReaderPromise) canonicalReaderPromise = import(READER_APP_URL);
@@ -22,6 +32,24 @@ function canonicalReaderApp() {
 
 function newBookId() {
   return `book_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function fileFingerprint(file) {
+  return `${String(file?.name || '')}|${Number(file?.size || 0)}|${Number(file?.lastModified || 0)}`;
+}
+
+function importCancelledError() {
+  const error = new Error('Импорт заменён новым выбранным EPUB');
+  error.name = 'ReaderSemanticImportCancelled';
+  return error;
+}
+
+function isImportCancelled(error) {
+  return error?.name === 'ReaderSemanticImportCancelled';
+}
+
+function assertCurrentImport(generation) {
+  if (generation !== semanticImportGeneration) throw importCancelledError();
 }
 
 function storageKey() {
@@ -155,37 +183,47 @@ function buildPreview(result) {
   }).join('\n\n---\n\n');
 }
 
-async function handleSemanticEpub(event, originalImport) {
-  const file = event?.target?.files?.[0];
-  if (!file || !String(file.name || '').toLowerCase().endsWith('.epub')) {
-    return originalImport(event);
-  }
-
+async function runSemanticEpubImport({ file, generation, bookId }) {
   pendingImport = null;
+  pendingLocalLibrary = [];
+
   // Capture the legacy full localStorage library before the multi-megabyte EPUB
   // parse yields. Startup hydration may compact that key to a v2 index while
   // parsing; keeping this in-memory snapshot closes the migration/import race.
   const key = storageKey();
   const startupLocalLibrary = mergeBookLists(readGuestStartupSnapshot(key), readStoredBooks(key));
+
   // ACTION_VIEW can deliver the file before normal Reader hydration begins.
   // Force the legacy library through the durable migration barrier before the
   // new EPUB parse/save is allowed to create or compact the v2 index.
   const startupDurableLibrary = await readDurableBooks(key);
-  pendingLocalLibrary = mergeBookLists(
+  assertCurrentImport(generation);
+  const localLibrarySnapshot = mergeBookLists(
     startupDurableLibrary,
     startupLocalLibrary,
     readGuestStartupSnapshot(key),
     readStoredBooks(key),
   );
+
   const preview = document.getElementById('reader-import-text');
   if (preview) preview.value = '';
 
   try {
     const result = await parseSemanticEpubFile(file, {
-      bookId: newBookId(),
-      onProgress: message => setStatus(`⏳ ${message}`),
+      bookId,
+      onProgress: message => {
+        // parseSemanticEpubFile calls onProgress before every chapter. Throwing
+        // here is the cancellation point: when the user chooses another EPUB,
+        // the old parser stops at the next chapter boundary instead of racing
+        // the new parser's progress/title/pending state.
+        assertCurrentImport(generation);
+        setStatus(`⏳ ${message}`);
+      },
     });
+    assertCurrentImport(generation);
+
     pendingImport = result;
+    pendingLocalLibrary = localLibrarySnapshot;
 
     setInputValue('reader-import-title', result.title);
     setInputValue('reader-import-author', result.author);
@@ -207,11 +245,59 @@ async function handleSemanticEpub(event, originalImport) {
       `✅ EPUB проверен: ${diag.chapters || 0} глав · ${diag.images || 0} изображений${footnotePart}${tocPart} · ${diag.textChars || 0} знаков${missing ? ` · не найдено изображений: ${missing}` : ''}. Нажми «Сохранить».`,
       missing ? 'progress' : 'ok',
     );
+    return result;
   } catch (error) {
-    pendingImport = null;
-    pendingLocalLibrary = [];
-    setStatus(`❌ EPUB не импортировался: ${String(error?.message || error)}`, 'error');
+    if (isImportCancelled(error) || generation !== semanticImportGeneration) {
+      semanticImportStats.cancelled += 1;
+      await imgStoreDeleteBook(bookId).catch(() => {});
+      return null;
+    }
+    if (generation === semanticImportGeneration) {
+      pendingImport = null;
+      pendingLocalLibrary = [];
+      setStatus(`❌ EPUB не импортировался: ${String(error?.message || error)}`, 'error');
+    }
+    return null;
   }
+}
+
+function handleSemanticEpub(event, originalImport) {
+  const file = event?.target?.files?.[0];
+  if (!file || !String(file.name || '').toLowerCase().endsWith('.epub')) {
+    if (activeSemanticImport) {
+      semanticImportStats.superseded += 1;
+      semanticImportGeneration += 1;
+      activeSemanticImport = null;
+      pendingImport = null;
+      pendingLocalLibrary = [];
+    }
+    return originalImport(event);
+  }
+
+  const fingerprint = fileFingerprint(file);
+  if (activeSemanticImport?.fingerprint === fingerprint) {
+    semanticImportStats.deduped += 1;
+    return activeSemanticImport.promise;
+  }
+
+  if (activeSemanticImport) semanticImportStats.superseded += 1;
+  const generation = ++semanticImportGeneration;
+  const bookId = newBookId();
+  semanticImportStats.starts += 1;
+
+  let promise;
+  promise = runSemanticEpubImport({ file, generation, bookId }).finally(() => {
+    if (activeSemanticImport?.generation === generation) activeSemanticImport = null;
+  });
+
+  activeSemanticImport = {
+    generation,
+    fingerprint,
+    bookId,
+    name: String(file.name || 'EPUB'),
+    promise,
+  };
+  return promise;
 }
 
 async function readDurableBooks(key) {
