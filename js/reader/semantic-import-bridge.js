@@ -308,18 +308,31 @@ async function savePendingSemanticBook(originalSave) {
   // save could immediately shrink the visible library back to the old count.
   // Re-enter through the exact canonical reader-app module before closing the
   // modal or claiming success, so memory, the local index and IndexedDB all
-  // describe the same library. This refresh is best-effort: readerOpenBook()
-  // below already reloads, falls back to the in-memory copy, and re-hydrates
-  // from IndexedDB a second time on its own before giving up — a fragile
-  // one-shot "is it in a freshly reloaded array yet" check here used to hard-
-  // fail (and only here) on transient staleness that readerOpenBook() would
-  // have recovered from a moment later, reporting the book "lost" when it was
-  // simply not visible yet in this one narrow snapshot.
+  // describe the same library. Every refresh call here is load-bearing for
+  // that reconciliation (the second load() re-merges the freshly written local
+  // index back into readerBooks), so all of them stay.
+  //
+  // What must NOT stay is treating a miss in that one snapshot as fatal. This
+  // bridge writes durable content through its own ?v=2 library-idb-store
+  // instance while reader-app reloads through the ?v=1 instance (the split is
+  // intentional — see the source gate). Each instance tracks legacy-migration
+  // state independently, so ordinary cross-instance staleness could leave the
+  // just-saved book briefly invisible in this single ?v=1 snapshot and the old
+  // hard failure reported a durably-saved book as lost. readerOpenBook() below
+  // reloads, falls back to the in-memory copy and re-hydrates from IndexedDB
+  // once more on its own, so let it be the one that decides.
   let app = null;
   try {
     app = await canonicalReaderApp();
     app.loadReaderBooks?.();
     await app.hydrateReaderBooksFromIndexedDB?.();
+    const liveBooks = app.loadReaderBooks?.() || [];
+    const liveTarget = Array.isArray(liveBooks)
+      ? liveBooks.find(item => String(item?.id || '') === String(target.id || ''))
+      : null;
+    if (!liveTarget || !Array.isArray(liveTarget.chapters) || !liveTarget.chapters.length) {
+      console.warn('[semantic epub] saved book not visible in this readerBooks snapshot yet; deferring to readerOpenBook', String(target.id || ''));
+    }
   } catch (error) {
     console.error('[semantic epub] canonical library refresh failed', error);
     setStatus(`❌ EPUB сохранён, но библиотека не обновилась: ${String(error?.message || error)}. Окно оставлено открытым — повторное сохранение безопасно.`, 'error');
