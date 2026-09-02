@@ -1,4 +1,4 @@
-name: Android APK toc128 audio then epub fix
+name: Android APK toc129 import supersede fix
 
 on:
   push:
@@ -74,7 +74,7 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Verify toc128 payload inside universal APK
+      - name: Verify toc129 payload inside universal APK
         shell: bash
         run: |
           set -euo pipefail
@@ -90,7 +90,9 @@ jobs:
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/audio-epub-import-isolation.js'
           unzip -p "$APK" assets/www/js/app.js | grep -qF 'guest startup is local-first'
           unzip -p "$APK" assets/www/js/reader/handler-bridge.js | grep -qF "audio-epub-import-isolation.js?v=1"
-          unzip -p "$APK" assets/www/js/reader/audio-epub-import-isolation.js | grep -qF '__readerAudioEpubIsolationV2'
+          unzip -p "$APK" assets/www/js/reader/audio-epub-import-isolation.js | grep -qF '__readerAudioEpubIsolationV3'
+          unzip -p "$APK" assets/www/js/reader/semantic-import-bridge.js | grep -qF '__readerSemanticImportStats'
+          unzip -p "$APK" assets/www/js/reader/semantic-import-bridge.js | grep -qF 'semanticImportStats.superseded += 1'
           if unzip -l "$APK" | grep -q 'assets/www/build/'; then
             echo 'transient repo build cache leaked into APK' >&2
             exit 1
@@ -108,7 +110,7 @@ jobs:
         shell: bash
         run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
 
-      - name: Real ACTION_VIEW, swipe, manual and audio-to-EPUB import on Android 15
+      - name: Real ACTION_VIEW, swipe, manual and latest-EPUB-wins import on Android 15
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -118,11 +120,11 @@ jobs:
           disable-animations: false
           script: bash scripts/run_toc126_storage_emulator.sh
 
-      - name: Upload toc128 live evidence
+      - name: Upload toc129 live evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: toc128-audio-epub-live-evidence
+          name: toc129-import-live-evidence
           path: runtime-audit/
           if-no-files-found: warn
           retention-days: 90
@@ -138,14 +140,14 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Sign and validate vc1021 A54 APK
+      - name: Sign and validate vc1022 A54 APK
         shell: bash
         run: |
           set -euo pipefail
           APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
           BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           mkdir -p unique-out
-          OUT=unique-out/Reader-AI-77.42-toc128-audio-epub-reset-a54-vc1021.apk
+          OUT=unique-out/Reader-AI-77.42-toc129-import-supersede-a54-vc1022.apk
           KSPASS="${ANDROID_KEYSTORE_PASSWORD:-readerai2026}"
           KEYPASS="${ANDROID_KEY_PASSWORD:-$KSPASS}"
           ALIAS="${ANDROID_KEY_ALIAS:-reader-ai}"
@@ -165,8 +167,8 @@ jobs:
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
           grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
           grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
-          grep -q "versionCode='1021'" unique-out/BADGING.txt
-          grep -q "versionName='77.42-toc128-audio-epub-reset-debug'" unique-out/BADGING.txt
+          grep -q "versionCode='1022'" unique-out/BADGING.txt
+          grep -q "versionName='77.42-toc129-import-supersede-debug'" unique-out/BADGING.txt
           grep -q "native-code: 'arm64-v8a'" unique-out/BADGING.txt
           if unzip -l "$OUT" | grep -Eq 'lib/(armeabi-v7a|x86|x86_64)/'; then
             echo 'non-A54 ABI leaked into final package' >&2
@@ -179,10 +181,10 @@ jobs:
           sha256sum "$OUT" | tee unique-out/SHA256.txt
           stat -c '%n %s bytes' "$OUT" | tee unique-out/SIZE.txt
 
-      - name: Upload verified toc128 A54 APK
+      - name: Upload verified toc129 A54 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-77.42-toc128-audio-epub-reset-a54-vc1021
+          name: Reader-AI-77.42-toc129-import-supersede-a54-vc1022
           path: unique-out/
           if-no-files-found: error
           retention-days: 30
