@@ -94,8 +94,9 @@ function mergeFullBooks(...lists) {
 // a legacy full localStorage library while the Android file bridge is still
 // fetching/constructing the incoming File. Do not let the new EPUB enter that
 // race: this module is loaded statically before app init, so its ?v=2 IDB
-// module has already captured the old local payload. Persist every full legacy
-// book and prove it round-trips before waiting for Reader UI readiness.
+// module has already captured the old local payload. Once guest startup has
+// also published its synchronous snapshot, persist every full legacy book and
+// prove it round-trips before handing the new file to semantic import.
 async function ensureExternalLegacyMigrationBarrier() {
   const key = externalLibraryKey();
   let liveRaw = '';
@@ -141,13 +142,8 @@ export async function readerImportAndroidFile(payload = {}) {
   }
 
   try {
-    // This must happen before waitUntilReady(). On a cold ACTION_VIEW start,
-    // waiting for the visible Reader shell gives normal startup enough time to
-    // compact the legacy localStorage payload. The IDB v2 module was evaluated
-    // when this bridge loaded and already captured that full payload, so commit
-    // it now, before any UI/handler wait can yield the race back to startup.
-    await ensureExternalLegacyMigrationBarrier();
     const { importHandler, saveHandler } = await waitUntilReady();
+    await ensureExternalLegacyMigrationBarrier();
     window.showScreen?.('reader');
     window.showReaderImportModal?.();
 
