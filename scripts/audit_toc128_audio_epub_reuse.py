@@ -138,18 +138,15 @@ result = cdp.eval(f"""(async()=>{{
 
   const isolationBefore={{...(globalThis.__readerImportIsolationStats||{{}})}};
 
-  // Start a real EPUB parse. Once the manual wrapper has handed it to the
-  // semantic importer, choose a DIFFERENT EPUB before awaiting the first one.
-  // toc128 dropped this second selection. toc129 must retain it and run it next,
-  // without starting two semantic parsers at the same time.
+  // Start a real EPUB parse. Wait for the wrapper's monotonic start counter,
+  // not for transient UI text: a fast parse can replace ⏳ with ✅ between two
+  // 20 ms CDP polls even though the parser unquestionably started.
   const first=Promise.resolve(importHandler({{target:{{files:[firstFile],value:''}}}}));
   const firstStarted=await waitFor(()=>{{
     const stats=globalThis.__readerImportIsolationStats||{{}};
-    const status=String(document.getElementById('reader-import-status')?.textContent||'');
-    return Number(stats.epubStarts||0)>Number(isolationBefore.epubStarts||0)
-      && status.startsWith('⏳');
+    return Number(stats.epubStarts||0)>Number(isolationBefore.epubStarts||0);
   }},5000);
-  if(!firstStarted) throw new Error('first manual EPUB parse never started');
+  if(!firstStarted) throw new Error('first manual EPUB parser start counter did not advance');
 
   const second=Promise.resolve(importHandler({{target:{{files:[secondFile],value:''}}}}));
   // Android/WebView file delivery can duplicate the same selection. The second
