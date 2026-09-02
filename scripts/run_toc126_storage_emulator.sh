@@ -86,9 +86,6 @@ PY
   case "$swipe_phase" in
     left-touch-delivery|right-touch-delivery)
       echo "physical swipe delivery retry ${swipe_gate_attempt}/3 after ${swipe_phase}" >&2
-      # Release any Android system overlay, then bring the same Activity back to
-      # the foreground. The next audit repositions to page 0 itself and again
-      # uses only real ADB touchscreen gestures for both directions.
       adb shell input keyevent 4 >/dev/null 2>&1 || true
       sleep 1
       adb shell am start -W -n "${PKG}/${ACT}" >/dev/null 2>&1 || true
@@ -110,29 +107,23 @@ test "$swipe_ok" -eq 1
 python3 scripts/audit_toc126_storage_delete.py
 adb exec-out screencap -p > runtime-audit/toc126-99-after-restart-delete.png
 
-# Regression from the real Galaxy A54 recording: importing from the normal
-# Library -> Add -> Choose File dialog used to show "EPUB added" while the
-# rendered library stayed at the old count. Exercise that manual handler path
-# after the ACTION_VIEW book has been deleted, so the new title must increase
-# both the durable and visible library by one.
+# Manual Library -> Add EPUB regression.
 python3 scripts/audit_toc127_manual_import_ui.py
 adb exec-out screencap -p > runtime-audit/toc127-100-after-manual-import.png
 
-# Regression from the next real recording: an audio transcription was prepared
-# in the import modal, then another EPUB was chosen. Stale audio state must be
-# cleared before semantic EPUB save and duplicate file events must reuse one ZIP
-# parse rather than run two competing 49-chapter parsers.
+# Audio -> EPUB stale-state / latest selection regression.
 python3 scripts/audit_toc128_audio_epub_reuse.py
 adb exec-out screencap -p > runtime-audit/toc128-110-after-audio-epub-reuse.png
 
-# toc131: Calibre and many commercial EPUBs render the opening glyph as a
-# floated block nested inside the first paragraph. The semantic importer must
-# rejoin that decorative block with the following text instead of dropping a
-# one-character prefix or splitting a dialogue prefix into its own paragraph.
+# toc131 decorative chapter-opening integrity.
 python3 scripts/audit_toc131_epub_dropcap_live.py | tee runtime-audit/toc131-epub-dropcap-live.log
 
-# toc130: the French vocabulary layer must be real runtime data inside the APK,
-# not an accidental side effect of a separate validation script. Keep this gate
-# after import/drop-cap regressions so the French fix cannot hide EPUB damage.
+# toc130 mandatory French assets and live vocabulary.
 python3 scripts/audit_toc130_french_assets_live.py | tee runtime-audit/toc130-french-assets-live.json
 adb exec-out screencap -p > runtime-audit/toc130-120-french-vocabulary.png
+
+# toc132: English keeps Migaku/WikDict first paint but gains French-style
+# paragraph batching. This runs LAST: a new English feature is not allowed to
+# mask import, EPUB integrity or French regressions above.
+python3 scripts/audit_toc132_english_context_live.py | tee runtime-audit/toc132-english-context-live.json
+adb exec-out screencap -p > runtime-audit/toc132-130-english-context.png
