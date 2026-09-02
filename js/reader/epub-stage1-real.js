@@ -12,6 +12,8 @@ export { semanticItemText };
 
 const FIGURE_RE = /(?:^|[-_\s])(figure|figura|illustration|image|photo|plate)(?:[-_\s]|$)/i;
 const CAPTION_RE = /caption|figcaption|legend|legende|pie.*figur|figur.*pie|image.*caption|photo.*caption/i;
+const DROP_CAP_PARENT_RE = /(?:^|[-_\s])(?:first|firstpara|first-paragraph|opening)(?:[-_\s]|$)/i;
+const DROP_CAP_CHILD_RE = /(?:^|[-_\s])(?:let|dropcap|drop-cap|initial)(?:[-_\s]|$)/i;
 
 export function semanticItemsDiagnostics(items = []) {
   const base = baseSemanticItemsDiagnostics(items);
@@ -43,6 +45,51 @@ export function resolveEpubPath(base, href) {
 
 function classText(node) {
   return `${node?.getAttribute?.('class') || ''} ${node?.getAttribute?.('id') || ''}`.trim();
+}
+
+function boundaryTextNode(root, fromStart) {
+  let node = root;
+  while (node?.nodeType === 1 && (fromStart ? node.firstChild : node.lastChild)) {
+    node = fromStart ? node.firstChild : node.lastChild;
+  }
+  return node?.nodeType === 3 ? node : null;
+}
+
+function trimInlineBoundaryWhitespace(node) {
+  const first = boundaryTextNode(node, true);
+  if (first) first.nodeValue = String(first.nodeValue || '').replace(/^\s+/, '');
+  const last = boundaryTextNode(node, false);
+  if (last) last.nodeValue = String(last.nodeValue || '').replace(/\s+$/, '');
+}
+
+function hasMeaningfulFollowingSibling(node) {
+  for (let sibling = node?.nextSibling; sibling; sibling = sibling.nextSibling) {
+    if (sibling.nodeType === 3 && String(sibling.nodeValue || '').trim()) return true;
+    if (sibling.nodeType === 1 && String(sibling.textContent || '').trim()) return true;
+  }
+  return false;
+}
+
+function normalizeDropCapWrappers(doc) {
+  for (const node of [...doc.querySelectorAll('div[class],span[class]')]) {
+    if (!DROP_CAP_CHILD_RE.test(classText(node))) continue;
+    const parent = node.parentElement;
+    if (!parent || !DROP_CAP_PARENT_RE.test(classText(parent))) continue;
+
+    const prefix = String(node.textContent || '').replace(/\s+/g, ' ').trim();
+    // A drop-cap wrapper is only an inline prefix of a larger opening sentence.
+    // Keep the rule deliberately narrow so ordinary nested block layout remains
+    // untouched. This covers Calibre-style single letters as well as dialogue
+    // prefixes such as “— C’” that are visually floated beside the continuation.
+    if (!prefix || prefix.length > 12 || !hasMeaningfulFollowingSibling(node)) continue;
+
+    const replacement = doc.createElement('span');
+    const inlineStyle = node.getAttribute('style');
+    if (inlineStyle) replacement.setAttribute('style', inlineStyle);
+    while (node.firstChild) replacement.appendChild(node.firstChild);
+    trimInlineBoundaryWhitespace(replacement);
+    node.replaceWith(replacement);
+  }
 }
 
 function styleMarks(node) {
@@ -119,6 +166,7 @@ export function normalizeRealWorldEpubHtml(html) {
   if (typeof DOMParser === 'undefined') throw new Error('DOMParser недоступен');
   const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
   doc.querySelectorAll('script,style,nav,header,footer,iframe,object,form,noscript,canvas').forEach(node => node.remove());
+  normalizeDropCapWrappers(doc);
   normalizeInlineStyles(doc);
   normalizeFigureWrappers(doc);
   return doc.documentElement?.outerHTML || String(html || '');
