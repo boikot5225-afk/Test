@@ -14,16 +14,6 @@ let canonicalReaderPromise = null;
 let pendingImport = null;
 let pendingLocalLibrary = [];
 let bridgeStarted = false;
-let activeSemanticImport = null;
-let semanticImportGeneration = 0;
-
-const semanticImportStats = globalThis.__readerSemanticImportStats || {
-  starts: 0,
-  deduped: 0,
-  superseded: 0,
-  cancelled: 0,
-};
-globalThis.__readerSemanticImportStats = semanticImportStats;
 
 function canonicalReaderApp() {
   if (!canonicalReaderPromise) canonicalReaderPromise = import(READER_APP_URL);
@@ -32,34 +22,6 @@ function canonicalReaderApp() {
 
 function newBookId() {
   return `book_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function fileFingerprint(file) {
-  return `${String(file?.name || '')}|${Number(file?.size || 0)}|${Number(file?.lastModified || 0)}`;
-}
-
-function importCancelledError() {
-  const error = new Error('Импорт заменён новым выбранным EPUB');
-  error.name = 'ReaderSemanticImportCancelled';
-  return error;
-}
-
-function isImportCancelled(error) {
-  return error?.name === 'ReaderSemanticImportCancelled';
-}
-
-function assertCurrentImport(generation) {
-  if (generation !== semanticImportGeneration) throw importCancelledError();
-}
-
-function invalidateActiveSemanticImport() {
-  if (!activeSemanticImport) return false;
-  semanticImportStats.superseded += 1;
-  semanticImportGeneration += 1;
-  activeSemanticImport = null;
-  pendingImport = null;
-  pendingLocalLibrary = [];
-  return true;
 }
 
 function storageKey() {
@@ -193,36 +155,37 @@ function buildPreview(result) {
   }).join('\n\n---\n\n');
 }
 
-async function runSemanticEpubImport({ file, generation, bookId }) {
-  pendingImport = null;
-  pendingLocalLibrary = [];
+async function handleSemanticEpub(event, originalImport) {
+  const file = event?.target?.files?.[0];
+  if (!file || !String(file.name || '').toLowerCase().endsWith('.epub')) {
+    return originalImport(event);
+  }
 
+  pendingImport = null;
+  // Capture the legacy full localStorage library before the multi-megabyte EPUB
+  // parse yields. Startup hydration may compact that key to a v2 index while
+  // parsing; keeping this in-memory snapshot closes the migration/import race.
   const key = storageKey();
   const startupLocalLibrary = mergeBookLists(readGuestStartupSnapshot(key), readStoredBooks(key));
+  // ACTION_VIEW can deliver the file before normal Reader hydration begins.
+  // Force the legacy library through the durable migration barrier before the
+  // new EPUB parse/save is allowed to create or compact the v2 index.
   const startupDurableLibrary = await readDurableBooks(key);
-  assertCurrentImport(generation);
-  const localLibrarySnapshot = mergeBookLists(
+  pendingLocalLibrary = mergeBookLists(
     startupDurableLibrary,
     startupLocalLibrary,
     readGuestStartupSnapshot(key),
     readStoredBooks(key),
   );
-
   const preview = document.getElementById('reader-import-text');
   if (preview) preview.value = '';
 
   try {
     const result = await parseSemanticEpubFile(file, {
-      bookId,
-      onProgress: message => {
-        assertCurrentImport(generation);
-        setStatus(`⏳ ${message}`);
-      },
+      bookId: newBookId(),
+      onProgress: message => setStatus(`⏳ ${message}`),
     });
-    assertCurrentImport(generation);
-
     pendingImport = result;
-    pendingLocalLibrary = localLibrarySnapshot;
 
     setInputValue('reader-import-title', result.title);
     setInputValue('reader-import-author', result.author);
@@ -244,58 +207,11 @@ async function runSemanticEpubImport({ file, generation, bookId }) {
       `✅ EPUB проверен: ${diag.chapters || 0} глав · ${diag.images || 0} изображений${footnotePart}${tocPart} · ${diag.textChars || 0} знаков${missing ? ` · не найдено изображений: ${missing}` : ''}. Нажми «Сохранить».`,
       missing ? 'progress' : 'ok',
     );
-    return result;
   } catch (error) {
-    if (isImportCancelled(error) || generation !== semanticImportGeneration) {
-      semanticImportStats.cancelled += 1;
-      await imgStoreDeleteBook(bookId).catch(() => {});
-      return null;
-    }
-    if (generation === semanticImportGeneration) {
-      pendingImport = null;
-      pendingLocalLibrary = [];
-      setStatus(`❌ EPUB не импортировался: ${String(error?.message || error)}`, 'error');
-    }
-    return null;
+    pendingImport = null;
+    pendingLocalLibrary = [];
+    setStatus(`❌ EPUB не импортировался: ${String(error?.message || error)}`, 'error');
   }
-}
-
-function handleSemanticEpub(event, originalImport) {
-  if (event?.__readerSupersedeSemanticImport === true) {
-    invalidateActiveSemanticImport();
-    return Promise.resolve();
-  }
-
-  const file = event?.target?.files?.[0];
-  if (!file || !String(file.name || '').toLowerCase().endsWith('.epub')) {
-    invalidateActiveSemanticImport();
-    return originalImport(event);
-  }
-
-  const fingerprint = fileFingerprint(file);
-  if (activeSemanticImport?.fingerprint === fingerprint) {
-    semanticImportStats.deduped += 1;
-    return activeSemanticImport.promise;
-  }
-
-  invalidateActiveSemanticImport();
-  const generation = ++semanticImportGeneration;
-  const bookId = newBookId();
-  semanticImportStats.starts += 1;
-
-  let promise;
-  promise = runSemanticEpubImport({ file, generation, bookId }).finally(() => {
-    if (activeSemanticImport?.generation === generation) activeSemanticImport = null;
-  });
-
-  activeSemanticImport = {
-    generation,
-    fingerprint,
-    bookId,
-    name: String(file.name || 'EPUB'),
-    promise,
-  };
-  return promise;
 }
 
 async function readDurableBooks(key) {
@@ -387,6 +303,12 @@ async function savePendingSemanticBook(originalSave) {
   const importedBookId = pendingImport.bookId;
   const target = existing || book;
 
+  // semantic-import used to write IndexedDB/localStorage behind reader-app's
+  // back. The live readerBooks array therefore stayed stale and its delayed
+  // save could immediately shrink the visible library back to the old count.
+  // Re-enter through the exact canonical reader-app module before closing the
+  // modal or claiming success, so memory, the local index and IndexedDB all
+  // describe the same library.
   let app = null;
   try {
     app = await canonicalReaderApp();
