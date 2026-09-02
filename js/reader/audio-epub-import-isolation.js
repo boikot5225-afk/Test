@@ -102,8 +102,8 @@ function installIsolation() {
   const canonicalImport = semanticImport.__semanticOriginal;
 
   const wrapped = function readerImportAudioEpubIsolated(event, ...args) {
-    // Android ACTION_VIEW must remain on the established semantic path. Do not
-    // clear UI or touch canonical pending state here.
+    // Android ACTION_VIEW must remain on the exact previously-green semantic
+    // path. No queue, UI cleanup or private-state reset is allowed here.
     if (event?.androidExternal === true) {
       return semanticImport.call(this, event, ...args);
     }
@@ -118,25 +118,28 @@ function installIsolation() {
     }
 
     const selectionGeneration = ++manualSelectionGeneration;
-    if (activeManualEpubImport) {
-      importIsolationStats.supersededCalls += 1;
-      // Invalidate the old semantic generation NOW, before waiting even for the
-      // tiny private-audio reset. This prevents a stale parser from repainting
-      // progress/title in the gap between the user's second selection and the
-      // second parser starting.
-      try { semanticImport.call(this, { __readerSupersedeSemanticImport: true }); } catch {}
-    }
+    const previousPromise = activeManualEpubImport?.promise || Promise.resolve();
+    if (activeManualEpubImport) importIsolationStats.supersededCalls += 1;
 
+    // A different EPUB selected during a parse must never be dropped. We also
+    // deliberately do NOT run two semantic parsers in parallel: the proven
+    // toc128 semantic bridge owns module-private pendingImport state. The latest
+    // selection waits for the current parse to settle, then immediately clears
+    // its result and becomes the only pending import. If a third file is chosen
+    // meanwhile, this queued generation exits and only the newest one runs.
     clearStaleImportUi();
-    setStatus(`⏳ Открываю ${file.name}...`);
-
-    const resetTask = resetQueue.then(() => resetCanonicalPendingAudio(canonicalImport));
-    resetQueue = resetTask.catch(() => {});
+    setStatus(`⏳ Переключаюсь на ${file.name}...`);
 
     let promise;
     promise = (async () => {
+      try { await previousPromise; } catch {}
+      if (selectionGeneration !== manualSelectionGeneration) return null;
+
+      const resetTask = resetQueue.then(() => resetCanonicalPendingAudio(canonicalImport));
+      resetQueue = resetTask.catch(() => {});
       await resetTask;
       if (selectionGeneration !== manualSelectionGeneration) return null;
+
       clearStaleImportUi();
       setStatus(`⏳ Открываю ${file.name}...`);
       importIsolationStats.epubStarts += 1;
