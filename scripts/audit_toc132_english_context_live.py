@@ -39,22 +39,30 @@ result = cdp.eval(r"""(async()=>{
   const oldFallback=globalThis.__AN2_FALLBACK_FIREBASE;
   const calls=[];
   const fake={
-    app(){return {functions(){return {httpsCallable(name){
-      if(name!=='readerAI') throw new Error('unexpected callable '+name);
-      return async payload=>{
-        calls.push(JSON.parse(JSON.stringify(payload)));
-        const context=String(payload.context||'');
-        const items=(payload.targets||[]).map(target=>{
-          const word=String(target.surface||'');
-          if(word.toLowerCase()==='bank' && /river/i.test(context)) return {id:target.id,ru:'берег',lemma:'bank',pos:'noun',confidence:.97,note:''};
-          if(word.toLowerCase()==='bank' && /deposit/i.test(context)) return {id:target.id,ru:'банк',lemma:'bank',pos:'noun',confidence:.98,note:''};
-          if(word.toLowerCase()==='peculiar') return {id:target.id,ru:'странный',lemma:'peculiar',pos:'adjective',confidence:.60,note:''};
-          if(word.toLowerCase()==='london') return {id:target.id,ru:'',lemma:'London',pos:'proper_noun',confidence:.99,note:''};
-          return {id:target.id,ru:String(target.localRu||''),lemma:String(target.lemma||word),pos:'other',confidence:.90,note:''};
-        });
-        return {data:{items}};
+    app(){
+      return {
+        functions(){
+          return {
+            httpsCallable(name){
+              if(name!=='readerAI') throw new Error('unexpected callable '+name);
+              return async payload=>{
+                calls.push(JSON.parse(JSON.stringify(payload)));
+                const context=String(payload.context||'');
+                const items=(payload.targets||[]).map(target=>{
+                  const word=String(target.surface||'');
+                  if(word.toLowerCase()==='bank' && /river/i.test(context)) return {id:target.id,ru:'берег',lemma:'bank',pos:'noun',confidence:.97,note:''};
+                  if(word.toLowerCase()==='bank' && /deposit/i.test(context)) return {id:target.id,ru:'банк',lemma:'bank',pos:'noun',confidence:.98,note:''};
+                  if(word.toLowerCase()==='peculiar') return {id:target.id,ru:'странный',lemma:'peculiar',pos:'adjective',confidence:.60,note:''};
+                  if(word.toLowerCase()==='london') return {id:target.id,ru:'',lemma:'London',pos:'proper_noun',confidence:.99,note:''};
+                  return {id:target.id,ru:String(target.localRu||''),lemma:String(target.lemma||word),pos:'other',confidence:.90,note:''};
+                });
+                return {data:{items}};
+              };
+            },
+          };
+        },
       };
-    }}};}};
+    },
   };
   globalThis.firebase=fake;
   globalThis.__AN2_FALLBACK_FIREBASE=null;
