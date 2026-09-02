@@ -91,8 +91,14 @@ jobs:
           unzip -p "$APK" assets/www/js/app.js | grep -qF 'guest startup is local-first'
           unzip -p "$APK" assets/www/js/reader/handler-bridge.js | grep -qF "audio-epub-import-isolation.js?v=1"
           unzip -p "$APK" assets/www/js/reader/audio-epub-import-isolation.js | grep -qF '__readerAudioEpubIsolationV3'
-          unzip -p "$APK" assets/www/js/reader/semantic-import-bridge.js | grep -qF '__readerSemanticImportStats'
-          unzip -p "$APK" assets/www/js/reader/semantic-import-bridge.js | grep -qF 'semanticImportStats.superseded += 1'
+          unzip -p "$APK" assets/www/js/reader/audio-epub-import-isolation.js | grep -qF 'const previousPromise = activeManualEpubImport?.promise || Promise.resolve()'
+          unzip -p "$APK" assets/www/js/reader/audio-epub-import-isolation.js | grep -qF 'try { await previousPromise; } catch {}'
+          unzip -p "$APK" assets/www/js/reader/audio-epub-import-isolation.js | grep -qF 'event?.androidExternal === true'
+          unzip -p "$APK" assets/www/js/reader/semantic-import-bridge.js | grep -qF 'const startupDurableLibrary = await readDurableBooks(key)'
+          if unzip -p "$APK" assets/www/js/reader/semantic-import-bridge.js | grep -qF '__readerSemanticImportStats'; then
+            echo 'abandoned semantic generation wrapper leaked into APK' >&2
+            exit 1
+          fi
           if unzip -l "$APK" | grep -q 'assets/www/build/'; then
             echo 'transient repo build cache leaked into APK' >&2
             exit 1
