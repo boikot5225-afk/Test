@@ -251,8 +251,12 @@ if result['dedupedCallsDelta'] < 1:
     raise RuntimeError('duplicate newest EPUB event was not deduplicated: ' + repr(summary))
 if result['blockedConcurrentDelta'] != 0:
     raise RuntimeError('new EPUB was handled by the obsolete blocking branch: ' + repr(summary))
-if result['supersededCallsDelta'] < 1:
-    raise RuntimeError('different EPUB selection was not retained as the newest queued import: ' + repr(summary))
+# supersededCalls is diagnostic only. On a fast WebView the first parser may
+# complete between the start-counter observation and delivery of the second
+# selection, so there is no still-active promise to mark as superseded. The
+# correctness invariant is observable below: the second selection owns the UI,
+# opens successfully, is stored exactly once, and the first selection is absent
+# from durable/local/card state.
 if result['staleAudioStatusVisible'] or result['staleAudioTitle'] or result['staleAudioAuthor'] or result['staleAudioPreview']:
     raise RuntimeError('audio import residue remained visible after EPUB takeover: ' + repr(summary))
 if result['finalUiTitle'] != SECOND_TITLE or result['finalUiAuthor'] != AUTHOR or not result['finalPreviewHasSecond'] or result['finalPreviewHasFirst']:
