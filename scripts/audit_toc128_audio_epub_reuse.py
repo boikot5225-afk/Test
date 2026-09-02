@@ -112,7 +112,7 @@ result = cdp.eval(f"""(async()=>{{
   const importHandler=window.readerImportFromFile;
   const saveHandler=window.saveReaderImport;
   if(typeof importHandler!=='function'||typeof saveHandler!=='function') throw new Error('import handlers missing');
-  if(!importHandler.__readerAudioEpubIsolationV1) throw new Error('audio→EPUB isolation bridge missing');
+  if(!importHandler.__readerAudioEpubIsolationV2) throw new Error('audio→EPUB isolation bridge v2 missing');
 
   const statsBefore={{...(globalThis.__readerImportIsolationStats||{{}})}};
   const first=Promise.resolve(importHandler({{target:{{files:[file],value:''}}}}));
