@@ -1,19 +1,21 @@
-// toc128: isolate only the in-app "audio first -> choose EPUB" transition.
+// Import-only guard for the in-app "audio first -> choose EPUB" transition.
 //
 // This module intentionally has NO imports. In particular it must not import
 // reader-app or IndexedDB during cold start: ACTION_VIEW has a carefully gated
-// legacy-library migration path that must remain byte-for-byte behaviorally
-// equivalent to the pre-toc128 build.
+// legacy-library migration path that must remain behaviorally identical.
 
 let activeManualEpubImport = null;
 let installedWrapper = null;
+let resetQueue = Promise.resolve();
 
 const importIsolationStats = globalThis.__readerImportIsolationStats || {
   epubStarts: 0,
   canonicalResets: 0,
   dedupedCalls: 0,
   blockedConcurrent: 0,
+  supersededCalls: 0,
 };
+if (!Number.isFinite(Number(importIsolationStats.supersededCalls))) importIsolationStats.supersededCalls = 0;
 globalThis.__readerImportIsolationStats = importIsolationStats;
 
 function fileFromEvent(event) {
@@ -36,35 +38,45 @@ function setStatus(message) {
   status.textContent = message;
 }
 
-function clearStaleAudioUi() {
+function clearStaleImportUi() {
+  const title = document.getElementById('reader-import-title');
+  const author = document.getElementById('reader-import-author');
+  const preview = document.getElementById('reader-import-text');
   const audioStatus = document.getElementById('reader-import-audio-status');
+  const stopButton = document.getElementById('reader-audio-stop-btn');
+
+  if (title) title.value = '';
+  if (author) author.value = '';
+  if (preview) preview.value = '';
   if (audioStatus) {
     audioStatus.style.display = 'none';
     audioStatus.textContent = '';
   }
-  const stopButton = document.getElementById('reader-audio-stop-btn');
   if (stopButton) stopButton.style.display = 'none';
 }
 
-// reader-app keeps the pending audio blob/timestamps private. Its ordinary
-// text-file import entry point already clears those private fields before it
-// parses the selected file. Feed it a harmless empty in-memory text file only
-// for that reset, then let semantic EPUB own the real EPUB exactly once.
+// reader-app keeps the pending audio blob/timestamps private. Its normal file
+// import entry resets those fields synchronously before it inspects the file
+// extension. Use a tiny sentinel object that stops execution immediately after
+// that reset point: no fake TXT is parsed and nothing is allowed to race the
+// real EPUB UI afterwards.
 async function resetCanonicalPendingAudio(canonicalImport) {
-  const resetFile = new File([''], '__reader_import_state_reset__.txt', {
-    type: 'text/plain',
-    lastModified: 1,
-  });
+  const stop = new Error('reader import state reset complete');
+  stop.name = 'ReaderImportResetComplete';
+  const resetFile = {
+    name: {
+      toLowerCase() { throw stop; },
+    },
+  };
   try {
     await canonicalImport({
       target: { files: [resetFile], value: '' },
       __readerImportStateReset: true,
     });
   } catch (error) {
-    // The reset happens synchronously at the beginning of reader-app's import
-    // path. A later empty-text validation error is irrelevant and must not make
-    // the real EPUB fail.
-    console.warn('[audio->epub] canonical reset parser result', error);
+    if (error !== stop && error?.name !== 'ReaderImportResetComplete') {
+      console.warn('[audio->epub] canonical reset result', error);
+    }
   }
   importIsolationStats.canonicalResets += 1;
 }
@@ -72,7 +84,7 @@ async function resetCanonicalPendingAudio(canonicalImport) {
 function semanticHandler() {
   const current = window.readerImportFromFile;
   if (typeof current !== 'function' || current.__isStub) return null;
-  if (current.__readerAudioEpubIsolationV2) return current;
+  if (current.__readerAudioEpubIsolationV3) return current;
   if (!current.__semanticStage1 || typeof current.__semanticOriginal !== 'function') return null;
   return current;
 }
@@ -80,7 +92,7 @@ function semanticHandler() {
 function installIsolation() {
   const semanticImport = semanticHandler();
   if (!semanticImport) return false;
-  if (semanticImport.__readerAudioEpubIsolationV2) {
+  if (semanticImport.__readerAudioEpubIsolationV3) {
     installedWrapper = semanticImport;
     window.__real_readerImportFromFile = semanticImport;
     return true;
@@ -89,8 +101,8 @@ function installIsolation() {
   const canonicalImport = semanticImport.__semanticOriginal;
 
   const wrapped = function readerImportAudioEpubIsolated(event, ...args) {
-    // Android ACTION_VIEW must remain on the pre-toc128 semantic path. Do not
-    // clear UI, touch canonical pending state, create a File, or start timers.
+    // Android ACTION_VIEW must remain on the established semantic path. Do not
+    // clear UI or touch canonical pending state here.
     if (event?.androidExternal === true) {
       return semanticImport.call(this, event, ...args);
     }
@@ -99,23 +111,27 @@ function installIsolation() {
     if (!isEpub(file)) return semanticImport.call(this, event, ...args);
 
     const key = fingerprint(file);
-    if (activeManualEpubImport) {
-      if (activeManualEpubImport.fingerprint === key) {
-        importIsolationStats.dedupedCalls += 1;
-        return activeManualEpubImport.promise;
-      }
-      importIsolationStats.blockedConcurrent += 1;
-      setStatus(`⏳ Уже разбираю ${activeManualEpubImport.name}. Дождись завершения перед выбором другого EPUB.`);
+    if (activeManualEpubImport?.fingerprint === key) {
+      importIsolationStats.dedupedCalls += 1;
       return activeManualEpubImport.promise;
     }
 
-    clearStaleAudioUi();
+    if (activeManualEpubImport) importIsolationStats.supersededCalls += 1;
+
+    clearStaleImportUi();
     setStatus(`⏳ Открываю ${file.name}...`);
+
+    // Private-state resets are tiny but must never overlap each other. They do
+    // NOT serialize EPUB parsing: after its own reset, the newly selected EPUB
+    // immediately enters semanticImport, whose generation guard supersedes the
+    // previous parser.
+    const resetTask = resetQueue.then(() => resetCanonicalPendingAudio(canonicalImport));
+    resetQueue = resetTask.catch(() => {});
 
     let promise;
     promise = (async () => {
-      await resetCanonicalPendingAudio(canonicalImport);
-      clearStaleAudioUi();
+      await resetTask;
+      clearStaleImportUi();
       setStatus(`⏳ Открываю ${file.name}...`);
       importIsolationStats.epubStarts += 1;
       return semanticImport.call(this, event, ...args);
@@ -131,9 +147,7 @@ function installIsolation() {
     return promise;
   };
 
-  // Preserve semantic markers so the existing bridge/handler synchronization
-  // treats this as the same semantic route rather than installing another one.
-  wrapped.__readerAudioEpubIsolationV2 = true;
+  wrapped.__readerAudioEpubIsolationV3 = true;
   wrapped.__semanticStage1 = true;
   wrapped.__semanticOriginal = canonicalImport;
   wrapped.__upgraded = semanticImport;
@@ -150,7 +164,6 @@ const timer = setInterval(() => {
   if (installIsolation() || attempts >= 240) clearInterval(timer);
 }, 50);
 
-// Also try immediately for warm navigation where semantic import is already up.
 installIsolation();
 
 export function readerAudioEpubIsolationInstalled() {
