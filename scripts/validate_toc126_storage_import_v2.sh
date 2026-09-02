@@ -31,6 +31,8 @@ idb = text('js/reader/library-idb-store.js')
 bridge = text('js/reader/semantic-import-bridge.js')
 semantic = text('js/reader/semantic-import-stage1.js')
 epub = text('js/reader/epub.js')
+epub_base = text('js/reader/epub-stage1.js')
+epub_real = text('js/reader/epub-stage1-real.js')
 external = text('js/reader/android-external-import.js')
 handler = text('js/reader/handler-bridge.js')
 audio_isolation = text('js/reader/audio-epub-import-isolation.js')
@@ -41,12 +43,13 @@ gradle = text('android/app/build.gradle')
 runner = text('scripts/run_toc126_storage_emulator.sh')
 audio_epub_audit = text('scripts/audit_toc128_audio_epub_reuse.py')
 fr_audit = text('scripts/audit_toc130_french_assets_live.py')
+dropcap_audit = text('scripts/audit_toc131_epub_dropcap_live.py')
 
-assert "versionCode 1023" in gradle
-assert "versionName '77.42-toc130-fr-assets'" in gradle
+assert "versionCode 1024" in gradle
+assert "versionName '77.42-toc131-epub-integrity'" in gradle
 assert "exclude { it.relativePath.toString() == 'app.js' }" in gradle
 
-# toc130 French assets are a mandatory Gradle input, never a validation-script side effect.
+# toc130 French assets remain a mandatory Gradle input, never a validation-script side effect.
 assert "def frenchReaderAssetDir = layout.buildDirectory.dir('generated/frenchReaderAssets')" in gradle
 assert "def frenchReaderOutputDir = layout.buildDirectory.dir('generated/frenchReaderAssets/frreader')" in gradle
 assert "tasks.register('prepareFrenchReaderResources')" in gradle
@@ -63,6 +66,31 @@ assert 'French core morphology probes failed' in fr_builder
 assert 'scripts/audit_toc130_french_assets_live.py' in runner
 assert 'readerLoadFrenchVocabularyData' in fr_audit
 assert 'fr_ru_core.json' in fr_audit and 'fr_ru_senses.json' in fr_audit
+
+# toc131: decorative opening initials are normalized in the real-world EPUB
+# compatibility layer before the base semantic parser sees block structure.
+# Do not globally relax the base parser's one-character boilerplate rule: the
+# semantic repair is to rejoin a real drop-cap prefix with its continuation.
+assert 'normalized.length <= 1' in epub_base
+assert 'const DROP_CAP_PARENT_RE' in epub_real
+assert 'const DROP_CAP_CHILD_RE' in epub_real
+assert 'function normalizeDropCapWrappers(doc)' in epub_real
+assert 'function trimInlineBoundaryWhitespace(node)' in epub_real
+assert "const replacement = doc.createElement('span')" in epub_real
+assert 'node.replaceWith(replacement)' in epub_real
+assert 'prefix.length > 12' in epub_real
+normalize_fn = epub_real.index('export function normalizeRealWorldEpubHtml')
+dropcap_call = epub_real.index('normalizeDropCapWrappers(doc)', normalize_fn)
+inline_call = epub_real.index('normalizeInlineStyles(doc)', normalize_fn)
+figure_call = epub_real.index('normalizeFigureWrappers(doc)', normalize_fn)
+assert dropcap_call < inline_call < figure_call, 'drop-cap repair must precede style/figure normalization'
+assert 'scripts/audit_toc131_epub_dropcap_live.py' in runner
+for probe in ['single-letter-accent', 'nested-emphasis', 'dialogue-prefix']:
+    assert probe in dropcap_audit, f'drop-cap runtime probe missing: {probe}'
+assert "expected:'Éclair avance sans coupure.'" in dropcap_audit
+assert "expected:'Ma phrase reste entière.'" in dropcap_audit
+assert "expected:'— C’est pourquoi le texte continue.'" in dropcap_audit
+assert "result.get('control') != ['Alpha.', 'Beta.']" in dropcap_audit
 
 # Guest cold start remains local-first.
 init_pos = app.index('async function init()')
@@ -198,7 +226,7 @@ for runtime_path in (root / 'js').rglob('*.js'):
     runtime_source = runtime_path.read_text(encoding='utf-8')
     assert 'reader-app.js?v=77.32' not in runtime_source, f'duplicate Reader module identity survived: {runtime_path}'
 
-print('toc130 French + toc129 import/storage source gate: PASS')
+print('toc131 EPUB integrity + French + toc129 import/storage source gate: PASS')
 PY
 
 TMP="$(mktemp -d)"
@@ -210,6 +238,7 @@ for f in \
   js/reader/semantic-import-bridge.js \
   js/reader/semantic-import-stage1.js \
   js/reader/epub.js \
+  js/reader/epub-stage1-real.js \
   js/reader/android-external-import.js \
   js/reader/handler-bridge.js \
   js/reader/audio-epub-import-isolation.js \
@@ -220,6 +249,10 @@ for f in \
   node --check "$target"
 done
 
-python3 -m py_compile scripts/audit_toc128_audio_epub_reuse.py scripts/audit_toc130_french_assets_live.py scripts/build_fr_reader_resources.py
+python3 -m py_compile \
+  scripts/audit_toc128_audio_epub_reuse.py \
+  scripts/audit_toc130_french_assets_live.py \
+  scripts/audit_toc131_epub_dropcap_live.py \
+  scripts/build_fr_reader_resources.py
 
-echo 'toc130 JS/Python syntax: PASS'
+echo 'toc131 JS/Python syntax: PASS'
