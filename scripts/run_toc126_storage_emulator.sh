@@ -124,3 +124,10 @@ adb exec-out screencap -p > runtime-audit/toc127-100-after-manual-import.png
 # parse rather than run two competing 49-chapter parsers.
 python3 scripts/audit_toc128_audio_epub_reuse.py
 adb exec-out screencap -p > runtime-audit/toc128-110-after-audio-epub-reuse.png
+
+# toc130: the French vocabulary layer must be real runtime data inside the APK,
+# not an accidental side effect of a separate validation script. Run this only
+# after every toc129 import regression has passed so a French fix cannot hide an
+# import regression.
+python3 scripts/audit_toc130_french_assets_live.py | tee runtime-audit/toc130-french-assets-live.json
+adb exec-out screencap -p > runtime-audit/toc130-120-french-vocabulary.png
