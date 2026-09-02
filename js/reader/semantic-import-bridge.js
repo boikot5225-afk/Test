@@ -52,6 +52,16 @@ function assertCurrentImport(generation) {
   if (generation !== semanticImportGeneration) throw importCancelledError();
 }
 
+function invalidateActiveSemanticImport() {
+  if (!activeSemanticImport) return false;
+  semanticImportStats.superseded += 1;
+  semanticImportGeneration += 1;
+  activeSemanticImport = null;
+  pendingImport = null;
+  pendingLocalLibrary = [];
+  return true;
+}
+
 function storageKey() {
   try {
     return window.an2ReaderStorageKey?.('an2_reader_books_v1') || 'an2_reader_books_v1';
@@ -187,15 +197,8 @@ async function runSemanticEpubImport({ file, generation, bookId }) {
   pendingImport = null;
   pendingLocalLibrary = [];
 
-  // Capture the legacy full localStorage library before the multi-megabyte EPUB
-  // parse yields. Startup hydration may compact that key to a v2 index while
-  // parsing; keeping this in-memory snapshot closes the migration/import race.
   const key = storageKey();
   const startupLocalLibrary = mergeBookLists(readGuestStartupSnapshot(key), readStoredBooks(key));
-
-  // ACTION_VIEW can deliver the file before normal Reader hydration begins.
-  // Force the legacy library through the durable migration barrier before the
-  // new EPUB parse/save is allowed to create or compact the v2 index.
   const startupDurableLibrary = await readDurableBooks(key);
   assertCurrentImport(generation);
   const localLibrarySnapshot = mergeBookLists(
@@ -212,10 +215,6 @@ async function runSemanticEpubImport({ file, generation, bookId }) {
     const result = await parseSemanticEpubFile(file, {
       bookId,
       onProgress: message => {
-        // parseSemanticEpubFile calls onProgress before every chapter. Throwing
-        // here is the cancellation point: when the user chooses another EPUB,
-        // the old parser stops at the next chapter boundary instead of racing
-        // the new parser's progress/title/pending state.
         assertCurrentImport(generation);
         setStatus(`⏳ ${message}`);
       },
@@ -262,15 +261,14 @@ async function runSemanticEpubImport({ file, generation, bookId }) {
 }
 
 function handleSemanticEpub(event, originalImport) {
+  if (event?.__readerSupersedeSemanticImport === true) {
+    invalidateActiveSemanticImport();
+    return Promise.resolve();
+  }
+
   const file = event?.target?.files?.[0];
   if (!file || !String(file.name || '').toLowerCase().endsWith('.epub')) {
-    if (activeSemanticImport) {
-      semanticImportStats.superseded += 1;
-      semanticImportGeneration += 1;
-      activeSemanticImport = null;
-      pendingImport = null;
-      pendingLocalLibrary = [];
-    }
+    invalidateActiveSemanticImport();
     return originalImport(event);
   }
 
@@ -280,7 +278,7 @@ function handleSemanticEpub(event, originalImport) {
     return activeSemanticImport.promise;
   }
 
-  if (activeSemanticImport) semanticImportStats.superseded += 1;
+  invalidateActiveSemanticImport();
   const generation = ++semanticImportGeneration;
   const bookId = newBookId();
   semanticImportStats.starts += 1;
@@ -389,12 +387,6 @@ async function savePendingSemanticBook(originalSave) {
   const importedBookId = pendingImport.bookId;
   const target = existing || book;
 
-  // semantic-import used to write IndexedDB/localStorage behind reader-app's
-  // back. The live readerBooks array therefore stayed stale and its delayed
-  // save could immediately shrink the visible library back to the old count.
-  // Re-enter through the exact canonical reader-app module before closing the
-  // modal or claiming success, so memory, the local index and IndexedDB all
-  // describe the same library.
   let app = null;
   try {
     app = await canonicalReaderApp();
