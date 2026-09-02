@@ -26,6 +26,7 @@ on:
       - 'js/reader/epub.js'
       - 'js/reader/android-external-import.js'
       - 'js/reader/handler-bridge.js'
+      - 'js/reader/audio-epub-import-isolation.js'
       - 'android/app/build.gradle'
   workflow_dispatch:
 
@@ -86,8 +87,10 @@ jobs:
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/semantic-import-bridge.js'
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/android-external-import.js'
           unzip -l "$APK" | grep -qF 'assets/www/js/reader/handler-bridge.js'
+          unzip -l "$APK" | grep -qF 'assets/www/js/reader/audio-epub-import-isolation.js'
           unzip -p "$APK" assets/www/js/app.js | grep -qF 'guest startup is local-first'
-          unzip -p "$APK" assets/www/js/reader/handler-bridge.js | grep -qF '__readerAudioEpubIsolationV1'
+          unzip -p "$APK" assets/www/js/reader/handler-bridge.js | grep -qF "audio-epub-import-isolation.js?v=1"
+          unzip -p "$APK" assets/www/js/reader/audio-epub-import-isolation.js | grep -qF '__readerAudioEpubIsolationV2'
           if unzip -l "$APK" | grep -q 'assets/www/build/'; then
             echo 'transient repo build cache leaked into APK' >&2
             exit 1
