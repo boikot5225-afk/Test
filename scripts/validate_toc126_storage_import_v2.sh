@@ -20,11 +20,8 @@ frozen = {
     'js/reader/pages-mode.js': '13ce9f42db4427e1c2442abad7c0e66343aad92d79a4e945376fb42afed8e7d9',
     'js/reader-app.js': '202e287af1158b8498e44ae3e9ce28cf43b1a0aaaba9f01b25bfdfa2fde47f04',
     'js/reader/chapter-render.js': 'c10f3680fb122c4f04a730ddb298f88165c29d5b24978cc5868560531f752361',
-    'js/reader/epub.js': None,
 }
 for path, expected in frozen.items():
-    if expected is None:
-        continue
     got = sha(path)
     assert got == expected, f'frozen Reader core changed: {path}: {got}'
 
@@ -109,7 +106,9 @@ assert "toc-direct.js" not in external
 assert 'bytes.subarray(dataStart, dataStart + compressedSize)' in epub
 assert 'bytes.slice(dataStart, dataStart + compressedSize)' not in epub
 
-# Canonical reader refresh + migration barrier stay intact.
+# The semantic bridge is intentionally the proven toc128 ACTION_VIEW path.
+# Do not add generation/cancellation state here: that experiment regressed the
+# legacy-library migration before the manual-import regression even ran.
 assert "reader-app.js?v=77.42-zh-reader-quality" in app
 assert "reader-app.js?v=77.42-zh-reader-quality" in handler
 assert "reader-app.js?v=77.42-zh-reader-quality" in bridge
@@ -118,6 +117,10 @@ assert "from './library-idb-store.js?v=2';" in bridge
 assert "from './library-idb-store.js?v=1';" not in bridge
 assert 'await app.hydrateReaderBooksFromIndexedDB?.()' in bridge
 assert 'saved book ${String(target.id || \'\')} is absent from canonical readerBooks' in bridge
+assert '__readerSemanticImportStats' not in bridge
+assert 'activeSemanticImport' not in bridge
+assert 'semanticImportGeneration' not in bridge
+assert '__readerSupersedeSemanticImport' not in bridge
 barrier = bridge.index('const startupDurableLibrary = await readDurableBooks(key)')
 parse = bridge.index('const result = await parseSemanticEpubFile(file')
 assert barrier < parse, 'ACTION_VIEW EPUB parse must wait for durable legacy migration'
@@ -125,10 +128,10 @@ assert 'libraryIdbDeleteBook(storageKey, wantedId)' in delete_fix
 assert 'localStorage.setItem(storageKey, JSON.stringify(books))' not in delete_fix
 assert "import { libraryIdbDeleteBook } from './library-idb-store.js?v=1';" in delete_fix
 
-# toc129 import transaction: ACTION_VIEW still bypasses the manual audio reset;
-# manual EPUB uses V3 isolation. A second DIFFERENT EPUB is never blocked: it
-# supersedes the active semantic generation, and stale progress callbacks throw
-# before they can repaint title/progress/pendingImport.
+# toc129 manual-import isolation. ACTION_VIEW bypasses this behavior entirely.
+# A different EPUB selected during a parse is queued rather than dropped or run
+# concurrently. Only the newest queued generation proceeds after the active
+# semantic parser settles. Duplicate delivery of the newest file shares one promise.
 assert "import './audio-epub-import-isolation.js?v=1';" in handler
 assert '__readerAudioEpubIsolationV1' not in handler
 assert 'activeEpubImport' not in handler
@@ -136,16 +139,21 @@ assert '__readerAudioEpubIsolationV3' in audio_isolation
 assert '__readerImportIsolationStats' in audio_isolation
 assert 'let activeManualEpubImport = null' in audio_isolation
 assert 'let resetQueue = Promise.resolve()' in audio_isolation
+assert 'let manualSelectionGeneration = 0' in audio_isolation
 assert 'event?.androidExternal === true' in audio_isolation
 android_bypass = audio_isolation.index('if (event?.androidExternal === true)')
 manual_file = audio_isolation.index('const file = fileFromEvent(event)')
-reset_call = audio_isolation.index('const resetTask = resetQueue.then(() => resetCanonicalPendingAudio(canonicalImport))', manual_file)
-assert android_bypass < manual_file < reset_call, 'ACTION_VIEW must bypass manual reset before file/reset work'
+previous_promise = audio_isolation.index('const previousPromise = activeManualEpubImport?.promise || Promise.resolve()', manual_file)
+reset_call = audio_isolation.index('const resetTask = resetQueue.then(() => resetCanonicalPendingAudio(canonicalImport))', previous_promise)
+assert android_bypass < manual_file < previous_promise < reset_call, 'ACTION_VIEW must bypass manual queue/reset before file work'
 assert 'activeManualEpubImport?.fingerprint === key' in audio_isolation
 assert 'return activeManualEpubImport.promise' in audio_isolation
 assert 'importIsolationStats.supersededCalls += 1' in audio_isolation
+assert 'try { await previousPromise; } catch {}' in audio_isolation
+assert 'selectionGeneration !== manualSelectionGeneration' in audio_isolation
 assert "Уже разбираю" not in audio_isolation
 assert 'blockedConcurrent += 1' not in audio_isolation
+assert '__readerSupersedeSemanticImport' not in audio_isolation
 assert 'ReaderImportResetComplete' in audio_isolation
 assert '__reader_import_state_reset__.txt' not in audio_isolation
 assert "reader-import-title" in audio_isolation
@@ -155,24 +163,12 @@ assert "reader-import-audio-status" in audio_isolation
 assert 'importIsolationStats.epubStarts += 1' in audio_isolation
 assert 'importIsolationStats.dedupedCalls += 1' in audio_isolation
 
-assert '__readerSemanticImportStats' in bridge
-assert 'let activeSemanticImport = null' in bridge
-assert 'let semanticImportGeneration = 0' in bridge
-assert 'assertCurrentImport(generation)' in bridge
-assert 'semanticImportStats.superseded += 1' in bridge
-assert 'semanticImportStats.cancelled += 1' in bridge
-assert 'activeSemanticImport?.fingerprint === fingerprint' in bridge
-assert 'return activeSemanticImport.promise' in bridge
-assert 'await imgStoreDeleteBook(bookId)' in bridge
-assert 'pendingLocalLibrary = localLibrarySnapshot' in bridge
-assert '__readerSupersedeSemanticImport' in bridge
-
 assert 'scripts/audit_toc128_audio_epub_reuse.py' in runner
 assert '__readerAudioEpubIsolationV3' in audio_epub_audit
 assert 'FIRST_TITLE' in audio_epub_audit and 'SECOND_TITLE' in audio_epub_audit
 assert 'supersededCallsDelta' in audio_epub_audit
-assert 'semanticSupersededDelta' in audio_epub_audit
-assert 'semanticCancelledDelta' in audio_epub_audit
+assert 'semanticSupersededDelta' not in audio_epub_audit
+assert 'semanticCancelledDelta' not in audio_epub_audit
 assert 'finalPreviewHasFirst' in audio_epub_audit
 assert 'staleDurableMatches' in audio_epub_audit
 assert 'openedHasOriginalAudio' in audio_epub_audit
