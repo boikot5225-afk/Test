@@ -20,7 +20,7 @@ frozen = {
     'js/reader/pages-mode.js': '13ce9f42db4427e1c2442abad7c0e66343aad92d79a4e945376fb42afed8e7d9',
     'js/reader-app.js': '202e287af1158b8498e44ae3e9ce28cf43b1a0aaaba9f01b25bfdfa2fde47f04',
     'js/reader/chapter-render.js': 'c10f3680fb122c4f04a730ddb298f88165c29d5b24978cc5868560531f752361',
-    'js/reader/epub.js': None,  # intentionally changed only for zero-copy ZIP views
+    'js/reader/epub.js': None,
 }
 for path, expected in frozen.items():
     if expected is None:
@@ -28,8 +28,6 @@ for path, expected in frozen.items():
     got = sha(path)
     assert got == expected, f'frozen Reader core changed: {path}: {got}'
 
-# Android syncWebAssets excludes the legacy root app.js. js/app.js is the real
-# bundled application entry, so startup validation must target that file.
 app = text('js/app.js')
 storage = text('js/reader/library-store.js')
 idb = text('js/reader/library-idb-store.js')
@@ -44,12 +42,11 @@ gradle = text('android/app/build.gradle')
 runner = text('scripts/run_toc126_storage_emulator.sh')
 audio_epub_audit = text('scripts/audit_toc128_audio_epub_reuse.py')
 
-assert "versionCode 1021" in gradle
-assert "versionName '77.42-toc128-audio-epub-reset'" in gradle
+assert "versionCode 1022" in gradle
+assert "versionName '77.42-toc129-import-supersede'" in gradle
 assert "exclude { it.relativePath.toString() == 'app.js' }" in gradle
 
-# Guest cold start is local-first: ACTION_VIEW must not wait on Firebase or a
-# cloud verb dictionary before the Reader shell becomes visible.
+# Guest cold start remains local-first.
 init_pos = app.index('async function init()')
 early_guest_pos = app.index("if (localStorage.getItem('an2_guest') === '1')", init_pos)
 firebase_wait_pos = app.index('// The Firebase SDK loads from a CDN', init_pos)
@@ -66,9 +63,8 @@ assert "document.getElementById('main-app').style.display = 'block'" in guest_bo
 assert 'restoreVerbsFromCache()' in guest_body
 assert 'loadVerbsFromCloud({ force: true })' in guest_body
 assert 'await withDeadline(() => loadVerbsFromCloud()' not in guest_body
-assert 'cloud dictionaries are an optional background refresh' in guest_body
 
-# localStorage is now index/positions only. These old full-snapshot patterns are forbidden.
+# localStorage is index/positions only.
 for forbidden in [
     'localStorage.setItem(storageKey(), JSON.stringify(books))',
     'localStorage.setItem(storageKey(), JSON.stringify(merged))',
@@ -84,7 +80,7 @@ assert 'readGuestStartupSnapshot(key)' in bridge
 assert 'const startupLocalLibrary = mergeBookLists(readGuestStartupSnapshot(key), readStoredBooks(key))' in bridge
 assert 'mergeBookLists(pendingLocalLibrary, readStoredBooks(key))' in bridge
 
-# IDB v2 stores separate book records and preserves the v1 store for non-destructive migration.
+# IDB v2 preserves full records and legacy migration.
 assert "const DB_VERSION = 2" in idb
 assert "const BOOK_STORE = 'book-records'" in idb
 assert "const INDEX_STORE = 'indexes'" in idb
@@ -92,7 +88,6 @@ assert 'const _bootLegacyLocal = new Map()' in idb
 assert '_bootLegacyLocal.delete(libraryKey)' in idb
 assert 'readLegacySnapshot' in idb
 assert 'libraryIdbPutBook' in idb and 'libraryIdbDeleteBook' in idb
-# A lightweight index must never be treated as proof that chapters are durable.
 assert 'toc126 migration commit guard' in idb
 assert 'await verifyFullRecords(libraryKey, source)' in idb
 assert 'durable full-book verification failed' in idb
@@ -100,7 +95,7 @@ assert 'legacy migration incomplete' in idb
 assert 'if (!full) continue;' in idb
 assert 'refusing index-only book record' in idb
 
-# One semantic EPUB parse owns text + images + exact NCX/nav TOC.
+# One semantic parser owns EPUB text/images/TOC.
 assert 'parsePackageToc(entries, packageInfo)' in semantic
 assert 'savedImageKeys' in semantic
 assert 'await imgStorePut(key' in semantic
@@ -110,16 +105,11 @@ assert 'toc,' in semantic and '_epubTocExact' in semantic
 assert 'captureEpubTocFile' not in external and 'applyCapturedEpubToc' not in external
 assert "toc-direct.js" not in external
 
-# ZIP central-directory entries must be zero-copy views, not per-entry copies.
+# ZIP central-directory entries remain zero-copy views.
 assert 'bytes.subarray(dataStart, dataStart + compressedSize)' in epub
 assert 'bytes.slice(dataStart, dataStart + compressedSize)' not in epub
 
-# The semantic bridge must re-enter the exact canonical reader-app after a
-# manual save so the live readerBooks array is refreshed. Its IDB import is
-# intentionally a DISTINCT ES-module identity (?v=2): that gives ACTION_VIEW
-# its own boot-time legacy snapshot/migration barrier. The fully green toc126
-# used this split; collapsing the bridge onto reader-app's ?v=1 reintroduced a
-# race that compacted legacy localStorage before its full book was durable.
+# Canonical reader refresh + migration barrier stay intact.
 assert "reader-app.js?v=77.42-zh-reader-quality" in app
 assert "reader-app.js?v=77.42-zh-reader-quality" in handler
 assert "reader-app.js?v=77.42-zh-reader-quality" in bridge
@@ -133,50 +123,66 @@ parse = bridge.index('const result = await parseSemanticEpubFile(file')
 assert barrier < parse, 'ACTION_VIEW EPUB parse must wait for durable legacy migration'
 assert 'libraryIdbDeleteBook(storageKey, wantedId)' in delete_fix
 assert 'localStorage.setItem(storageKey, JSON.stringify(books))' not in delete_fix
-# Ordinary delete belongs to the canonical Reader runtime and therefore MUST
-# share reader-app's ?v=1 module identity. Unlike import migration, it must not
-# create an independent boot snapshot while deleting a normal library item.
 assert "import { libraryIdbDeleteBook } from './library-idb-store.js?v=1';" in delete_fix
 
-# toc128: keep the known-green handler/ACTION_VIEW architecture intact. The
-# new layer is a no-import manual-only wrapper loaded by handler-bridge. It may
-# clear canonical private audio state only for a real in-app EPUB selection;
-# Android ACTION_VIEW must pass straight through to the established semantic
-# route before any reset/UI mutation happens.
+# toc129 import transaction: ACTION_VIEW still bypasses the manual audio reset;
+# manual EPUB uses V3 isolation. A second DIFFERENT EPUB is never blocked: it
+# supersedes the active semantic generation, and stale progress callbacks throw
+# before they can repaint title/progress/pendingImport.
 assert "import './audio-epub-import-isolation.js?v=1';" in handler
 assert '__readerAudioEpubIsolationV1' not in handler
 assert 'activeEpubImport' not in handler
-assert '__readerAudioEpubIsolationV2' in audio_isolation
+assert '__readerAudioEpubIsolationV3' in audio_isolation
 assert '__readerImportIsolationStats' in audio_isolation
 assert 'let activeManualEpubImport = null' in audio_isolation
+assert 'let resetQueue = Promise.resolve()' in audio_isolation
 assert 'event?.androidExternal === true' in audio_isolation
 android_bypass = audio_isolation.index('if (event?.androidExternal === true)')
 manual_file = audio_isolation.index('const file = fileFromEvent(event)')
-reset_call = audio_isolation.index('await resetCanonicalPendingAudio(canonicalImport)')
-assert android_bypass < manual_file < reset_call, 'ACTION_VIEW must bypass toc128 manual reset before file/reset work'
-assert 'activeManualEpubImport.fingerprint === key' in audio_isolation
+reset_call = audio_isolation.index('resetCanonicalPendingAudio(canonicalImport)')
+assert android_bypass < manual_file < reset_call, 'ACTION_VIEW must bypass manual reset before file/reset work'
+assert 'activeManualEpubImport?.fingerprint === key' in audio_isolation
 assert 'return activeManualEpubImport.promise' in audio_isolation
-assert 'current.__semanticStage1' in audio_isolation
-assert "typeof current.__semanticOriginal !== 'function'" in audio_isolation
-assert "__reader_import_state_reset__.txt" in audio_isolation
+assert 'importIsolationStats.supersededCalls += 1' in audio_isolation
+assert "Уже разбираю" not in audio_isolation
+assert 'blockedConcurrent += 1' not in audio_isolation
+assert 'ReaderImportResetComplete' in audio_isolation
+assert '__reader_import_state_reset__.txt' not in audio_isolation
+assert "reader-import-title" in audio_isolation
+assert "reader-import-author" in audio_isolation
+assert "reader-import-text" in audio_isolation
 assert "reader-import-audio-status" in audio_isolation
-assert "audioStatus.style.display = 'none'" in audio_isolation
 assert 'importIsolationStats.epubStarts += 1' in audio_isolation
 assert 'importIsolationStats.dedupedCalls += 1' in audio_isolation
+
+assert '__readerSemanticImportStats' in bridge
+assert 'let activeSemanticImport = null' in bridge
+assert 'let semanticImportGeneration = 0' in bridge
+assert 'assertCurrentImport(generation)' in bridge
+assert 'semanticImportStats.superseded += 1' in bridge
+assert 'semanticImportStats.cancelled += 1' in bridge
+assert 'activeSemanticImport?.fingerprint === fingerprint' in bridge
+assert 'return activeSemanticImport.promise' in bridge
+assert 'await imgStoreDeleteBook(bookId)' in bridge
+assert 'pendingLocalLibrary = localLibrarySnapshot' in bridge
+
 assert 'scripts/audit_toc128_audio_epub_reuse.py' in runner
-assert '__readerAudioEpubIsolationV2' in audio_epub_audit
-assert 'epubStartsDelta' in audio_epub_audit
+assert '__readerAudioEpubIsolationV3' in audio_epub_audit
+assert 'FIRST_TITLE' in audio_epub_audit and 'SECOND_TITLE' in audio_epub_audit
+assert 'supersededCallsDelta' in audio_epub_audit
+assert 'semanticSupersededDelta' in audio_epub_audit
+assert 'semanticCancelledDelta' in audio_epub_audit
+assert 'finalPreviewHasFirst' in audio_epub_audit
+assert 'staleDurableMatches' in audio_epub_audit
 assert 'openedHasOriginalAudio' in audio_epub_audit
-assert 'durableMatches' in audio_epub_audit
 
 for runtime_path in (root / 'js').rglob('*.js'):
     runtime_source = runtime_path.read_text(encoding='utf-8')
     assert 'reader-app.js?v=77.32' not in runtime_source, f'duplicate Reader module identity survived: {runtime_path}'
 
-print('toc128 audio→EPUB/storage source gate: PASS')
+print('toc129 import/storage source gate: PASS')
 PY
 
-# Parse changed modules as ESM without executing browser APIs.
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 for f in \
@@ -197,4 +203,4 @@ done
 
 python3 -m py_compile scripts/audit_toc128_audio_epub_reuse.py
 
-echo 'toc128 JS/Python syntax: PASS'
+echo 'toc129 JS/Python syntax: PASS'
