@@ -125,9 +125,14 @@ adb exec-out screencap -p > runtime-audit/toc127-100-after-manual-import.png
 python3 scripts/audit_toc128_audio_epub_reuse.py
 adb exec-out screencap -p > runtime-audit/toc128-110-after-audio-epub-reuse.png
 
+# toc131: Calibre and many commercial EPUBs render the opening glyph as a
+# floated block nested inside the first paragraph. The semantic importer must
+# rejoin that decorative block with the following text instead of dropping a
+# one-character prefix or splitting a dialogue prefix into its own paragraph.
+python3 scripts/audit_toc131_epub_dropcap_live.py | tee runtime-audit/toc131-epub-dropcap-live.log
+
 # toc130: the French vocabulary layer must be real runtime data inside the APK,
-# not an accidental side effect of a separate validation script. Run this only
-# after every toc129 import regression has passed so a French fix cannot hide an
-# import regression.
+# not an accidental side effect of a separate validation script. Keep this gate
+# after import/drop-cap regressions so the French fix cannot hide EPUB damage.
 python3 scripts/audit_toc130_french_assets_live.py | tee runtime-audit/toc130-french-assets-live.json
 adb exec-out screencap -p > runtime-audit/toc130-120-french-vocabulary.png
