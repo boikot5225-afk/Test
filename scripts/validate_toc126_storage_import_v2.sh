@@ -139,7 +139,7 @@ assert 'let resetQueue = Promise.resolve()' in audio_isolation
 assert 'event?.androidExternal === true' in audio_isolation
 android_bypass = audio_isolation.index('if (event?.androidExternal === true)')
 manual_file = audio_isolation.index('const file = fileFromEvent(event)')
-reset_call = audio_isolation.index('resetCanonicalPendingAudio(canonicalImport)')
+reset_call = audio_isolation.index('const resetTask = resetQueue.then(() => resetCanonicalPendingAudio(canonicalImport))', manual_file)
 assert android_bypass < manual_file < reset_call, 'ACTION_VIEW must bypass manual reset before file/reset work'
 assert 'activeManualEpubImport?.fingerprint === key' in audio_isolation
 assert 'return activeManualEpubImport.promise' in audio_isolation
@@ -165,6 +165,7 @@ assert 'activeSemanticImport?.fingerprint === fingerprint' in bridge
 assert 'return activeSemanticImport.promise' in bridge
 assert 'await imgStoreDeleteBook(bookId)' in bridge
 assert 'pendingLocalLibrary = localLibrarySnapshot' in bridge
+assert '__readerSupersedeSemanticImport' in bridge
 
 assert 'scripts/audit_toc128_audio_epub_reuse.py' in runner
 assert '__readerAudioEpubIsolationV3' in audio_epub_audit
