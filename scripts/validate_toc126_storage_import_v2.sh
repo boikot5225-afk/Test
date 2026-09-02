@@ -40,9 +40,11 @@ external = text('js/reader/android-external-import.js')
 handler = text('js/reader/handler-bridge.js')
 delete_fix = text('js/reader/delete-fix.js')
 gradle = text('android/app/build.gradle')
+runner = text('scripts/run_toc126_storage_emulator.sh')
+audio_epub_audit = text('scripts/audit_toc128_audio_epub_reuse.py')
 
-assert "versionCode 1020" in gradle
-assert "versionName '77.42-toc127-manual-import-fix'" in gradle
+assert "versionCode 1021" in gradle
+assert "versionName '77.42-toc128-audio-epub-reset'" in gradle
 assert "exclude { it.relativePath.toString() == 'app.js' }" in gradle
 
 # Guest cold start is local-first: ACTION_VIEW must not wait on Firebase or a
@@ -134,11 +136,34 @@ assert 'localStorage.setItem(storageKey, JSON.stringify(books))' not in delete_f
 # share reader-app's ?v=1 module identity. Unlike import migration, it must not
 # create an independent boot snapshot while deleting a normal library item.
 assert "import { libraryIdbDeleteBook } from './library-idb-store.js?v=1';" in delete_fix
+
+# toc128: semantic EPUB must not inherit pending audio metadata and must never
+# start a second ZIP parse for a duplicate file event. The isolation layer uses
+# the semantic wrapper's canonical original only as a private-state reset, then
+# gives semantic EPUB sole ownership of the real file.
+assert '__readerAudioEpubIsolationV1' in handler
+assert '__readerImportIsolationStats' in handler
+assert 'let activeEpubImport = null' in handler
+assert 'activeEpubImport.fingerprint === fingerprint' in handler
+assert 'return activeEpubImport.promise' in handler
+assert "current.__semanticStage1" in handler
+assert "typeof current.__semanticOriginal !== 'function'" in handler
+assert 'await resetCanonicalPendingImport(canonicalImport)' in handler
+assert "__reader_import_state_reset__.txt" in handler
+assert "reader-import-audio-status" in handler
+assert "audioStatus.style.display = 'none'" in handler
+assert 'importIsolationStats.epubStarts += 1' in handler
+assert 'importIsolationStats.dedupedCalls += 1' in handler
+assert 'scripts/audit_toc128_audio_epub_reuse.py' in runner
+assert 'epubStartsDelta' in audio_epub_audit
+assert 'openedHasOriginalAudio' in audio_epub_audit
+assert 'durableMatches' in audio_epub_audit
+
 for runtime_path in (root / 'js').rglob('*.js'):
     runtime_source = runtime_path.read_text(encoding='utf-8')
     assert 'reader-app.js?v=77.32' not in runtime_source, f'duplicate Reader module identity survived: {runtime_path}'
 
-print('toc127 manual-import/storage source gate: PASS')
+print('toc128 audio→EPUB/storage source gate: PASS')
 PY
 
 # Parse changed modules as ESM without executing browser APIs.
@@ -159,4 +184,6 @@ for f in \
   node --check "$target"
 done
 
-echo 'toc127 JS syntax: PASS'
+python3 -m py_compile scripts/audit_toc128_audio_epub_reuse.py
+
+echo 'toc128 JS/Python syntax: PASS'
