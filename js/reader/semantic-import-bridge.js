@@ -13,6 +13,7 @@ const READER_APP_URL = '../reader-app.js?v=77.42-zh-reader-quality';
 let canonicalReaderPromise = null;
 let pendingImport = null;
 let pendingLocalLibrary = [];
+let pendingImportAndroidExternal = false;
 let bridgeStarted = false;
 
 function canonicalReaderApp() {
@@ -158,10 +159,12 @@ function buildPreview(result) {
 async function handleSemanticEpub(event, originalImport) {
   const file = event?.target?.files?.[0];
   if (!file || !String(file.name || '').toLowerCase().endsWith('.epub')) {
+    pendingImportAndroidExternal = false;
     return originalImport(event);
   }
 
   pendingImport = null;
+  pendingImportAndroidExternal = event?.androidExternal === true;
   // Capture the legacy full localStorage library before the multi-megabyte EPUB
   // parse yields. Startup hydration may compact that key to a v2 index while
   // parsing; keeping this in-memory snapshot closes the migration/import race.
@@ -210,6 +213,7 @@ async function handleSemanticEpub(event, originalImport) {
   } catch (error) {
     pendingImport = null;
     pendingLocalLibrary = [];
+    pendingImportAndroidExternal = false;
     setStatus(`❌ EPUB не импортировался: ${String(error?.message || error)}`, 'error');
   }
 }
@@ -226,6 +230,7 @@ async function readDurableBooks(key) {
 
 async function savePendingSemanticBook(originalSave) {
   if (!pendingImport) return originalSave();
+  const isAndroidExternal = pendingImportAndroidExternal;
 
   const language = String(document.getElementById('reader-import-lang')?.value || pendingImport.lang || '').trim();
   if (!language) {
@@ -303,12 +308,10 @@ async function savePendingSemanticBook(originalSave) {
   const importedBookId = pendingImport.bookId;
   const target = existing || book;
 
-  // The durable write above already round-tripped the complete book. Normally
-  // canonical reader-app hydration sees it immediately. On Android WebView the
-  // canonical IDB module can still be finishing its own startup migration and
-  // miss this just-saved record on the first hydrate. In that case, hand the
-  // already-durable full object directly to the exact array that reader-app
-  // assigned as readerBooks. No full EPUB is written back to localStorage.
+  // The emergency in-memory adoption is intentionally MANUAL-IMPORT ONLY.
+  // ACTION_VIEW keeps the proven toc128 post-save behavior byte-for-byte: its
+  // cold-start legacy migration owns the canonical hydration and must never be
+  // short-circuited by injecting a one-book array into readerBooks.
   let app = null;
   try {
     app = await canonicalReaderApp();
@@ -319,7 +322,8 @@ async function savePendingSemanticBook(originalSave) {
       ? liveBooks.find(item => String(item?.id || '') === String(target.id || ''))
       : null;
 
-    if ((!liveTarget || !Array.isArray(liveTarget.chapters) || !liveTarget.chapters.length)
+    if (!isAndroidExternal
+        && (!liveTarget || !Array.isArray(liveTarget.chapters) || !liveTarget.chapters.length)
         && Array.isArray(liveBooks)) {
       const index = liveBooks.findIndex(item => String(item?.id || '') === String(target.id || ''));
       if (index >= 0) liveBooks[index] = target;
@@ -356,6 +360,7 @@ async function savePendingSemanticBook(originalSave) {
 
   pendingImport = null;
   pendingLocalLibrary = [];
+  pendingImportAndroidExternal = false;
   try { delete globalThis.__readerGuestLegacyLibrarySnapshot; } catch {}
 
   window.closeReaderImportModal?.();
