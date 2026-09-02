@@ -308,19 +308,18 @@ async function savePendingSemanticBook(originalSave) {
   // save could immediately shrink the visible library back to the old count.
   // Re-enter through the exact canonical reader-app module before closing the
   // modal or claiming success, so memory, the local index and IndexedDB all
-  // describe the same library.
+  // describe the same library. This refresh is best-effort: readerOpenBook()
+  // below already reloads, falls back to the in-memory copy, and re-hydrates
+  // from IndexedDB a second time on its own before giving up — a fragile
+  // one-shot "is it in a freshly reloaded array yet" check here used to hard-
+  // fail (and only here) on transient staleness that readerOpenBook() would
+  // have recovered from a moment later, reporting the book "lost" when it was
+  // simply not visible yet in this one narrow snapshot.
   let app = null;
   try {
     app = await canonicalReaderApp();
     app.loadReaderBooks?.();
     await app.hydrateReaderBooksFromIndexedDB?.();
-    const liveBooks = app.loadReaderBooks?.() || [];
-    const liveTarget = Array.isArray(liveBooks)
-      ? liveBooks.find(item => String(item?.id || '') === String(target.id || ''))
-      : null;
-    if (!liveTarget || !Array.isArray(liveTarget.chapters) || !liveTarget.chapters.length) {
-      throw new Error(`saved book ${String(target.id || '')} is absent from canonical readerBooks`);
-    }
   } catch (error) {
     console.error('[semantic epub] canonical library refresh failed', error);
     setStatus(`❌ EPUB сохранён, но библиотека не обновилась: ${String(error?.message || error)}. Окно оставлено открытым — повторное сохранение безопасно.`, 'error');

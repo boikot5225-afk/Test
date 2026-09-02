@@ -127,7 +127,19 @@ assert "reader-app.js?v=77.32" not in handler
 assert "from './library-idb-store.js?v=2';" in bridge
 assert "from './library-idb-store.js?v=1';" not in bridge
 assert 'await app.hydrateReaderBooksFromIndexedDB?.()' in bridge
-assert 'saved book ${String(target.id || \'\')} is absent from canonical readerBooks' in bridge
+# The bridge's own hydrate refresh (above) reads through the reader-app.js
+# ?v=1 module, but writes durable content through this file's own ?v=2
+# library-idb-store instance (see the split-identity note above) -- each
+# instance tracks legacy-migration completeness independently in memory even
+# though both read/write the same physical IndexedDB. A hard gate that
+# compared "is the just-saved book visible in a single, freshly reloaded ?v=1
+# array yet" against ?v=2-written data was comparing across that split and
+# failed on ordinary cross-instance staleness, reporting a durably-saved book
+# as lost. readerOpenBook() right below is the real, meaningful check: it is
+# entirely ?v=1-internal, already reloads/re-hydrates/falls back to memory on
+# its own, and has its own distinct failure message -- so it alone must gate.
+assert 'saved book ${String(target.id || \'\')} is absent from canonical readerBooks' not in bridge
+assert "Reader не открыл сохранённую книгу" in bridge
 barrier = bridge.index('const startupDurableLibrary = await readDurableBooks(key)')
 parse = bridge.index('const result = await parseSemanticEpubFile(file')
 assert barrier < parse, 'ACTION_VIEW EPUB parse must wait for durable legacy migration'
