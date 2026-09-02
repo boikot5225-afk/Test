@@ -35,13 +35,34 @@ external = text('js/reader/android-external-import.js')
 handler = text('js/reader/handler-bridge.js')
 audio_isolation = text('js/reader/audio-epub-import-isolation.js')
 delete_fix = text('js/reader/delete-fix.js')
+fr_vocab = text('js/reader/fr-vocab-estimate.js')
+fr_builder = text('scripts/build_fr_reader_resources.py')
 gradle = text('android/app/build.gradle')
 runner = text('scripts/run_toc126_storage_emulator.sh')
 audio_epub_audit = text('scripts/audit_toc128_audio_epub_reuse.py')
+fr_audit = text('scripts/audit_toc130_french_assets_live.py')
 
-assert "versionCode 1022" in gradle
-assert "versionName '77.42-toc129-import-supersede'" in gradle
+assert "versionCode 1023" in gradle
+assert "versionName '77.42-toc130-fr-assets'" in gradle
 assert "exclude { it.relativePath.toString() == 'app.js' }" in gradle
+
+# toc130 French assets are a mandatory Gradle input, never a validation-script side effect.
+assert "def frenchReaderAssetDir = layout.buildDirectory.dir('generated/frenchReaderAssets')" in gradle
+assert "def frenchReaderOutputDir = layout.buildDirectory.dir('generated/frenchReaderAssets/frreader')" in gradle
+assert "tasks.register('prepareFrenchReaderResources')" in gradle
+assert "scripts/build_fr_reader_resources.py" in gradle
+assert "dependsOn 'prepareFrenchReaderResources'" in gradle
+assert "frenchReaderAssetDir.get().asFile" in gradle
+for name in ['fr_vocab_frequency.tsv', 'fr_vocab_lemma.tsv', 'fr_ru_core.json', 'fr_ru_senses.json']:
+    assert name in gradle, f'French Gradle output missing: {name}'
+assert "../../../frreader/fr_vocab_frequency.tsv?v=1" in fr_vocab
+assert "../../../frreader/fr_vocab_lemma.tsv?v=1" in fr_vocab
+assert 'MIN_EXPECTED_COUNT=50000' in fr_vocab
+assert 'WORDHOARD_SHA256' in fr_builder
+assert 'French core morphology probes failed' in fr_builder
+assert 'scripts/audit_toc130_french_assets_live.py' in runner
+assert 'readerLoadFrenchVocabularyData' in fr_audit
+assert 'fr_ru_core.json' in fr_audit and 'fr_ru_senses.json' in fr_audit
 
 # Guest cold start remains local-first.
 init_pos = app.index('async function init()')
@@ -177,7 +198,7 @@ for runtime_path in (root / 'js').rglob('*.js'):
     runtime_source = runtime_path.read_text(encoding='utf-8')
     assert 'reader-app.js?v=77.32' not in runtime_source, f'duplicate Reader module identity survived: {runtime_path}'
 
-print('toc129 import/storage source gate: PASS')
+print('toc130 French + toc129 import/storage source gate: PASS')
 PY
 
 TMP="$(mktemp -d)"
@@ -192,12 +213,13 @@ for f in \
   js/reader/android-external-import.js \
   js/reader/handler-bridge.js \
   js/reader/audio-epub-import-isolation.js \
-  js/reader/delete-fix.js; do
+  js/reader/delete-fix.js \
+  js/reader/fr-vocab-estimate.js; do
   target="$TMP/$(echo "$f" | tr '/' '_').mjs"
   cp "$f" "$target"
   node --check "$target"
 done
 
-python3 -m py_compile scripts/audit_toc128_audio_epub_reuse.py
+python3 -m py_compile scripts/audit_toc128_audio_epub_reuse.py scripts/audit_toc130_french_assets_live.py scripts/build_fr_reader_resources.py
 
-echo 'toc129 JS/Python syntax: PASS'
+echo 'toc130 JS/Python syntax: PASS'
