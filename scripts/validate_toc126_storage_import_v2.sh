@@ -38,6 +38,7 @@ semantic = text('js/reader/semantic-import-stage1.js')
 epub = text('js/reader/epub.js')
 external = text('js/reader/android-external-import.js')
 handler = text('js/reader/handler-bridge.js')
+audio_isolation = text('js/reader/audio-epub-import-isolation.js')
 delete_fix = text('js/reader/delete-fix.js')
 gradle = text('android/app/build.gradle')
 runner = text('scripts/run_toc126_storage_emulator.sh')
@@ -137,23 +138,31 @@ assert 'localStorage.setItem(storageKey, JSON.stringify(books))' not in delete_f
 # create an independent boot snapshot while deleting a normal library item.
 assert "import { libraryIdbDeleteBook } from './library-idb-store.js?v=1';" in delete_fix
 
-# toc128: semantic EPUB must not inherit pending audio metadata and must never
-# start a second ZIP parse for a duplicate file event. The isolation layer uses
-# the semantic wrapper's canonical original only as a private-state reset, then
-# gives semantic EPUB sole ownership of the real file.
-assert '__readerAudioEpubIsolationV1' in handler
-assert '__readerImportIsolationStats' in handler
-assert 'let activeEpubImport = null' in handler
-assert 'activeEpubImport.fingerprint === fingerprint' in handler
-assert 'return activeEpubImport.promise' in handler
-assert "current.__semanticStage1" in handler
-assert "typeof current.__semanticOriginal !== 'function'" in handler
-assert 'await resetCanonicalPendingImport(canonicalImport)' in handler
-assert "__reader_import_state_reset__.txt" in handler
-assert "reader-import-audio-status" in handler
-assert "audioStatus.style.display = 'none'" in handler
-assert 'importIsolationStats.epubStarts += 1' in handler
-assert 'importIsolationStats.dedupedCalls += 1' in handler
+# toc128: keep the known-green handler/ACTION_VIEW architecture intact. The
+# new layer is a no-import manual-only wrapper loaded by handler-bridge. It may
+# clear canonical private audio state only for a real in-app EPUB selection;
+# Android ACTION_VIEW must pass straight through to the established semantic
+# route before any reset/UI mutation happens.
+assert "import './audio-epub-import-isolation.js?v=1';" in handler
+assert '__readerAudioEpubIsolationV1' not in handler
+assert 'activeEpubImport' not in handler
+assert '__readerAudioEpubIsolationV2' in audio_isolation
+assert '__readerImportIsolationStats' in audio_isolation
+assert 'let activeManualEpubImport = null' in audio_isolation
+assert 'event?.androidExternal === true' in audio_isolation
+android_bypass = audio_isolation.index('if (event?.androidExternal === true)')
+manual_file = audio_isolation.index('const file = fileFromEvent(event)')
+reset_call = audio_isolation.index('await resetCanonicalPendingAudio(canonicalImport)')
+assert android_bypass < manual_file < reset_call, 'ACTION_VIEW must bypass toc128 manual reset before file/reset work'
+assert 'activeManualEpubImport.fingerprint === key' in audio_isolation
+assert 'return activeManualEpubImport.promise' in audio_isolation
+assert "semanticImport.__semanticStage1" in audio_isolation
+assert "typeof semanticImport.__semanticOriginal" not in audio_isolation  # canonical is captured only after semanticHandler validation
+assert "__reader_import_state_reset__.txt" in audio_isolation
+assert "reader-import-audio-status" in audio_isolation
+assert "audioStatus.style.display = 'none'" in audio_isolation
+assert 'importIsolationStats.epubStarts += 1' in audio_isolation
+assert 'importIsolationStats.dedupedCalls += 1' in audio_isolation
 assert 'scripts/audit_toc128_audio_epub_reuse.py' in runner
 assert 'epubStartsDelta' in audio_epub_audit
 assert 'openedHasOriginalAudio' in audio_epub_audit
@@ -178,6 +187,7 @@ for f in \
   js/reader/epub.js \
   js/reader/android-external-import.js \
   js/reader/handler-bridge.js \
+  js/reader/audio-epub-import-isolation.js \
   js/reader/delete-fix.js; do
   target="$TMP/$(echo "$f" | tr '/' '_').mjs"
   cp "$f" "$target"
