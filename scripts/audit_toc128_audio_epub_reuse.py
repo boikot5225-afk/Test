@@ -9,12 +9,14 @@ from reader_cdp import ReaderCDP
 
 OUT = pathlib.Path('runtime-audit')
 OUT.mkdir(exist_ok=True)
-TITLE = 'Audio then EPUB regression toc128'
-AUTHOR = 'Reader AI gate'
-CHAPTERS = 49
+FIRST_TITLE = 'Superseded EPUB regression toc129'
+SECOND_TITLE = 'Latest EPUB wins regression toc129'
+AUTHOR = 'Reader AI import gate'
+FIRST_CHAPTERS = 80
+SECOND_CHAPTERS = 49
 
 
-def make_epub_bytes():
+def make_epub_bytes(title, chapters, marker, identifier):
     out = io.BytesIO()
     with zipfile.ZipFile(out, 'w') as zf:
         zf.writestr('mimetype', 'application/epub+zip', compress_type=zipfile.ZIP_STORED)
@@ -28,16 +30,19 @@ def make_epub_bytes():
         manifest = ['<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>']
         spine = []
         nav = []
-        for i in range(1, CHAPTERS + 1):
+        for i in range(1, chapters + 1):
             manifest.append(f'<item id="c{i}" href="chapter{i}.xhtml" media-type="application/xhtml+xml"/>')
             spine.append(f'<itemref idref="c{i}"/>')
             nav.append(f'<li><a href="chapter{i}.xhtml">Chapter {i}</a></li>')
+            # Give the first import enough real work that the second selection
+            # can supersede it while parsing rather than only before it starts.
+            repeated = ' '.join([f'{marker} paragraph {i} semantic import work.'] * 16)
             zf.writestr(
                 f'OEBPS/chapter{i}.xhtml',
                 f'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapter {i}</title></head><body>
 <h1>Chapter {i}</h1>
-<p>This is chapter {i} of the audio then EPUB isolation regression fixture.</p>
-<p>The semantic ZIP parser must run exactly once even if the same file event is delivered twice.</p>
+<p>{repeated}</p>
+<p>{marker} must remain authoritative only when this is the latest selected EPUB.</p>
 </body></html>''',
             )
         zf.writestr(
@@ -45,8 +50,8 @@ def make_epub_bytes():
             f'''<?xml version="1.0" encoding="UTF-8"?>
 <package version="3.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:identifier id="bookid">audio-epub-toc128</dc:identifier>
-    <dc:title>{TITLE}</dc:title>
+    <dc:identifier id="bookid">{identifier}</dc:identifier>
+    <dc:title>{title}</dc:title>
     <dc:creator>{AUTHOR}</dc:creator>
     <dc:language>en</dc:language>
   </metadata>
@@ -62,27 +67,41 @@ def make_epub_bytes():
     return out.getvalue()
 
 
-payload_b64 = base64.b64encode(make_epub_bytes()).decode('ascii')
+first_b64 = base64.b64encode(make_epub_bytes(FIRST_TITLE, FIRST_CHAPTERS, 'FIRST-SHOULD-DIE', 'toc129-first')).decode('ascii')
+second_b64 = base64.b64encode(make_epub_bytes(SECOND_TITLE, SECOND_CHAPTERS, 'SECOND-MUST-WIN', 'toc129-second')).decode('ascii')
 cdp = ReaderCDP(connect_timeout=55)
 cdp.connect()
 cdp.wait("document.readyState==='complete'", 55)
-cdp.wait("window.readerImportFromFile && window.__readerImportIsolationStats", 20)
+cdp.wait("window.readerImportFromFile && window.__readerImportIsolationStats && window.__readerSemanticImportStats", 20)
 
 before = cdp.eval(r"""(async()=>{
   const key=window.an2ReaderStorageKey?.('an2_reader_books_v1')||'an2_reader_books_v1::guest';
   const mod=await import('./js/reader/library-idb-store.js?v=1');
   const books=await mod.libraryIdbGet(key)||[];
-  const stats={...(globalThis.__readerImportIsolationStats||{})};
-  return {key,count:books.length,ids:books.map(b=>String(b?.id||'')),titles:books.map(b=>String(b?.title||'')),stats};
+  return {
+    key,
+    count:books.length,
+    ids:books.map(b=>String(b?.id||'')),
+    titles:books.map(b=>String(b?.title||'')),
+    isolation:{...(globalThis.__readerImportIsolationStats||{})},
+    semantic:{...(globalThis.__readerSemanticImportStats||{})},
+  };
 })()""", 30)
 
 result = cdp.eval(f"""(async()=>{{
-  const title={json.dumps(TITLE)};
+  const firstTitle={json.dumps(FIRST_TITLE)};
+  const secondTitle={json.dumps(SECOND_TITLE)};
   const author={json.dumps(AUTHOR)};
-  const waitFor=async(fn,timeout=8000)=>{{
+  const waitFor=async(fn,timeout=10000)=>{{
     const start=Date.now();
-    while(Date.now()-start<timeout){{ if(fn()) return true; await new Promise(r=>setTimeout(r,80)); }}
+    while(Date.now()-start<timeout){{ if(fn()) return true; await new Promise(r=>setTimeout(r,35)); }}
     return false;
+  }};
+  const decode=(payload,name,lastModified)=>{{
+    const raw=atob(payload);
+    const bytes=new Uint8Array(raw.length);
+    for(let i=0;i<raw.length;i++) bytes[i]=raw.charCodeAt(i);
+    return new File([bytes],name,{{type:'application/epub+zip',lastModified}});
   }};
 
   window.showScreen?.('reader');
@@ -90,7 +109,7 @@ result = cdp.eval(f"""(async()=>{{
   await Promise.resolve(window.renderReaderScreen?.());
   window.showReaderImportModal?.();
 
-  // Reproduce the visible residue left by a completed audio transcription.
+  // Reproduce residue from a finished audio transcription.
   const titleEl=document.getElementById('reader-import-title');
   const authorEl=document.getElementById('reader-import-author');
   const preview=document.getElementById('reader-import-text');
@@ -98,28 +117,38 @@ result = cdp.eval(f"""(async()=>{{
   const stopBtn=document.getElementById('reader-audio-stop-btn');
   if(titleEl) titleEl.value='Previous audio transcript';
   if(authorEl) authorEl.value='Previous audio author';
-  if(preview) preview.value='Old transcript text that must not survive into the EPUB import.';
+  if(preview) preview.value='Old transcript text that must not survive into EPUB import.';
   if(audioStatus){{
     audioStatus.style.display='inline';
     audioStatus.textContent='✅ Готово: 13 фрагмент(ов) · аудио сохранено · тайм-коды (приблизительно). Проверь текст перед сохранением.';
   }}
   if(stopBtn) stopBtn.style.display='inline-flex';
 
-  const raw=atob({json.dumps(payload_b64)});
-  const bytes=new Uint8Array(raw.length);
-  for(let i=0;i<raw.length;i++) bytes[i]=raw.charCodeAt(i);
-  const file=new File([bytes], 'audio-then-epub-toc128.epub', {{type:'application/epub+zip', lastModified:128}});
+  const firstFile=decode({json.dumps(first_b64)},'first-slow-toc129.epub',12901);
+  const secondFile=decode({json.dumps(second_b64)},'second-final-toc129.epub',12902);
   const importHandler=window.readerImportFromFile;
   const saveHandler=window.saveReaderImport;
   if(typeof importHandler!=='function'||typeof saveHandler!=='function') throw new Error('import handlers missing');
-  if(!importHandler.__readerAudioEpubIsolationV2) throw new Error('audio→EPUB isolation bridge v2 missing');
+  if(!importHandler.__readerAudioEpubIsolationV3) throw new Error('audio→EPUB isolation bridge v3 missing');
 
-  const statsBefore={{...(globalThis.__readerImportIsolationStats||{{}})}};
-  const first=Promise.resolve(importHandler({{target:{{files:[file],value:''}}}}));
-  const second=Promise.resolve(importHandler({{target:{{files:[file],value:''}}}}));
-  await Promise.all([first,second]);
+  const isolationBefore={{...(globalThis.__readerImportIsolationStats||{{}})}};
+  const semanticBefore={{...(globalThis.__readerSemanticImportStats||{{}})}};
 
-  const statsAfter={{...(globalThis.__readerImportIsolationStats||{{}})}};
+  // Start one real parse, wait until the semantic bridge owns it, then choose a
+  // DIFFERENT EPUB. The second selection must supersede the first; it must not
+  // be blocked and the old parser must never repaint progress/title afterwards.
+  const first=Promise.resolve(importHandler({{target:{{files:[firstFile],value:''}}}}));
+  const firstStarted=await waitFor(()=>Number(globalThis.__readerSemanticImportStats?.starts||0)>Number(semanticBefore.starts||0),5000);
+  if(!firstStarted) throw new Error('first semantic EPUB parse never started');
+
+  const second=Promise.resolve(importHandler({{target:{{files:[secondFile],value:''}}}}));
+  // Real file inputs/WebView bridges can deliver the same selection twice. The
+  // duplicate SECOND event must share its in-flight promise, not launch a third parse.
+  const duplicateSecond=Promise.resolve(importHandler({{target:{{files:[secondFile],value:''}}}}));
+  await Promise.allSettled([first,second,duplicateSecond]);
+
+  const isolationAfter={{...(globalThis.__readerImportIsolationStats||{{}})}};
+  const semanticAfter={{...(globalThis.__readerSemanticImportStats||{{}})}};
   const parseStatus=String(document.getElementById('reader-import-status')?.textContent||'');
   if(parseStatus.startsWith('❌')) throw new Error(parseStatus);
 
@@ -127,12 +156,12 @@ result = cdp.eval(f"""(async()=>{{
   const staleAudioTitle=String(titleEl?.value||'')==='Previous audio transcript';
   const staleAudioAuthor=String(authorEl?.value||'')==='Previous audio author';
   const staleAudioPreview=String(preview?.value||'').includes('Old transcript text');
+  const finalUiTitle=String(titleEl?.value||'');
+  const finalUiAuthor=String(authorEl?.value||'');
+  const finalPreview=String(preview?.value||'');
 
   const lang=document.getElementById('reader-import-lang');
   if(lang){{lang.value='en';lang.dataset.userChanged='1';}}
-  if(titleEl) titleEl.value=title;
-  if(authorEl) authorEl.value=author;
-
   await Promise.resolve(saveHandler());
   const openedReady=await waitFor(()=>{{
     const reading=document.getElementById('reader-reading-view');
@@ -146,8 +175,11 @@ result = cdp.eval(f"""(async()=>{{
   const mod=await import('./js/reader/library-idb-store.js?v=1');
   const durable=await mod.libraryIdbGet(key)||[];
   const local=JSON.parse(localStorage.getItem(key)||'[]');
-  const durableMatches=durable.filter(b=>String(b?.title||'')===title);
-  const localMatches=Array.isArray(local)?local.filter(b=>String(b?.title||'')===title):[];
+  const finalDurable=durable.filter(b=>String(b?.title||'')===secondTitle);
+  const staleDurable=durable.filter(b=>String(b?.title||'')===firstTitle);
+  const finalLocal=Array.isArray(local)?local.filter(b=>String(b?.title||'')===secondTitle):[];
+  const staleLocal=Array.isArray(local)?local.filter(b=>String(b?.title||'')===firstTitle):[];
+  const hasChapterTimestamps=(book)=>Array.isArray(book?.chapters)&&book.chapters.some(ch=>Array.isArray(ch?.paragraphTimestamps)&&ch.paragraphTimestamps.length>0);
 
   window.readerBackToLibrary?.();
   await waitFor(()=>{{
@@ -156,64 +188,86 @@ result = cdp.eval(f"""(async()=>{{
     return library&&reading&&getComputedStyle(library).display!=='none'&&getComputedStyle(reading).display==='none';
   }},6000);
   await Promise.resolve(window.renderReaderScreen?.());
-  await new Promise(r=>setTimeout(r,400));
+  await new Promise(r=>setTimeout(r,350));
   const libraryList=document.getElementById('reader-library-list');
   const cardTitles=[...(libraryList?.querySelectorAll?.('.lib-book-title')||[])].map(x=>String(x.textContent||'').trim());
 
   return {{
     parseStatus,
-    statsBefore,
-    statsAfter,
-    epubStartsDelta:Number(statsAfter.epubStarts||0)-Number(statsBefore.epubStarts||0),
-    canonicalResetsDelta:Number(statsAfter.canonicalResets||0)-Number(statsBefore.canonicalResets||0),
-    dedupedCallsDelta:Number(statsAfter.dedupedCalls||0)-Number(statsBefore.dedupedCalls||0),
-    blockedConcurrentDelta:Number(statsAfter.blockedConcurrent||0)-Number(statsBefore.blockedConcurrent||0),
+    isolationBefore,
+    isolationAfter,
+    semanticBefore,
+    semanticAfter,
+    isolationStartsDelta:Number(isolationAfter.epubStarts||0)-Number(isolationBefore.epubStarts||0),
+    canonicalResetsDelta:Number(isolationAfter.canonicalResets||0)-Number(isolationBefore.canonicalResets||0),
+    dedupedCallsDelta:Number(isolationAfter.dedupedCalls||0)-Number(isolationBefore.dedupedCalls||0),
+    blockedConcurrentDelta:Number(isolationAfter.blockedConcurrent||0)-Number(isolationBefore.blockedConcurrent||0),
+    supersededCallsDelta:Number(isolationAfter.supersededCalls||0)-Number(isolationBefore.supersededCalls||0),
+    semanticStartsDelta:Number(semanticAfter.starts||0)-Number(semanticBefore.starts||0),
+    semanticDedupedDelta:Number(semanticAfter.deduped||0)-Number(semanticBefore.deduped||0),
+    semanticSupersededDelta:Number(semanticAfter.superseded||0)-Number(semanticBefore.superseded||0),
+    semanticCancelledDelta:Number(semanticAfter.cancelled||0)-Number(semanticBefore.cancelled||0),
     staleAudioStatusVisible,
     staleAudioTitle,
     staleAudioAuthor,
     staleAudioPreview,
+    finalUiTitle,
+    finalUiAuthor,
+    finalPreviewHasSecond:finalPreview.includes('SECOND-MUST-WIN'),
+    finalPreviewHasFirst:finalPreview.includes('FIRST-SHOULD-DIE'),
     openedReady,
     openedTitle:String(opened?.title||''),
     openedFull:!!opened?.chapters?.length,
     openedChapterCount:Array.isArray(opened?.chapters)?opened.chapters.length:0,
     openedHasOriginalAudio:!!opened?.hasOriginalAudio,
-    openedHasParagraphTimestamps:Array.isArray(opened?.paragraphTimestamps)&&opened.paragraphTimestamps.length>0,
+    openedHasParagraphTimestamps:hasChapterTimestamps(opened),
     durableCount:durable.length,
-    durableMatches:durableMatches.length,
-    durableHasAudio:durableMatches.some(b=>!!b?.hasOriginalAudio),
-    durableHasTimestamps:durableMatches.some(b=>Array.isArray(b?.paragraphTimestamps)&&b.paragraphTimestamps.length>0),
+    finalDurableMatches:finalDurable.length,
+    staleDurableMatches:staleDurable.length,
+    durableHasAudio:finalDurable.some(b=>!!b?.hasOriginalAudio),
+    durableHasTimestamps:finalDurable.some(hasChapterTimestamps),
     localCount:Array.isArray(local)?local.length:-1,
-    localMatches:localMatches.length,
-    cardMatches:cardTitles.filter(x=>x===title).length,
+    finalLocalMatches:finalLocal.length,
+    staleLocalMatches:staleLocal.length,
+    finalCardMatches:cardTitles.filter(x=>x===secondTitle).length,
+    staleCardMatches:cardTitles.filter(x=>x===firstTitle).length,
     cardTitles,
   }};
-}})()""", 70)
+}})()""", 90)
 
 summary = {'before': before, 'after': result}
-(OUT / 'toc128-audio-epub-reuse.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
+(OUT / 'toc129-import-supersede.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
 print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
 
 if not result:
-    raise RuntimeError('audio→EPUB audit returned no result')
-if result['epubStartsDelta'] != 1:
-    raise RuntimeError('same EPUB launched semantic parser more than once: ' + repr(summary))
-if result['canonicalResetsDelta'] != 1:
-    raise RuntimeError('EPUB did not reset canonical pending audio import state exactly once: ' + repr(summary))
+    raise RuntimeError('import supersede audit returned no result')
+if result['isolationStartsDelta'] != 2 or result['semanticStartsDelta'] != 2:
+    raise RuntimeError('expected exactly first + latest semantic EPUB starts: ' + repr(summary))
+if result['canonicalResetsDelta'] != 2:
+    raise RuntimeError('each distinct manual EPUB did not reset stale audio state exactly once: ' + repr(summary))
 if result['dedupedCallsDelta'] < 1:
-    raise RuntimeError('duplicate EPUB file event was not deduplicated: ' + repr(summary))
+    raise RuntimeError('duplicate latest EPUB event was not deduplicated: ' + repr(summary))
 if result['blockedConcurrentDelta'] != 0:
-    raise RuntimeError('same-file duplicate was treated as another EPUB instead of same-flight reuse: ' + repr(summary))
+    raise RuntimeError('new EPUB was still blocked behind old parse: ' + repr(summary))
+if result['supersededCallsDelta'] < 1 or result['semanticSupersededDelta'] < 1:
+    raise RuntimeError('different EPUB did not supersede active import: ' + repr(summary))
+if result['semanticCancelledDelta'] < 1:
+    raise RuntimeError('superseded parser did not stop at semantic progress boundary: ' + repr(summary))
 if result['staleAudioStatusVisible'] or result['staleAudioTitle'] or result['staleAudioAuthor'] or result['staleAudioPreview']:
     raise RuntimeError('audio import residue remained visible after EPUB takeover: ' + repr(summary))
-if not result['openedReady'] or result['openedTitle'] != TITLE or not result['openedFull'] or result['openedChapterCount'] != CHAPTERS:
-    raise RuntimeError('EPUB after audio did not open cleanly: ' + repr(summary))
+if result['finalUiTitle'] != SECOND_TITLE or result['finalUiAuthor'] != AUTHOR or not result['finalPreviewHasSecond'] or result['finalPreviewHasFirst']:
+    raise RuntimeError('stale first parser overwrote final import UI: ' + repr(summary))
+if not result['openedReady'] or result['openedTitle'] != SECOND_TITLE or not result['openedFull'] or result['openedChapterCount'] != SECOND_CHAPTERS:
+    raise RuntimeError('latest selected EPUB did not open cleanly: ' + repr(summary))
 if result['openedHasOriginalAudio'] or result['openedHasParagraphTimestamps']:
-    raise RuntimeError('previous audio attachment/timestamps leaked into EPUB book: ' + repr(summary))
-if result['durableMatches'] != 1 or result['localMatches'] != 1 or result['cardMatches'] != 1:
-    raise RuntimeError('audio→EPUB flow created missing/duplicate book state: ' + repr(summary))
+    raise RuntimeError('previous audio attachment/timestamps leaked into latest EPUB: ' + repr(summary))
+if result['finalDurableMatches'] != 1 or result['finalLocalMatches'] != 1 or result['finalCardMatches'] != 1:
+    raise RuntimeError('latest EPUB created missing/duplicate durable state: ' + repr(summary))
+if result['staleDurableMatches'] or result['staleLocalMatches'] or result['staleCardMatches']:
+    raise RuntimeError('superseded EPUB was accidentally saved or rendered: ' + repr(summary))
 if result['durableHasAudio'] or result['durableHasTimestamps']:
-    raise RuntimeError('stale audio metadata leaked into durable EPUB: ' + repr(summary))
+    raise RuntimeError('stale audio metadata leaked into durable latest EPUB: ' + repr(summary))
 if result['durableCount'] < before['count'] + 1 or result['localCount'] < before['count'] + 1:
-    raise RuntimeError('audio→EPUB flow did not increase library count: ' + repr(summary))
+    raise RuntimeError('latest EPUB did not increase library count: ' + repr(summary))
 
 cdp.close()
