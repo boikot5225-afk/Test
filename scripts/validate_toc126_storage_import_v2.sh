@@ -37,6 +37,14 @@ external = text('js/reader/android-external-import.js')
 handler = text('js/reader/handler-bridge.js')
 audio_isolation = text('js/reader/audio-epub-import-isolation.js')
 delete_fix = text('js/reader/delete-fix.js')
+interactions_runtime = text('js/reader/interactions-runtime.js')
+en_vocab = text('js/reader/en-vocab-estimate.js')
+en_morph = text('js/reader/en-morphology-resolver.js')
+en_gloss = text('js/reader/en-unknown-gloss-v2.js')
+en_old_context = text('js/reader/en-context-gloss-v1.js')
+en_fixes = text('js/reader/en-context-fixes-v1.js')
+en_batch = text('js/reader/en-context-batch-v2.js')
+en_task = text('functions/en-context-task.js')
 fr_vocab = text('js/reader/fr-vocab-estimate.js')
 fr_builder = text('scripts/build_fr_reader_resources.py')
 gradle = text('android/app/build.gradle')
@@ -44,10 +52,73 @@ runner = text('scripts/run_toc126_storage_emulator.sh')
 audio_epub_audit = text('scripts/audit_toc128_audio_epub_reuse.py')
 fr_audit = text('scripts/audit_toc130_french_assets_live.py')
 dropcap_audit = text('scripts/audit_toc131_epub_dropcap_live.py')
+en_audit = text('scripts/audit_toc132_english_context_live.py')
 
-assert "versionCode 1024" in gradle
-assert "versionName '77.42-toc131-epub-integrity'" in gradle
+assert "versionCode 1025" in gradle
+assert "versionName '77.42-toc132-en-context-batch'" in gradle
 assert "exclude { it.relativePath.toString() == 'app.js' }" in gradle
+
+# toc132 keeps the established English learning model intact. Migaku frequency,
+# conservative morphology and WikDict remain first paint; only a new contextual
+# replacement layer is added after them.
+assert 'const EXPECTED_COUNT = 36566' in en_vocab
+for probe in ["went:'go'", "gone:'go'", "am:'be'", "were:'be'"]:
+    assert probe in en_vocab, f'English vocabulary morphology sentinel missing: {probe}'
+assert 'SAFE_IRREGULAR' in en_morph and 'SAFE_CONTRACTIONS' in en_morph
+assert 'hits.size === 1' in en_morph, 'English morphology resolver became guessy'
+assert "../../../wikdict/en_ru_core.json?v=1" in en_gloss
+assert 'hasContextOverride(wrap)' in en_gloss
+assert "../../../wikdict/en_ru_senses.json?v=1" in en_old_context
+assert "wrap.dataset.enContextProvider || '') === 'deepseek-context'" in en_old_context
+assert "wrap.dataset.enContextProvider || '') === 'deepseek-context'" in en_fixes
+
+# The multi-sense English asset is no longer an undeclared side effect: Gradle
+# must declare and verify it explicitly because both old and new context layers use it.
+assert "def wikdictSensesJsonFile = layout.buildDirectory.file('generated/wikdictAssets/wikdict/en_ru_senses.json')" in gradle
+assert 'outputs.file(wikdictSensesJsonFile)' in gradle
+assert 'File sensesOutput = wikdictSensesJsonFile.get().asFile' in gradle
+assert 'Missing mandatory English WikDict asset' in gradle
+
+# New English batch mirrors the useful French architecture only: whole paragraph,
+# one bounded batch, exact occurrence cache and event-driven scheduling. It never
+# creates/moves Reader DOM and accepts a contextual replacement only at >=0.84.
+assert "import './en-context-batch-v2.js?v=1';" in interactions_runtime
+assert interactions_runtime.index("en-context-fixes-v1.js?v=2") < interactions_runtime.index("en-context-batch-v2.js?v=1") < interactions_runtime.index("fr-reader-pipeline-v2.js?v=1")
+assert "const MIN_CONFIDENCE = 0.84" in en_batch
+assert "const MAX_ACTIVE = 1" in en_batch
+assert "const MAX_TARGETS = 24" in en_batch
+assert "task: 'en_context_batch'" in en_batch
+assert "sourceLang: 'en'" in en_batch
+assert "wrap.dataset.enContextProvider = 'deepseek-context'" in en_batch
+assert "root?.dataset?.readerBookId || 'book'" in en_batch
+assert "root?.dataset?.renderedChapter || '0'" in en_batch
+assert 'hashText(normalize(context))' in en_batch
+assert "window.addEventListener('reader:pagechange'" in en_batch
+assert "window.addEventListener('reader:en-vocab-ready'" in en_batch
+assert "window.addEventListener('reader:en-morphology-augmented'" in en_batch
+assert "window.addEventListener('reader:word-state-changed'" in en_batch
+assert 'MutationObserver' not in en_batch
+for forbidden in ['renderReaderChapter', 'readerNextParagraph', 'readerPrevParagraph', 'readerSelectParagraph', 'createElement(', 'appendChild(', 'insertBefore(']:
+    assert forbidden not in en_batch, f'English context batch crossed Reader/layout boundary: {forbidden}'
+
+# Backend prompt is contextual but explicitly conservative; the client remains
+# the final gate and refuses low-confidence or proper-name replacements.
+assert 'buildEnContextBatchPrompt' in en_task
+assert 'offline WikDict gloss' in en_task
+assert 'DO NOT change a reasonable dictionary gloss just to sound different' in en_task
+assert 'Phrasal verbs, idioms and collocations' in en_task
+assert 'Be conservative with confidence' in en_task
+assert "pos=\"proper_noun\", ru=\"\"" in en_task
+assert "confidence < MIN_CONFIDENCE" in en_batch
+assert "pos === 'proper_noun'" in en_batch
+
+# toc132 Android audit runs only after all older import/EPUB/French regressions.
+assert 'scripts/audit_toc132_english_context_live.py' in runner
+assert runner.index('scripts/audit_toc131_epub_dropcap_live.py') < runner.index('scripts/audit_toc130_french_assets_live.py') < runner.index('scripts/audit_toc132_english_context_live.py')
+assert "river-bank contextual gloss failed" in en_audit
+assert "Financial-bank contextual gloss failed" in en_audit
+assert "Low-confidence AI overwrote offline English gloss" in en_audit
+assert "Proper-name AI result erased/overrode English gloss" in en_audit
 
 # toc130 French assets remain a mandatory Gradle input, never a validation-script side effect.
 assert "def frenchReaderAssetDir = layout.buildDirectory.dir('generated/frenchReaderAssets')" in gradle
@@ -67,10 +138,7 @@ assert 'scripts/audit_toc130_french_assets_live.py' in runner
 assert 'readerLoadFrenchVocabularyData' in fr_audit
 assert 'fr_ru_core.json' in fr_audit and 'fr_ru_senses.json' in fr_audit
 
-# toc131: decorative opening initials are normalized in the real-world EPUB
-# compatibility layer before the base semantic parser sees block structure.
-# Do not globally relax the base parser's one-character boilerplate rule: the
-# semantic repair is to rejoin a real drop-cap prefix with its continuation.
+# toc131 decorative opening initials remain intact.
 assert 'normalized.length <= 1' in epub_base
 assert 'const DROP_CAP_PARENT_RE' in epub_real
 assert 'const DROP_CAP_CHILD_RE' in epub_real
@@ -155,9 +223,7 @@ assert "toc-direct.js" not in external
 assert 'bytes.subarray(dataStart, dataStart + compressedSize)' in epub
 assert 'bytes.slice(dataStart, dataStart + compressedSize)' not in epub
 
-# The semantic bridge is intentionally the proven toc128 ACTION_VIEW path.
-# Do not add generation/cancellation state here: that experiment regressed the
-# legacy-library migration before the manual-import regression even ran.
+# Proven ACTION_VIEW/import path remains unchanged.
 assert "reader-app.js?v=77.42-zh-reader-quality" in app
 assert "reader-app.js?v=77.42-zh-reader-quality" in handler
 assert "reader-app.js?v=77.42-zh-reader-quality" in bridge
@@ -177,10 +243,7 @@ assert 'libraryIdbDeleteBook(storageKey, wantedId)' in delete_fix
 assert 'localStorage.setItem(storageKey, JSON.stringify(books))' not in delete_fix
 assert "import { libraryIdbDeleteBook } from './library-idb-store.js?v=1';" in delete_fix
 
-# toc129 manual-import isolation. ACTION_VIEW bypasses this behavior entirely.
-# A different EPUB selected during a parse is queued rather than dropped or run
-# concurrently. Only the newest queued generation proceeds after the active
-# semantic parser settles. Duplicate delivery of the newest file shares one promise.
+# toc129 manual-import isolation remains intact.
 assert "import './audio-epub-import-isolation.js?v=1';" in handler
 assert '__readerAudioEpubIsolationV1' not in handler
 assert 'activeEpubImport' not in handler
@@ -226,7 +289,7 @@ for runtime_path in (root / 'js').rglob('*.js'):
     runtime_source = runtime_path.read_text(encoding='utf-8')
     assert 'reader-app.js?v=77.32' not in runtime_source, f'duplicate Reader module identity survived: {runtime_path}'
 
-print('toc131 EPUB integrity + French + toc129 import/storage source gate: PASS')
+print('toc132 English context + toc131 EPUB + French + toc129 import/storage source gate: PASS')
 PY
 
 TMP="$(mktemp -d)"
@@ -243,16 +306,20 @@ for f in \
   js/reader/handler-bridge.js \
   js/reader/audio-epub-import-isolation.js \
   js/reader/delete-fix.js \
+  js/reader/interactions-runtime.js \
+  js/reader/en-context-batch-v2.js \
   js/reader/fr-vocab-estimate.js; do
   target="$TMP/$(echo "$f" | tr '/' '_').mjs"
   cp "$f" "$target"
   node --check "$target"
 done
+node --check functions/en-context-task.js
 
 python3 -m py_compile \
   scripts/audit_toc128_audio_epub_reuse.py \
   scripts/audit_toc130_french_assets_live.py \
   scripts/audit_toc131_epub_dropcap_live.py \
+  scripts/audit_toc132_english_context_live.py \
   scripts/build_fr_reader_resources.py
 
-echo 'toc131 JS/Python syntax: PASS'
+echo 'toc132 JS/Python syntax: PASS'
