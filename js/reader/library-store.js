@@ -358,17 +358,27 @@ export function createReaderLibraryStore({
 
     const byId = new Map(current.filter(book => book?.id).map(book => [book.id, book]));
     let changed = false;
+    // libraryIdbGet() can fold a legacy book's still-available payload
+    // straight into its result even before that book has actually round-
+    // tripped through IndexedDB book-records (see _idbPendingMigration in
+    // library-idb-store.js). That keeps the rest of the library visible, but
+    // localStorage is that book's only other full copy — never let it be
+    // compacted away to a chapters-less index until migration truly lands.
+    let hasPendingMigration = false;
     for (const idbBook of fromIdb) {
       if (!idbBook?.id) continue;
+      if (idbBook._idbPendingMigration) hasPendingMigration = true;
       const local = byId.get(idbBook.id);
       const winner = preferRicherBook(idbBook, local);
       if (winner !== local || isIndexOnlyBook(local)) changed = true;
       byId.set(idbBook.id, winner);
     }
 
-    const merged = dedupePreservingOpenBook([...byId.values()]);
+    const merged = dedupePreservingOpenBook([...byId.values()])
+      .map(book => (book._idbPendingMigration ? (({ _idbPendingMigration, ...rest }) => rest)(book) : book));
     applyPositions(merged);
     setBooks(merged);
+    if (hasPendingMigration) return changed || localContainsLegacyFullBooks;
     try { writeLocalIndex(merged); }
     catch (error) { onError('[reader] library index refresh failed', error); }
     return changed || localContainsLegacyFullBooks;

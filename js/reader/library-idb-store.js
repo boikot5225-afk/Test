@@ -384,9 +384,14 @@ async function migrateLegacySources(key) {
 export async function libraryIdbGet(key) {
   const libraryKey = cleanLibraryKey(key);
 
-  // Never report a migration source as durable until it has actually
-  // round-tripped through book-records. Callers use successful idbGet() as the
-  // signal that it is safe to compact the legacy localStorage snapshot.
+  // Best-effort: migrateLegacySources() keeps retrying an incomplete legacy
+  // migration on every call until it lands. A book stuck mid-migration must
+  // never make this call fail outright — that used to throw here and made
+  // hydrateFromIndexedDB() (which silently swallows read errors) skip
+  // updating the live library, hiding books that were already durably
+  // written by a concurrent/prior libraryIdbPut() (e.g. a book just
+  // imported and saved). Keep attempting migration, but always return the
+  // fullest library snapshot we can assemble instead of discarding it.
   let migrationError = null;
   try {
     await migrateLegacySources(libraryKey);
@@ -394,7 +399,7 @@ export async function libraryIdbGet(key) {
     migrationError = error;
   }
 
-  let index = await libraryIdbGetIndex(libraryKey);
+  const index = await libraryIdbGetIndex(libraryKey);
   let records = index.length
     ? await readBookRecords(libraryKey, index.map(item => item.id))
     : [];
@@ -402,14 +407,20 @@ export async function libraryIdbGet(key) {
   const legacyLocal = readLegacyLocalStorageSnapshot(libraryKey);
   if (legacyLocal.length) {
     const byId = new Map(records.filter(book => book?.id).map(book => [String(book.id), book]));
-    const missing = legacyLocal
-      .filter(book => !isFullBook(byId.get(String(book.id))))
-      .map(book => String(book.id));
+    const missing = legacyLocal.filter(book => !isFullBook(byId.get(String(book.id))));
     if (missing.length) {
-      throw migrationError || new Error(`[reader] legacy migration incomplete: ${missing.join(',')}`);
+      // Fold the still-available legacy payload straight into the result
+      // rather than dropping every other book in the library on the floor.
+      // These entries are NOT yet proven durable in book-records — tag them
+      // so callers that compact localStorage (the only other copy) can wait
+      // for a real migration success instead of deleting the sole full copy.
+      console.warn('[reader] legacy migration incomplete, returning best-effort library', missing.map(book => String(book.id)));
+      for (const book of missing) byId.set(String(book.id), { ...book, _idbPendingMigration: true });
+      records = [...byId.values()];
     }
   }
 
+  if (records.length) return records;
   if (migrationError) throw migrationError;
   if (index.length) return records;
 
@@ -418,7 +429,9 @@ export async function libraryIdbGet(key) {
   const legacy = await readLegacySnapshot(libraryKey);
   if (!Array.isArray(legacy) || !legacy.length) return null;
   await libraryIdbPut(libraryKey, legacy);
-  index = await libraryIdbGetIndex(libraryKey);
-  records = index.length ? await readBookRecords(libraryKey, index.map(item => item.id)) : [];
-  return records.length ? records : null;
+  const migratedIndex = await libraryIdbGetIndex(libraryKey);
+  const migratedRecords = migratedIndex.length
+    ? await readBookRecords(libraryKey, migratedIndex.map(item => item.id))
+    : [];
+  return migratedRecords.length ? migratedRecords : null;
 }
