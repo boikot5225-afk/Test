@@ -107,3 +107,10 @@ adb exec-out screencap -p > runtime-audit/toc126-99-after-restart-delete.png
 # both the durable and visible library by one.
 python3 scripts/audit_toc127_manual_import_ui.py
 adb exec-out screencap -p > runtime-audit/toc127-100-after-manual-import.png
+
+# Regression from the next real recording: an audio transcription was prepared
+# in the import modal, then another EPUB was chosen. Stale audio state must be
+# cleared before semantic EPUB save and duplicate file events must reuse one ZIP
+# parse rather than run two competing 49-chapter parsers.
+python3 scripts/audit_toc128_audio_epub_reuse.py
+adb exec-out screencap -p > runtime-audit/toc128-110-after-audio-epub-reuse.png
