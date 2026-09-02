@@ -20,6 +20,16 @@ adb forward --remove tcp:9222 >/dev/null 2>&1 || true
 adb forward tcp:9222 "localabstract:webview_devtools_remote_${PID}"
 python3 scripts/prepare_toc126_legacy_storage.py | tee runtime-audit/toc126-legacy-seed.json
 
+# localStorage.setItem() is synchronous to JavaScript, but Android WebView's
+# backing LevelDB may still be flushing a multi-megabyte value when the process
+# is killed. A test that force-stops immediately can therefore manufacture a
+# fake migration loss before the next process even starts. Give WebView time to
+# flush, then independently re-read the exact full legacy book before killing
+# the process. If this check fails, ACTION_VIEW is never launched and the
+# failure is correctly classified as a seed/harness failure.
+sleep 3
+python3 scripts/audit_toc126_legacy_seed_before_stop.py | tee runtime-audit/toc126-legacy-pre-stop.json
+
 # Import through the same ACTION_VIEW/content hand-off used by Android users.
 adb push runtime-audit/toc126-storage-audit.epub /data/local/tmp/toc126-storage-audit.epub
 adb shell run-as "$PKG" cp /data/local/tmp/toc126-storage-audit.epub cache/toc126-storage-audit.epub
