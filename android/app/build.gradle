@@ -26,8 +26,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 1021
-        versionName '77.42-toc128-audio-epub-reset'
+        versionCode 1022
+        versionName '77.42-toc129-import-supersede'
     }
 
     buildFeatures {
