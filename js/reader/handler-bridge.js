@@ -103,8 +103,10 @@ async function resetCanonicalPendingImport(canonicalImport) {
 
 // Semantic EPUB bypasses reader-app's normal file-import entry point. That used
 // to leave audio-pending state behind after transcription, and repeated file
-// events could launch two ZIP parsers over the same EPUB. Keep semantic parsing
-// single-flight and explicitly run the canonical reset before every new EPUB.
+// events could launch two ZIP parsers over the same EPUB. Keep manual semantic
+// parsing single-flight and explicitly run the canonical reset before a new EPUB.
+// Android ACTION_VIEW is deliberately excluded: its cold-start path already has
+// the toc126 durable migration barrier and has no previous in-modal audio state.
 function installImportIsolationBridge() {
   const current = liveHandler('readerImportFromFile');
   if (!current) return false;
@@ -121,6 +123,13 @@ function installImportIsolationBridge() {
     const file = importFile(event);
     const isEpub = !!file && String(file.name || '').toLowerCase().endsWith('.epub');
     if (!isEpub) return semanticImport.call(this, event, ...args);
+
+    // Preserve the already-green cold ACTION_VIEW migration path byte-for-byte
+    // in behavior. Running the synthetic manual reset here can compact the
+    // legacy full localStorage snapshot before semantic-import's durable barrier.
+    if (event?.androidExternal === true) {
+      return semanticImport.call(this, event, ...args);
+    }
 
     const fingerprint = epubFingerprint(file);
     if (activeEpubImport) {
