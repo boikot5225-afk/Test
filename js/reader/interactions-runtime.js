@@ -12,6 +12,7 @@ import './en-unknown-gloss-v2.js?v=5'; // toc105: context/DeepSeek overrides out
 import './en-unknown-gloss-full-fallback.js?v=2';
 import './en-context-gloss-v1.js?v=2'; // toc105: never overwrite DeepSeek context; text-only
 import './en-context-fixes-v1.js?v=2'; // toc105: DeepSeek context has final priority; text-only
+import './en-context-batch-v2.js?v=1'; // toc132: whole-paragraph batch, high-confidence replacement only
 import './fr-reader-pipeline-v2.js?v=1'; // toc124: event-driven French Known/Unknown + immediate local glosses
 import './fr-context-batch-v5.js?v=1'; // toc125: paragraph DeepSeek via readerAI; guest mode needs no Firebase account
 import './fr-lexical-pipeline-v2.js?v=124'; // French word-card lexical owner; occurrence context stays local
