@@ -215,6 +215,20 @@ async function verifyFullRecords(key, books) {
   return true;
 }
 
+async function verifyIndexedRecords(key, books) {
+  const expectedIds = (Array.isArray(books) ? books : [])
+    .filter(isFullBook)
+    .map(book => String(book.id));
+  if (!expectedIds.length) return true;
+  const index = await libraryIdbGetIndex(key);
+  const indexedIds = new Set((Array.isArray(index) ? index : []).map(item => String(item?.id || '')).filter(Boolean));
+  const missing = expectedIds.filter(id => !indexedIds.has(id));
+  if (missing.length) {
+    throw new Error(`[reader] durable index verification failed: ${missing.join(',')}`);
+  }
+  return true;
+}
+
 export async function libraryIdbGetBook(key, bookId) {
   const rows = await readBookRecords(key, [bookId]);
   return rows[0] || null;
@@ -252,42 +266,54 @@ export async function libraryIdbPut(key, books) {
   const libraryKey = cleanLibraryKey(key);
   const source = Array.isArray(books) ? books.filter(book => book?.id) : [];
   const incomingIndex = source.map(indexEntry);
-  const previousIndex = await libraryIdbGetIndex(libraryKey).catch(() => []);
-  const previousById = new Map(previousIndex.map(item => [String(item?.id || ''), item]));
-  const mergedIndex = mergeIndexes(previousIndex, incomingIndex);
-  const changedIds = new Set();
-  for (const item of incomingIndex) {
-    if (!sameRevision(previousById.get(item.id), item)) changedIds.add(item.id);
-  }
-
   const db = await openDB();
+  let mergedIndex = [];
+
+  // The current index MUST be read inside the same readwrite transaction that
+  // writes the merged result. Reader loads this module through more than one
+  // query-string URL (?v=1 and ?v=2), so module-local mutexes cannot prevent a
+  // lost update. IndexedDB serializes overlapping readwrite transactions across
+  // all those independent module/connection instances.
   await new Promise((resolve, reject) => {
     const tx = db.transaction([BOOK_STORE, INDEX_STORE], 'readwrite');
     const store = tx.objectStore(BOOK_STORE);
     const indexStore = tx.objectStore(INDEX_STORE);
+    const indexReq = indexStore.get(libraryKey);
+    let requestError = null;
 
-    for (const book of source) {
-      const id = String(book.id || '');
-      const full = isFullBook(book);
-      // A full payload must always refresh the record even when its lightweight
-      // index revision happens to match. That exact state can occur when an
-      // index-only write races legacy migration; skipping here creates a ghost
-      // index with no chapters and loses the old book on compaction.
-      if (!full) continue;
-      store.put({ key: recordKey(libraryKey, id), libraryKey, bookId: id, book });
-    }
-    // IMPORTANT: no implicit deletes here. During startup, owner switching,
-    // migration or async cloud merge, the caller may temporarily hold only a
-    // subset of the library. Only libraryIdbDeleteBook() may remove records.
-    indexStore.put(mergedIndex, libraryKey);
+    indexReq.onsuccess = () => {
+      const previousIndex = Array.isArray(indexReq.result) ? indexReq.result : [];
+      mergedIndex = mergeIndexes(previousIndex, incomingIndex);
+
+      for (const book of source) {
+        const id = String(book.id || '');
+        const full = isFullBook(book);
+        // A full payload must always refresh the record even when its lightweight
+        // index revision happens to match. That exact state can occur when an
+        // index-only write races legacy migration; skipping here creates a ghost
+        // index with no chapters and loses the old book on compaction.
+        if (!full) continue;
+        store.put({ key: recordKey(libraryKey, id), libraryKey, bookId: id, book });
+      }
+      // IMPORTANT: no implicit deletes here. During startup, owner switching,
+      // migration or async cloud merge, the caller may temporarily hold only a
+      // subset of the library. Only libraryIdbDeleteBook() may remove records.
+      indexStore.put(mergedIndex, libraryKey);
+    };
+    indexReq.onerror = () => {
+      requestError = indexReq.error || new Error('[reader] library index merge read failed');
+      try { tx.abort(); } catch {}
+    };
     tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error || new Error('[reader] library IndexedDB write failed'));
-    tx.onabort = () => reject(tx.error || new Error('[reader] library IndexedDB write aborted'));
+    tx.onerror = () => reject(requestError || tx.error || new Error('[reader] library IndexedDB write failed'));
+    tx.onabort = () => reject(requestError || tx.error || new Error('[reader] library IndexedDB write aborted'));
   });
   // Transaction completion alone is not enough for migration safety: prove
-  // every full source book round-trips from book-records before any caller is
-  // allowed to shrink localStorage to an index.
+  // every full source book round-trips from book-records AND remains reachable
+  // through the durable index before any caller may compact localStorage or
+  // announce a successful import.
   await verifyFullRecords(libraryKey, source);
+  await verifyIndexedRecords(libraryKey, source);
   return mergedIndex;
 }
 
@@ -299,24 +325,37 @@ export async function libraryIdbPutBook(key, book) {
   if (!isFullBook(durableBook)) {
     throw new Error(`[reader] refusing index-only book record: ${String(book.id)}`);
   }
-  const current = await libraryIdbGetIndex(libraryKey).catch(() => []);
   const nextEntry = indexEntry(durableBook);
-  const nextIndex = mergeIndexes(current, [nextEntry]);
   const db = await openDB();
+  let nextIndex = [];
   await new Promise((resolve, reject) => {
     const tx = db.transaction([BOOK_STORE, INDEX_STORE], 'readwrite');
-    tx.objectStore(BOOK_STORE).put({
-      key: recordKey(libraryKey, nextEntry.id),
-      libraryKey,
-      bookId: nextEntry.id,
-      book: durableBook,
-    });
-    tx.objectStore(INDEX_STORE).put(nextIndex, libraryKey);
+    const bookStore = tx.objectStore(BOOK_STORE);
+    const indexStore = tx.objectStore(INDEX_STORE);
+    const indexReq = indexStore.get(libraryKey);
+    let requestError = null;
+
+    indexReq.onsuccess = () => {
+      const current = Array.isArray(indexReq.result) ? indexReq.result : [];
+      nextIndex = mergeIndexes(current, [nextEntry]);
+      bookStore.put({
+        key: recordKey(libraryKey, nextEntry.id),
+        libraryKey,
+        bookId: nextEntry.id,
+        book: durableBook,
+      });
+      indexStore.put(nextIndex, libraryKey);
+    };
+    indexReq.onerror = () => {
+      requestError = indexReq.error || new Error('[reader] single book index merge read failed');
+      try { tx.abort(); } catch {}
+    };
     tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error || new Error('[reader] single book write failed'));
-    tx.onabort = () => reject(tx.error || new Error('[reader] single book write aborted'));
+    tx.onerror = () => reject(requestError || tx.error || new Error('[reader] single book write failed'));
+    tx.onabort = () => reject(requestError || tx.error || new Error('[reader] single book write aborted'));
   });
   await verifyFullRecords(libraryKey, [durableBook]);
+  await verifyIndexedRecords(libraryKey, [durableBook]);
   return true;
 }
 
@@ -324,16 +363,27 @@ export async function libraryIdbDeleteBook(key, bookId) {
   const libraryKey = cleanLibraryKey(key);
   const id = String(bookId || '');
   if (!id) return false;
-  const current = await libraryIdbGetIndex(libraryKey).catch(() => []);
-  const next = current.filter(item => String(item?.id || '') !== id);
   const db = await openDB();
   await new Promise((resolve, reject) => {
     const tx = db.transaction([BOOK_STORE, INDEX_STORE], 'readwrite');
-    tx.objectStore(BOOK_STORE).delete(recordKey(libraryKey, id));
-    tx.objectStore(INDEX_STORE).put(next, libraryKey);
+    const bookStore = tx.objectStore(BOOK_STORE);
+    const indexStore = tx.objectStore(INDEX_STORE);
+    const indexReq = indexStore.get(libraryKey);
+    let requestError = null;
+
+    indexReq.onsuccess = () => {
+      const current = Array.isArray(indexReq.result) ? indexReq.result : [];
+      const next = current.filter(item => String(item?.id || '') !== id);
+      bookStore.delete(recordKey(libraryKey, id));
+      indexStore.put(next, libraryKey);
+    };
+    indexReq.onerror = () => {
+      requestError = indexReq.error || new Error('[reader] delete index merge read failed');
+      try { tx.abort(); } catch {}
+    };
     tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error || new Error('[reader] single book delete failed'));
-    tx.onabort = () => reject(tx.error || new Error('[reader] single book delete aborted'));
+    tx.onerror = () => reject(requestError || tx.error || new Error('[reader] single book delete failed'));
+    tx.onabort = () => reject(requestError || tx.error || new Error('[reader] single book delete aborted'));
   });
   return true;
 }
