@@ -352,7 +352,6 @@ async function refineParagraph(paragraph, dict) {
   } finally {
     state.inFlight.delete(paragraphKey);
     state.active = Math.max(0, state.active - 1);
-    schedule('next-paragraph', 40);
   }
 }
 
@@ -361,9 +360,13 @@ async function refine(reason = 'event') {
   const paragraphs = visibleParagraphs();
   if (!paragraphs.length) return;
   const dict = await loadSenses();
+  // Drain the visible paragraph set in one event-driven pass. With MAX_ACTIVE=1
+  // each request still runs strictly one-at-a-time, but a fast first paragraph
+  // can no longer starve the remaining visible paragraphs until another Reader
+  // event happens to fire.
   for (const paragraph of paragraphs) {
-    if (state.active >= MAX_ACTIVE) break;
-    void refineParagraph(paragraph, dict);
+    if (currentLang() !== 'en') break;
+    await refineParagraph(paragraph, dict);
   }
 }
 
