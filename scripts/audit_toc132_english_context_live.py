@@ -35,6 +35,20 @@ result = cdp.eval(r"""(async()=>{
       <span class="rw-en-gloss-wrap" data-en-gloss="1" data-en-gloss-visible="1"><span class="reader-word rw-migaku-unknown" data-word="London" data-lang="en">London</span><span class="rw-en-gloss-text">Лондон</span></span> was quiet.
     </div></div>`;
 
+  // The production EN/FR batchers deliberately work only on geometrically
+  // visible paragraphs. The audit injects synthetic DOM into whatever Reader
+  // page happened to be on-screen after the previous regression tests, so its
+  // native layout is not a deterministic visibility fixture. Make all four
+  // audit paragraphs explicitly visible rather than weakening the production
+  // selector or accepting an unprocessed offline gloss.
+  [...root.querySelectorAll('.reader-paragraph')].forEach((paragraph,index)=>{
+    const top=80+(index*90);
+    paragraph.getBoundingClientRect=()=>({
+      x:20,y:top,left:20,top,right:620,bottom:top+64,width:600,height:64,
+      toJSON(){return this;},
+    });
+  });
+
   const oldFirebase=globalThis.firebase;
   const oldFallback=globalThis.__AN2_FALLBACK_FIREBASE;
   const calls=[];
