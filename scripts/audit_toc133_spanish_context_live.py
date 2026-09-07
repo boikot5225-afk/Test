@@ -24,10 +24,12 @@ result = cdp.eval(r"""(async()=>{
   root.dataset.renderedChapter='8';
 
   // Use the production vocabulary owner instead of painting fake Unknown
-  // classes by hand.  A zero conservative Known boundary makes every lexical
-  // fixture Unknown while proper names still go through the real local proper
-  // guard.  This is disposable test state and is restored below.
-  const profileKey='an2_reader_vocab_estimate_es_v1::guest';
+  // classes by hand. A zero conservative Known boundary makes lexical fixtures
+  // Unknown while the real proper-name heuristic remains active. Test state is
+  // scoped to whichever owner the app actually uses and restored below.
+  const owner=localStorage.getItem('an2_reader_active_owner_v1') ||
+    (localStorage.getItem('an2_guest')==='1'?'guest':'anon');
+  const profileKey=`an2_reader_vocab_estimate_es_v1::${owner}`;
   const oldProfile=localStorage.getItem(profileKey);
   localStorage.setItem(profileKey,JSON.stringify({
     language:'es',version:1,estimate:0,conservativeKnownCount:0,
@@ -67,6 +69,7 @@ result = cdp.eval(r"""(async()=>{
           if(word==='banco' && /parque/i.test(context)) return {id:target.id,ru:'скамейка',lemma:'banco',pos:'noun',confidence:.97,note:''};
           if(word==='banco' && /depositó/i.test(context)) return {id:target.id,ru:'банк',lemma:'banco',pos:'noun',confidence:.98,note:''};
           if(word==='raro') return {id:target.id,ru:'странный',lemma:'raro',pos:'adjective',confidence:.60,note:''};
+          if(word==='madrid') return {id:target.id,ru:'',lemma:'Madrid',pos:'proper_noun',confidence:.99,note:''};
           return {id:target.id,ru:String(target.localRu||''),lemma:String(target.lemma||word),pos:'other',confidence:.91,note:''};
         });
         return {data:{items}};
@@ -99,8 +102,11 @@ result = cdp.eval(r"""(async()=>{
         throw new Error('Spanish lexical fixture is not a real Unknown with local gloss: '+JSON.stringify(fixture));
       }
     }
-    if(!lexical['3']?.proper || lexical['3']?.unknown || lexical['3']?.localRu) {
-      throw new Error('Spanish proper-name local guard failed before AI: '+JSON.stringify(fixture));
+    // A one-off sentence-initial capital must NOT be declared proper merely by
+    // capitalization. It stays Unknown and lets exact context make the final
+    // high-confidence proper_noun decision.
+    if(!lexical['3']?.unknown || lexical['3']?.proper) {
+      throw new Error('Spanish sentence-initial capitalization was mistaken for a proper noun: '+JSON.stringify(fixture));
     }
     const raroBefore=lexical['2'].localRu;
 
@@ -115,7 +121,7 @@ result = cdp.eval(r"""(async()=>{
       clearTimeout(shared.timer);clearTimeout(shared.retryTimer);
       shared.timer=0;shared.retryTimer=0;
     }
-    const mod=await import('./js/reader/es-context-batch-v1.js?v=77.42-toc133-live-audit-classified');
+    const mod=await import('./js/reader/es-context-batch-v1.js?v=77.42-toc133-live-audit-classified-v2');
     const fresh=globalThis.__readerEsContextBatchV1;
     if(fresh){
       fresh.cache=null;
@@ -140,7 +146,7 @@ result = cdp.eval(r"""(async()=>{
       };
     });
     const batchCalls=calls.filter(call=>call?.task==='es_context_batch'&&call?.sourceLang==='es');
-    return {rows,calls:batchCalls,fixture,raroBefore};
+    return {rows,calls:batchCalls,fixture,raroBefore,owner};
   } finally {
     if(oldProfile===null)localStorage.removeItem(profileKey);
     else localStorage.setItem(profileKey,oldProfile);
@@ -156,8 +162,8 @@ fixture = {row['p']: row for row in result.get('fixture', [])}
 for p in ('0', '1', '2'):
     if not fixture.get(p, {}).get('unknown') or fixture.get(p, {}).get('proper') or not fixture.get(p, {}).get('localRu'):
         raise RuntimeError('Spanish audit bypassed real lexical classification: ' + repr(result))
-if not fixture.get('3', {}).get('proper') or fixture.get('3', {}).get('unknown') or fixture.get('3', {}).get('localRu'):
-    raise RuntimeError('Spanish proper noun was not suppressed locally before context: ' + repr(result))
+if not fixture.get('3', {}).get('unknown') or fixture.get('3', {}).get('proper'):
+    raise RuntimeError('Spanish capitalization-only proper-name false positive: ' + repr(result))
 rows = {row['p']: row for row in result.get('rows', [])}
 if rows.get('0', {}).get('ru') != 'скамейка' or rows.get('0', {}).get('provider') != 'context-deepseek-batch':
     raise RuntimeError('park-banco contextual gloss failed: ' + repr(result))
@@ -168,13 +174,11 @@ if rows.get('0', {}).get('key') == rows.get('1', {}).get('key'):
 if rows.get('2', {}).get('ru') != result.get('raroBefore') or rows.get('2', {}).get('provider') != fixture.get('2', {}).get('localProvider'):
     raise RuntimeError('Low-confidence AI overwrote offline Spanish gloss: ' + repr(result))
 if not rows.get('3', {}).get('proper') or rows.get('3', {}).get('ru') or rows.get('3', {}).get('unknown'):
-    raise RuntimeError('Spanish proper noun leaked into translation after context: ' + repr(result))
-if len(result.get('calls', [])) != 3:
-    raise RuntimeError('Spanish batch did not drain the three lexical Unknown paragraphs: ' + repr(result))
+    raise RuntimeError('Spanish contextual proper noun was not suppressed: ' + repr(result))
+if len(result.get('calls', [])) != 4:
+    raise RuntimeError('Spanish batch did not drain all four visible paragraphs: ' + repr(result))
 for call in result['calls']:
     if call.get('task') != 'es_context_batch' or call.get('sourceLang') != 'es' or not call.get('context') or not call.get('targets'):
         raise RuntimeError('Malformed Spanish context batch payload: ' + repr(result))
-    if any(str(target.get('surface', '')).lower() == 'madrid' for target in call.get('targets', [])):
-        raise RuntimeError('Spanish proper noun was unnecessarily sent to AI: ' + repr(result))
 
 cdp.close()
