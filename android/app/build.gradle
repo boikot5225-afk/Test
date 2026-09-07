@@ -21,6 +21,11 @@ def migakuZhCacheDir = layout.buildDirectory.dir('migaku-zh-cache')
 def frenchReaderAssetDir = layout.buildDirectory.dir('generated/frenchReaderAssets')
 def frenchReaderOutputDir = layout.buildDirectory.dir('generated/frenchReaderAssets/frreader')
 def frenchReaderCacheDir = new File(repoRoot, 'build/fr-reader-cache')
+def spanishReaderAssetDir = layout.buildDirectory.dir('generated/spanishReaderAssets')
+def spanishReaderOutputDir = layout.buildDirectory.dir('generated/spanishReaderAssets/esreader')
+def spanishReaderCacheDir = new File(repoRoot, 'build/es-reader-cache')
+def spanishWebCodeDir = layout.buildDirectory.dir('generated/spanishWebCode')
+def spanishVocabModuleFile = layout.buildDirectory.file('generated/spanishWebCode/es-vocab-estimate.js')
 
 android {
     namespace 'space.saintjust.reader.stage1'
@@ -30,8 +35,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 1025
-        versionName '77.42-toc132-en-context-batch'
+        versionCode 1026
+        versionName '77.42-toc133-es-context-batch'
     }
 
     buildFeatures {
@@ -75,6 +80,7 @@ android {
                     wikdictAssetDir.get().asFile,
                     migakuZhAssetDir.get().asFile,
                     frenchReaderAssetDir.get().asFile,
+                    spanishReaderAssetDir.get().asFile,
             ]
         }
     }
@@ -85,7 +91,27 @@ dependencies {
     implementation 'com.google.mlkit:translate:17.0.3'
 }
 
+tasks.register('prepareSpanishWebCode') {
+    inputs.file(new File(repoRoot, 'js/reader/fr-vocab-estimate.js'))
+    inputs.file(new File(repoRoot, 'scripts/materialize_es_vocab_module.py'))
+    outputs.file(spanishVocabModuleFile)
+
+    doLast {
+        File output = spanishVocabModuleFile.get().asFile
+        output.parentFile.mkdirs()
+        exec {
+            commandLine 'python3',
+                    new File(repoRoot, 'scripts/materialize_es_vocab_module.py').absolutePath,
+                    output.absolutePath
+        }
+        if (!output.exists() || output.length() == 0L) {
+            throw new GradleException('Missing generated Spanish vocabulary module')
+        }
+    }
+}
+
 tasks.register('syncWebAssets', Sync) {
+    dependsOn 'prepareSpanishWebCode'
     from(repoRoot) {
         exclude '.git/**'
         exclude '.github/**'
@@ -109,6 +135,9 @@ tasks.register('syncWebAssets', Sync) {
         exclude 'FIREBASE_*.txt'
         exclude 'SUPABASE_*.txt'
         exclude { it.relativePath.toString() == 'app.js' }
+    }
+    from(spanishWebCodeDir) {
+        into 'js/reader'
     }
     into layout.buildDirectory.dir('generated/webAssets/www')
 }
@@ -226,9 +255,39 @@ tasks.register('prepareFrenchReaderResources') {
     }
 }
 
+tasks.register('prepareSpanishReaderResources') {
+    inputs.file(new File(repoRoot, 'scripts/build_es_reader_resources.py'))
+    outputs.file(layout.buildDirectory.file('generated/spanishReaderAssets/esreader/es_vocab_frequency.tsv'))
+    outputs.file(layout.buildDirectory.file('generated/spanishReaderAssets/esreader/es_vocab_lemma.tsv'))
+    outputs.file(layout.buildDirectory.file('generated/spanishReaderAssets/esreader/es_vocab_manifest.json'))
+    outputs.file(layout.buildDirectory.file('generated/spanishReaderAssets/esreader/es_ru_core.json'))
+    outputs.file(layout.buildDirectory.file('generated/spanishReaderAssets/esreader/es_ru_senses.json'))
+    outputs.file(layout.buildDirectory.file('generated/spanishReaderAssets/esreader/NOTICE.txt'))
+
+    doLast {
+        File outputDir = spanishReaderOutputDir.get().asFile
+        outputDir.mkdirs()
+        spanishReaderCacheDir.mkdirs()
+        logger.lifecycle("Building mandatory Spanish Reader lexical resources…")
+        exec {
+            commandLine 'python3',
+                    new File(repoRoot, 'scripts/build_es_reader_resources.py').absolutePath,
+                    '--output-dir', outputDir.absolutePath,
+                    '--cache-dir', spanishReaderCacheDir.absolutePath
+        }
+        ['es_vocab_frequency.tsv', 'es_vocab_lemma.tsv', 'es_ru_core.json', 'es_ru_senses.json'].each { name ->
+            File generated = new File(outputDir, name)
+            if (!generated.exists() || generated.length() == 0L) {
+                throw new GradleException("Missing mandatory Spanish Reader asset: ${name}")
+            }
+        }
+    }
+}
+
 tasks.named('preBuild') {
     dependsOn 'syncWebAssets'
     dependsOn 'prepareEnRuWikDict'
     dependsOn 'prepareZhMigakuResources'
     dependsOn 'prepareFrenchReaderResources'
+    dependsOn 'prepareSpanishReaderResources'
 }
