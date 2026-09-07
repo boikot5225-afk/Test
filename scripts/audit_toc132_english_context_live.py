@@ -21,18 +21,34 @@ result = cdp.eval(r"""(async()=>{
   root.dataset.lang='en';
   root.dataset.readerBookId='toc132-en-context-audit';
   root.dataset.renderedChapter='7';
+
+  // The production English MutationObserver is intentionally allowed to see
+  // this synthetic chapter.  The old audit merely painted rw-migaku-unknown by
+  // hand, which raced the real vocabulary classifier: on a slower/more loaded
+  // runtime the observer correctly removed that fake class because no English
+  // assessment profile existed.  Install a disposable, valid profile whose
+  // conservative Known boundary is zero, then ask the real vocabulary owner to
+  // classify the fixture.  Context is therefore tested against the same Unknown
+  // contract it receives in the app instead of against a timing accident.
+  const profileKey='an2_reader_vocab_estimate_en_v1::guest';
+  const oldProfile=localStorage.getItem(profileKey);
+  localStorage.setItem(profileKey,JSON.stringify({
+    language:'en',version:1,estimate:0,conservativeKnownCount:0,
+    listLength:36566,updatedAt:new Date().toISOString(),audit:true,
+  }));
+
   root.innerHTML=`
     <div class="reader-paragraph" data-p="0"><div class="reader-paragraph-text">
-      He sat on the <span class="rw-en-gloss-wrap" data-en-gloss="1" data-en-gloss-visible="1"><span class="reader-word rw-migaku-unknown" data-word="bank" data-lang="en">bank</span><span class="rw-en-gloss-text">банк</span></span> of the river.
+      He sat on the <span class="rw-en-gloss-wrap" data-en-gloss="1" data-en-gloss-visible="1"><span class="reader-word" data-word="bank" data-lang="en">bank</span><span class="rw-en-gloss-text">банк</span></span> of the river.
     </div></div>
     <div class="reader-paragraph" data-p="1"><div class="reader-paragraph-text">
-      She went to the <span class="rw-en-gloss-wrap" data-en-gloss="1" data-en-gloss-visible="1"><span class="reader-word rw-migaku-unknown" data-word="bank" data-lang="en">bank</span><span class="rw-en-gloss-text">банк</span></span> to deposit cash.
+      She went to the <span class="rw-en-gloss-wrap" data-en-gloss="1" data-en-gloss-visible="1"><span class="reader-word" data-word="bank" data-lang="en">bank</span><span class="rw-en-gloss-text">банк</span></span> to deposit cash.
     </div></div>
     <div class="reader-paragraph" data-p="2"><div class="reader-paragraph-text">
-      It was a <span class="rw-en-gloss-wrap" data-en-gloss="1" data-en-gloss-visible="1"><span class="reader-word rw-migaku-unknown" data-word="peculiar" data-lang="en">peculiar</span><span class="rw-en-gloss-text">особенный</span></span> arrangement.
+      It was a <span class="rw-en-gloss-wrap" data-en-gloss="1" data-en-gloss-visible="1"><span class="reader-word" data-word="peculiar" data-lang="en">peculiar</span><span class="rw-en-gloss-text">особенный</span></span> arrangement.
     </div></div>
     <div class="reader-paragraph" data-p="3"><div class="reader-paragraph-text">
-      <span class="rw-en-gloss-wrap" data-en-gloss="1" data-en-gloss-visible="1"><span class="reader-word rw-migaku-unknown" data-word="London" data-lang="en">London</span><span class="rw-en-gloss-text">Лондон</span></span> was quiet.
+      <span class="rw-en-gloss-wrap" data-en-gloss="1" data-en-gloss-visible="1"><span class="reader-word" data-word="London" data-lang="en">London</span><span class="rw-en-gloss-text">Лондон</span></span> was quiet.
     </div></div>`;
 
   // The production EN/FR batchers deliberately work only on geometrically
@@ -81,7 +97,23 @@ result = cdp.eval(r"""(async()=>{
   globalThis.firebase=fake;
   globalThis.__AN2_FALLBACK_FIREBASE=null;
   try {
-    const mod=await import('./js/reader/en-context-batch-v2.js?v=77.42-toc132-live-audit');
+    if(typeof globalThis.readerLoadEnglishVocabularyData!=='function' ||
+       typeof globalThis.readerApplyEnglishVocabularyEstimate!=='function') {
+      throw new Error('English vocabulary owner is not installed');
+    }
+    await globalThis.readerLoadEnglishVocabularyData();
+    await globalThis.readerApplyEnglishVocabularyEstimate();
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const knowledge=[...root.querySelectorAll('.reader-word[data-word]')].map(el=>({
+      word:String(el.dataset.word||''),
+      unknown:el.classList.contains('rw-migaku-unknown'),
+      known:el.classList.contains('rw-migaku-known'),
+    }));
+    if(knowledge.some(row=>!row.unknown||row.known)) {
+      throw new Error('English audit fixture was not classified Unknown: '+JSON.stringify(knowledge));
+    }
+
+    const mod=await import('./js/reader/en-context-batch-v2.js?v=77.42-toc132-live-audit-classified');
     localStorage.removeItem(globalThis.an2ReaderStorageKey?.('an2_reader_en_context_batch_v2')||'an2_reader_en_context_batch_v2');
     const shared=globalThis.__readerEnContextBatchV2;
     if(shared){
@@ -106,11 +138,14 @@ result = cdp.eval(r"""(async()=>{
         provider:String(wrap?.dataset.enContextProvider||''),
         key:String(wrap?.dataset.enContextKey||''),
         batch:String(wrap?.dataset.enContextBatch||''),
+        unknown:!!word?.classList.contains('rw-migaku-unknown'),
       };
     });
     const batchCalls=calls.filter(call=>call?.task==='en_context_batch'&&call?.sourceLang==='en');
-    return {rows,calls:batchCalls,threshold:mod.MIN_CONFIDENCE};
+    return {rows,calls:batchCalls,threshold:mod.MIN_CONFIDENCE,knowledge};
   } finally {
+    if(oldProfile===null)localStorage.removeItem(profileKey);
+    else localStorage.setItem(profileKey,oldProfile);
     globalThis.firebase=oldFirebase;
     globalThis.__AN2_FALLBACK_FIREBASE=oldFallback;
   }
@@ -121,6 +156,9 @@ if not result:
     raise RuntimeError('English context audit returned no result')
 if abs(float(result.get('threshold', 0)) - 0.84) > 1e-9:
     raise RuntimeError('English context confidence gate changed: ' + repr(result))
+knowledge = result.get('knowledge', [])
+if len(knowledge) != 4 or any(not row.get('unknown') or row.get('known') for row in knowledge):
+    raise RuntimeError('English context audit did not use real Unknown classification: ' + repr(result))
 rows = {row['p']: row for row in result.get('rows', [])}
 if rows.get('0', {}).get('ru') != 'берег' or rows.get('0', {}).get('provider') != 'deepseek-context':
     raise RuntimeError('river-bank contextual gloss failed: ' + repr(result))
