@@ -279,13 +279,17 @@ function processScope(scope, data) {
   for (const paragraph of Array.from(scope.querySelectorAll('.reader-paragraph'))) {
     const context = paragraphContext(paragraph);
     for (const el of Array.from(paragraph.querySelectorAll('.reader-word[data-word]'))) {
-      if (isLikelyProper(el)) {
+      // The vocabulary owner has a chapter-wide capitalization/proper-name
+      // guard that also catches names at sentence start. Preserve that verdict;
+      // the cheap occurrence-local heuristic below only supplements it. The old
+      // code removed rw-es-proper before checking Unknown, which silently lost
+      // names such as sentence-initial Madrid after vocabulary classification.
+      if (el.classList.contains('rw-es-proper') || isLikelyProper(el)) {
         el.classList.remove('rw-migaku-unknown');
         el.classList.add('rw-es-proper');
         removeGloss(el);
         continue;
       }
-      el.classList.remove('rw-es-proper');
       if (!el.classList.contains('rw-migaku-unknown')) {
         removeGloss(el);
         continue;
