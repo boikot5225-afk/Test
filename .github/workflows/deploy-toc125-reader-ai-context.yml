@@ -1,12 +1,13 @@
-name: Deploy toc132 readerAI English + French context batch
+name: Deploy toc133 readerAI English + French + Spanish context batch
 
 on:
   push:
     branches:
-      - feature/77.42-toc126-storage-import-v2
+      - feature/77.42-toc133-es-context-batch
     paths:
       - 'functions/en-context-task.js'
       - 'functions/fr-context-task.js'
+      - 'functions/es-context-task.js'
       - 'functions/zh-context-task.js'
       - 'functions/zh-polyphones-packed.js'
       - '.github/workflows/deploy-toc125-reader-ai-context.yml'
@@ -31,9 +32,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: feature/77.42-toc126-storage-import-v2
+          ref: feature/77.42-toc133-es-context-batch
 
-      - name: Inject bounded ZH FR EN context tasks into readerAI only
+      - name: Inject bounded ZH FR EN ES context tasks into readerAI only
         shell: bash
         run: |
           set -euo pipefail
@@ -44,19 +45,19 @@ jobs:
           source = path.read_text(encoding='utf-8')
 
           prompt_anchor = "  const langName = sourceLangName(lang);\n\n"
-          prompt_patch = """  const langName = sourceLangName(lang);\n\n  if (task === 'zh_context_batch') {\n    const { buildZhContextBatchPrompt } = require('./zh-context-task');\n    try {\n      return buildZhContextBatchPrompt(body);\n    } catch (error) {\n      throw new HttpsError('invalid-argument', error?.message || String(error));\n    }\n  }\n\n  if (task === 'fr_context_batch') {\n    const { buildFrContextBatchPrompt } = require('./fr-context-task');\n    try {\n      return buildFrContextBatchPrompt(body);\n    } catch (error) {\n      throw new HttpsError('invalid-argument', error?.message || String(error));\n    }\n  }\n\n  if (task === 'en_context_batch') {\n    const { buildEnContextBatchPrompt } = require('./en-context-task');\n    try {\n      return buildEnContextBatchPrompt(body);\n    } catch (error) {\n      throw new HttpsError('invalid-argument', error?.message || String(error));\n    }\n  }\n\n"""
+          prompt_patch = """  const langName = sourceLangName(lang);\n\n  if (task === 'zh_context_batch') {\n    const { buildZhContextBatchPrompt } = require('./zh-context-task');\n    try {\n      return buildZhContextBatchPrompt(body);\n    } catch (error) {\n      throw new HttpsError('invalid-argument', error?.message || String(error));\n    }\n  }\n\n  if (task === 'fr_context_batch') {\n    const { buildFrContextBatchPrompt } = require('./fr-context-task');\n    try {\n      return buildFrContextBatchPrompt(body);\n    } catch (error) {\n      throw new HttpsError('invalid-argument', error?.message || String(error));\n    }\n  }\n\n  if (task === 'en_context_batch') {\n    const { buildEnContextBatchPrompt } = require('./en-context-task');\n    try {\n      return buildEnContextBatchPrompt(body);\n    } catch (error) {\n      throw new HttpsError('invalid-argument', error?.message || String(error));\n    }\n  }\n\n  if (task === 'es_context_batch') {\n    const { buildEsContextBatchPrompt } = require('./es-context-task');\n    try {\n      return buildEsContextBatchPrompt(body);\n    } catch (error) {\n      throw new HttpsError('invalid-argument', error?.message || String(error));\n    }\n  }\n\n"""
           if source.count(prompt_anchor) != 1:
               raise SystemExit(f'buildPrompt anchor count={source.count(prompt_anchor)}')
           source = source.replace(prompt_anchor, prompt_patch, 1)
 
           token_anchor = "function maxTokensForTask(task) {\n  if (task === 'generate_verb') return 1400;"
-          token_patch = "function maxTokensForTask(task) {\n  if (task === 'zh_context_batch') return 1200;\n  if (task === 'fr_context_batch') return 1500;\n  if (task === 'en_context_batch') return 1500;\n  if (task === 'generate_verb') return 1400;"
+          token_patch = "function maxTokensForTask(task) {\n  if (task === 'zh_context_batch') return 1200;\n  if (task === 'fr_context_batch') return 1500;\n  if (task === 'en_context_batch') return 1500;\n  if (task === 'es_context_batch') return 1500;\n  if (task === 'generate_verb') return 1400;"
           if source.count(token_anchor) != 1:
               raise SystemExit(f'maxTokens anchor count={source.count(token_anchor)}')
           source = source.replace(token_anchor, token_patch, 1)
 
           auth_anchor = """  async (request) => {\n    if (!request.auth?.uid) {\n      throw new HttpsError('unauthenticated', 'Нужно войти в Firebase Auth.');\n    }\n\n    const body = request.data || {};\n    const task = String(body.task || '').trim();\n    if (!task) throw new HttpsError('invalid-argument', 'Missing task');\n"""
-          auth_patch = """  async (request) => {\n    const body = request.data || {};\n    const task = String(body.task || '').trim();\n    if (!task) throw new HttpsError('invalid-argument', 'Missing task');\n\n    const lang = sourceLang(body);\n    const guestReaderContext =\n      (task === 'fr_context_batch' && lang === 'fr') ||\n      (task === 'en_context_batch' && lang === 'en');\n    if (!request.auth?.uid && !guestReaderContext) {\n      throw new HttpsError('unauthenticated', 'Нужно войти в Firebase Auth.');\n    }\n"""
+          auth_patch = """  async (request) => {\n    const body = request.data || {};\n    const task = String(body.task || '').trim();\n    if (!task) throw new HttpsError('invalid-argument', 'Missing task');\n\n    const lang = sourceLang(body);\n    const guestReaderContext =\n      (task === 'fr_context_batch' && lang === 'fr') ||\n      (task === 'en_context_batch' && lang === 'en') ||\n      (task === 'es_context_batch' && lang === 'es');\n    if (!request.auth?.uid && !guestReaderContext) {\n      throw new HttpsError('unauthenticated', 'Нужно войти в Firebase Auth.');\n    }\n"""
           if source.count(auth_anchor) != 1:
               raise SystemExit(f'readerAI auth anchor count={source.count(auth_anchor)}')
           source = source.replace(auth_anchor, auth_patch, 1)
@@ -67,8 +68,6 @@ jobs:
               raise SystemExit(f'usage anchor count={source.count(usage_anchor)}')
           source = source.replace(usage_anchor, usage_patch, 1)
 
-          # Deploy only readerAI. TTS/STT functions and unrelated secrets are
-          # deliberately cut out so this English change cannot alter them.
           marker = '// Cloud TTS proxy:'
           marker_at = source.find(marker)
           if marker_at < 0:
@@ -87,15 +86,13 @@ jobs:
 
           required = (
               "exports.readerAI = onCall(",
-              "task === 'zh_context_batch'",
-              "buildZhContextBatchPrompt(body)",
-              "task === 'fr_context_batch'",
-              "buildFrContextBatchPrompt(body)",
-              "task === 'en_context_batch'",
-              "buildEnContextBatchPrompt(body)",
-              "if (task === 'en_context_batch') return 1500",
+              "task === 'zh_context_batch'", "buildZhContextBatchPrompt(body)",
+              "task === 'fr_context_batch'", "buildFrContextBatchPrompt(body)",
+              "task === 'en_context_batch'", "buildEnContextBatchPrompt(body)",
+              "task === 'es_context_batch'", "buildEsContextBatchPrompt(body)",
+              "if (task === 'es_context_batch') return 1500",
               "const guestReaderContext =",
-              "task === 'en_context_batch' && lang === 'en'",
+              "task === 'es_context_batch' && lang === 'es'",
               "if (!request.auth?.uid && !guestReaderContext)",
               "thinking: { type: 'disabled' }",
               "response_format: { type: 'json_object' }",
@@ -113,7 +110,7 @@ jobs:
           cache: npm
           cache-dependency-path: functions/package-lock.json
 
-      - name: Install and verify conservative English prompt
+      - name: Install and verify conservative context prompts
         shell: bash
         run: |
           set -euo pipefail
@@ -121,33 +118,31 @@ jobs:
           node --check functions/index.js
           node --check functions/en-context-task.js
           node --check functions/fr-context-task.js
+          node --check functions/es-context-task.js
           node --check functions/zh-context-task.js
           node - <<'NODE'
           const assert = require('node:assert/strict');
           const fs = require('node:fs');
-          const { buildEnContextBatchPrompt } = require('./functions/en-context-task');
-          const prompt = buildEnContextBatchPrompt({
-            context: 'He sat on the bank of the river, then ran out of patience and gave up.',
+          const { buildEsContextBatchPrompt } = require('./functions/es-context-task');
+          const prompt = buildEsContextBatchPrompt({
+            context: 'Se sentó en el banco del parque. Después depositó el dinero en el banco.',
             targets: [
-              { id:'t0', surface:'bank', lemma:'bank', localRu:'банк', senses:['банк','берег'] },
-              { id:'t1', surface:'ran', lemma:'run', localRu:'бежать' },
-              { id:'t2', surface:'up', lemma:'up', localRu:'вверх' },
+              { id:'t0', surface:'banco', lemma:'banco', localRu:'банк', senses:['банк','скамейка'] },
+              { id:'t1', surface:'Madrid', lemma:'Madrid', localRu:'' },
             ],
           });
           assert.match(prompt, /offline WikDict gloss/);
-          assert.match(prompt, /bank.*банк.*берег/s);
-          assert.match(prompt, /run out/);
-          assert.match(prompt, /give up/);
-          assert.match(prompt, /Be conservative with confidence/);
+          assert.match(prompt, /banco.*банк.*скамейка/s);
+          assert.match(prompt, /proper_noun/);
+          assert.match(prompt, />=0\.90/);
 
           const source = fs.readFileSync('functions/index.js','utf8');
-          assert.match(source, /task === 'zh_context_batch'/);
-          assert.match(source, /task === 'fr_context_batch'/);
-          assert.match(source, /task === 'en_context_batch'/);
-          assert.match(source, /guestReaderContext/);
-          assert.match(source, /task === 'en_context_batch' && lang === 'en'/);
+          for (const task of ['zh_context_batch','fr_context_batch','en_context_batch','es_context_batch']) {
+            assert.match(source, new RegExp(`task === '${task}'`));
+          }
+          assert.match(source, /task === 'es_context_batch' && lang === 'es'/);
           assert.equal((source.match(/exports\.readerAI\s*=\s*onCall/g)||[]).length,1);
-          console.log('readerAI ZH + FR + conservative EN context deploy source PASS');
+          console.log('readerAI ZH + FR + EN + ES context deploy source PASS');
           NODE
 
       - name: Select deployment credential
