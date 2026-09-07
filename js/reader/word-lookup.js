@@ -1,7 +1,7 @@
 // Reader local lookup.
-// This module keeps the existing lookup order intact:
+// It keeps language owners isolated:
 // Chinese local/remote dictionary → Japanese local dictionary →
-// French quick/cache/verb/noun lookup.
+// Spanish WordHoard/WikDict lexical owner → legacy French quick/cache/verb/noun.
 // DeepSeek is deliberately not called here.
 
 export function createReaderWordLookup({
@@ -22,9 +22,6 @@ export function createReaderWordLookup({
     const enRaw = entry.en || entry.english || entry.definition || entry.definitions || entry.gloss || '';
     const en = Array.isArray(enRaw) ? enRaw.join('; ') : String(enRaw || '').trim();
     if (!en) return entry;
-    // English remains a cheap offline hint, never a fake Russian translation.
-    // reader-app therefore sees "no RU" and asks DeepSeek exactly once; the
-    // resulting Russian value is cached and subsequent taps stay local.
     return {
       ...entry,
       en,
@@ -45,11 +42,21 @@ export function createReaderWordLookup({
       return chineseOfflineResult(await fetchChineseDictEntry(normalized));
     }
 
-    // JMdict answers the form as it appears in the text, deinflecting it to a
-    // dictionary form on the way. A miss stops here rather than falling through
-    // the French quick/verb/noun tables, which can never match kana or kanji —
-    // the caller already treats null as "ask DeepSeek".
     if (lang === 'ja') return lookupJapaneseWord?.(normalized) || null;
+
+    // Spanish must stop here. Before toc134 it accidentally fell through into
+    // the old French quick/cache/verb/noun chain, so a Spanish tap could miss or
+    // be interpreted with French morphology. The ES lexical owner consumes the
+    // same WordHoard/WikDict assets as inline Spanish glosses.
+    if (lang === 'es') {
+      const analyze = globalThis.readerSpanishLexicalAnalysisFor;
+      if (typeof analyze !== 'function') return null;
+      try { return await analyze(normalized); }
+      catch (error) {
+        console.warn('[reader lookup] Spanish lexical analysis failed', error?.message || error);
+        return null;
+      }
+    }
 
     const quick = quickLookup(normalized);
     if (quick) return quick;
