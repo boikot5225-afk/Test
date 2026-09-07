@@ -8,6 +8,7 @@ on:
       - '.github/workflows/android-apk-toc133-es-context.yml'
       - 'scripts/build_es_reader_resources.py'
       - 'scripts/materialize_es_vocab_module.py'
+      - 'scripts/validate_toc133_frozen_toc132.sh'
       - 'scripts/audit_toc133_spanish_context_live.py'
       - 'scripts/run_toc133_spanish_emulator.sh'
       - 'js/reader/es-reader-pipeline-v1.js'
@@ -55,7 +56,7 @@ jobs:
 
       - name: Validate frozen toc132 architecture first
         shell: bash
-        run: bash scripts/validate_toc126_storage_import_v2.sh
+        run: bash scripts/validate_toc133_frozen_toc132.sh
 
       - name: Validate Spanish source and generated vocabulary owner
         shell: bash
@@ -219,7 +220,7 @@ jobs:
             exit 1
           fi
           if unzip -l "$OUT" | grep -q 'assets/www/build/'; then
-            echo 'transient repo build cache leaked into final APK' >&2
+            echo 'transient repo build cache leaked into APK' >&2
             exit 1
           fi
           sha256sum "$OUT" | tee unique-out/SHA256.txt
