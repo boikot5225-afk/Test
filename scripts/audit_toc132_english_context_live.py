@@ -23,14 +23,13 @@ result = cdp.eval(r"""(async()=>{
   root.dataset.renderedChapter='7';
 
   // The production English MutationObserver is intentionally allowed to see
-  // this synthetic chapter.  The old audit merely painted rw-migaku-unknown by
-  // hand, which raced the real vocabulary classifier: on a slower/more loaded
-  // runtime the observer correctly removed that fake class because no English
-  // assessment profile existed.  Install a disposable, valid profile whose
-  // conservative Known boundary is zero, then ask the real vocabulary owner to
-  // classify the fixture.  Context is therefore tested against the same Unknown
-  // contract it receives in the app instead of against a timing accident.
-  const profileKey='an2_reader_vocab_estimate_en_v1::guest';
+  // this synthetic chapter. The old audit merely painted rw-migaku-unknown by
+  // hand, which raced the real vocabulary classifier. Install a disposable,
+  // valid profile for the app's ACTUAL owner whose conservative Known boundary
+  // is zero, then ask the real vocabulary owner to classify the fixture.
+  const owner=localStorage.getItem('an2_reader_active_owner_v1') ||
+    (localStorage.getItem('an2_guest')==='1'?'guest':'anon');
+  const profileKey=`an2_reader_vocab_estimate_en_v1::${owner}`;
   const oldProfile=localStorage.getItem(profileKey);
   localStorage.setItem(profileKey,JSON.stringify({
     language:'en',version:1,estimate:0,conservativeKnownCount:0,
@@ -55,8 +54,7 @@ result = cdp.eval(r"""(async()=>{
   // visible paragraphs. The audit injects synthetic DOM into whatever Reader
   // page happened to be on-screen after the previous regression tests, so its
   // native layout is not a deterministic visibility fixture. Make all four
-  // audit paragraphs explicitly visible rather than weakening the production
-  // selector or accepting an unprocessed offline gloss.
+  // audit paragraphs explicitly visible rather than weakening production.
   [...root.querySelectorAll('.reader-paragraph')].forEach((paragraph,index)=>{
     const top=80+(index*90);
     paragraph.getBoundingClientRect=()=>({
@@ -113,7 +111,7 @@ result = cdp.eval(r"""(async()=>{
       throw new Error('English audit fixture was not classified Unknown: '+JSON.stringify(knowledge));
     }
 
-    const mod=await import('./js/reader/en-context-batch-v2.js?v=77.42-toc132-live-audit-classified');
+    const mod=await import('./js/reader/en-context-batch-v2.js?v=77.42-toc132-live-audit-classified-owner');
     localStorage.removeItem(globalThis.an2ReaderStorageKey?.('an2_reader_en_context_batch_v2')||'an2_reader_en_context_batch_v2');
     const shared=globalThis.__readerEnContextBatchV2;
     if(shared){
@@ -142,7 +140,7 @@ result = cdp.eval(r"""(async()=>{
       };
     });
     const batchCalls=calls.filter(call=>call?.task==='en_context_batch'&&call?.sourceLang==='en');
-    return {rows,calls:batchCalls,threshold:mod.MIN_CONFIDENCE,knowledge};
+    return {rows,calls:batchCalls,threshold:mod.MIN_CONFIDENCE,knowledge,owner};
   } finally {
     if(oldProfile===null)localStorage.removeItem(profileKey);
     else localStorage.setItem(profileKey,oldProfile);
