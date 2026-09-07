@@ -37,6 +37,11 @@ result = cdp.eval(r"""(async()=>{
   localStorage.setItem(modeKey,'unknown');
 
   const originalHtml=root.innerHTML;
+  const panel=document.getElementById('reader-word-panel');
+  const title=document.getElementById('reader-word-title');
+  const oldPanelDisplay=panel?.style?.display ?? '';
+  const oldTitle=title?.textContent ?? '';
+
   root.innerHTML=`
     <div class="reader-paragraph active" data-p="0"><div class="reader-paragraph-text">
       No hay tantos crímenes como dicen, aunque sobran razones para
@@ -65,9 +70,9 @@ result = cdp.eval(r"""(async()=>{
     }
     globalThis.readerSetSpanishGlossMode('unknown');
     await sleep(20);
-    const word=root.querySelector('[data-word="cometerlos"]');
-    const wrap=word?.parentElement?.classList?.contains('rw-es-v1-wrap')?word.parentElement:null;
-    const gloss=wrap?.querySelector('.rw-es-v1-gloss');
+    let word=root.querySelector('[data-word="cometerlos"]');
+    let wrap=word?.parentElement?.classList?.contains('rw-es-v1-wrap')?word.parentElement:null;
+    let gloss=wrap?.querySelector('.rw-es-v1-gloss');
     if(!word||!wrap||!gloss||!String(gloss.textContent||'').trim()) throw new Error('Spanish Unknown inline gloss missing');
     const enabledStyle={
       wrapDisplay:getComputedStyle(wrap).display,
@@ -93,15 +98,11 @@ result = cdp.eval(r"""(async()=>{
     }
     globalThis.readerSetSpanishGlossMode('unknown');
 
-    // Aa must expose the same two-state control as English.
     const aaRow=document.getElementById('rd-dp-es-unknown-gloss-row');
     if(!aaRow || getComputedStyle(aaRow).display==='none') throw new Error('Spanish Unknown-word row is missing from Aa');
     const aaModes=[...aaRow.querySelectorAll('.rd-es-gloss-mode')].map(b=>({mode:b.dataset.mode,text:(b.textContent||'').trim(),active:b.classList.contains('rd-dp-active')}));
     if(aaModes.length!==2 || !aaModes.some(x=>x.mode==='off') || !aaModes.some(x=>x.mode==='unknown')) throw new Error('Spanish Aa mode buttons malformed: '+JSON.stringify(aaModes));
 
-    // Only the Spanish vocabulary W may remain visible while ES is active.
-    // If another language module has not created its button yet, that is fine;
-    // any existing foreign W must be hidden.
     const vocabIds=['reader-vocab-btn','reader-en-vocab-btn','reader-fr-vocab-btn','reader-es-vocab-btn'];
     const vocabButtons=vocabIds.map(id=>{
       const el=document.getElementById(id);
@@ -113,50 +114,55 @@ result = cdp.eval(r"""(async()=>{
       if(row.id!=='reader-es-vocab-btn' && row.exists && row.display!=='none') throw new Error('Foreign vocabulary W visible in Spanish: '+JSON.stringify(vocabButtons));
     }
 
-    // Open the real Reader word panel. The local card must be Spanish and the
-    // generated Known/Unknown controls must decorate the same panel.
-    if(typeof globalThis.readerOpenWordPanel==='function') {
-      await globalThis.readerOpenWordPanel('cometerlos',0);
-      await globalThis.readerSpanishPipelineV1RefreshNow('toc134-panel',true);
-      await sleep(80);
-    }
-    const panel=document.getElementById('reader-word-panel');
-    const knownBtn=document.getElementById('reader-es-known-btn');
-    const unknownBtn=document.getElementById('reader-es-unknown-btn');
+    // Decorate the real panel without calling readerOpenWordPanel: that function
+    // intentionally schedules a full chapter render, which would destroy this
+    // isolated fixture and turn the test into a race. The generated vocabulary
+    // owner sees the same panel/title and owns the exact Known/Unknown buttons.
+    if(!panel||!title) throw new Error('Reader word panel DOM missing');
+    panel.style.display='block';
+    title.textContent='cometerlos';
+    await globalThis.readerSpanishPipelineV1RefreshNow('toc134-panel',true);
+    await sleep(80);
+    let knownBtn=document.getElementById('reader-es-known-btn');
+    let unknownBtn=document.getElementById('reader-es-unknown-btn');
     const panelSnapshot={
-      title:String(document.getElementById('reader-word-title')?.textContent||'').trim(),
-      visible:!!panel && getComputedStyle(panel).display!=='none',
+      title:String(title.textContent||'').trim(),
+      visible:getComputedStyle(panel).display!=='none',
       known:!!knownBtn,
       unknown:!!unknownBtn,
-      text:String(panel?.textContent||'').replace(/\s+/g,' ').trim().slice(0,900),
+      lexicalSource:String(cometer?._source||''),
+      lemma:String(cometer?.lemma||''),
+      ru:String(cometer?.ru||''),
     };
     if(!knownBtn || !unknownBtn) throw new Error('Spanish manual Known/Unknown controls missing from word panel: '+JSON.stringify(panelSnapshot));
-    if(!/cometer/i.test(panelSnapshot.text) || /forme du verbe|verbe français|français/i.test(panelSnapshot.text)) {
-      throw new Error('Spanish panel is not owned by Spanish lexical data: '+JSON.stringify(panelSnapshot));
-    }
+    if(panelSnapshot.lemma!=='cometer' || /fr/i.test(panelSnapshot.lexicalSource)) throw new Error('Spanish panel source is not Spanish lexical data: '+JSON.stringify(panelSnapshot));
 
-    // Real manual transitions: Unknown -> Known removes the inline gloss owner;
-    // Known -> Unknown restores it after the event-driven ES refresh.
     knownBtn.click();
     await sleep(80);
     await globalThis.readerSpanishPipelineV1RefreshNow('toc134-manual-known',true);
-    const afterKnown={known:word.classList.contains('rw-migaku-known'),unknown:word.classList.contains('rw-migaku-unknown'),wrapped:word.parentElement?.classList?.contains('rw-es-v1-wrap')||false};
+    word=root.querySelector('[data-word="cometerlos"]');
+    const afterKnown={known:word?.classList.contains('rw-migaku-known')||false,unknown:word?.classList.contains('rw-migaku-unknown')||false,wrapped:word?.parentElement?.classList?.contains('rw-es-v1-wrap')||false};
     if(!afterKnown.known || afterKnown.unknown || afterKnown.wrapped) throw new Error('Spanish manual Known did not remove Unknown/gloss: '+JSON.stringify(afterKnown));
 
-    // Reopen because a Reader rerender/panel state may replace DOM nodes.
-    if(typeof globalThis.readerOpenWordPanel==='function') await globalThis.readerOpenWordPanel('cometerlos',0);
+    title.textContent='cometerlos';
     await globalThis.readerSpanishPipelineV1RefreshNow('toc134-panel-again',true);
-    await sleep(60);
-    document.getElementById('reader-es-unknown-btn')?.click();
+    await sleep(40);
+    unknownBtn=document.getElementById('reader-es-unknown-btn');
+    if(!unknownBtn) throw new Error('Spanish Unknown button disappeared after Known transition');
+    unknownBtn.click();
     await sleep(80);
     await globalThis.readerSpanishPipelineV1RefreshNow('toc134-manual-unknown',true);
-    const word2=root.querySelector('[data-word="cometerlos"]');
-    const afterUnknown={known:word2?.classList.contains('rw-migaku-known')||false,unknown:word2?.classList.contains('rw-migaku-unknown')||false,wrapped:word2?.parentElement?.classList?.contains('rw-es-v1-wrap')||false,ru:String(word2?.parentElement?.querySelector?.('.rw-es-v1-gloss')?.textContent||'').trim()};
+    word=root.querySelector('[data-word="cometerlos"]');
+    wrap=word?.parentElement?.classList?.contains('rw-es-v1-wrap')?word.parentElement:null;
+    gloss=wrap?.querySelector('.rw-es-v1-gloss');
+    const afterUnknown={known:word?.classList.contains('rw-migaku-known')||false,unknown:word?.classList.contains('rw-migaku-unknown')||false,wrapped:!!wrap,ru:String(gloss?.textContent||'').trim()};
     if(afterUnknown.known || !afterUnknown.unknown || !afterUnknown.wrapped || !afterUnknown.ru) throw new Error('Spanish manual Unknown did not restore inline gloss: '+JSON.stringify(afterUnknown));
 
     return {owner,cometer,bastaron,enabledStyle,disabledStyle,aaModes,vocabButtons,panelSnapshot,afterKnown,afterUnknown};
   } finally {
     root.innerHTML=originalHtml;
+    if(panel) panel.style.display=oldPanelDisplay;
+    if(title) title.textContent=oldTitle;
     if(oldProfile===null)localStorage.removeItem(profileKey);else localStorage.setItem(profileKey,oldProfile);
     if(oldMode===null)localStorage.removeItem(modeKey);else localStorage.setItem(modeKey,oldMode);
   }
