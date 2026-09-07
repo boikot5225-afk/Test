@@ -279,11 +279,8 @@ function processScope(scope, data) {
   for (const paragraph of Array.from(scope.querySelectorAll('.reader-paragraph'))) {
     const context = paragraphContext(paragraph);
     for (const el of Array.from(paragraph.querySelectorAll('.reader-word[data-word]'))) {
-      // The vocabulary owner has a chapter-wide capitalization/proper-name
-      // guard that also catches names at sentence start. Preserve that verdict;
-      // the cheap occurrence-local heuristic below only supplements it. The old
-      // code removed rw-es-proper before checking Unknown, which silently lost
-      // names such as sentence-initial Madrid after vocabulary classification.
+      // Preserve a proper-name verdict from the vocabulary owner. The local
+      // occurrence heuristic supplements it for obvious mid-sentence capitals.
       if (el.classList.contains('rw-es-proper') || isLikelyProper(el)) {
         el.classList.remove('rw-migaku-unknown');
         el.classList.add('rw-es-proper');
@@ -367,7 +364,39 @@ if (typeof window !== 'undefined' && !window.__readerEsPipelineV1) {
   window.readerSpanishRefresh = (reason = 'external', force = true) => scheduleRefresh(reason, 0, force);
   window.readerSpanishPipelineV1RefreshNow = refresh;
   window.readerSpanishLemmaForOccurrence = lemmaFor;
-  window.readerSpanishIsProperWord = word => /^[A-ZÁÉÍÓÚÜÑ]/u.test(String(word || '').trim());
+  // Never equate "capitalized" with "proper noun" at sentence start. Require
+  // at least one non-initial capitalized occurrence in the current chapter,
+  // mirroring the proven French chapter heuristic. A one-off ambiguous name can
+  // still be resolved by the conservative context batch.
+  window.readerSpanishIsProperWord = (word) => {
+    const raw = String(word || '').trim();
+    if (!/^[A-ZÁÉÍÓÚÜÑ]/u.test(raw)) return false;
+    const root = document.getElementById('reader-chapter-text');
+    if (!root || typeof document.createRange !== 'function') return false;
+    const wanted = normalize(raw);
+    const matches = Array.from(root.querySelectorAll('.reader-word[data-word]'))
+      .filter(el => normalize(el.dataset.word || el.textContent || '') === wanted);
+    if (!matches.length) return false;
+    let capitals = 0;
+    let lowers = 0;
+    let nonInitial = 0;
+    for (const el of matches) {
+      const shown = String(el.textContent || el.dataset.word || '').trim();
+      const upper = /^[A-ZÁÉÍÓÚÜÑ]/u.test(shown);
+      if (upper) capitals += 1; else lowers += 1;
+      let before = '';
+      try {
+        const paragraph = el.closest('.reader-paragraph') || root;
+        const range = document.createRange();
+        range.setStart(paragraph, 0);
+        range.setEndBefore(el);
+        before = String(range.toString() || '').slice(-80).trimEnd();
+      } catch {}
+      const sentenceInitial = !before || /[.!?…][\s"'»”)]*$/u.test(before);
+      if (upper && !sentenceInitial) nonInitial += 1;
+    }
+    return capitals > 0 && lowers === 0 && nonInitial > 0;
+  };
   installEventHooks();
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
   else boot();
