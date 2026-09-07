@@ -9,6 +9,7 @@ on:
       - 'scripts/build_es_reader_resources.py'
       - 'scripts/materialize_es_vocab_module.py'
       - 'scripts/validate_toc133_frozen_toc132.sh'
+      - 'scripts/audit_toc132_english_context_live.py'
       - 'scripts/audit_toc133_spanish_context_live.py'
       - 'scripts/run_toc133_spanish_emulator.sh'
       - 'js/reader/es-reader-pipeline-v1.js'
