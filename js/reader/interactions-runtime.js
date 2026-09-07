@@ -19,6 +19,7 @@ import './fr-lexical-pipeline-v2.js?v=124'; // French word-card lexical owner; o
 import './es-reader-pipeline-v1.js?v=1'; // toc133: Spanish frequency/lemma + immediate ES-RU WikDict gloss
 import './es-context-batch-v1.js?v=1'; // toc133: drain all visible Spanish paragraphs sequentially
 import './es-lexical-pipeline-v1.js?v=134'; // toc134: Spanish word cards use Spanish morphology/WikDict, never French fallthrough
+import './es-parity-ui-v1.js?v=134'; // toc134: English-equivalent inline help mode + one Spanish W control
 import './toc51-stability.js?v=2';
 import './toolbar-scroll.js?v=1';
 import './zh-readable-inline.js?v=8-quality';
