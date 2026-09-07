@@ -59,22 +59,31 @@ result = cdp.eval(r"""(async()=>{
   const oldFallback=globalThis.__AN2_FALLBACK_FIREBASE;
   const calls=[];
   const fake={
-    app(){return {functions(){return {httpsCallable(name){
-      if(name!=='readerAI') throw new Error('unexpected callable '+name);
-      return async payload=>{
-        calls.push(JSON.parse(JSON.stringify(payload)));
-        const context=String(payload.context||'');
-        const items=(payload.targets||[]).map(target=>{
-          const word=String(target.surface||'').toLowerCase();
-          if(word==='banco' && /parque/i.test(context)) return {id:target.id,ru:'скамейка',lemma:'banco',pos:'noun',confidence:.97,note:''};
-          if(word==='banco' && /depositó/i.test(context)) return {id:target.id,ru:'банк',lemma:'banco',pos:'noun',confidence:.98,note:''};
-          if(word==='raro') return {id:target.id,ru:'странный',lemma:'raro',pos:'adjective',confidence:.60,note:''};
-          if(word==='madrid') return {id:target.id,ru:'',lemma:'Madrid',pos:'proper_noun',confidence:.99,note:''};
-          return {id:target.id,ru:String(target.localRu||''),lemma:String(target.lemma||word),pos:'other',confidence:.91,note:''};
-        });
-        return {data:{items}};
+    app(){
+      return {
+        functions(){
+          return {
+            httpsCallable(name){
+              if(name!=='readerAI') throw new Error('unexpected callable '+name);
+              return async payload=>{
+                calls.push(JSON.parse(JSON.stringify(payload)));
+                const context=String(payload.context||'');
+                const items=(payload.targets||[]).map(target=>{
+                  const word=String(target.surface||'').toLowerCase();
+                  if(word==='banco' && /parque/i.test(context)) return {id:target.id,ru:'скамейка',lemma:'banco',pos:'noun',confidence:.97,note:''};
+                  if(word==='banco' && /depositó/i.test(context)) return {id:target.id,ru:'банк',lemma:'banco',pos:'noun',confidence:.98,note:''};
+                  if(word==='raro') return {id:target.id,ru:'странный',lemma:'raro',pos:'adjective',confidence:.60,note:''};
+                  if(word==='madrid') return {id:target.id,ru:'',lemma:'Madrid',pos:'proper_noun',confidence:.99,note:''};
+                  return {id:target.id,ru:String(target.localRu||''),lemma:String(target.lemma||word),pos:'other',confidence:.91,note:''};
+                });
+                return {data:{items}};
+              };
+            },
+          };
+        },
       };
-    }}};}};
+    },
+  };
   globalThis.firebase=fake;
   globalThis.__AN2_FALLBACK_FIREBASE=null;
   try {
@@ -121,7 +130,7 @@ result = cdp.eval(r"""(async()=>{
       clearTimeout(shared.timer);clearTimeout(shared.retryTimer);
       shared.timer=0;shared.retryTimer=0;
     }
-    const mod=await import('./js/reader/es-context-batch-v1.js?v=77.42-toc133-live-audit-classified-v2');
+    const mod=await import('./js/reader/es-context-batch-v1.js?v=77.42-toc133-live-audit-classified-v3');
     const fresh=globalThis.__readerEsContextBatchV1;
     if(fresh){
       fresh.cache=null;
