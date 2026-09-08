@@ -1,10 +1,12 @@
 // toc134 — one Spanish lexical owner for both word cards and inline Unknown glosses.
-// The toc133 painter remains responsible for layout/context cache. This bridge only
-// replaces its direct-dictionary fallback with the same morphology + ES→RU analysis
-// used by the Spanish word card, so forms such as cometerlos/bastaron cannot diverge.
+// The toc133 painter remains responsible for layout/context cache. This bridge first
+// uses the same morphology + ES→RU analysis as the Spanish word card. If that local
+// dictionary has no Russian for a real Spanish lemma, the existing conservative
+// paragraph context batch is kicked immediately instead of leaving a blank label.
 
 let scheduled = 0;
 let running = null;
+let ensuring = null;
 
 function currentLang() {
   const raw = String(
@@ -54,11 +56,15 @@ function candidates(root) {
       const provider = String(wrap.dataset.esProvider || '');
       // Context owns an exact occurrence and must stay final. Everything else is
       // a local fallback and therefore must use the same lexical owner as cards.
-      if (/(?:context-deepseek-batch|occurrence-cache|deepseek|context)/i.test(provider) && String(gloss.textContent || '').trim()) continue;
+      if (/(?:context-deepseek-batch|context-batch-cache|occurrence-cache|deepseek|context)/i.test(provider) && String(gloss.textContent || '').trim()) continue;
       out.push({ word, wrap, gloss });
     }
   }
   return out;
+}
+
+function blankUnknowns(root) {
+  return candidates(root).filter(({ gloss }) => !compactRussian(gloss.textContent || ''));
 }
 
 async function repaintNow() {
@@ -88,9 +94,32 @@ async function repaintNow() {
   return running;
 }
 
-function schedule(delay = 0) {
+async function ensureGlossesNow(reason = 'lexical-miss') {
+  if (currentLang() !== 'es') return false;
+  if (ensuring) return ensuring;
+  ensuring = (async () => {
+    await repaintNow();
+    const root = document.getElementById('reader-chapter-text');
+    if (!root || !blankUnknowns(root).length) return true;
+
+    // WikDict ES→RU is intentionally conservative and has genuine lexical gaps.
+    // Reuse the already-shipped paragraph DeepSeek path for only those blanks;
+    // its >=.90 confidence gate and occurrence cache remain authoritative.
+    try {
+      const context = await import('./es-context-batch-v1.js?v=1');
+      if (typeof context?.refine === 'function') await context.refine(reason);
+    } catch (error) {
+      console.warn('[es inline lexical owner] context fallback unavailable', error?.message || error);
+    }
+    await repaintNow();
+    return !blankUnknowns(root).length;
+  })().finally(() => { ensuring = null; });
+  return ensuring;
+}
+
+function schedule(delay = 0, reason = 'event') {
   clearTimeout(scheduled);
-  scheduled = setTimeout(() => { void repaintNow(); }, Math.max(0, Number(delay) || 0));
+  scheduled = setTimeout(() => { void ensureGlossesNow(reason); }, Math.max(0, Number(delay) || 0));
 }
 
 function wrapExplicitRefresh() {
@@ -100,7 +129,10 @@ function wrapExplicitRefresh() {
   globalThis.__readerEsInlineLexicalRefreshWrapped = true;
   globalThis.readerSpanishPipelineV1RefreshNow = async (...args) => {
     const result = await original(...args);
+    // Rendering must never wait on the network. Paint local data synchronously
+    // with the refresh, then kick the contextual fill in parallel if needed.
     await repaintNow();
+    schedule(0, 'explicit-refresh');
     return result;
   };
 }
@@ -109,13 +141,14 @@ if (typeof window !== 'undefined' && !window.__readerEsInlineLexicalOwnerV1) {
   window.__readerEsInlineLexicalOwnerV1 = true;
   wrapExplicitRefresh();
   globalThis.readerSpanishInlineLexicalRefresh = repaintNow;
-  window.addEventListener('reader:es-pipeline-v1-ready', () => schedule(0));
-  window.addEventListener('reader:es-lexical-corrected', () => schedule(0));
-  window.addEventListener('reader:pagechange', () => schedule(20));
-  window.addEventListener('reader:word-state-changed', () => schedule(0));
-  window.addEventListener('an2:languagechange', () => schedule(0));
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { wrapExplicitRefresh(); schedule(0); }, { once: true });
-  else schedule(0);
+  globalThis.readerSpanishEnsureInlineGlosses = ensureGlossesNow;
+  window.addEventListener('reader:es-pipeline-v1-ready', () => schedule(0, 'pipeline-ready'));
+  window.addEventListener('reader:es-lexical-corrected', () => schedule(0, 'lexical-corrected'));
+  window.addEventListener('reader:pagechange', () => schedule(20, 'pagechange'));
+  window.addEventListener('reader:word-state-changed', () => schedule(0, 'word-state'));
+  window.addEventListener('an2:languagechange', () => schedule(0, 'language'));
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { wrapExplicitRefresh(); schedule(0, 'dom-ready'); }, { once: true });
+  else schedule(0, 'boot');
 }
 
-export { repaintNow };
+export { repaintNow, ensureGlossesNow };
