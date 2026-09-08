@@ -153,9 +153,15 @@ function clearProperGloss(el, key) {
     wrap.parentNode?.insertBefore(el, wrap);
     wrap.remove();
   }
-  el?.classList?.remove('rw-migaku-unknown');
+  el?.classList?.remove('rw-migaku-known', 'rw-migaku-unknown');
   el?.classList?.add('rw-es-proper');
-  if (el?.dataset) el.dataset.esContextKey = key || '';
+  if (el?.dataset) {
+    // Occurrence-scoped durable verdict. The vocabulary classifier may run
+    // asynchronously after this batch; it must not turn a context-confirmed
+    // proper noun back into Unknown merely because it begins a sentence.
+    el.dataset.esContextProper = '1';
+    el.dataset.esContextKey = key || '';
+  }
 }
 
 function paragraphContext(paragraph) {
