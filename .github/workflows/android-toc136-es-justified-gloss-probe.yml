@@ -1,0 +1,76 @@
+name: Android toc136 Spanish justified gloss probe
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc136-es-justified-gloss-layout
+    paths:
+      - '.github/workflows/android-toc136-es-justified-gloss-probe.yml'
+      - 'android/app/build.gradle'
+      - 'js/reader/es-parity-ui-v1.js'
+      - 'js/reader/interactions-runtime.js'
+      - 'scripts/audit_toc136_spanish_justified_gloss_live.py'
+      - 'scripts/run_toc136_spanish_justified_gloss_probe.sh'
+  workflow_dispatch:
+
+jobs:
+  justified-gloss-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc136-es-justified-gloss-layout
+          fetch-depth: 0
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Materialize offline guest cold-start fix
+        run: python3 scripts/patch_toc126_guest_cold_start.py
+
+      - name: Validate toc136 layout source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check js/reader/es-parity-ui-v1.js
+          node --check js/reader/interactions-runtime.js
+          grep -q "versionCode 1029" android/app/build.gradle
+          grep -q "versionName '77.42-toc136-es-justified-gloss-layout'" android/app/build.gradle
+          grep -q "display:inline!important;position:relative!important" js/reader/es-parity-ui-v1.js
+          grep -q "es-parity-ui-v1.js?v=136" js/reader/interactions-runtime.js
+
+      - name: Build universal debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Prepare audit dependency
+        run: python3 -m pip install --quiet websocket-client requests
+
+      - name: Enable emulator hardware acceleration
+        run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+
+      - name: Android 15 justified gloss probe
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: false
+          script: bash scripts/run_toc136_spanish_justified_gloss_probe.sh
+
+      - name: Upload toc136 probe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toc136-es-justified-gloss-probe-evidence
+          path: runtime-audit/
+          if-no-files-found: warn
+          retention-days: 30
