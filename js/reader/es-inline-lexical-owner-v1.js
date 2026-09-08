@@ -54,6 +54,28 @@ function rememberContext(wrap, gloss) {
   return true;
 }
 
+// The contextual painter and the lexical owner are deliberately asynchronous.
+// A context result can become visible a few milliseconds before ensureGlossesNow()
+// reaches its final repaint/remember pass. If the user taps "Знаю" in that tiny
+// window, the vocabulary owner immediately unwraps the word and the accepted RU
+// gloss would otherwise be lost. Capture already-visible contextual decisions in
+// the click *capture* phase, before the Known/Unknown button's own handler mutates
+// the word DOM. The key is occurrence-specific, so this never promotes one sense
+// of a word globally to another occurrence.
+function rememberVisibleContexts() {
+  if (currentLang() !== 'es') return 0;
+  const root = document.getElementById('reader-chapter-text');
+  if (!root) return 0;
+  let remembered = 0;
+  for (const wrap of root.querySelectorAll('.rw-es-v1-wrap[data-es-occurrence-key]')) {
+    const word = wrap.querySelector(':scope > .reader-word.rw-migaku-unknown[data-word]');
+    const gloss = wrap.querySelector(':scope > .rw-es-v1-gloss');
+    if (!word || !gloss || word.classList.contains('rw-es-proper')) continue;
+    if (rememberContext(wrap, gloss)) remembered += 1;
+  }
+  return remembered;
+}
+
 function restoreRememberedContext(word, wrap, gloss) {
   const occurrenceKey = String(wrap?.dataset?.esOccurrenceKey || '');
   const saved = occurrenceKey ? contextByOccurrence.get(occurrenceKey) : null;
@@ -182,6 +204,13 @@ if (typeof window !== 'undefined' && !window.__readerEsInlineLexicalOwnerV1) {
   wrapExplicitRefresh();
   globalThis.readerSpanishInlineLexicalRefresh = repaintNow;
   globalThis.readerSpanishEnsureInlineGlosses = ensureGlossesNow;
+  // Capture before the materialized vocabulary owner's bubble-phase button
+  // listener can remove the wrapper for Known. button.click() follows the same
+  // event path, so the live gate exercises the exact user interaction path.
+  document.addEventListener('click', event => {
+    const button = event.target?.closest?.('#reader-es-known-btn,#reader-es-unknown-btn');
+    if (button) rememberVisibleContexts();
+  }, true);
   window.addEventListener('reader:es-pipeline-v1-ready', () => schedule(0, 'pipeline-ready'));
   window.addEventListener('reader:es-lexical-corrected', () => schedule(0, 'lexical-corrected'));
   window.addEventListener('reader:es-vocab-ready', () => schedule(20, 'vocab-ready'));
