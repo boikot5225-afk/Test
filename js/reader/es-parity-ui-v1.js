@@ -1,7 +1,7 @@
 // toc136 — Spanish UI parity with book-style justified interlinear layout.
 // Keep each source word in the normal inline formatting context. Russian glosses
 // are absolutely positioned from a relative inline anchor, so enabling help no
-// longer turns words into atomic inline-block boxes that wreck EPUB justification.
+// longer turns words into atomic boxes that wreck EPUB justification.
 import './es-inline-lexical-owner-v1.js?v=134';
 
 const MODE_KEY = 'an2_reader_es_unknown_gloss_mode_v1';
