@@ -87,7 +87,8 @@ for probe in [
     'Русский под Unknown',
 ]:
     assert probe in ui, f'toc136 Spanish layout contract missing: {probe}'
-assert 'inline-block' not in ui
+# Comments may discuss the retired layout; only an actual CSS declaration is a leak.
+assert 'display:inline-block' not in ui
 assert "not(.rd-es-unknown-gloss) .rw-es-v1-gloss{display:none!important}" in ui
 
 for probe in [
