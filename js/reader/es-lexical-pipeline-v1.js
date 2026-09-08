@@ -110,6 +110,75 @@ function mappedLemma(data, candidate) {
   return normalize(hit?.word || raw);
 }
 
+function rankedVerbLemma(data, candidate) {
+  const raw = normalize(candidate);
+  if (!raw) return '';
+  const hit = rankedHit(data, raw);
+  if (!Number.isInteger(hit?.index)) return '';
+  const entry = data?.entries?.[hit.index];
+  return mapPos(entry?.pos) === 'verb' ? normalize(hit.word || raw) : '';
+}
+
+// High-precision fallback for regular Spanish conjugations missing from the
+// source morphology table. A candidate is accepted only when it resolves to a
+// real ranked Spanish verb, and ambiguous -er/-ir candidates are rejected.
+function regularVerbLemma(surface, data) {
+  const original = normalize(surface);
+  if (!original || !data) return '';
+  const existingHead = rankedHit(data, original);
+  if (Number.isInteger(existingHead?.index)) return '';
+
+  const matches = new Set();
+  const add = candidate => {
+    const verb = rankedVerbLemma(data, candidate);
+    if (verb) matches.add(verb);
+  };
+  const addStem = (suffix, endings) => {
+    if (!original.endsWith(suffix) || original.length <= suffix.length + 1) return;
+    const stem = original.slice(0, -suffix.length);
+    for (const ending of endings) add(stem + ending);
+  };
+
+  // Preterite / imperfect / gerund / participle — the safest regular forms.
+  addStem('asteis', ['ar']);
+  addStem('aste', ['ar']);
+  addStem('aron', ['ar']);
+  addStem('ábamos', ['ar']);
+  addStem('abais', ['ar']);
+  addStem('abas', ['ar']);
+  addStem('aban', ['ar']);
+  addStem('aba', ['ar']);
+  addStem('ando', ['ar']);
+  addStem('ado', ['ar']);
+
+  addStem('isteis', ['er', 'ir']);
+  addStem('iste', ['er', 'ir']);
+  addStem('ieron', ['er', 'ir']);
+  addStem('íamos', ['er', 'ir']);
+  addStem('íais', ['er', 'ir']);
+  addStem('ías', ['er', 'ir']);
+  addStem('ían', ['er', 'ir']);
+  addStem('ía', ['er', 'ir']);
+  addStem('iendo', ['er', 'ir']);
+  addStem('ido', ['er', 'ir']);
+
+  // Future/conditional retain the infinitive stem. Validate the resulting
+  // infinitive directly instead of guessing a conjugation class.
+  for (const suffix of ['íamos','íais','ías','ían','ía','emos','éis','ás','án','é','á']) {
+    if (!original.endsWith(suffix) || original.length <= suffix.length + 2) continue;
+    const candidate = original.slice(0, -suffix.length);
+    if (/(?:ar|er|ir)$/u.test(candidate)) add(candidate);
+  }
+
+  // Distinctive accented simple-preterite endings.
+  addStem('ió', ['er', 'ir']);
+  addStem('í', ['er', 'ir']);
+  addStem('ó', ['ar']);
+  addStem('é', ['ar']);
+
+  return matches.size === 1 ? [...matches][0] : '';
+}
+
 // Spanish object/reflexive clitics can attach to infinitives, gerunds and
 // affirmatives (hacerlo, cometerlos, atreverse). Only detach when the remaining
 // form is actually known by the generated morphology/frequency data, so nouns
@@ -134,6 +203,8 @@ function cliticLemma(surface, data) {
         const baseMapped = normalize(data?.lemma?.get?.(base) || '');
         if (baseMapped && rankedHit(data, baseMapped)) return baseMapped;
         if (mappedHit && mapped !== original) return mapped;
+        const regular = regularVerbLemma(base, data);
+        if (regular) return regular;
         queue.push({ value: base, depth: depth + 1 });
       }
     }
@@ -144,11 +215,20 @@ function cliticLemma(surface, data) {
 async function lemmaFor(surface) {
   const normalized = normalize(surface);
   if (!normalized) return '';
-  const direct = baseLemma(normalized);
+  const beforeLoad = baseLemma(normalized);
+  if (beforeLoad && beforeLoad !== normalized) return beforeLoad;
+
   const data = await vocabularyData();
-  if (direct && direct !== normalized) return direct;
+  // readerSpanishLemmaFor is synchronous and may have been called before its
+  // data finished loading. Re-check the actual loaded map here.
+  const loadedMapped = normalize(data?.lemma?.get?.(normalized) || '');
+  if (loadedMapped && loadedMapped !== normalized) return loadedMapped;
+  if (rankedHit(data, normalized)) return normalized;
+
   const clitic = cliticLemma(normalized, data);
-  return clitic || direct || normalized;
+  if (clitic) return clitic;
+  const regular = regularVerbLemma(normalized, data);
+  return regular || beforeLoad || normalized;
 }
 
 function entryForLemma(data, lemma) {
@@ -291,4 +371,4 @@ if (typeof window !== 'undefined' && !window.__readerEsLexicalPipelineV1) {
   document.addEventListener('reader:es-analysis-ready', event => rememberAnalysis(event?.detail || {}));
 }
 
-export { normalize, sanitizeRussian, mapPos, analyze, analyzeContext, rememberAnalysis, lemmaFor, cliticLemma };
+export { normalize, sanitizeRussian, mapPos, analyze, analyzeContext, rememberAnalysis, lemmaFor, cliticLemma, regularVerbLemma };
