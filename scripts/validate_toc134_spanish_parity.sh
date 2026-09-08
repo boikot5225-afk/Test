@@ -54,7 +54,8 @@ assert "analysisOverrides" in lexical
 assert "properLemmas" in lexical
 
 # Inline Unknown fallback must use exactly the same Spanish lexical analysis as
-# the word card. Context translations keep priority over the local lexical owner.
+# the word card. Context translations keep priority over the local lexical owner,
+# and an accepted contextual occurrence must survive Known -> Unknown + repaint.
 assert "import './es-inline-lexical-owner-v1.js?v=134';" in ui
 for probe in [
     'readerSpanishLexicalAnalysisFor',
@@ -63,6 +64,9 @@ for probe in [
     'readerSpanishInlineLexicalRefresh',
     'context-deepseek-batch',
     'rw-migaku-unknown',
+    'contextByOccurrence',
+    'restoreRememberedContext',
+    "reader:es-vocab-ready",
 ]:
     assert probe in inline, f'Spanish inline lexical owner missing: {probe}'
 
