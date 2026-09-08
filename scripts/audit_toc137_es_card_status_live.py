@@ -43,28 +43,31 @@ result = cdp.eval(r"""(async()=>{
   </div></div>`;
 
   try {
-    // Reproduce the real startup order that caused the bug: the French owner has
-    // already claimed its document-level hook before the first Spanish word tap.
-    document.documentElement.dataset.readerFrVocabPanelHook='1';
-    delete document.documentElement.dataset.readerEsVocabPanelHook;
-
     if(typeof globalThis.readerSpanishPipelineV1RefreshNow!=='function') {
       throw new Error('Spanish reader pipeline missing');
     }
 
-    // Prime Spanish while the production word panel is still absent. This is
-    // exactly the lazy-panel path the old toc136 audit accidentally skipped.
+    // Prime the real Spanish vocabulary owner while the production word panel
+    // is still absent. Do not reset either hook sentinel: installPanelHook()
+    // intentionally runs only when the module is evaluated. The toc136 bug was
+    // that Spanish reused the French sentinel and therefore never installed its
+    // own listener when French had initialized first.
     await globalThis.readerSpanishPipelineV1RefreshNow('toc137-before-panel',true);
     await sleep(80);
 
-    if(document.documentElement.dataset.readerEsVocabPanelHook!=='1') {
-      throw new Error('Spanish panel hook was not independently installed after French hook');
+    const hookFrBefore=document.documentElement.dataset.readerFrVocabPanelHook||'';
+    const hookEsBefore=document.documentElement.dataset.readerEsVocabPanelHook||'';
+    if(hookFrBefore!=='1') {
+      throw new Error('French panel hook is not present before Spanish lazy-card test');
+    }
+    if(hookEsBefore!=='1') {
+      throw new Error('Spanish panel hook did not coexist independently with French: '+JSON.stringify({hookFrBefore,hookEsBefore}));
     }
 
     const panelModuleUrl=new URL('js/reader/word-panel.js?v=5',document.baseURI).href;
     const {createReaderWordPanel}=await import(panelModuleUrl);
     const panelOwner=createReaderWordPanel({
-      escape:value=>String(value||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'),
+      escape:value=>String(value||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;'),
       canonicalLang:()=> 'es',
       currentLang:()=> 'es',
       extractPinyin:()=>'',
@@ -74,8 +77,10 @@ result = cdp.eval(r"""(async()=>{
     const panel=panelOwner.ensure();
     panel.style.display='block';
 
-    // Reproduce the second collision too: the same shared panel may previously
-    // have been decorated by French in the current session.
+    // Reproduce the shared-panel state that matters in the real app: French
+    // has already decorated the lazily-created card in this session. Spanish
+    // must take ownership on the actual word tap, remove the French block and
+    // publish its own current Known/Unknown status without a manual refresh.
     panel.dataset.migakuKnowledge='fr1';
     const actions=panel.querySelector('.reader-word-actions');
     const fake=document.createElement('div');
@@ -88,9 +93,9 @@ result = cdp.eval(r"""(async()=>{
     const word=root.querySelector('[data-word="reposaban"]');
     if(!word) throw new Error('Spanish audit word missing');
 
-    // Do NOT call readerSpanishPipelineV1RefreshNow after creating the panel.
-    // The user only taps a word; the Spanish click hook must decorate the lazy
-    // panel and publish the current Known/Unknown status on its own.
+    // No readerSpanishPipelineV1RefreshNow() after panel creation. This is the
+    // genuine lazy-card path: the user only taps a Spanish word and the already
+    // installed Spanish document hook must decorate the new shared panel.
     word.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));
     await sleep(140);
 
@@ -99,6 +104,8 @@ result = cdp.eval(r"""(async()=>{
     const source=panel.querySelector('#reader-es-knowledge-source');
     const statusText=String(source?.textContent||'').trim();
     const snapshot={
+      hookFrBefore,
+      hookEsBefore,
       hookFr:document.documentElement.dataset.readerFrVocabPanelHook||'',
       hookEs:document.documentElement.dataset.readerEsVocabPanelHook||'',
       panelMarker:panel.dataset.migakuKnowledge||'',
@@ -127,6 +134,8 @@ result = cdp.eval(r"""(async()=>{
 print(json.dumps(result, ensure_ascii=False, indent=2))
 if not result:
     raise RuntimeError('toc137 Spanish card-status audit returned no result')
+if result.get('hookFrBefore') != '1' or result.get('hookEsBefore') != '1':
+    raise RuntimeError('toc137 French/Spanish hook coexistence failed: ' + repr(result))
 if result.get('hookEs') != '1':
     raise RuntimeError('toc137 Spanish hook isolation failed: ' + repr(result))
 if result.get('panelMarker') != 'es1':
