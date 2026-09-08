@@ -42,14 +42,12 @@ function injectStyles() {
     }
     #reader-reading-view.rd-es-pipeline-v1:not(.rd-es-unknown-gloss) .rw-es-v1-gloss{display:none!important}
 
-    /* Keep the EPUB's real alignment. The key change from toc135 is that the
-       annotation owner itself remains inline instead of inline-block. Therefore
-       normal Spanish spaces and punctuation remain part of Chromium's text line,
-       while the Russian hint is painted below without taking horizontal width. */
+    /* Preserve the EPUB's own text-align. Only line rhythm and annotation
+       geometry are owned here. Inline anchors keep Spanish spaces/punctuation in
+       Chromium's normal line layout, while Russian hints take no horizontal width. */
     #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .reader-paragraph-text{
-      line-height:1.72!important;text-align:inherit!important;text-align-last:auto!important;
-      text-wrap:pretty!important;hyphens:auto!important;-webkit-hyphens:auto!important;
-      word-spacing:normal!important
+      line-height:1.72!important;text-wrap:pretty!important;hyphens:auto!important;
+      -webkit-hyphens:auto!important;word-spacing:normal!important
     }
     #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .rw-es-v1-wrap{
       display:inline!important;position:relative!important;vertical-align:baseline!important;
