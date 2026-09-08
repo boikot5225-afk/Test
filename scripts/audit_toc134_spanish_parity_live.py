@@ -37,10 +37,34 @@ result = cdp.eval(r"""(async()=>{
   localStorage.setItem(modeKey,'unknown');
 
   const originalHtml=root.innerHTML;
-  const panel=document.getElementById('reader-word-panel');
+
+  // The production word panel is deliberately lazy: on a cold Reader start it
+  // does not exist until the first word is opened.  The old audit incorrectly
+  // treated that as a product failure.  Materialize the exact production DOM
+  // owner here, before installing the isolated text fixture, so we can test the
+  // real Spanish Known/Unknown decoration without calling readerOpenWordPanel
+  // (which intentionally schedules a chapter render and would destroy fixture).
+  let panel=document.getElementById('reader-word-panel');
+  let createdPanelForAudit=false;
+  if(!panel){
+    const panelModuleUrl=new URL('js/reader/word-panel.js?v=5',document.baseURI).href;
+    const {createReaderWordPanel}=await import(panelModuleUrl);
+    if(typeof createReaderWordPanel!=='function') throw new Error('Production word-panel module missing');
+    const panelOwner=createReaderWordPanel({
+      escape:value=>String(value||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'),
+      canonicalLang:()=> 'es',
+      currentLang:()=> 'es',
+      extractPinyin:()=>'',
+      extractReading:()=>'',
+      getSelectedWord:()=>String(document.getElementById('reader-word-title')?.textContent||'').trim(),
+    });
+    panel=panelOwner.ensure();
+    createdPanelForAudit=true;
+  }
   const title=document.getElementById('reader-word-title');
-  const oldPanelDisplay=panel?.style?.display ?? '';
-  const oldTitle=title?.textContent ?? '';
+  if(!panel||!title) throw new Error('Production Reader word panel could not be materialized');
+  const oldPanelDisplay=panel.style.display ?? '';
+  const oldTitle=title.textContent ?? '';
 
   root.innerHTML=`
     <div class="reader-paragraph active" data-p="0"><div class="reader-paragraph-text">
@@ -118,7 +142,6 @@ result = cdp.eval(r"""(async()=>{
     // intentionally schedules a full chapter render, which would destroy this
     // isolated fixture and turn the test into a race. The generated vocabulary
     // owner sees the same panel/title and owns the exact Known/Unknown buttons.
-    if(!panel||!title) throw new Error('Reader word panel DOM missing');
     panel.style.display='block';
     title.textContent='cometerlos';
     await globalThis.readerSpanishPipelineV1RefreshNow('toc134-panel',true);
@@ -158,11 +181,14 @@ result = cdp.eval(r"""(async()=>{
     const afterUnknown={known:word?.classList.contains('rw-migaku-known')||false,unknown:word?.classList.contains('rw-migaku-unknown')||false,wrapped:!!wrap,ru:String(gloss?.textContent||'').trim()};
     if(afterUnknown.known || !afterUnknown.unknown || !afterUnknown.wrapped || !afterUnknown.ru) throw new Error('Spanish manual Unknown did not restore inline gloss: '+JSON.stringify(afterUnknown));
 
-    return {owner,cometer,bastaron,enabledStyle,disabledStyle,aaModes,vocabButtons,panelSnapshot,afterKnown,afterUnknown};
+    return {owner,cometer,bastaron,enabledStyle,disabledStyle,aaModes,vocabButtons,panelSnapshot,afterKnown,afterUnknown,createdPanelForAudit};
   } finally {
     root.innerHTML=originalHtml;
-    if(panel) panel.style.display=oldPanelDisplay;
-    if(title) title.textContent=oldTitle;
+    if(createdPanelForAudit) panel.remove();
+    else {
+      panel.style.display=oldPanelDisplay;
+      title.textContent=oldTitle;
+    }
     if(oldProfile===null)localStorage.removeItem(profileKey);else localStorage.setItem(profileKey,oldProfile);
     if(oldMode===null)localStorage.removeItem(modeKey);else localStorage.setItem(modeKey,oldMode);
   }
