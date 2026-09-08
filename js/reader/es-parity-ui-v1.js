@@ -1,6 +1,7 @@
-// toc135 — Spanish UI parity with readable interlinear layout.
-// Presentation remains here; the inline lexical bridge below makes card/inline
-// morphology share the same Spanish lexical owner while context keeps priority.
+// toc136 — Spanish UI parity with book-style justified interlinear layout.
+// Keep each source word in the normal inline formatting context. Russian glosses
+// are absolutely positioned from a relative inline anchor, so enabling help no
+// longer turns words into atomic inline-block boxes that wreck EPUB justification.
 import './es-inline-lexical-owner-v1.js?v=134';
 
 const MODE_KEY = 'an2_reader_es_unknown_gloss_mode_v1';
@@ -27,43 +28,46 @@ function injectStyles() {
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
-    /* Disabled = genuinely ordinary text. The toc133 wrappers stay in DOM so
-       enabling help is instant, but they must not reserve vertical space. */
+    /* Disabled = ordinary EPUB text. Wrappers stay in DOM only as transparent
+       inline containers so toggling help never re-tokenizes the chapter. */
     #reader-reading-view.rd-es-pipeline-v1:not(.rd-es-unknown-gloss) .rw-es-v1-wrap{
       display:inline!important;position:static!important;vertical-align:baseline!important;
       line-height:inherit!important;margin:0!important;padding:0!important;
       overflow:visible!important;white-space:normal!important
     }
     #reader-reading-view.rd-es-pipeline-v1:not(.rd-es-unknown-gloss) .rw-es-v1-wrap>.reader-word{
-      display:inline!important;margin:0!important;padding:0!important;line-height:inherit!important;
-      white-space:normal!important;word-break:normal!important;overflow-wrap:normal!important
+      display:inline!important;position:static!important;margin:0!important;padding:0!important;
+      line-height:inherit!important;white-space:normal!important;word-break:normal!important;
+      overflow-wrap:normal!important
     }
     #reader-reading-view.rd-es-pipeline-v1:not(.rd-es-unknown-gloss) .rw-es-v1-gloss{display:none!important}
 
-    /* Interlinear annotation slots are inline-blocks. EPUB justification treats
-       the spaces between those slots as expandable gaps and can produce huge,
-       unreadable rivers of whitespace. While Russian-under-Unknown is enabled,
-       keep the book's typography but render paragraphs ragged-start instead of
-       justified. Switching the mode off restores the EPUB's original alignment. */
+    /* Keep the EPUB's real alignment. The key change from toc135 is that the
+       annotation owner itself remains inline instead of inline-block. Therefore
+       normal Spanish spaces and punctuation remain part of Chromium's text line,
+       while the Russian hint is painted below without taking horizontal width. */
     #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .reader-paragraph-text{
-      line-height:1.86!important;text-align:start!important;text-align-last:auto!important;
+      line-height:1.72!important;text-align:inherit!important;text-align-last:auto!important;
+      text-wrap:pretty!important;hyphens:auto!important;-webkit-hyphens:auto!important;
       word-spacing:normal!important
     }
     #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .rw-es-v1-wrap{
-      display:inline-block!important;vertical-align:-.36em!important;line-height:1!important;
-      margin:0 .025em!important;padding:0 0 .56em!important;position:relative!important;
-      overflow:visible!important;white-space:nowrap!important
+      display:inline!important;position:relative!important;vertical-align:baseline!important;
+      line-height:inherit!important;margin:0!important;padding:0!important;
+      overflow:visible!important;white-space:normal!important
     }
     #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .rw-es-v1-wrap>.reader-word{
-      display:inline!important;margin:0!important;padding:0 1px!important;line-height:1.04!important;
-      white-space:nowrap!important;word-break:keep-all!important;overflow-wrap:normal!important
+      display:inline!important;position:relative!important;margin:0!important;padding:0 1px!important;
+      line-height:inherit!important;white-space:nowrap!important;word-break:keep-all!important;
+      overflow-wrap:normal!important
     }
     #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .rw-es-v1-gloss{
-      display:block!important;position:absolute!important;left:50%!important;bottom:0!important;
-      transform:translateX(-50%)!important;max-width:none!important;white-space:nowrap!important;
-      pointer-events:none!important;font-family:'IBM Plex Sans',sans-serif!important;
-      font-size:var(--es-v1-gloss-font,.38em)!important;font-weight:400!important;line-height:1!important;
-      color:var(--text-muted)!important;text-decoration:none!important
+      display:block!important;position:absolute!important;left:50%!important;top:1.08em!important;
+      bottom:auto!important;transform:translateX(-50%)!important;max-width:none!important;
+      white-space:nowrap!important;pointer-events:none!important;
+      font-family:'IBM Plex Sans',sans-serif!important;font-size:var(--es-v1-gloss-font,.38em)!important;
+      font-weight:400!important;line-height:1!important;color:var(--text-muted)!important;
+      text-decoration:none!important
     }
     #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .rw-es-v1-gloss:empty{display:none!important}
 
@@ -114,7 +118,6 @@ function sync() {
 function setMode(next) {
   try { localStorage.setItem(MODE_KEY, next === 'off' ? 'off' : 'unknown'); } catch {}
   sync();
-  // No re-tokenization: wrappers/glosses already exist. This only changes CSS.
   try { window.dispatchEvent(new CustomEvent('reader:es-gloss-mode-changed', { detail: { mode: mode() } })); } catch {}
 }
 
