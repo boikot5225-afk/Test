@@ -8,6 +8,7 @@ node --check /tmp/toc134-es-vocab-estimate.js
 node --check js/reader/es-reader-pipeline-v1.js
 node --check js/reader/es-context-batch-v1.js
 node --check js/reader/es-lexical-pipeline-v1.js
+node --check js/reader/es-inline-lexical-owner-v1.js
 node --check js/reader/es-parity-ui-v1.js
 node --check js/reader/word-lookup.js
 
@@ -20,6 +21,7 @@ def text(path):
 lookup=text('js/reader/word-lookup.js')
 interactions=text('js/reader/interactions-runtime.js')
 lexical=text('js/reader/es-lexical-pipeline-v1.js')
+inline=text('js/reader/es-inline-lexical-owner-v1.js')
 ui=text('js/reader/es-parity-ui-v1.js')
 reader=text('js/reader-app.js')
 gradle=text('android/app/build.gradle')
@@ -50,6 +52,19 @@ assert "return baseMapped" in lexical
 assert "return mapped" in lexical
 assert "analysisOverrides" in lexical
 assert "properLemmas" in lexical
+
+# Inline Unknown fallback must use exactly the same Spanish lexical analysis as
+# the word card. Context translations keep priority over the local lexical owner.
+assert "import './es-inline-lexical-owner-v1.js?v=134';" in ui
+for probe in [
+    'readerSpanishLexicalAnalysisFor',
+    'es-lexical-owner',
+    'readerSpanishPipelineV1RefreshNow',
+    'readerSpanishInlineLexicalRefresh',
+    'context-deepseek-batch',
+    'rw-migaku-unknown',
+]:
+    assert probe in inline, f'Spanish inline lexical owner missing: {probe}'
 
 # Generated ES vocabulary must own the same mature controls as French: Measure
 # my level, lemma-based classification and manual Known/Unknown.
