@@ -1,0 +1,261 @@
+name: Android APK toc136 Spanish justified gloss + frozen gates
+
+on:
+  push:
+    branches:
+      - feature/77.42-toc136-es-justified-gloss-layout
+    paths:
+      - '.github/workflows/android-apk-toc136-es-justified-gloss.yml'
+      - 'scripts/build_es_reader_resources.py'
+      - 'scripts/materialize_es_vocab_module.py'
+      - 'scripts/validate_toc133_frozen_toc132.sh'
+      - 'scripts/validate_toc134_frozen_toc133.sh'
+      - 'scripts/validate_toc136_frozen_toc133.sh'
+      - 'scripts/validate_toc136_spanish_justified_gloss.sh'
+      - 'scripts/audit_toc132_english_context_live.py'
+      - 'scripts/audit_toc133_spanish_context_live.py'
+      - 'scripts/audit_toc136_spanish_parity_live.py'
+      - 'scripts/audit_toc136_spanish_justified_gloss_live.py'
+      - 'scripts/setup_toc134_spanish_parity_context.py'
+      - 'scripts/run_toc133_spanish_emulator.sh'
+      - 'scripts/run_toc136_spanish_release_emulator.sh'
+      - 'js/reader/es-reader-pipeline-v1.js'
+      - 'js/reader/es-context-batch-v1.js'
+      - 'js/reader/es-lexical-pipeline-v1.js'
+      - 'js/reader/es-inline-lexical-owner-v1.js'
+      - 'js/reader/es-parity-ui-v1.js'
+      - 'js/reader/word-lookup.js'
+      - 'js/reader/interactions-runtime.js'
+      - 'android/app/build.gradle'
+  workflow_dispatch:
+
+jobs:
+  spanish-justified-gloss-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/77.42-toc136-es-justified-gloss-layout
+          fetch-depth: 0
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore established Reader AI signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_KEYSTORE_BASE64}"
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Materialize offline guest cold-start fix
+        shell: bash
+        run: python3 scripts/patch_toc126_guest_cold_start.py
+
+      - name: Validate frozen Reader plus toc136 Spanish source
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/validate_toc136_spanish_justified_gloss.sh
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+
+          for source_path, output_path in [
+              ('scripts/audit_toc132_english_context_live.py', '/tmp/toc132-english-live-audit.js'),
+              ('scripts/audit_toc133_spanish_context_live.py', '/tmp/toc133-spanish-live-audit.js'),
+              ('scripts/audit_toc136_spanish_parity_live.py', '/tmp/toc136-spanish-parity-live-audit.js'),
+              ('scripts/audit_toc136_spanish_justified_gloss_live.py', '/tmp/toc136-spanish-layout-live-audit.js'),
+          ]:
+              source = Path(source_path).read_text(encoding='utf-8')
+              tree = ast.parse(source, filename=source_path)
+              candidates = []
+              for node in ast.walk(tree):
+                  if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                      continue
+                  if node.func.attr != 'eval' or not node.args:
+                      continue
+                  first = node.args[0]
+                  if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                      value = first.value.strip()
+                      if value.startswith('(async()=>'):
+                          candidates.append(first.value)
+              if len(candidates) != 1:
+                  raise SystemExit(f'{source_path}: expected one async cdp.eval JavaScript body, got {len(candidates)}')
+              Path(output_path).write_text(candidates[0], encoding='utf-8')
+          PY
+          node --check /tmp/toc132-english-live-audit.js
+          node --check /tmp/toc133-spanish-live-audit.js
+          node --check /tmp/toc136-spanish-parity-live-audit.js
+          node --check /tmp/toc136-spanish-layout-live-audit.js
+
+      - name: Build universal APK directly from validated source
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify toc136 Spanish payload inside universal APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+          unzip -t "$APK" >/dev/null
+          for f in \
+            assets/www/js/reader/es-vocab-estimate.js \
+            assets/www/js/reader/es-reader-pipeline-v1.js \
+            assets/www/js/reader/es-context-batch-v1.js \
+            assets/www/js/reader/es-lexical-pipeline-v1.js \
+            assets/www/js/reader/es-inline-lexical-owner-v1.js \
+            assets/www/js/reader/es-parity-ui-v1.js \
+            assets/www/js/reader/word-lookup.js \
+            assets/esreader/es_vocab_frequency.tsv \
+            assets/esreader/es_vocab_lemma.tsv \
+            assets/esreader/es_ru_core.json \
+            assets/esreader/es_ru_senses.json \
+            assets/www/js/reader/en-context-batch-v2.js \
+            assets/www/js/reader/fr-reader-pipeline-v2.js \
+            assets/www/js/reader/epub-stage1-real.js; do
+            unzip -l "$APK" | grep -qF "$f"
+          done
+          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF "es-lexical-pipeline-v1.js?v=134"
+          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF "es-parity-ui-v1.js?v=136"
+          unzip -p "$APK" assets/www/js/reader/word-lookup.js | grep -qF "if (lang === 'es')"
+          unzip -p "$APK" assets/www/js/reader/es-inline-lexical-owner-v1.js | grep -qF 'restoreRememberedContext'
+          unzip -p "$APK" assets/www/js/reader/es-inline-lexical-owner-v1.js | grep -qF 'reader:es-vocab-ready'
+          unzip -p "$APK" assets/www/js/reader/es-parity-ui-v1.js | grep -qF 'Русский под Unknown'
+          unzip -p "$APK" assets/www/js/reader/es-parity-ui-v1.js | grep -qF 'display:inline!important;position:relative!important'
+          unzip -p "$APK" assets/www/js/reader/es-parity-ui-v1.js | grep -qF 'top:100%!important'
+          if unzip -p "$APK" assets/www/js/reader/es-parity-ui-v1.js | grep -qF 'inline-block'; then
+            echo 'old Spanish inline-block layout leaked into toc136' >&2
+            exit 1
+          fi
+          unzip -p "$APK" assets/www/js/reader/es-vocab-estimate.js | grep -qF 'reader-es-known-btn'
+          unzip -p "$APK" assets/www/js/reader/es-vocab-estimate.js | grep -qF 'reader-es-unknown-btn'
+          unzip -p "$APK" assets/www/js/reader/epub-stage1-real.js | grep -qF 'normalizeDropCapWrappers'
+          if unzip -l "$APK" | grep -q 'assets/www/build/'; then
+            echo 'transient repo build cache leaked into APK' >&2
+            exit 1
+          fi
+
+      - name: Prepare realistic EPUB and audit dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/make_toc126_storage_audit_epub.py
+          test "$(stat -c %s runtime-audit/toc126-storage-audit.epub)" -gt 4000000
+          python3 -m pip install --quiet websocket-client requests
+
+      - name: Enable emulator hardware acceleration
+        shell: bash
+        run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+
+      - name: Android 15 full frozen suite plus toc136 Spanish behavior and layout
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: false
+          script: bash scripts/run_toc136_spanish_release_emulator.sh
+
+      - name: Upload toc136 live evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toc136-es-justified-gloss-frozen-live-evidence
+          path: runtime-audit/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Configure final Galaxy A54 ABI only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/configure_toc123_a54_abi.py
+          rm -rf android/app/build
+
+      - name: Build final Galaxy A54 APK directly
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Sign and validate vc1029 A54 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          mkdir -p unique-out
+          OUT=unique-out/Reader-AI-77.42-toc136-es-justified-gloss-layout-a54-vc1029.apk
+          KSPASS="${ANDROID_KEYSTORE_PASSWORD:-readerai2026}"
+          KEYPASS="${ANDROID_KEY_PASSWORD:-$KSPASS}"
+          ALIAS="${ANDROID_KEY_ALIAS:-reader-ai}"
+          "${BUILD_TOOLS}/apksigner" sign \
+            --ks "${ANDROID_KEYSTORE_PATH}" \
+            --ks-key-alias "$ALIAS" \
+            --ks-pass "pass:$KSPASS" \
+            --key-pass "pass:$KEYPASS" \
+            --v1-signing-enabled false \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out "$OUT" "$APK"
+          "${BUILD_TOOLS}/apksigner" verify --verbose --print-certs "$OUT" | tee unique-out/APKSIGNER.txt
+          "${BUILD_TOOLS}/aapt" dump badging "$OUT" | tee unique-out/BADGING.txt
+          "${BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$OUT" > unique-out/ZIPALIGN.txt
+          unzip -t "$OUT" >/dev/null
+          for f in \
+            assets/www/js/reader/es-vocab-estimate.js \
+            assets/www/js/reader/es-reader-pipeline-v1.js \
+            assets/www/js/reader/es-context-batch-v1.js \
+            assets/www/js/reader/es-lexical-pipeline-v1.js \
+            assets/www/js/reader/es-inline-lexical-owner-v1.js \
+            assets/www/js/reader/es-parity-ui-v1.js \
+            assets/www/js/reader/word-lookup.js \
+            assets/esreader/es_vocab_frequency.tsv \
+            assets/esreader/es_vocab_lemma.tsv \
+            assets/esreader/es_ru_core.json \
+            assets/esreader/es_ru_senses.json \
+            assets/www/js/reader/en-context-batch-v2.js \
+            assets/frreader/fr_ru_core.json; do
+            unzip -l "$OUT" | grep -qF "$f"
+          done
+          unzip -p "$OUT" assets/www/js/reader/es-parity-ui-v1.js | grep -qF 'top:100%!important'
+          unzip -p "$OUT" assets/www/js/reader/es-parity-ui-v1.js | grep -qF 'display:inline!important;position:relative!important'
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
+          grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
+          grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
+          grep -q "versionCode='1029'" unique-out/BADGING.txt
+          grep -q "versionName='77.42-toc136-es-justified-gloss-layout-debug'" unique-out/BADGING.txt
+          grep -q "targetSdkVersion:'35'" unique-out/BADGING.txt
+          grep -q "native-code: 'arm64-v8a'" unique-out/BADGING.txt
+          if unzip -l "$OUT" | grep -Eq 'lib/(armeabi-v7a|x86|x86_64)/'; then
+            echo 'non-A54 ABI leaked into final package' >&2
+            exit 1
+          fi
+          if unzip -l "$OUT" | grep -q 'assets/www/build/'; then
+            echo 'transient repo build cache leaked into APK' >&2
+            exit 1
+          fi
+          sha256sum "$OUT" | tee unique-out/SHA256.txt
+          stat -c '%n %s bytes' "$OUT" | tee unique-out/SIZE.txt
+
+      - name: Upload verified toc136 A54 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reader-AI-77.42-toc136-es-justified-gloss-layout-a54-vc1029
+          path: unique-out/
+          if-no-files-found: error
+          retention-days: 30
