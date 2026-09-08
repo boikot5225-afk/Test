@@ -35,8 +35,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 1028
-        versionName '77.42-toc135-es-readable-layout'
+        versionCode 1029
+        versionName '77.42-toc136-es-justified-gloss-layout'
     }
 
     buildFeatures {
@@ -220,7 +220,7 @@ tasks.register('prepareZhMigakuResources') {
             commandLine 'python3',
                     new File(repoRoot, 'scripts/export_zh_jieba_rank_asset.py').absolutePath,
                     new File(outputDir, 'zh_migaku.sqlite3').absolutePath,
-                    new File(outputDir, 'zh_jieba_top100k.txt').absolutePath,
+                    new File(outputDir, 'data/zh_jieba_top100k.txt').absolutePath,
                     '--limit', '100000'
         }
     }
