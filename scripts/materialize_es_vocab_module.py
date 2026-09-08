@@ -43,6 +43,21 @@ def materialize(output: Path) -> None:
     for old, new in replacements:
         source = source.replace(old, new)
 
+    # Context-batch owns occurrence-specific proper-noun decisions.  The
+    # generic vocabulary owner otherwise reclassifies every rendered word on a
+    # later async refresh and would turn sentence-initial names such as Madrid
+    # back into Unknown.  Preserve only the exact DOM occurrence marked by the
+    # context layer; do not promote every capitalized surface globally.
+    classification_anchor = "function applyClassificationToElement(el,info){removeKnowledgeClasses(el);const base="
+    classification_patch = (
+        "function applyClassificationToElement(el,info){removeKnowledgeClasses(el);"
+        "if(el?.dataset?.esContextProper==='1'){el.classList.remove('rw-migaku-known','rw-migaku-unknown');"
+        "el.classList.add('rw-es-proper');el.removeAttribute('title');return;}const base="
+    )
+    if classification_anchor not in source:
+        raise SystemExit("Spanish classification anchor changed; refusing to lose contextual proper verdicts")
+    source = source.replace(classification_anchor, classification_patch, 1)
+
     required = (
         "an2_reader_vocab_estimate_es_v1",
         "esreader/es_vocab_frequency.tsv",
@@ -51,6 +66,7 @@ def materialize(output: Path) -> None:
         "reader:es-vocab-ready",
         "currentLang()!=='es'",
         "lang:'es'",
+        "esContextProper==='1'",
     )
     for token in required:
         if token not in source:
