@@ -32,39 +32,62 @@ result = cdp.eval(r"""(async()=>{
     —${known('Pero')} ${known('Emiliano')} ${known('no')} ${known('fue')} ${known('a')} ${known('la')} ${unknown('hacienda','имение')}, ${known('conocía')} ${known('a')} ${known('los')} ${unknown('enemigos','враги')} ${known('y')} ${known('no')} ${known('les')} ${known('confiaba')} ${known('ni')} ${unknown('tantito','столько')}, ${known('mandó')} ${known('a')} ${known('un')} ${unknown('compadre','кум')} ${known('suyo')} ${known('que')} ${known('le')} ${unknown('insistió','настоял')} ${known('mucho')}. ${known('Pa’')} ${known('que')} ${known('se')} ${known('le')} ${known('quitara')} ${known('lo')} ${unknown('jodón','надоеда')}. ${known('Ése')} ${known('fue')} ${known('el')} ${known('que')} ${known('murió')} ${unknown('baleado','застрелен')}: ${known('Emiliano')} ${known('se')} ${unknown('escondió','спрятался')}, ${known('y')} ${unknown('vio','увидел')} ${known('cómo')} ${known('la')} ${known('Revolución')} ${known('se')} ${known('moría')}…
   </div></div>`;
 
+  const paragraph=document.getElementById('toc136-user-fixture');
+  const measure=()=>{
+    const pStyle=getComputedStyle(paragraph);
+    const pr=paragraph.getBoundingClientRect();
+    const words=[...paragraph.querySelectorAll('.reader-word')].map((el,index)=>{
+      const r=el.getBoundingClientRect();
+      return {index,word:el.dataset.word,left:Number(r.left.toFixed(2)),right:Number(r.right.toFixed(2)),top:Number(r.top.toFixed(2)),bottom:Number(r.bottom.toFixed(2)),width:Number(r.width.toFixed(2)),display:getComputedStyle(el).display};
+    });
+    const lines=[];
+    for(const item of words){
+      let line=lines.find(x=>Math.abs(x.top-item.top)<=4);
+      if(!line){ line={top:item.top,items:[]}; lines.push(line); }
+      line.items.push(item);
+    }
+    lines.sort((a,b)=>a.top-b.top);
+    const gaps=[];
+    for(const line of lines){
+      line.items.sort((a,b)=>a.left-b.left);
+      for(let i=1;i<line.items.length;i++){
+        const a=line.items[i-1],b=line.items[i];
+        if(b.left>=a.right) gaps.push(Number((b.left-a.right).toFixed(2)));
+      }
+    }
+    return {
+      textAlign:pStyle.textAlign,
+      display:pStyle.display,
+      width:Number(pr.width.toFixed(2)),
+      height:Number(pr.height.toFixed(2)),
+      lineHeight:pStyle.lineHeight,
+      lineWords:lines.map(l=>l.items.map(x=>x.word)),
+      lines:lines.map(l=>({top:l.top,left:l.items[0]?.left,right:l.items[l.items.length-1]?.right,words:l.items.map(x=>x.word)})),
+      words,
+      gaps,
+      maxGap:gaps.length?Math.max(...gaps):null,
+    };
+  };
+
+  // Ordinary mode is the ground truth. The annotation layer is allowed to add
+  // vertical room, but must not change Spanish line breaks or horizontal metrics.
+  globalThis.readerSetSpanishGlossMode('off');
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  await sleep(40);
+  const ordinary=measure();
+
   globalThis.readerSetSpanishGlossMode('unknown');
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
   await sleep(80);
+  const annotated=measure();
 
-  const paragraph=document.getElementById('toc136-user-fixture');
-  const pStyle=getComputedStyle(paragraph);
-  const pr=paragraph.getBoundingClientRect();
-  const rr=root.getBoundingClientRect();
-  const words=[...paragraph.querySelectorAll('.reader-word')].map((el,index)=>{
-    const r=el.getBoundingClientRect();
-    return {index,word:el.dataset.word,left:Number(r.left.toFixed(2)),right:Number(r.right.toFixed(2)),top:Number(r.top.toFixed(2)),bottom:Number(r.bottom.toFixed(2)),width:Number(r.width.toFixed(2)),display:getComputedStyle(el).display};
-  });
-  const lines=[];
-  for(const item of words){
-    let line=lines.find(x=>Math.abs(x.top-item.top)<=4);
-    if(!line){ line={top:item.top,items:[]}; lines.push(line); }
-    line.items.push(item);
+  const horizontalDeltas=[];
+  for(let i=0;i<Math.min(ordinary.words.length,annotated.words.length);i++){
+    const a=ordinary.words[i], b=annotated.words[i];
+    horizontalDeltas.push(Math.max(Math.abs(a.left-b.left),Math.abs(a.right-b.right),Math.abs(a.width-b.width)));
   }
-  lines.sort((a,b)=>a.top-b.top);
-  const gaps=[];
-  const gapRows=[];
-  for(const line of lines){
-    line.items.sort((a,b)=>a.left-b.left);
-    for(let i=1;i<line.items.length;i++){
-      const a=line.items[i-1],b=line.items[i];
-      if(b.left>=a.right){
-        const gap=Number((b.left-a.right).toFixed(2));
-        gaps.push(gap);
-        gapRows.push({a:a.word,b:b.word,gap,top:line.top});
-      }
-    }
-  }
-  const maxGap=gaps.length?Math.max(...gaps):null;
+  const maxHorizontalDelta=horizontalDeltas.length?Number(Math.max(...horizontalDeltas).toFixed(2)):null;
+  const lineBreaksEqual=JSON.stringify(ordinary.lineWords)===JSON.stringify(annotated.lineWords);
 
   const glossGeometry=[...paragraph.querySelectorAll('.rw-es-v1-wrap')].map(wrap=>{
     const word=wrap.querySelector('.reader-word');
@@ -83,23 +106,12 @@ result = cdp.eval(r"""(async()=>{
   });
 
   return {
-    textAlign:pStyle.textAlign,
-    paragraphDisplay:pStyle.display,
-    paragraphWidth:Number(pr.width.toFixed(2)),
-    paragraphHeight:Number(pr.height.toFixed(2)),
-    rootWidth:Number(rr.width.toFixed(2)),
-    fontSize:pStyle.fontSize,
-    lineHeight:pStyle.lineHeight,
-    whiteSpace:pStyle.whiteSpace,
-    wordSpacing:pStyle.wordSpacing,
-    lineCount:lines.length,
-    wordsCount:words.length,
-    maxGap,
-    gapsCount:gaps.length,
-    gapRows,
-    lines:lines.map(l=>({top:l.top,words:l.items.map(x=>x.word),left:l.items[0]?.left,right:l.items[l.items.length-1]?.right})),
+    ordinary,
+    annotated,
+    lineBreaksEqual,
+    maxHorizontalDelta,
+    horizontalDeltas,
     glossGeometry,
-    words,
   };
 })()""", 40)
 
@@ -108,12 +120,16 @@ cdp.close()
 
 if not result:
     raise RuntimeError('toc136 Spanish justified gloss audit returned no result')
-if result.get('textAlign') != 'justify':
+ordinary = result.get('ordinary') or {}
+annotated = result.get('annotated') or {}
+if ordinary.get('textAlign') != 'justify' or annotated.get('textAlign') != 'justify':
     raise RuntimeError('toc136 did not preserve EPUB justification: ' + repr(result))
-if result.get('lineCount', 0) < 5 or result.get('gapsCount', 0) < 15:
-    raise RuntimeError('toc136 diagnostic fixture geometry is unrealistic: ' + repr(result))
-if result.get('maxGap') is None or result.get('maxGap') > 34:
-    raise RuntimeError('toc136 Spanish justification spacing failed: ' + repr(result))
+if len(ordinary.get('lineWords') or []) < 5 or len(annotated.get('lineWords') or []) < 5:
+    raise RuntimeError('toc136 diagnostic fixture did not form book lines: ' + repr(result))
+if not result.get('lineBreaksEqual'):
+    raise RuntimeError('Spanish annotations changed source line breaks: ' + repr(result))
+if result.get('maxHorizontalDelta') is None or result.get('maxHorizontalDelta') > 1.5:
+    raise RuntimeError('Spanish annotations changed horizontal source metrics: ' + repr(result))
 for row in result.get('glossGeometry') or []:
     if row.get('wrapDisplay') != 'inline' or row.get('wrapPosition') != 'relative' or row.get('glossPosition') != 'absolute':
         raise RuntimeError('toc136 inline gloss anchor inactive: ' + repr(row))
