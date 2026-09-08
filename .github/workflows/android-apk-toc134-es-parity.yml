@@ -19,6 +19,7 @@ on:
       - 'js/reader/es-reader-pipeline-v1.js'
       - 'js/reader/es-context-batch-v1.js'
       - 'js/reader/es-lexical-pipeline-v1.js'
+      - 'js/reader/es-inline-lexical-owner-v1.js'
       - 'js/reader/es-parity-ui-v1.js'
       - 'js/reader/word-lookup.js'
       - 'js/reader/interactions-runtime.js'
@@ -112,6 +113,7 @@ jobs:
             assets/www/js/reader/es-reader-pipeline-v1.js \
             assets/www/js/reader/es-context-batch-v1.js \
             assets/www/js/reader/es-lexical-pipeline-v1.js \
+            assets/www/js/reader/es-inline-lexical-owner-v1.js \
             assets/www/js/reader/es-parity-ui-v1.js \
             assets/www/js/reader/word-lookup.js \
             assets/esreader/es_vocab_frequency.tsv \
@@ -126,6 +128,8 @@ jobs:
           unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF "es-lexical-pipeline-v1.js?v=134"
           unzip -p "$APK" assets/www/js/reader/interactions-runtime.js | grep -qF "es-parity-ui-v1.js?v=134"
           unzip -p "$APK" assets/www/js/reader/word-lookup.js | grep -qF "if (lang === 'es')"
+          unzip -p "$APK" assets/www/js/reader/es-inline-lexical-owner-v1.js | grep -qF 'restoreRememberedContext'
+          unzip -p "$APK" assets/www/js/reader/es-inline-lexical-owner-v1.js | grep -qF 'reader:es-vocab-ready'
           unzip -p "$APK" assets/www/js/reader/es-parity-ui-v1.js | grep -qF 'Русский под Unknown'
           unzip -p "$APK" assets/www/js/reader/es-parity-ui-v1.js | grep -qF 'vertical-align:-.36em!important'
           unzip -p "$APK" assets/www/js/reader/es-vocab-estimate.js | grep -qF 'reader-es-known-btn'
@@ -208,6 +212,7 @@ jobs:
             assets/www/js/reader/es-reader-pipeline-v1.js \
             assets/www/js/reader/es-context-batch-v1.js \
             assets/www/js/reader/es-lexical-pipeline-v1.js \
+            assets/www/js/reader/es-inline-lexical-owner-v1.js \
             assets/www/js/reader/es-parity-ui-v1.js \
             assets/www/js/reader/word-lookup.js \
             assets/esreader/es_vocab_frequency.tsv \
@@ -218,6 +223,7 @@ jobs:
             assets/frreader/fr_ru_core.json; do
             unzip -l "$OUT" | grep -qF "$f"
           done
+          unzip -p "$OUT" assets/www/js/reader/es-inline-lexical-owner-v1.js | grep -qF 'restoreRememberedContext'
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
           grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
           grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
