@@ -17,5 +17,9 @@ PID="$(adb shell pidof "$PKG" | tr -d '\r')"
 test -n "$PID"
 adb forward --remove tcp:9222 >/dev/null 2>&1 || true
 adb forward tcp:9222 "localabstract:webview_devtools_remote_${PID}"
+set +e
 python3 scripts/audit_toc136_spanish_justified_gloss_live.py | tee runtime-audit/toc136-spanish-justified-gloss-live.json
+AUDIT_RC=${PIPESTATUS[0]}
 adb exec-out screencap -p > runtime-audit/toc136-spanish-justified-gloss.png
+set -e
+exit "$AUDIT_RC"
