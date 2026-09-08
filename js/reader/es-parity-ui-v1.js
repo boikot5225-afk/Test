@@ -59,7 +59,7 @@ function injectStyles() {
       overflow-wrap:normal!important
     }
     #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .rw-es-v1-gloss{
-      display:block!important;position:absolute!important;left:50%!important;top:1.08em!important;
+      display:block!important;position:absolute!important;left:50%!important;top:100%!important;
       bottom:auto!important;transform:translateX(-50%)!important;max-width:none!important;
       white-space:nowrap!important;pointer-events:none!important;
       font-family:'IBM Plex Sans',sans-serif!important;font-size:var(--es-v1-gloss-font,.38em)!important;
