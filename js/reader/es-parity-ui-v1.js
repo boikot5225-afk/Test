@@ -1,4 +1,4 @@
-// toc134 — Spanish UI parity with the mature English Reader.
+// toc135 — Spanish UI parity with readable interlinear layout.
 // Presentation remains here; the inline lexical bridge below makes card/inline
 // morphology share the same Spanish lexical owner while context keeps priority.
 import './es-inline-lexical-owner-v1.js?v=134';
@@ -40,8 +40,15 @@ function injectStyles() {
     }
     #reader-reading-view.rd-es-pipeline-v1:not(.rd-es-unknown-gloss) .rw-es-v1-gloss{display:none!important}
 
-    /* Enabled = the same geometry as English Unknown gloss v5. */
-    #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .reader-paragraph-text{line-height:1.86!important}
+    /* Interlinear annotation slots are inline-blocks. EPUB justification treats
+       the spaces between those slots as expandable gaps and can produce huge,
+       unreadable rivers of whitespace. While Russian-under-Unknown is enabled,
+       keep the book's typography but render paragraphs ragged-start instead of
+       justified. Switching the mode off restores the EPUB's original alignment. */
+    #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .reader-paragraph-text{
+      line-height:1.86!important;text-align:start!important;text-align-last:auto!important;
+      word-spacing:normal!important
+    }
     #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .rw-es-v1-wrap{
       display:inline-block!important;vertical-align:-.36em!important;line-height:1!important;
       margin:0 .025em!important;padding:0 0 .56em!important;position:relative!important;
@@ -60,8 +67,7 @@ function injectStyles() {
     }
     #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .rw-es-v1-gloss:empty{display:none!important}
 
-    /* One vocabulary owner at a time. The screenshot that triggered toc134
-       showed several W buttons because each language module exposed its own. */
+    /* One vocabulary owner at a time. */
     #reader-reading-view.rd-es-language-active #reader-en-vocab-btn,
     #reader-reading-view.rd-es-language-active #reader-fr-vocab-btn,
     #reader-reading-view.rd-es-language-active #reader-vocab-btn{display:none!important}
