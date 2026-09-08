@@ -49,9 +49,11 @@ def materialize(output: Path) -> None:
     # back into Unknown.  Preserve only the exact DOM occurrence marked by the
     # context layer; do not promote every capitalized surface globally.
     classification_anchor = "function applyClassificationToElement(el,info){removeKnowledgeClasses(el);const base="
+    proper_base_cleanup = "['rw-new','rw-looked','rw-learning','rw-problem','rw-hard','rw-familiar','rw-seen','rw-faded'].forEach(cls=>el.classList.remove(cls));"
     classification_patch = (
         "function applyClassificationToElement(el,info){removeKnowledgeClasses(el);"
-        "if(el?.dataset?.esContextProper==='1'){el.classList.remove('rw-migaku-known','rw-migaku-unknown');"
+        "if(el?.dataset?.esContextProper==='1'){"
+        + proper_base_cleanup +
         "el.classList.add('rw-es-proper');el.removeAttribute('title');return;}const base="
     )
     if classification_anchor not in source:
@@ -67,6 +69,7 @@ def materialize(output: Path) -> None:
         "currentLang()!=='es'",
         "lang:'es'",
         "esContextProper==='1'",
+        "rw-es-proper",
     )
     for token in required:
         if token not in source:
