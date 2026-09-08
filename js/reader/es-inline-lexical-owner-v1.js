@@ -7,6 +7,7 @@
 let scheduled = 0;
 let running = null;
 let ensuring = null;
+const contextByOccurrence = new Map();
 
 function currentLang() {
   const raw = String(
@@ -36,6 +37,35 @@ function glossFontSize(surface, ru) {
   return `${em.toFixed(3)}em`;
 }
 
+function isContextProvider(provider) {
+  return /(?:context-deepseek-batch|context-batch-cache|occurrence-cache|deepseek|context)/i.test(String(provider || ''));
+}
+
+function rememberContext(wrap, gloss) {
+  const ru = compactRussian(gloss?.textContent || '');
+  const provider = String(wrap?.dataset?.esProvider || '');
+  const occurrenceKey = String(wrap?.dataset?.esOccurrenceKey || '');
+  if (!ru || !occurrenceKey || !isContextProvider(provider)) return false;
+  contextByOccurrence.set(occurrenceKey, {
+    ru,
+    provider,
+    contextKey: String(wrap.dataset.esContextKey || ''),
+  });
+  return true;
+}
+
+function restoreRememberedContext(word, wrap, gloss) {
+  const occurrenceKey = String(wrap?.dataset?.esOccurrenceKey || '');
+  const saved = occurrenceKey ? contextByOccurrence.get(occurrenceKey) : null;
+  if (!saved?.ru || word?.classList?.contains('rw-es-proper') || !word?.classList?.contains('rw-migaku-unknown')) return false;
+  gloss.textContent = saved.ru;
+  wrap.dataset.esProvider = saved.provider || 'context-batch-cache';
+  if (saved.contextKey) wrap.dataset.esContextKey = saved.contextKey;
+  const surface = String(word.dataset.word || word.textContent || '').trim();
+  wrap.style.setProperty('--es-v1-gloss-font', glossFontSize(surface, saved.ru));
+  return true;
+}
+
 function activeScopes(root) {
   const pages = Array.from(root.querySelectorAll(':scope > .rd-page'));
   if (!pages.length) return [root];
@@ -54,9 +84,13 @@ function candidates(root) {
       const gloss = wrap?.querySelector(':scope > .rw-es-v1-gloss') || null;
       if (!wrap || !gloss) continue;
       const provider = String(wrap.dataset.esProvider || '');
-      // Context owns an exact occurrence and must stay final. Everything else is
-      // a local fallback and therefore must use the same lexical owner as cards.
-      if (/(?:context-deepseek-batch|context-batch-cache|occurrence-cache|deepseek|context)/i.test(provider) && String(gloss.textContent || '').trim()) continue;
+      // Context owns an exact occurrence and must stay final. Remember it by the
+      // stable toc133 occurrence key before skipping so a Known -> Unknown toggle
+      // can restore it immediately even though the wrapper itself was removed.
+      if (isContextProvider(provider) && compactRussian(gloss.textContent || '')) {
+        rememberContext(wrap, gloss);
+        continue;
+      }
       out.push({ word, wrap, gloss });
     }
   }
@@ -80,6 +114,10 @@ async function repaintNow() {
     await Promise.all(items.map(async ({ word, wrap, gloss }) => {
       const surface = String(word.dataset.word || word.textContent || '').trim();
       if (!surface) return;
+      // A forced toc133 painter refresh can recreate the wrapper with a blank
+      // missing-local slot. Restore the already accepted contextual occurrence
+      // before doing morphology/network work; this removes the visible blank flash.
+      if (restoreRememberedContext(word, wrap, gloss)) return;
       let analysis = null;
       try { analysis = await analyze(surface); } catch {}
       const ru = compactRussian(analysis?.ru || analysis?.meaning || '');
@@ -111,6 +149,8 @@ async function ensureGlossesNow(reason = 'lexical-miss') {
     } catch (error) {
       console.warn('[es inline lexical owner] context fallback unavailable', error?.message || error);
     }
+    // Capture any context result before returning. If a later knowledge/pagination
+    // refresh replaces the slot, repaintNow can restore this accepted occurrence.
     await repaintNow();
     return !blankUnknowns(root).length;
   })().finally(() => { ensuring = null; });
@@ -129,8 +169,8 @@ function wrapExplicitRefresh() {
   globalThis.__readerEsInlineLexicalRefreshWrapped = true;
   globalThis.readerSpanishPipelineV1RefreshNow = async (...args) => {
     const result = await original(...args);
-    // Rendering must never wait on the network. Paint local data synchronously
-    // with the refresh, then kick the contextual fill in parallel if needed.
+    // Rendering must never wait on the network. Repaint from local data or a
+    // remembered accepted context immediately, then fill genuine misses async.
     await repaintNow();
     schedule(0, 'explicit-refresh');
     return result;
@@ -144,6 +184,7 @@ if (typeof window !== 'undefined' && !window.__readerEsInlineLexicalOwnerV1) {
   globalThis.readerSpanishEnsureInlineGlosses = ensureGlossesNow;
   window.addEventListener('reader:es-pipeline-v1-ready', () => schedule(0, 'pipeline-ready'));
   window.addEventListener('reader:es-lexical-corrected', () => schedule(0, 'lexical-corrected'));
+  window.addEventListener('reader:es-vocab-ready', () => schedule(20, 'vocab-ready'));
   window.addEventListener('reader:pagechange', () => schedule(20, 'pagechange'));
   window.addEventListener('reader:word-state-changed', () => schedule(0, 'word-state'));
   window.addEventListener('an2:languagechange', () => schedule(0, 'language'));
