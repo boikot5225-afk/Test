@@ -1,6 +1,8 @@
 // toc134 — Spanish UI parity with the mature English Reader.
-// Presentation only: lexical/context owners remain es-reader-pipeline-v1 and
-// es-context-batch-v1. Values below intentionally mirror en-unknown-gloss-v2.
+// Presentation remains here; the inline lexical bridge below makes card/inline
+// morphology share the same Spanish lexical owner while context keeps priority.
+import './es-inline-lexical-owner-v1.js?v=134';
+
 const MODE_KEY = 'an2_reader_es_unknown_gloss_mode_v1';
 const STYLE_ID = 'rd-es-parity-ui-v1-style';
 const ROW_ID = 'rd-dp-es-unknown-gloss-row';
