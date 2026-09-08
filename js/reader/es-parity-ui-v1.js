@@ -42,12 +42,11 @@ function injectStyles() {
     }
     #reader-reading-view.rd-es-pipeline-v1:not(.rd-es-unknown-gloss) .rw-es-v1-gloss{display:none!important}
 
-    /* Preserve the EPUB's own text-align. Only line rhythm and annotation
-       geometry are owned here. Inline anchors keep Spanish spaces/punctuation in
-       Chromium's normal line layout, while Russian hints take no horizontal width. */
+    /* The EPUB keeps every horizontal typography decision: alignment, spacing,
+       wrapping and hyphenation. We only reserve vertical room for the Russian hint.
+       The hint is absolute, so its width never pushes Spanish words apart. */
     #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .reader-paragraph-text{
-      line-height:1.72!important;text-wrap:pretty!important;hyphens:auto!important;
-      -webkit-hyphens:auto!important;word-spacing:normal!important
+      line-height:1.72!important
     }
     #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .rw-es-v1-wrap{
       display:inline!important;position:relative!important;vertical-align:baseline!important;
@@ -55,7 +54,7 @@ function injectStyles() {
       overflow:visible!important;white-space:normal!important
     }
     #reader-reading-view.rd-es-pipeline-v1.rd-es-unknown-gloss .rw-es-v1-wrap>.reader-word{
-      display:inline!important;position:relative!important;margin:0!important;padding:0 1px!important;
+      display:inline!important;position:relative!important;margin:0!important;padding:0!important;
       line-height:inherit!important;white-space:nowrap!important;word-break:keep-all!important;
       overflow-wrap:normal!important
     }
