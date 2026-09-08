@@ -153,14 +153,22 @@ function clearProperGloss(el, key) {
     wrap.parentNode?.insertBefore(el, wrap);
     wrap.remove();
   }
-  el?.classList?.remove('rw-migaku-known', 'rw-migaku-unknown');
-  el?.classList?.add('rw-es-proper');
-  if (el?.dataset) {
+  if (!el?.classList) return;
+  el.classList.remove(
+    'rw-migaku-known', 'rw-migaku-unknown',
+    'rw-new', 'rw-looked', 'rw-learning', 'rw-problem', 'rw-hard',
+    'rw-familiar', 'rw-seen', 'rw-faded'
+  );
+  el.classList.add('rw-es-proper');
+  el.removeAttribute('title');
+  if (el.dataset) {
     // Occurrence-scoped durable verdict. The vocabulary classifier may run
     // asynchronously after this batch; it must not turn a context-confirmed
     // proper noun back into Unknown merely because it begins a sentence.
     el.dataset.esContextProper = '1';
     el.dataset.esContextKey = key || '';
+    delete el.dataset.readerEstimatedKnowledge;
+    delete el.dataset.readerManualKnowledge;
   }
 }
 
