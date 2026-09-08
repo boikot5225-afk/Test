@@ -35,8 +35,8 @@ android {
         applicationId 'space.saintjust.reader.semanticstage1clean.formatfix'
         minSdk 24
         targetSdk 35
-        versionCode 1029
-        versionName '77.42-toc136-es-justified-gloss-layout'
+        versionCode 1030
+        versionName '77.42-toc137-es-card-status'
     }
 
     buildFeatures {
