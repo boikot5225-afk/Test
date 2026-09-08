@@ -15,16 +15,27 @@ cdp.wait("document.getElementById('main-app')?.style.display!=='none'", 20)
 
 result = cdp.eval(r"""(async()=>{
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  const screen=document.getElementById('screen-reader');
+  const library=document.getElementById('reader-library-view');
   const view=document.getElementById('reader-reading-view');
   const root=document.getElementById('reader-chapter-text');
-  if(!view||!root) throw new Error('Reader DOM missing');
+  if(!screen||!view||!root) throw new Error('Reader DOM missing');
   if(typeof globalThis.readerSetSpanishGlossMode!=='function') throw new Error('Spanish gloss mode owner missing');
+
+  // The reader screen itself is normally hidden until a real book is opened.
+  // A hidden ancestor makes getBoundingClientRect() return 0x0 and turns the
+  // layout audit into a fake pass/fail. Activate the actual reader hierarchy
+  // before inserting the diagnostic paragraph so Chromium performs real line
+  // layout at the emulated handset width.
+  document.querySelectorAll('.screen').forEach(el=>el.classList.toggle('active',el===screen));
+  screen.style.display='block';
+  if(library) library.style.display='none';
+  view.style.display='block';
 
   const esc=s=>String(s).replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
   const known=w=>`<span class="reader-word rw-migaku-known" data-word="${esc(w)}" data-lang="es">${esc(w)}</span>`;
   const unknown=(w,ru)=>`<span class="rw-es-v1-wrap" data-es-pipeline="v1"><span class="reader-word rw-migaku-unknown" data-word="${esc(w)}" data-lang="es">${esc(w)}</span><span class="rw-es-v1-gloss" aria-hidden="true">${esc(ru)}</span></span>`;
 
-  view.style.display='block';
   view.dataset.readerLang='es';
   root.dataset.lang='es';
   view.classList.add('rd-es-pipeline-v1','rd-es-language-active');
