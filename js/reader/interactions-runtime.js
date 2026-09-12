@@ -17,6 +17,7 @@ import './fr-reader-pipeline-v2.js?v=1'; // toc124: event-driven French Known/Un
 import './fr-context-batch-v5.js?v=1'; // toc125: paragraph DeepSeek via readerAI; guest mode needs no Firebase account
 import './fr-lexical-pipeline-v2.js?v=124'; // French word-card lexical owner; occurrence context stays local
 import './fr-smooth-reader-v1.js?v=138'; // toc138: justified inline gloss layout + non-blocking manual status
+import './fr-word-panel-smooth-v1.js?v=138'; // toc138: no full chapter repaint on a French word tap
 import './es-reader-pipeline-v1.js?v=1'; // toc133: Spanish frequency/lemma + immediate ES-RU WikDict gloss
 import './es-context-batch-v1.js?v=1'; // toc133: drain all visible Spanish paragraphs sequentially
 import './es-lexical-pipeline-v1.js?v=134'; // toc134: Spanish word cards use Spanish morphology/WikDict, never French fallthrough
