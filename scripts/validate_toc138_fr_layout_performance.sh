@@ -11,7 +11,7 @@ restore() {
 trap restore EXIT
 
 # Reuse the complete green toc137/toc136 source gates with only release metadata
-# presented as toc137. toc138 intentionally adds one late French UI/perf owner.
+# presented as toc137. toc138 intentionally adds late French UI/perf owners.
 python3 - <<'PY'
 from pathlib import Path
 p=Path('android/app/build.gradle')
@@ -27,6 +27,7 @@ restore
 trap - EXIT
 
 node --check js/reader/fr-smooth-reader-v1.js
+node --check js/reader/fr-word-panel-smooth-v1.js
 node --check js/reader/interactions-runtime.js
 
 python3 - <<'PY'
@@ -36,6 +37,7 @@ def text(path):
     return Path(path).read_text(encoding='utf-8')
 
 smooth=text('js/reader/fr-smooth-reader-v1.js')
+panel=text('js/reader/fr-word-panel-smooth-v1.js')
 interactions=text('js/reader/interactions-runtime.js')
 gradle=text('android/app/build.gradle')
 
@@ -60,12 +62,22 @@ for probe in [
 ]:
     assert probe in smooth, f'toc138 French smooth contract missing: {probe}'
 
-# The late owner must be loaded after the lexical French owner and page actions
-# must not force a redundant French pass when render signature is unchanged.
+for probe in [
+    '__toc138FrenchSmoothPanel',
+    '__toc138FrenchSuppressedChapterRepaints',
+    'renderReaderChapter',
+    'requestAnimationFrame',
+    "currentLang() !== 'fr'",
+]:
+    assert probe in panel, f'toc138 French word-panel smooth contract missing: {probe}'
+
+# The late owners must be loaded after the lexical French owner and before the
+# Spanish pipeline; page actions must not force a redundant French pass.
 lex=interactions.index("import './fr-lexical-pipeline-v2.js?v=124';")
 smooth_i=interactions.index("import './fr-smooth-reader-v1.js?v=138';")
+panel_i=interactions.index("import './fr-word-panel-smooth-v1.js?v=138';")
 es=interactions.index("import './es-reader-pipeline-v1.js?v=1';")
-assert lex < smooth_i < es
+assert lex < smooth_i < panel_i < es
 assert "window.readerFrenchRefresh?.(reason, false)" in interactions
 assert "window.readerSpanishRefresh?.(reason, true)" in interactions
 
