@@ -16,6 +16,7 @@ import './en-context-batch-v2.js?v=1'; // toc132: whole-paragraph batch, high-co
 import './fr-reader-pipeline-v2.js?v=1'; // toc124: event-driven French Known/Unknown + immediate local glosses
 import './fr-context-batch-v5.js?v=1'; // toc125: paragraph DeepSeek via readerAI; guest mode needs no Firebase account
 import './fr-lexical-pipeline-v2.js?v=124'; // French word-card lexical owner; occurrence context stays local
+import './fr-smooth-reader-v1.js?v=138'; // toc138: justified inline gloss layout + non-blocking manual status
 import './es-reader-pipeline-v1.js?v=1'; // toc133: Spanish frequency/lemma + immediate ES-RU WikDict gloss
 import './es-context-batch-v1.js?v=1'; // toc133: drain all visible Spanish paragraphs sequentially
 import './es-lexical-pipeline-v1.js?v=134'; // toc134: Spanish word cards use Spanish morphology/WikDict, never French fallthrough
@@ -59,7 +60,9 @@ function hasNativeSelection() {
 }
 
 function refreshFrench(reason) {
-  try { window.readerFrenchRefresh?.(reason, true); } catch {}
+  // Page/render actions already change the French render signature. Do not force
+  // a redundant second whole-pipeline pass when the signature did not change.
+  try { window.readerFrenchRefresh?.(reason, false); } catch {}
   try { window.readerSpanishRefresh?.(reason, true); } catch {}
 }
 
