@@ -7,9 +7,11 @@ on:
     paths:
       - '.github/workflows/android-apk-toc138-fr-layout-performance.yml'
       - 'js/reader/fr-smooth-reader-v1.js'
+      - 'js/reader/fr-word-panel-smooth-v1.js'
       - 'js/reader/interactions-runtime.js'
       - 'scripts/validate_toc138_fr_layout_performance.sh'
       - 'scripts/audit_toc138_fr_layout_performance_live.py'
+      - 'scripts/audit_toc138_fr_word_panel_jank_live.py'
       - 'scripts/run_toc138_fr_layout_performance_emulator.sh'
       - 'android/app/build.gradle'
   workflow_dispatch:
@@ -57,12 +59,13 @@ jobs:
           set -euo pipefail
           bash scripts/validate_toc138_fr_layout_performance.sh
           python3 -m py_compile scripts/audit_toc138_fr_layout_performance_live.py
+          python3 -m py_compile scripts/audit_toc138_fr_word_panel_jank_live.py
 
       - name: Build universal APK from validated source
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Verify toc138 French owner inside APK
+      - name: Verify toc138 French owners inside APK
         shell: bash
         run: |
           set -euo pipefail
@@ -70,16 +73,21 @@ jobs:
           test -f "$APK"
           unzip -t "$APK" >/dev/null
           FR_JS="$(mktemp)"
+          PANEL_JS="$(mktemp)"
           INT_JS="$(mktemp)"
           unzip -p "$APK" assets/www/js/reader/fr-smooth-reader-v1.js > "$FR_JS"
+          unzip -p "$APK" assets/www/js/reader/fr-word-panel-smooth-v1.js > "$PANEL_JS"
           unzip -p "$APK" assets/www/js/reader/interactions-runtime.js > "$INT_JS"
           grep -qF 'text-align:justify!important' "$FR_JS"
           grep -qF 'reader:fr-manual-knowledge-fast' "$FR_JS"
           grep -qF 'event.stopImmediatePropagation()' "$FR_JS"
           grep -qF '__toc138Smooth' "$FR_JS"
+          grep -qF '__toc138FrenchSmoothPanel' "$PANEL_JS"
+          grep -qF '__toc138FrenchSuppressedChapterRepaints' "$PANEL_JS"
           grep -qF "import './fr-smooth-reader-v1.js?v=138';" "$INT_JS"
+          grep -qF "import './fr-word-panel-smooth-v1.js?v=138';" "$INT_JS"
           grep -qF 'window.readerFrenchRefresh?.(reason, false)' "$INT_JS"
-          rm -f "$FR_JS" "$INT_JS"
+          rm -f "$FR_JS" "$PANEL_JS" "$INT_JS"
 
       - name: Prepare realistic EPUB and audit dependencies
         shell: bash
@@ -148,14 +156,19 @@ jobs:
           "${BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$OUT" > unique-out/ZIPALIGN.txt
           unzip -t "$OUT" >/dev/null
           FR_JS="$(mktemp)"
+          PANEL_JS="$(mktemp)"
           INT_JS="$(mktemp)"
           unzip -p "$OUT" assets/www/js/reader/fr-smooth-reader-v1.js > "$FR_JS"
+          unzip -p "$OUT" assets/www/js/reader/fr-word-panel-smooth-v1.js > "$PANEL_JS"
           unzip -p "$OUT" assets/www/js/reader/interactions-runtime.js > "$INT_JS"
           grep -qF 'text-align:justify!important' "$FR_JS"
           grep -qF 'reader:fr-manual-knowledge-fast' "$FR_JS"
           grep -qF '__toc138Smooth' "$FR_JS"
+          grep -qF '__toc138FrenchSmoothPanel' "$PANEL_JS"
+          grep -qF '__toc138FrenchSuppressedChapterRepaints' "$PANEL_JS"
           grep -qF "import './fr-smooth-reader-v1.js?v=138';" "$INT_JS"
-          rm -f "$FR_JS" "$INT_JS"
+          grep -qF "import './fr-word-panel-smooth-v1.js?v=138';" "$INT_JS"
+          rm -f "$FR_JS" "$PANEL_JS" "$INT_JS"
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
           grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
           grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
