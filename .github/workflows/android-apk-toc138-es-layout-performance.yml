@@ -104,6 +104,14 @@ jobs:
           fi
           rm -f "$SMOOTH" "$INTERACTIONS" "$READER" "$ES_JS"
 
+      - name: Upload validated debug APK (pre-emulator-gate)
+        uses: actions/upload-artifact@v4
+        with:
+          name: toc138-es-layout-performance-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Prepare realistic EPUB and audit dependencies
         shell: bash
         run: |
