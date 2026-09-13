@@ -1,30 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GRADLE=android/app/build.gradle
-BACKUP="$(mktemp)"
-cp "$GRADLE" "$BACKUP"
-restore() {
-  cp "$BACKUP" "$GRADLE"
-  rm -f "$BACKUP"
-}
-trap restore EXIT
-
-# Re-run the complete green toc137 source contract against its original release
-# metadata. toc138 is additive except for the explicitly audited Spanish tap path.
-python3 - <<'PY'
-from pathlib import Path
-p=Path('android/app/build.gradle')
-s=p.read_text(encoding='utf-8')
-if s.count('versionCode 1031') != 1 or s.count("versionName '77.42-toc138-es-layout-performance'") != 1:
-    raise SystemExit('toc138 Gradle metadata missing before frozen toc137 validation')
-s=s.replace('versionCode 1031','versionCode 1030',1)
-s=s.replace("versionName '77.42-toc138-es-layout-performance'","versionName '77.42-toc137-es-card-status'",1)
-p.write_text(s,encoding='utf-8')
-PY
-bash scripts/validate_toc137_es_card_status.sh
-cp "$BACKUP" "$GRADLE"
-
+# The workflow runs the complete frozen toc137 validator before applying the
+# intentional toc138 readerOpenWordPanel hot-path patch. From this point onward
+# validate only the toc138 delta instead of pretending reader-app stayed frozen.
 python3 scripts/materialize_es_vocab_module.py /tmp/toc138-es-vocab-estimate.js
 node --check /tmp/toc138-es-vocab-estimate.js
 node --check js/reader/es-smooth-reader-v1.js
@@ -73,11 +52,8 @@ for probe in [
     'readerRefreshParagraphWordClasses(paragraphIndex)',
 ]:
     assert probe in panel, f'toc138 Spanish word-tap hot path missing: {probe}'
-# Full chapter repaint remains for non-Spanish readers but must be inside the else
-# branch after the Spanish fast path, never before it.
 assert panel.index("if (activeLang === 'es')") < panel.index('} else {') < panel.index('renderReaderChapter()')
 
-# toc137 card status ownership must survive untouched.
 for probe in [
     'readerEsVocabPanelHook',
     "panel.dataset.migakuKnowledge='es1'",
