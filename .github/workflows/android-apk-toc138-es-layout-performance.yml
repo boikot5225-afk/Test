@@ -54,11 +54,15 @@ jobs:
         shell: bash
         run: python3 scripts/patch_toc126_guest_cold_start.py
 
+      - name: Validate complete frozen toc137 baseline
+        shell: bash
+        run: bash scripts/validate_toc137_es_card_status.sh
+
       - name: Materialize toc138 Spanish layout and tap hot path
         shell: bash
         run: python3 scripts/patch_toc138_es_layout_performance.py
 
-      - name: Validate frozen toc137 plus toc138 Spanish contracts
+      - name: Validate toc138 Spanish delta
         shell: bash
         run: |
           set -euo pipefail
