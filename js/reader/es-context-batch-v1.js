@@ -316,9 +316,14 @@ function cacheDecision(target, result) {
     return true;
   }
   const ru = cleanRu(result?.ru);
-  if (!ru || confidence < MIN_CONFIDENCE) {
+  const hadLocal = !!cleanRu(target.localRu);
+  if (!ru || (confidence < MIN_CONFIDENCE && hadLocal)) {
     // Cache the conservative "keep WikDict" decision too. Otherwise an
-    // ambiguous word would hammer the model on every page event.
+    // ambiguous word would hammer the model on every page event. Only
+    // conservative when there is actually a WikDict gloss to keep — when the
+    // word started blank, "keep local" means "stay blank forever" (this was
+    // caching a permanent empty gloss for genuine WikDict gaps even after
+    // DeepSeek did return a translation, just below the strict threshold).
     cache.set(target.key, { keepLocal: true, confidence, ts: Date.now() });
     return true;
   }
