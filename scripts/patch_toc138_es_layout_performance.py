@@ -3,6 +3,7 @@ from pathlib import Path
 
 APP = Path('js/reader-app.js')
 GRADLE = Path('android/app/build.gradle')
+SMOOTH = Path('js/reader/es-smooth-reader-v1.js')
 
 old = """  // Paint only the paragraph containing the clicked word immediately (cheap),
   // then rebuild the full chapter on the next animation frame so every other
@@ -43,6 +44,18 @@ if new not in text:
     text = text.replace(old, new, 1)
     APP.write_text(text, encoding='utf-8')
 
+# The late layer is loaded after toc136. Its visibility override must only win in
+# Unknown-gloss mode; otherwise it would accidentally re-enable hints in ordinary
+# reading mode merely because the gloss node still contains text.
+smooth = SMOOTH.read_text(encoding='utf-8')
+old_gloss = '#reader-reading-view.rd-es-smooth-v1 .rw-es-v1-gloss:not(:empty){display:block!important}'
+new_gloss = '#reader-reading-view.rd-es-smooth-v1.rd-es-unknown-gloss .rw-es-v1-gloss:not(:empty){display:block!important}'
+if new_gloss not in smooth:
+    if smooth.count(old_gloss) != 1:
+        raise SystemExit('toc138 Spanish gloss visibility anchor changed')
+    smooth = smooth.replace(old_gloss, new_gloss, 1)
+    SMOOTH.write_text(smooth, encoding='utf-8')
+
 text = GRADLE.read_text(encoding='utf-8')
 old_code = 'versionCode 1030'
 new_code = 'versionCode 1031'
@@ -59,4 +72,4 @@ if new_name not in text:
     text = text.replace(old_name, new_name, 1)
 GRADLE.write_text(text, encoding='utf-8')
 
-print('toc138 Spanish tap hot-path + vc1031 metadata patch: applied')
+print('toc138 Spanish layout/performance + vc1031 patch: applied')
