@@ -20,6 +20,7 @@ import './es-reader-pipeline-v1.js?v=1'; // toc133: Spanish frequency/lemma + im
 import './es-context-batch-v1.js?v=1'; // toc133: drain all visible Spanish paragraphs sequentially
 import './es-lexical-pipeline-v1.js?v=134'; // toc134: Spanish word cards use Spanish morphology/WikDict, never French fallthrough
 import './es-parity-ui-v1.js?v=136'; // toc136: preserve EPUB justification with inline Spanish gloss anchors
+import './es-knowledge-status-v1.js?v=137'; // toc137: explicit current ЗНАЮ/НЕ ЗНАЮ marker in Spanish word card
 import './toc51-stability.js?v=2';
 import './toolbar-scroll.js?v=1';
 import './zh-readable-inline.js?v=8-quality';
