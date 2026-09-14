@@ -561,10 +561,26 @@ function bindObserver() {
     for (const record of records) {
       if (record.type === 'attributes') {
         const el = record.target;
-        if (el instanceof Element && (el.classList.contains('reader-word') || el.classList.contains('rw-zh-gloss-wrap'))) {
+        if (el instanceof Element && el.classList.contains('reader-word')) {
           relevant = true;
-          break;
+          // The CSS that sizes/positions .rw-zh-readable-ru is gated on the
+          // word still carrying .rw-migaku-unknown (:has(> .reader-word.rw-
+          // migaku-unknown)), so the instant a tap flips that class the note
+          // renders unstyled -- full-size plain text -- until clearLane()
+          // removes it. Sync this one wrap right away instead of leaving it
+          // to the debounced batch pass below, so removal lands in the same
+          // frame as the class change and there is nothing left to flash.
+          if (wordState(el) !== 'unknown') {
+            const wrap = el.parentElement?.classList?.contains('rw-zh-gloss-wrap') ? el.parentElement : null;
+            if (wrap) syncWrap(wrap);
+          }
+          continue;
         }
+        if (el instanceof Element && el.classList.contains('rw-zh-gloss-wrap')) {
+          relevant = true;
+          continue;
+        }
+        continue;
       }
       for (const node of record.addedNodes || []) {
         if (!(node instanceof Element)) continue;
@@ -574,7 +590,6 @@ function bindObserver() {
           break;
         }
       }
-      if (relevant) break;
     }
     if (relevant) schedule(20);
   });
