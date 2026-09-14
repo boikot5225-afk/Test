@@ -92,6 +92,17 @@ result = cdp.eval(r"""(async()=>{
     }
     await globalThis.readerSpanishPipelineV1RefreshNow('live-audit-fixture',true);
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    // toc134's inline lexical owner wraps readerSpanishPipelineV1RefreshNow to
+    // fire its own background ensureGlossesNow() (which itself calls into
+    // es-context-batch-v1's refine()) on a 0ms timeout after the call above
+    // returns. Left unsettled, that background pass can still be mid-flight
+    // when this script clears the context-batch cache below and starts its
+    // own controlled refine() -- the two races over the same occurrence
+    // cache, and the background pass's now-cached write can land in between,
+    // making a genuine fresh network hit look like a stale cache hit
+    // (right ru, but provider downgraded to context-batch-cache). Await the
+    // exposed ensure-glosses promise so nothing is left in flight first.
+    try { await globalThis.readerSpanishEnsureInlineGlosses?.('live-audit-settle'); } catch {}
 
     const fixture=[...root.querySelectorAll('.reader-paragraph')].map(p=>{
       const word=p.querySelector('.reader-word');
