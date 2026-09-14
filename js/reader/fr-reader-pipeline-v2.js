@@ -135,9 +135,15 @@ function injectStyles() {
   style.id = 'rd-fr-pipeline-v2-style';
   style.textContent = `
 #reader-reading-view.rd-fr-pipeline-v2 .reader-paragraph-text{line-height:1.82!important}
-#reader-reading-view.rd-fr-pipeline-v2 .rw-fr-v2-wrap{display:inline-block!important;position:relative!important;vertical-align:-.37em!important;line-height:1!important;padding:0 0 .58em!important;margin:0 .018em!important;white-space:nowrap!important;overflow:visible!important}
-#reader-reading-view.rd-fr-pipeline-v2 .rw-fr-v2-wrap>.reader-word{display:inline!important;margin:0!important;padding:0 1px!important;line-height:1.04!important;white-space:nowrap!important;word-break:keep-all!important;overflow-wrap:normal!important}
-#reader-reading-view.rd-fr-pipeline-v2 .rw-fr-v2-gloss{position:absolute!important;left:50%!important;bottom:.02em!important;transform:translateX(-50%)!important;white-space:nowrap!important;pointer-events:none!important;font-family:'IBM Plex Sans',sans-serif!important;font-size:var(--fr-v2-gloss-font,.37em)!important;font-weight:400!important;line-height:1!important;color:var(--text-muted)!important;text-decoration:none!important}
+/* toc138 fix: no wrapper span around the word. Inserting a new inline box
+   around .reader-word (the old .rw-fr-v2-wrap) added a glyph-run boundary
+   that the un-annotated render never has, which measurably perturbs text
+   shaping/rounding and was flipping line-wrap decisions under justify — the
+   toc138 layout jank. position:relative by itself never affects layout, so
+   this keeps a glossed word's box byte-identical to its plain rendering;
+   the gloss now lives *inside* the word's own (always-present) span. */
+#reader-reading-view.rd-fr-pipeline-v2 .reader-word{position:relative!important}
+#reader-reading-view.rd-fr-pipeline-v2 .rw-fr-v2-gloss{position:absolute!important;left:50%!important;top:100%!important;transform:translateX(-50%)!important;white-space:nowrap!important;pointer-events:none!important;font-family:'IBM Plex Sans',sans-serif!important;font-size:var(--fr-v2-gloss-font,.37em)!important;font-weight:400!important;line-height:1!important;color:var(--text-muted)!important;text-decoration:none!important}
 #reader-reading-view.rd-fr-pipeline-v2 .rw-fr-v2-gloss:empty{visibility:hidden!important}
 `;
   document.head.appendChild(style);
@@ -162,22 +168,18 @@ function unwrapOldGloss(el) {
 function ensureGlossSlot(el) {
   if (!el?.parentNode) return null;
   unwrapOldGloss(el);
-  let wrap = el.parentElement?.classList?.contains('rw-fr-v2-wrap') ? el.parentElement : null;
-  if (!wrap) {
-    wrap = document.createElement('span');
-    wrap.className = 'rw-fr-v2-wrap';
-    wrap.dataset.frPipeline = 'v2';
-    el.parentNode.insertBefore(wrap, el);
-    wrap.appendChild(el);
-  }
-  let gloss = wrap.querySelector(':scope > .rw-fr-v2-gloss');
+  el.dataset.frPipeline = 'v2';
+  let gloss = el.querySelector(':scope > .rw-fr-v2-gloss');
   if (!gloss) {
     gloss = document.createElement('span');
     gloss.className = 'rw-fr-v2-gloss';
     gloss.setAttribute('aria-hidden', 'true');
-    wrap.appendChild(gloss);
+    el.appendChild(gloss);
   }
-  return { wrap, gloss };
+  // `wrap` used to be a separate ancestor span; it is now the word itself,
+  // kept as a distinct field so callers that stash data on it (provider,
+  // occurrence key, font-size var) don't need to change.
+  return { wrap: el, gloss };
 }
 
 function setGloss(el, value, provider = 'wikdict', occurrenceKey = '') {
@@ -193,10 +195,7 @@ function setGloss(el, value, provider = 'wikdict', occurrenceKey = '') {
 }
 
 function removeGloss(el) {
-  const wrap = el?.parentElement?.classList?.contains('rw-fr-v2-wrap') ? el.parentElement : null;
-  if (!wrap) return;
-  wrap.parentNode?.insertBefore(el, wrap);
-  wrap.remove();
+  el?.querySelector?.(':scope > .rw-fr-v2-gloss')?.remove();
 }
 
 function wordSurface(el) {

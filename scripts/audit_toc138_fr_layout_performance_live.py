@@ -85,16 +85,15 @@ result = cdp.eval(r"""(async()=>{
     if(!ru)continue;
     el.classList.remove('rw-migaku-known');
     el.classList.add('rw-migaku-unknown');
-    const wrap=document.createElement('span');
-    wrap.className='rw-fr-v2-wrap';
-    wrap.dataset.frPipeline='v2';
-    el.parentNode.insertBefore(wrap,el);
-    wrap.appendChild(el);
+    el.dataset.frPipeline='v2';
+    // toc138 fix: the gloss is appended straight into the word's own
+    // (always-present) span, not into a new wrapper inserted around it — a
+    // wrapper adds a glyph-run boundary the un-annotated word never has.
     const gloss=document.createElement('span');
     gloss.className='rw-fr-v2-gloss';
     gloss.setAttribute('aria-hidden','true');
     gloss.textContent=ru;
-    wrap.appendChild(gloss);
+    el.appendChild(gloss);
   }
   await twoFrames();
   await sleep(50);
@@ -107,13 +106,13 @@ result = cdp.eval(r"""(async()=>{
   }
   const maxHorizontalDelta=deltas.length?Number(Math.max(...deltas).toFixed(2)):null;
   const lineBreaksEqual=JSON.stringify(ordinary.lineWords)===JSON.stringify(annotated.lineWords);
-  const glossGeometry=[...paragraph.querySelectorAll('.rw-fr-v2-wrap')].map(wrap=>{
-    const word=wrap.querySelector('.reader-word'),gloss=wrap.querySelector('.rw-fr-v2-gloss');
+  const glossGeometry=[...paragraph.querySelectorAll('.rw-fr-v2-gloss')].map(gloss=>{
+    const word=gloss.parentElement;
     const wr=word.getBoundingClientRect(),gr=gloss.getBoundingClientRect();
     return {
       word:word.dataset.word,
-      wrapDisplay:getComputedStyle(wrap).display,
-      wrapPosition:getComputedStyle(wrap).position,
+      wrapDisplay:getComputedStyle(word).display,
+      wrapPosition:getComputedStyle(word).position,
       glossPosition:getComputedStyle(gloss).position,
       centerDelta:Number(Math.abs((wr.left+wr.right)/2-(gr.left+gr.right)/2).toFixed(2)),
       belowDelta:Number((gr.top-wr.bottom).toFixed(2)),

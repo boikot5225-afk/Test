@@ -137,9 +137,11 @@ function lemmaFor(surfaceValue) {
 }
 
 function glossPair(el) {
-  const wrap = el?.parentElement?.classList?.contains('rw-fr-v2-wrap') ? el.parentElement : null;
-  const node = wrap?.querySelector?.(':scope > .rw-fr-v2-gloss') || null;
-  return { wrap, node };
+  // toc138: the gloss lives directly inside the word's own span now (no
+  // separate wrapper ancestor), so the word itself doubles as the "wrap"
+  // that callers stash provider/occurrence-key data on.
+  const node = el?.querySelector?.(':scope > .rw-fr-v2-gloss') || null;
+  return { wrap: node ? el : null, node };
 }
 
 function currentLocalRu(el) {

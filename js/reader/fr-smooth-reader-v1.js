@@ -57,7 +57,15 @@ function injectStyles() {
   text-align:justify!important;
   text-align-last:auto!important;
 }
-#reader-reading-view.rd-fr-smooth-v1 .rw-fr-v2-wrap,
+/* toc138 fix: no wrapper span around the word — see fr-reader-pipeline-v2.js
+   for why (an extra inline box measurably perturbs text-shaping/rounding
+   vs the un-annotated word and was flipping line-wrap decisions under
+   justify). The gloss lives inside the word's own span; position:relative
+   alone never affects layout. The legacy .rw-fr-gloss-wrap rules stay as a
+   defensive fallback for the older fr-unknown-gloss.js structure. */
+#reader-reading-view.rd-fr-smooth-v1 .reader-word{
+  position:relative!important;
+}
 #reader-reading-view.rd-fr-smooth-v1 .rw-fr-gloss-wrap{
   display:inline!important;
   position:relative!important;
@@ -68,7 +76,6 @@ function injectStyles() {
   overflow:visible!important;
   white-space:inherit!important;
 }
-#reader-reading-view.rd-fr-smooth-v1 .rw-fr-v2-wrap>.reader-word,
 #reader-reading-view.rd-fr-smooth-v1 .rw-fr-gloss-wrap>.reader-word{
   display:inline!important;
   position:relative!important;
@@ -195,17 +202,11 @@ function setWordVisual(el, known) {
   el.classList.add(known ? 'rw-migaku-known' : 'rw-migaku-unknown');
   el.dataset.readerManualKnowledge = known ? 'known' : 'unknown';
   delete el.dataset.readerEstimatedKnowledge;
-  let parent = el.parentElement;
-  for (let depth = 0; parent && depth < 2; depth += 1, parent = parent.parentElement) {
-    if (!parent.classList?.contains('rw-fr-v2-wrap') && !parent.classList?.contains('rw-fr-gloss-wrap')) continue;
-    if (known) {
-      parent.dataset.frFastKnown = '1';
-      if (parent.classList.contains('rw-fr-gloss-wrap')) parent.dataset.frGlossVisible = '0';
-    } else {
-      delete parent.dataset.frFastKnown;
-      if (parent.classList.contains('rw-fr-gloss-wrap')) parent.dataset.frGlossVisible = '1';
-    }
-  }
+  if (known) el.dataset.frFastKnown = '1';
+  else delete el.dataset.frFastKnown;
+  // Legacy fr-unknown-gloss.js wrap, if this word still has one.
+  const legacyWrap = el.parentElement?.classList?.contains('rw-fr-gloss-wrap') ? el.parentElement : null;
+  if (legacyWrap) legacyWrap.dataset.frGlossVisible = known ? '0' : '1';
 }
 
 function compactRussian(value) {
@@ -217,8 +218,9 @@ function compactRussian(value) {
 
 async function ensureUnknownGloss(el) {
   if (!el || !el.isConnected || !el.classList.contains('rw-migaku-unknown')) return;
-  let wrap = el.parentElement?.classList?.contains('rw-fr-v2-wrap') ? el.parentElement : null;
-  if (wrap?.querySelector(':scope > .rw-fr-v2-gloss:not(:empty)')) return;
+  if (el.querySelector(':scope > .rw-fr-v2-gloss:not(:empty)')) return;
+  // Legacy fr-unknown-gloss.js wrap, if this word still has one.
+  const legacyWrap = el.parentElement?.classList?.contains('rw-fr-gloss-wrap') ? el.parentElement : null;
   const surface = String(el.dataset.word || el.textContent || '').trim();
   if (!surface) return;
   let analysis = null;
@@ -234,27 +236,20 @@ async function ensureUnknownGloss(el) {
   if (!el.isConnected || !el.classList.contains('rw-migaku-unknown')) return;
   const ru = compactRussian(analysis?.ru || analysis?.meaning || '');
   if (!ru) return;
-  if (!wrap) {
-    const old = el.parentElement?.classList?.contains('rw-fr-gloss-wrap') ? el.parentElement : null;
-    if (old) {
-      old.dataset.frGlossVisible = '1';
-      const oldGloss = old.querySelector(':scope > .rw-fr-gloss-text');
-      if (oldGloss && !oldGloss.textContent.trim()) oldGloss.textContent = ru;
-      return;
-    }
-    wrap = document.createElement('span');
-    wrap.className = 'rw-fr-v2-wrap';
-    wrap.dataset.frPipeline = 'v2';
-    el.parentNode?.insertBefore(wrap, el);
-    wrap.appendChild(el);
+  if (legacyWrap) {
+    legacyWrap.dataset.frGlossVisible = '1';
+    const oldGloss = legacyWrap.querySelector(':scope > .rw-fr-gloss-text');
+    if (oldGloss && !oldGloss.textContent.trim()) oldGloss.textContent = ru;
+    return;
   }
-  delete wrap.dataset.frFastKnown;
-  let gloss = wrap.querySelector(':scope > .rw-fr-v2-gloss');
+  delete el.dataset.frFastKnown;
+  el.dataset.frPipeline = 'v2';
+  let gloss = el.querySelector(':scope > .rw-fr-v2-gloss');
   if (!gloss) {
     gloss = document.createElement('span');
     gloss.className = 'rw-fr-v2-gloss';
     gloss.setAttribute('aria-hidden', 'true');
-    wrap.appendChild(gloss);
+    el.appendChild(gloss);
   }
   gloss.textContent = ru;
 }

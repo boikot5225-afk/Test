@@ -51,7 +51,7 @@ for probe in [
     'display:inline!important',
     'position:absolute!important',
     'top:100%!important',
-    'rw-fr-v2-wrap',
+    'rw-fr-v2-gloss',
     'rw-fr-gloss-wrap',
     'reader-fr-known-btn,#reader-fr-unknown-btn',
     'event.stopImmediatePropagation()',
