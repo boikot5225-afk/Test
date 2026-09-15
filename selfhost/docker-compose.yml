@@ -7,6 +7,10 @@ services:
     environment:
       - SELFHOST_TOKEN=${SELFHOST_TOKEN}
       - WHISPER_MODEL_SIZE=${WHISPER_MODEL_SIZE:-base}
-    # 2GB RAM total on the box — leave headroom for the VPN process and the
-    # OS itself instead of letting one bad request balloon and OOM the host.
-    mem_limit: 1400m
+    # ~6GB RAM on the box (~3.8GB actually free), and this one container holds
+    # both models resident: faster-whisper medium int8 peaks around 1.2-1.4GB
+    # and Kokoro adds ~0.5GB on top, so the old 1400m cap could not fit medium
+    # at all. 3g leaves the OS, nginx and the VPN process their ~800MB and
+    # still stops one bad request from ballooning into the host. There is no
+    # swap, so hitting this limit is an instant OOM kill, not a slowdown.
+    mem_limit: 3g
