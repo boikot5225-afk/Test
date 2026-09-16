@@ -40,6 +40,14 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default package list still asks for the legacy `tools`
+          # package, which Google has withdrawn from the SDK repository -- on a
+          # runner image with cmdline-tools 16.0 sdkmanager exits 1 and the job
+          # dies before it reaches a single validation step. Nothing here needs
+          # `tools`: Gradle drives the build and the emulator action brings its
+          # own system images, so ask for platform-tools alone.
+          packages: platform-tools
 
       - name: Restore established Reader AI signing key
         shell: bash
