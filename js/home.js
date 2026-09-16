@@ -102,11 +102,13 @@ export async function renderHome() {
 
   if (typeof globalThis.updateLangUI === 'function') globalThis.updateLangUI();
   else {
-    const btnFr = $('hlb-fr'); const btnEn = $('hlb-en'); const btnZh = $('hlb-zh'); const btnEs = $('hlb-es');
+    const btnFr = $('hlb-fr'); const btnEn = $('hlb-en'); const btnZh = $('hlb-zh');
+    const btnEs = $('hlb-es'); const btnJa = $('hlb-ja');
     if (btnFr) btnFr.classList.toggle('active', lang === 'fr');
     if (btnEn) btnEn.classList.toggle('active', lang === 'en');
     if (btnZh) btnZh.classList.toggle('active', isZh);
     if (btnEs) btnEs.classList.toggle('active', lang === 'es');
+    if (btnJa) btnJa.classList.toggle('active', lang === 'ja');
     const icon = $('bn-practice-icon'); const label = $('bn-practice-label');
     if (icon) icon.textContent = isZh ? '🀄' : '⚡';
     if (label) label.textContent = isZh ? 'Символы' : 'Глаголы';

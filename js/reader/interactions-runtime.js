@@ -28,6 +28,7 @@ import './zh-readable-inline.js?v=8-quality';
 import './zh-context-cache-v3.js?v=1'; // one-time reset of pre-polyphone AI pinyin cache
 import './zh-context-auth-wakeup.js?v=1'; // retry context AI as soon as Firebase restores a user
 import './zh-context-batch.js?v=8-quality'; // toc119: context owns Russian; auth retry; fresh cache
+import './ja-readable-inline.js?v=1'; // Japanese: kana reading above the word, Russian below it
 import { createReaderInteractions } from './interactions.js?v=2';
 
 function getRoot() {

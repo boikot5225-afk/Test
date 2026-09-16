@@ -2062,7 +2062,7 @@ export function startSRSReview() {
 
 // ── Переключение языка ──
 function setAppLang(lang) {
-  const allowed = ['fr', 'zh', 'en', 'es'];
+  const allowed = ['fr', 'zh', 'en', 'es', 'ja'];
   if (!allowed.includes(lang)) return;
   globalThis.AN2_LANG = lang;
   try { localStorage.setItem('an2_lang', lang); } catch {}
@@ -2070,14 +2070,16 @@ function setAppLang(lang) {
   // Reset dict to correct type for new language
   if (typeof window.setDictType === 'function') {
     const dictScreenActive = document.getElementById('screen-dict')?.classList.contains('active');
-    const targetDictType = lang === 'zh' ? 'zh' : (lang === 'en' || lang === 'es') ? 'reader' : 'verbs';
+    // Only French has the conjugation tables the "verbs" dictionary is built
+    // around; every other reading language uses the reader word list.
+    const targetDictType = lang === 'zh' ? 'zh' : lang === 'fr' ? 'verbs' : 'reader';
     if (dictScreenActive) {
       window.setDictType(targetDictType);
     } else {
       // Reset tab visibility quietly so next open starts correctly
       const tabsFr = document.getElementById('dict-tabs-fr');
       const tabsZh = document.getElementById('dict-tabs-zh');
-      if (tabsFr) tabsFr.style.display = (lang === 'zh' || lang === 'en' || lang === 'es') ? 'none' : 'flex';
+      if (tabsFr) tabsFr.style.display = lang === 'fr' ? 'flex' : 'none';
       if (tabsZh) tabsZh.style.display = lang === 'zh' ? 'block' : 'none';
     }
   }
@@ -2098,10 +2100,12 @@ function updateLangUI() {
   const btnEn = document.getElementById('hlb-en');
   const btnZh = document.getElementById('hlb-zh');
   const btnEs = document.getElementById('hlb-es');
+  const btnJa = document.getElementById('hlb-ja');
   if (btnFr) btnFr.classList.toggle('active', lang === 'fr');
   if (btnEn) btnEn.classList.toggle('active', isEn);
   if (btnZh) btnZh.classList.toggle('active', isZh);
   if (btnEs) btnEs.classList.toggle('active', isEs);
+  if (btnJa) btnJa.classList.toggle('active', lang === 'ja');
 
   // 4th nav button
   const icon = document.getElementById('bn-practice-icon');
@@ -2112,7 +2116,7 @@ function updateLangUI() {
   // Sync dict tabs visibility without triggering a render
   const tabsFr = document.getElementById('dict-tabs-fr');
   const tabsZh = document.getElementById('dict-tabs-zh');
-  if (tabsFr) tabsFr.style.display = (isZh || isEn || isEs) ? 'none' : 'flex';
+  if (tabsFr) tabsFr.style.display = lang === 'fr' ? 'flex' : 'none';
   if (tabsZh) tabsZh.style.display = isZh ? 'block' : 'none';
 
   // Also sync import modal lang selector if open
