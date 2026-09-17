@@ -25,6 +25,13 @@ patched() {  # все три признака исправленных файл�
     && grep -q 'from misaki import ja' server/Dockerfile 2>/dev/null
 }
 
+# Установить misaki мало: app.py должен её вызывать. get_ja_g2p() появилась в
+# том же коммите, что и Dockerfile, и если развёрнутый app.py старше или изменён
+# локально, японский пойдёт через espeak при полностью исправном образе — то
+# есть каша останется, а логи будут чистыми. Это худший из возможных исходов,
+# поэтому он проверяется до сборки, а не после.
+speaks_japanese() { grep -q 'get_ja_g2p' server/app.py 2>/dev/null; }
+
 run_fix() (
   set -u
   docker info >/dev/null 2>&1 || { fail "docker не отвечает: это не сервер, либо демон не запущен"; return 1; }
@@ -65,6 +72,7 @@ run_fix() (
   fi
 
   patched || { fail "файлы так и не исправлены; покажите: cat $DIR/server/Dockerfile"; return 1; }
+  speaks_japanese || { fail "в $DIR/server/app.py нет get_ja_g2p() — misaki встанет, но вызывать её будет некому, и японский останется кашей. Пришлите: git -C $DIR status --short"; return 1; }
   echo ">>> собираю образ: 10-15 минут, pyopenjtalk компилируется из исходников"
 
   docker compose build --no-cache tts-stt || { fail "сборка упала; пришлите последние 20 строк вывода"; return 1; }
