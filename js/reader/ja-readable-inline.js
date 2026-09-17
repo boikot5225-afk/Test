@@ -224,9 +224,7 @@ function setMeaning(wrap, ru) {
   wrap.dataset.jaGloss = '1';
 }
 
-function syncWord(el) {
-  if (!isJapaneseWord(el)) return;
-  const ru = enabled() ? meaningFor(el) : '';
+function applyMeaning(el, ru) {
   if (!ru) {
     const existing = wrapperFor(el);
     if (existing) unwrap(existing);
@@ -234,6 +232,11 @@ function syncWord(el) {
   }
   const wrap = ensureWrapper(el);
   if (wrap) setMeaning(wrap, ru);
+}
+
+function syncWord(el) {
+  if (!isJapaneseWord(el)) return;
+  applyMeaning(el, enabled() ? meaningFor(el) : '');
 }
 
 function syncAll() {
@@ -254,7 +257,19 @@ function syncAll() {
   });
   if (!enabled()) return 0;
   const words = root.querySelectorAll('.reader-word[data-lang="ja"][data-word]');
-  words.forEach(syncWord);
+  // Segmentation does not always keep an inflected word whole: 寒かったです can
+  // come through as 寒 + かったです, and both halves resolve to the same word,
+  // so both asked for a row and the line read "было холодно / было холодно".
+  // A repeat directly under the neighbouring token is that split, not two words
+  // that happen to mean the same thing — those are never adjacent — so the tail
+  // keeps quiet and the head carries the meaning for both.
+  let previous = '';
+  for (const el of words) {
+    if (!isJapaneseWord(el)) continue;
+    const ru = meaningFor(el);
+    applyMeaning(el, ru && ru === previous ? '' : ru);
+    if (ru) previous = ru;
+  }
   return words.length;
 }
 
