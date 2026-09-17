@@ -21,7 +21,7 @@ fail() { printf '\n!!! НЕ СДЕЛАНО: %s\n' "$1" >&2; }
 
 patched() {  # все три признака исправленных файлов на месте?
   grep -q unidic-lite server/requirements.txt 2>/dev/null \
-    && grep -q 'cmake g++' server/Dockerfile 2>/dev/null \
+    && grep -q 'build-essential cmake' server/Dockerfile 2>/dev/null \
     && grep -q 'from misaki import ja' server/Dockerfile 2>/dev/null
 }
 
@@ -64,8 +64,11 @@ run_fix() (
       cp server/Dockerfile server/Dockerfile.bak
       grep -q unidic-lite server/requirements.txt \
         || printf 'misaki[ja]==0.9.*\nunidic-lite==1.0.*\n' >> server/requirements.txt
-      grep -q 'cmake g++' server/Dockerfile \
-        || sed -i 's/espeak-ng ffmpeg curl/espeak-ng ffmpeg curl cmake g++/' server/Dockerfile
+      # build-essential, не g++: cmake конфигурирует open_jtalk генератором
+      # Unix Makefiles, а make в python:3.11-slim нет, и сборка падает на
+      # "Getting requirements to build wheel", не называя причину.
+      grep -q 'build-essential cmake' server/Dockerfile \
+        || sed -i 's/espeak-ng ffmpeg curl\( cmake g++\)\?/espeak-ng ffmpeg curl build-essential cmake/' server/Dockerfile
       grep -q 'from misaki import ja' server/Dockerfile \
         || sed -i 's|^RUN pip install --no-cache-dir -r requirements.txt$|RUN pip install --no-cache-dir -r requirements.txt \&\& pip uninstall -y unidic \&\& python -c "from misaki import ja; ja.JAG2P()(chr(0x4ECA))"|' server/Dockerfile
     fi

@@ -2,12 +2,20 @@ FROM python:3.11-slim
 
 # espeak-ng: phonemizer backend kokoro-onnx needs for some languages.
 # ffmpeg: faster-whisper/ctranslate2 audio decoding.
-# cmake + g++: pyopenjtalk ships as a source tarball and builds on install; it
-# is what gives Japanese the phonemes Kokoro's jf_/jm_ voices were trained on.
-# Without it espeak-ng handles Japanese, and espeak cannot read kanji at all —
-# it names them, so 朝 is spoken aloud as "Chinese letter".
+# build-essential + cmake: pyopenjtalk ships only as a source tarball and builds
+# on install; it is what gives Japanese the phonemes Kokoro's jf_/jm_ voices were
+# trained on. Without it espeak-ng handles Japanese and the vowels never reach
+# the model (see get_ja_g2p in app.py).
+#
+# build-essential, not `g++` alone: setup.py configures the bundled open_jtalk
+# and hts_engine sources with `cmake ..`, whose default generator is Unix
+# Makefiles, and python:3.11-slim has no make. cmake then stops at
+#   CMake Error: CMake was unable to find a build program corresponding to
+#   "Unix Makefiles". CMAKE_MAKE_PROGRAM is not set.
+# and pip reports only "Getting requirements to build wheel did not run
+# successfully", which does not name the missing tool.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    espeak-ng ffmpeg curl cmake g++ \
+    espeak-ng ffmpeg curl build-essential cmake \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
