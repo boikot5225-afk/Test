@@ -132,8 +132,16 @@ jobs:
           grep -qF 'READING_CACHE_KEY' "$WORK/batch.js"
           grep -qF 'an2ReaderWordStateSnapshot' "$WORK/vocab.js"
           grep -qF 'INTERMEDIATE_STEMS' "$WORK/dict.js"
-          grep -qF "import './ja-readable-inline.js?v=2-reading';" "$WORK/runtime.js"
-          grep -qF "import './ja-context-batch.js?v=2-reading';" "$WORK/runtime.js"
+          grep -qF 'dataset?.lang !== ' "$WORK/inline.js"
+          # Bumping this token is what makes a phone drop the module it already
+          # cached; four rebuilds went out looking unchanged because it stayed at
+          # v=1. One value for all three, checked here so half a bump fails the
+          # build rather than shipping two old modules and one new one.
+          JA_MODULE_VERSION='3-fr-cost'
+          for module in ja-vocab-estimate ja-readable-inline ja-context-batch; do
+            grep -qF "import './${module}.js?v=${JA_MODULE_VERSION}';" "$WORK/runtime.js" \
+              || { echo "runtime.js does not import ${module} at v=${JA_MODULE_VERSION}" >&2; exit 1; }
+          done
           rm -rf "$WORK"
 
       - name: Upload validated debug APK (pre-emulator-gate)

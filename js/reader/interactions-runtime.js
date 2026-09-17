@@ -28,9 +28,9 @@ import './zh-readable-inline.js?v=8-quality';
 import './zh-context-cache-v3.js?v=1'; // one-time reset of pre-polyphone AI pinyin cache
 import './zh-context-auth-wakeup.js?v=1'; // retry context AI as soon as Firebase restores a user
 import './zh-context-batch.js?v=8-quality'; // toc119: context owns Russian; auth retry; fresh cache
-import './ja-vocab-estimate.js?v=2-reading'; // Japanese: Known/Unknown from a frequency test
-import './ja-readable-inline.js?v=2-reading'; // Japanese: kana reading above the word, Russian below it
-import './ja-context-batch.js?v=2-reading'; // Japanese: ask DeepSeek for the Unknown words on screen
+import './ja-vocab-estimate.js?v=3-fr-cost'; // Japanese: Known/Unknown from a frequency test
+import './ja-readable-inline.js?v=3-fr-cost'; // Japanese: kana reading above the word, Russian below it
+import './ja-context-batch.js?v=3-fr-cost'; // Japanese: ask DeepSeek for the Unknown words on screen
 import { createReaderInteractions } from './interactions.js?v=2';
 
 function getRoot() {
