@@ -110,6 +110,19 @@ function normalizeSpeechText(text, lang = 'fr') {
   return normalizeLang(lang) === 'fr' ? normalizeFrenchSpeechText(clean) : clean;
 }
 
+// Generated audio is cached on the device forever, keyed by the text and the
+// voice. Nothing in that key says anything about the server that produced it,
+// so when the server was fixed, every Japanese paragraph already played kept
+// replaying the broken generation out of the cache — the fix was live and
+// inaudible. Japanese was served by espeak-ng for a while, which deletes the
+// vowels and names kanji aloud, so those recordings are not stale, they are
+// wrong.
+//
+// Bump this when a server-side change alters how existing text is spoken. It
+// costs one regeneration per paragraph and nothing else; leaving it alone costs
+// an evening of "I fixed it" against audio that cannot change.
+const TTS_CACHE_GENERATION = '2-ja-misaki';
+
 function cacheHash(text) {
   let h = 2166136261;
   for (let i = 0; i < text.length; i += 1) {
@@ -446,7 +459,7 @@ export async function speak(text, opts = {}) {
 
   const voiceEngine = getTtsVoiceEngine();
   const voice = getTtsVoice(lang) || defaultKokoroVoice(lang);
-  const key = cacheHash(`${lang}|${voiceEngine}|${voice}|${prepared}`);
+  const key = cacheHash(`${TTS_CACHE_GENERATION}|${lang}|${voiceEngine}|${voice}|${prepared}`);
   stopSpeak();
   const token = ++ttsToken;
   try {
@@ -520,7 +533,7 @@ export async function prefetchSpeech(text, opts = {}) {
     if (engine === 'webspeech') return; // nothing to prefetch, synthesis is local
     const voiceEngine = getTtsVoiceEngine();
     const voice = getTtsVoice(lang) || defaultKokoroVoice(lang);
-    const key = cacheHash(`${lang}|${voiceEngine}|${voice}|${prepared}`);
+    const key = cacheHash(`${TTS_CACHE_GENERATION}|${lang}|${voiceEngine}|${voice}|${prepared}`);
     if (TTS_MEM_CACHE.has(key) || ttsPrefetchInFlight.has(key)) return;
     if (await readPersistentAudio(key)) return;
     ttsPrefetchInFlight.add(key);

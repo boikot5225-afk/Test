@@ -132,12 +132,16 @@ jobs:
           grep -qF 'READING_CACHE_KEY' "$WORK/batch.js"
           grep -qF 'an2ReaderWordStateSnapshot' "$WORK/vocab.js"
           grep -qF 'INTERMEDIATE_STEMS' "$WORK/dict.js"
+          unzip -p "$APK" assets/www/js/tts.js > "$WORK/tts.js"
+          # Аудио кэшируется на устройстве навсегда; без поколения в ключе
+          # починка сервера остаётся неслышной.
+          grep -qF 'TTS_CACHE_GENERATION' "$WORK/tts.js"
           grep -qF 'dataset?.lang !== ' "$WORK/inline.js"
           # Bumping this token is what makes a phone drop the module it already
           # cached; four rebuilds went out looking unchanged because it stayed at
           # v=1. One value for all three, checked here so half a bump fails the
           # build rather than shipping two old modules and one new one.
-          JA_MODULE_VERSION='5-as-written'
+          JA_MODULE_VERSION='6-tts-cache'
           for module in ja-vocab-estimate ja-readable-inline ja-context-batch; do
             grep -qF "import './${module}.js?v=${JA_MODULE_VERSION}';" "$WORK/runtime.js" \
               || { echo "runtime.js does not import ${module} at v=${JA_MODULE_VERSION}" >&2; exit 1; }
