@@ -98,6 +98,9 @@ const DEINFLECT_RULES = [
 ];
 
 const MAX_DEINFLECT_DEPTH = 4;
+
+// What a rule can leave behind that is a stem rather than a dictionary form.
+const INTERMEDIATE_STEMS = new Set(['て', 'で', 'ます']);
 const KANA = /[぀-ヿ]/;
 const ALL_KANA = /^[぀-ヿ]+$/;
 
@@ -126,6 +129,9 @@ const IRREGULAR_READINGS = Object.freeze({
   '来る': 'くる', '来': 'く', '来ます': 'きます', '来ました': 'きました', '来た': 'きた',
   '来て': 'きて', '来ている': 'きている', '来ない': 'こない', '来なかった': 'こなかった',
   '来られる': 'こられる', '来させる': 'こさせる', '来れば': 'くれば', '来い': 'こい',
+  // The continuous forms were missing, so 来ています read くています.
+  '来ています': 'きています', '来ていました': 'きていました', '来ていた': 'きていた',
+  '来てる': 'きてる', '来ません': 'きません', '来ませんでした': 'きませんでした',
 });
 
 export function surfaceReading(surface, lemma, lemmaReading) {
@@ -226,6 +232,20 @@ export function createDeinflector(rowFor) {
           if (!form.endsWith(from) || form.length - from.length + to.length < 2) continue;
           const candidate = form.slice(0, form.length - from.length) + to;
           const row = rowFor(candidate);
+          // A rule that strips 〜ている leaves the て-form, and 〜ました leaves
+          // the ます-form; neither is a dictionary form, so neither may end the
+          // walk even when it happens to be a word in its own right. 降って is
+          // such a word — the archaic conjunction くだって "humbly" — so
+          // 降っていました stopped there and 雪が降って carried the reading
+          // くだ instead of ふ. These stay on the frontier and the next round
+          // reduces them properly.
+          if (INTERMEDIATE_STEMS.has(to)) {
+            if (!seen.has(candidate)) {
+              seen.add(candidate);
+              next.push({ form: candidate, note: note || formName });
+            }
+            continue;
+          }
           // Validate before deduping: several rules propose the same candidate
           // while demanding different parts of speech (食べた is reached by both
           // the vk and the ichidan rule), and only one of them is right.

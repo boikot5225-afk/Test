@@ -107,12 +107,32 @@ for (const r of rows('select idseq, text from Kana')) {
 // Homographs make claiming a key first-come-first-served wrong: 本 belongs to
 // ほん "book", but the 元/本/素 (もと, "origin") entry has a lower sequence
 // number and would take it, and ない would resolve to 亡い "dead" rather than
-// 無い. JMdict carries no frequency field here, so two signals stand in for it.
-// First, a form that heads its own entry outranks the same form listed as a
-// variant of another word. Second, among headwords, the entry with more senses
-// wins — the everyday word is the one that accumulated meanings.
+// 無い. A form that heads its own entry outranks the same form listed as a
+// variant of another word; among headwords, three signals decide, in order.
+//
+// First, JMdict's priority tags. ichi1 marks the core vocabulary list, news1 the
+// top of a newspaper corpus, nfXX a frequency bucket — any of them means the
+// everyday word. This has to lead: 朝 is あさ "morning" (ichi1, news1, nf09,
+// three senses) and also ちょう "dynasty" (no tags, five senses), and ranking by
+// senses alone handed the key to the dynasty. The reader then printed ちょう
+// over 朝 in "朝、六時に起きました".
+//
+// Second, the sense count — between two equally unmarked entries the everyday
+// word is the one that accumulated meanings.
+//
+// Third, the JMdict sequence number, so a rebuild is deterministic. It also
+// settles 大: おお and だい are both spec1, and the lower sequence is おお,
+// which is the one that shows up in 大きい.
 const senseCount = new Map();
 for (const r of rows('select idseq, count(*) as n from Sense group by idseq')) senseCount.set(r.idseq, r.n);
+
+// Any priority tag at all, on any spelling of the entry.
+const prioritized = new Set();
+for (const table of [['Kanji', 'KJP'], ['Kana', 'KNP']]) {
+  for (const r of rows(`select distinct f.idseq as idseq from ${table[0]} f join ${table[1]} p on p.kid = f.ID`)) {
+    prioritized.add(r.idseq);
+  }
+}
 
 const entries = [];
 const entryIndex = new Map();
@@ -130,6 +150,14 @@ function entryId(reading, code, meaning) {
     entryIndex.set(key, id);
   }
   return id;
+}
+
+// Higher wins. Later entries must not displace an equal one, so the sequence
+// number is folded in as a descending term rather than compared separately.
+function scoreFor(idseq) {
+  return (prioritized.has(idseq) ? 1e12 : 0)
+    + (senseCount.get(idseq) || 1) * 1e7
+    + (1e7 - Math.min(idseq % 1e7, 1e7));
 }
 
 function claim(form, id, score) {
@@ -152,7 +180,7 @@ for (const pass of ['headword', 'variant']) {
     const readings = kanaForms.get(r.idseq) || [];
     const reading = readings[0] || '';
     const kanji = kanjiForms.get(r.idseq) || [];
-    const score = pass === 'headword' ? (senseCount.get(r.idseq) || 1) : null;
+    const score = pass === 'headword' ? scoreFor(r.idseq) : null;
     const kanjiPass = pass === 'headword' ? kanji.slice(0, 1) : kanji.slice(1);
     const kanaPass = pass === 'headword' ? readings.slice(0, 1) : readings.slice(1);
 
