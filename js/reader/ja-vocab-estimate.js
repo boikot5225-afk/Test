@@ -16,6 +16,7 @@
 // A word has two spellings. 意見 and いけん are one word, so both columns of the
 // list index to the same rank and a reader who met either has met the word.
 import { createDeinflector } from './ja-dict.js';
+import { wordStateIdbPut } from './word-state-idb-store.js?v=1';
 
 const PROFILE_BASE_KEY = 'an2_reader_vocab_estimate_ja_v1';
 const WORD_STATE_BASE_KEY = 'an2_reader_word_state_v1';
@@ -75,14 +76,28 @@ function normalizeSurface(value) {
   return String(value || '').normalize('NFC').trim();
 }
 
+// The Reader core keeps word state in memory and writes that whole snapshot on
+// its next save, so a decision parsed out of localStorage and written back here
+// would be silently reverted the next time anything touched a word — mark one
+// word Known, tap a second, and the first came back Unknown. The core publishes
+// the live object; mutating that is what makes a decision stick, which is what
+// the Chinese, English and French layers do.
 function wordStateStore() {
+  try {
+    const live = globalThis.an2ReaderWordStateSnapshot?.();
+    if (live && typeof live === 'object') return live;
+  } catch {}
   try { return JSON.parse(localStorage.getItem(scopedKey(WORD_STATE_BASE_KEY)) || '{}') || {}; }
   catch { return {}; }
 }
 
 function persistWordState(store) {
-  try { localStorage.setItem(scopedKey(WORD_STATE_BASE_KEY), JSON.stringify(store)); }
+  const key = scopedKey(WORD_STATE_BASE_KEY);
+  try { localStorage.setItem(key, JSON.stringify(store || {})); }
   catch (error) { console.warn('[reader ja vocab] word state save failed', error?.message || error); }
+  wordStateIdbPut(key, store || {}).catch(error => {
+    console.warn('[reader ja vocab] IndexedDB save failed', error?.message || error);
+  });
 }
 
 function loadProfile() {
