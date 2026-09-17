@@ -95,11 +95,15 @@ def get_zh_g2p():
 def get_ja_g2p():
     """misaki's Japanese g2p, or None when it is not installed.
 
-    Unlike the Chinese one, misaki[ja] pulls pyopenjtalk, mojimoji and unidic —
-    C++ extensions needing cmake and a compiler, plus a ~1 GB dictionary. That
-    does not fit a slim image, so it stays optional: install it and Japanese
-    gets the phonemes Kokoro's jf_/jm_ voices were trained on, skip it and
-    espeak-ng handles Japanese at lower quality. Either way the image builds.
+    This is in the image now. The earlier note here said it could not be —
+    misaki[ja] does pull pyopenjtalk, which builds from source and needs cmake,
+    but the ~1 GB dictionary it warned about is only the `unidic` stub's
+    separate download. unidic-lite is a complete dictionary at 249 MB, so the
+    Dockerfile installs that and drops the stub.
+
+    Kept optional anyway: an image built before that change still runs, just
+    with espeak-ng handling Japanese, and espeak cannot read kanji at all — it
+    names them, so 朝 is read aloud as "Chinese letter".
     """
     global _ja_g2p
     if _ja_g2p is False:

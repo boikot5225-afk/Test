@@ -6,3 +6,8 @@ faster-whisper==1.0.*
 soundfile==0.12.*
 requests==2.32.*
 misaki[zh]==0.9.*
+misaki[ja]==0.9.*
+# misaki[ja] depends on `unidic`, which installs as an empty stub and expects a
+# separate ~1GB download; unidic-lite is a complete 249MB dictionary that
+# fugashi uses instead once the stub is gone (the Dockerfile removes it).
+unidic-lite==1.0.*
