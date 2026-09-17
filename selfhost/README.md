@@ -35,29 +35,38 @@ nano .env   # set SELFHOST_TOKEN to: openssl rand -hex 32
 docker compose up -d --build
 ```
 
-First build downloads the Kokoro model weights (~350MB) and installs
-faster-whisper — can take several minutes on a 1 vCPU box. Chinese pulls its
-own g2p (`misaki[zh]`); espeak-ng covers the rest.
+First build downloads the Kokoro model weights (~350MB), installs
+faster-whisper, and compiles pyopenjtalk from source — ten minutes or so on a
+1 vCPU box. Chinese and Japanese both get misaki's own g2p (`misaki[zh]`,
+`misaki[ja]`); espeak-ng covers the rest.
 
-Japanese works out of the box through espeak-ng, but not well: Kokoro's `jf_`
-and `jm_` voices were trained on misaki's Japanese g2p, so espeak phonemes come
-out mispronounced. Better Japanese is opt-in because it is not cheap — the
-`ja` extra needs a C++ toolchain to build pyopenjtalk and mojimoji, and unidic
-downloads roughly a gigabyte of dictionary:
+Japanese needs that g2p, it is not a nicety. Kokoro's `jf_` and `jm_` voices
+were trained on misaki phonemes, and espeak-ng cannot read kanji at all — it
+*names* them, so 朝 comes out of the speaker as "Chinese letter". The Dockerfile
+therefore ends its pip step with `python -c "from misaki import ja; ja.JAG2P()"`:
+**if Japanese g2p is missing, the build fails.** A build that succeeds is proof
+the image has it.
 
-```dockerfile
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake \
-    && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir 'misaki[ja]==0.9.*' && python -m unidic download
-```
+(An earlier version of this file called `misaki[ja]` opt-in because unidic
+downloads ~1GB. That gigabyte belongs to the `unidic` stub package, not to
+misaki: `unidic-lite` is a complete 249MB dictionary needing no download, and
+the Dockerfile drops the stub so fugashi uses it.)
 
-app.py picks that path up on its own when the import succeeds and logs a line
-about falling back when it does not. Then check:
+Then check:
 
 ```bash
 curl http://127.0.0.1:8080/health
 # {"ok":true}
 ```
+
+And confirm Japanese loaded — this should print **nothing**:
+
+```bash
+docker compose logs tts-stt | grep 'misaki\[ja\] unavailable'
+```
+
+If it prints a line, the container is running an image built before Japanese
+was wired in. See "Updating later".
 
 ## 5. Expose it over HTTPS
 
@@ -107,11 +116,28 @@ times out or errors. Nothing changes for DeepSeek.
 
 ## Updating later
 
+`docker compose up -d --build` only rebuilds from the files that are on the
+VPS. If you deployed by `scp` (step 2), the VPS has a **copy** — `git pull` in
+the repo on your laptop does not touch it, and the rebuild will faithfully
+rebuild the old image. Copy the folder again first:
+
 ```bash
-cd ~/tts-stt
-git pull   # if you keep this folder as a git checkout, otherwise re-scp
-docker compose up -d --build
+# on your machine, in the repo
+scp -r selfhost/server/ user@your-vps-ip:~/tts-stt/
 ```
+
+```bash
+# on the VPS
+cd ~/tts-stt
+git pull        # only if this folder really is a git checkout
+grep -n unidic-lite server/requirements.txt   # new files have this line; old ones don't
+docker compose build --no-cache tts-stt
+docker compose up -d
+docker compose logs tts-stt | grep 'misaki\[ja\] unavailable'   # expect no output
+```
+
+`--no-cache` because the Kokoro weights are fetched by a `RUN curl` layer that
+Docker will happily reuse even when the layers above it changed.
 
 ## Rolling back
 
