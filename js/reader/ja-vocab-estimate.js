@@ -739,20 +739,18 @@ function schedulePendingWordBatch() {
 
 function installRenderObserver() {
   if (typeof MutationObserver === 'undefined') return;
-  // Same reasoning as the batch module: watching a French chapter's every
-  // class change costs frame time that the reader feels, and this layer has
-  // nothing to say about French.
-  if (currentLang() !== 'ja') {
-    renderObserver?.disconnect();
-    renderObserver = null;
-    renderObserverRoot = null;
-    return;
-  }
   const root = document.getElementById('reader-chapter-text');
   if (!root) { setTimeout(installRenderObserver, 250); return; }
   if (renderObserver && renderObserverRoot === root) return;
   renderObserver?.disconnect();
   renderObserverRoot = root;
+  // Attached whatever the book is open. Scoping this to Japanese looked like a
+  // free saving — the callback returns immediately for other languages anyway —
+  // but the chapter is rendered after the modules boot, so at attach time the
+  // language still reads as the default and the observer was never attached at
+  // all. Nothing then marked a word Known or Unknown, and the underlines that
+  // depend on those classes did not appear. The callback leaving early is the
+  // cheap part; not being there is not a saving, it is the feature missing.
   renderObserver = new MutationObserver(records => {
     if (currentLang() !== 'ja') return;
     for (const record of records) for (const node of record.addedNodes || []) queueWordNode(node);

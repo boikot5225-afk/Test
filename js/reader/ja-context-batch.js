@@ -368,19 +368,11 @@ function schedule(delay = 400) {
   scanTimer = setTimeout(() => { runPass().catch(() => {}); }, Math.max(0, delay));
 }
 
+// Attached whatever the book is open, for the same reason as the vocabulary
+// layer: the chapter renders after this module boots, so a language check here
+// runs before there is a language to check and the observer never attaches.
 function bindObserver() {
   if (typeof MutationObserver === 'undefined') return;
-  // Only while a Japanese book is open. The callback returned immediately for
-  // other languages, but the observer itself is not free: it was watching every
-  // class change across a 1800-word French chapter and charging that to the
-  // frame the reader is waiting on. Nothing here has anything to say about
-  // French, so it should not be listening to it.
-  if (currentLang() !== 'ja') {
-    observer?.disconnect();
-    observer = null;
-    observedRoot = null;
-    return;
-  }
   const root = document.getElementById('reader-chapter-text');
   if (!root) { setTimeout(bindObserver, 250); return; }
   if (observer && observedRoot === root) return;
