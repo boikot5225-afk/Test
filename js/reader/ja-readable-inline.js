@@ -25,6 +25,11 @@ const STYLE_ID = 'reader-ja-readable-inline-v1';
 const MODE_KEY = 'an2_reader_ja_unknown_gloss_mode_v1';
 const LEXICAL_CACHE_KEY = 'an2_reader_lexical_cache_v1';
 const INSTANT_CACHE_KEY = 'an2_instant_translate_word_cache_v1';
+// Filled by ja-context-batch for Unknown words on screen. It is a separate
+// store because the Reader core holds its own lexical cache in memory and
+// rewrites the whole object on save, which would drop anything written from
+// out here.
+const BATCH_CACHE_KEY = 'an2_reader_ja_context_gloss_v1';
 const MAX_MEANING_CHARS = 36;
 
 // A word wearing one of these has stopped needing help: learned, a service word
@@ -138,9 +143,11 @@ function cachedRussian(word) {
   if (!key) return '';
   const lexical = readJson(scopedKey(LEXICAL_CACHE_KEY))[`ja:${key}`] || null;
   const instant = readJson(INSTANT_CACHE_KEY)[`ja:${String(word || '').trim().toLowerCase()}`] || null;
+  const batch = readJson(scopedKey(BATCH_CACHE_KEY))[`ja:${key}`] || null;
   // An explicit Instant translation is the reader's own most recent answer for
-  // this word, so it outranks whatever the card cached earlier.
-  return russianOf(instant) || russianOf(lexical);
+  // this word, so it outranks whatever the card cached earlier; the batch pass
+  // is the fallback for a word nobody has opened by hand.
+  return russianOf(instant) || russianOf(lexical) || russianOf(batch);
 }
 
 // A word is cached under whichever form was tapped, and Japanese inflects, so

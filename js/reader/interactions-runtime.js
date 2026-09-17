@@ -30,6 +30,7 @@ import './zh-context-auth-wakeup.js?v=1'; // retry context AI as soon as Firebas
 import './zh-context-batch.js?v=8-quality'; // toc119: context owns Russian; auth retry; fresh cache
 import './ja-vocab-estimate.js?v=1'; // Japanese: Known/Unknown from a frequency test
 import './ja-readable-inline.js?v=1'; // Japanese: kana reading above the word, Russian below it
+import './ja-context-batch.js?v=1'; // Japanese: ask DeepSeek for the Unknown words on screen
 import { createReaderInteractions } from './interactions.js?v=2';
 
 function getRoot() {
