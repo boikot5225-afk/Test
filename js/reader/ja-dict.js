@@ -95,6 +95,20 @@ const DEINFLECT_RULES = [
   ['きたい', 'く', 'v5k', 'желательная форма'], ['みたい', 'む', 'v5m', 'желательная форма'],
   ['りたい', 'る', 'v5r', 'желательная форма'], ['いたい', 'う', 'v5u', 'желательная форма'],
   ['したい', 'する', 'vs', 'желательная форма'],
+  // The polite copula, which the table had no rule for at all. Every sentence
+  // in a beginner's text ends in it, and without these 忙しいですが reduced to
+  // nothing: segmentation could not join it, so the reader was left tapping a
+  // bare 忙 that is not a word and has neither reading nor meaning. Same for
+  // 寒かったです, 好きです and 大きいです. Longest first, so ですが is not
+  // mistaken for です with a stray が.
+  ['ですけれども', '', '', 'вежливая форма'], ['ですけれど', '', '', 'вежливая форма'],
+  ['ですけど', '', '', 'вежливая форма'], ['ですから', '', '', 'вежливая форма'],
+  ['ですので', '', '', 'вежливая форма'], ['ですが', '', '', 'вежливая форма'],
+  ['ですね', '', '', 'вежливая форма'], ['ですよ', '', '', 'вежливая форма'],
+  ['でしょうか', '', '', 'вежливый вопрос'], ['でしょう', '', '', 'предположение'],
+  ['でしたか', '', '', 'вежливый вопрос в прошедшем'], ['でした', '', '', 'вежливое прошедшее'],
+  ['ですか', '', '', 'вежливый вопрос'],
+  ['です', '', '', 'вежливая форма'],
 ];
 
 const MAX_DEINFLECT_DEPTH = 4;
