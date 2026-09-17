@@ -282,9 +282,16 @@ function pickBrowserVoice(lang = 'fr') {
   const n = normalizeLang(lang);
   const prefix = n === 'zh' ? 'zh' : n === 'ja' ? 'ja' : n === 'en' ? 'en' : n === 'es' ? 'es' : 'fr';
   const voices = window.speechSynthesis?.getVoices?.() || [];
-  return voices.find((v) => v.lang.toLowerCase().startsWith(prefix) && v.localService)
-    || voices.find((v) => v.lang.toLowerCase().startsWith(prefix))
-    || null;
+  const local = voices.find((v) => v.lang.toLowerCase().startsWith(prefix) && v.localService);
+  if (local) return local;
+  // A voice the device lists but has not downloaded is a trap for Japanese and
+  // Chinese. Android keeps such entries in getVoices(), the engine silently
+  // falls back to its default — usually English — and that voice does not read
+  // the characters, it describes them: 朝 comes out as "Chinese letter". A
+  // French sentence read by an English voice is at least still the sentence, so
+  // only the character-based languages insist on a downloaded voice.
+  if (n === 'ja' || n === 'zh') return null;
+  return voices.find((v) => v.lang.toLowerCase().startsWith(prefix)) || null;
 }
 
 function speakViaWebSpeech(text, { lang = 'fr', rate = 1 } = {}) {
@@ -451,6 +458,19 @@ export async function speak(text, opts = {}) {
       } catch (fallbackError) {
         console.warn('[tts] device voice failed too:', fallbackError);
       }
+    }
+    if (token === ttsToken && (lang === 'ja' || lang === 'zh')) {
+      // Saying nothing without saying why is the version of this that wastes
+      // someone's evening, so name the missing piece and where it lives.
+      const genitive = lang === 'ja' ? 'японского' : 'китайского';
+      const accusative = lang === 'ja' ? 'японский' : 'китайский';
+      if (window.showToast) {
+        window.showToast(
+          `🔇 Нет ${genitive} голоса. Настройки Android → Язык и ввод → Синтез речи → установи ${accusative} для Google TTS`,
+          8000,
+        );
+      }
+      return false;
     }
     if (window.showToast) window.showToast(`⚠️ Firebase-озвучка: ${msg.slice(0, 220)}`, 6500);
     return false;
