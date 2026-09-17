@@ -97,6 +97,45 @@ jobs:
           grep -qF 'window.readerFrenchRefresh?.(reason, false)' "$INT_JS"
           rm -f "$FR_JS" "$PANEL_JS" "$INT_JS"
 
+      - name: Verify Japanese dictionary and modules inside APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+          WORK="$(mktemp -d)"
+          unzip -p "$APK" assets/www/data/ja_dict_core.json > "$WORK/ja_dict_core.json"
+          unzip -p "$APK" assets/www/data/ja_vocab_frequency.tsv > "$WORK/ja_vocab_frequency.tsv"
+          unzip -p "$APK" assets/www/js/reader/ja-readable-inline.js > "$WORK/inline.js"
+          unzip -p "$APK" assets/www/js/reader/ja-context-batch.js > "$WORK/batch.js"
+          unzip -p "$APK" assets/www/js/reader/ja-vocab-estimate.js > "$WORK/vocab.js"
+          unzip -p "$APK" assets/www/js/reader/ja-dict.js > "$WORK/dict.js"
+          unzip -p "$APK" assets/www/js/reader/interactions-runtime.js > "$WORK/runtime.js"
+          # The readings a reader sees are only as good as what actually ships.
+          # The dictionary was rebuilt to stop 朝 being read ちょう "dynasty";
+          # a stale copy inside the APK would look exactly like the fix never
+          # landed, which is a failure mode worth catching here rather than on
+          # someone's phone.
+          python3 - "$WORK/ja_dict_core.json" <<'PYCHECK'
+          import json, sys
+          d = json.load(open(sys.argv[1], encoding='utf-8'))
+          index, entries = d['map'], d['entries']
+          for word, reading in {'朝': 'あさ', '外': 'そと', '女子': 'じょし', '火': 'ひ', '降る': 'ふる'}.items():
+              got = entries[index[word]][0]
+              assert got == reading, f'{word} reads {got}, expected {reading}'
+          print(f'ja_dict_core.json: {len(index)} keys, readings correct')
+          PYCHECK
+          test "$(wc -l < "$WORK/ja_vocab_frequency.tsv")" -ge 30000
+          grep -qF 'rw-migaku-unknown' "$WORK/inline.js"
+          grep -qF 'ru === previous' "$WORK/inline.js"
+          grep -qF 'applyContextReadings' "$WORK/batch.js"
+          grep -qF 'READING_CACHE_KEY' "$WORK/batch.js"
+          grep -qF 'an2ReaderWordStateSnapshot' "$WORK/vocab.js"
+          grep -qF 'INTERMEDIATE_STEMS' "$WORK/dict.js"
+          grep -qF "import './ja-readable-inline.js?v=2-reading';" "$WORK/runtime.js"
+          grep -qF "import './ja-context-batch.js?v=2-reading';" "$WORK/runtime.js"
+          rm -rf "$WORK"
+
       - name: Upload validated debug APK (pre-emulator-gate)
         uses: actions/upload-artifact@v4
         with:
