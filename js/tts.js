@@ -84,19 +84,14 @@ function normalizeFrenchSpeechText(text) {
 
 function normalizeSpeechText(text, lang = 'fr') {
   const clean = String(text || '').replace(/\s+/g, ' ').trim();
-  const n = normalizeLang(lang);
-  if (n === 'fr') return normalizeFrenchSpeechText(clean);
-  // Japanese is handed to the engine as kana. Kokoro's Japanese voices want
-  // misaki's phonemes; without that optional package the server falls back to
-  // espeak-ng, which reads kana fine and cannot read kanji at all — it names
-  // them instead, so 朝 is spoken as "Chinese letter". The reader layer builds
-  // the kana from the furigana already on the page, context corrections and
-  // all, and leaves the text alone when it has nothing to offer.
-  if (n === 'ja') {
-    try { return globalThis.readerJaKanaForSpeech?.(clean) || clean; }
-    catch (_) { return clean; }
-  }
-  return clean;
+  // Japanese goes to the engine exactly as written. Sending kana instead was
+  // worth it only while the server had no Japanese g2p and espeak-ng was naming
+  // the kanji aloud; with misaki installed it is actively worse, because kana
+  // alone hides where a word ends and a particle begins. misaki turns
+  // わたしは会社員です into "βataɕi βa kaiɕaiɴ desɨ" and the same line in kana
+  // into "βataɕi βakai ɕa iɴ desɨ" — the boundaries slide and the result is the
+  // mush this was meant to fix.
+  return normalizeLang(lang) === 'fr' ? normalizeFrenchSpeechText(clean) : clean;
 }
 
 function cacheHash(text) {
