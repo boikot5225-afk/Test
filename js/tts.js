@@ -84,14 +84,29 @@ function normalizeFrenchSpeechText(text) {
 
 function normalizeSpeechText(text, lang = 'fr') {
   const clean = String(text || '').replace(/\s+/g, ' ').trim();
-  // Japanese goes to the engine exactly as written. Sending kana instead was
-  // worth it only while the server had no Japanese g2p and espeak-ng was naming
-  // the kanji aloud; with misaki installed it is actively worse, because kana
-  // alone hides where a word ends and a particle begins. misaki turns
-  // わたしは会社員です into "βataɕi βa kaiɕaiɴ desɨ" and the same line in kana
-  // into "βataɕi βakai ɕa iɴ desɨ" — the boundaries slide and the result is the
-  // mush this was meant to fix.
-  return normalizeLang(lang) === 'fr' ? normalizeFrenchSpeechText(clean) : clean;
+  const n = normalizeLang(lang);
+  if (n === 'fr') return normalizeFrenchSpeechText(clean);
+  // Japanese is handed to the engine as kana. Kokoro's Japanese voices want
+  // misaki's phonemes; without that optional package the server falls back to
+  // espeak-ng, which reads kana fine and cannot read kanji at all — it names
+  // them instead, so 朝 is spoken as "Chinese letter". The reader layer builds
+  // the kana from the furigana already on the page, context corrections and
+  // all, and leaves the text alone when it has nothing to offer.
+  //
+  // This was removed once, on the assumption that the server now had misaki and
+  // would rather have the writing. It did not: its own logs say
+  // "misaki[ja] unavailable (No module named 'pyopenjtalk')", and the kanji went
+  // back to being named aloud. Kana is the reading that works against both — a
+  // server without the g2p speaks it correctly, and one with it phonemizes kana
+  // too (a little worse, since kana hides some word boundaries: わたしは会社員です
+  // comes out "βataɕi βakai ɕa iɴ desɨ" rather than "βataɕi βa kaiɕaiɴ desɨ").
+  // A little worse is not the same kind of thing as naming the characters, so
+  // do not take this out again without first reading the server's log line.
+  if (n === 'ja') {
+    try { return globalThis.readerJaKanaForSpeech?.(clean) || clean; }
+    catch (_) { return clean; }
+  }
+  return clean;
 }
 
 function cacheHash(text) {

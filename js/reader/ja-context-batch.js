@@ -334,6 +334,44 @@ async function runPass() {
   }
 }
 
+// The kana this paragraph spells out, for the speech engine.
+//
+// Kokoro's Japanese voices want misaki's phonemes, but that package needs a
+// compiler and a ~1GB dictionary, so the server treats it as optional and falls
+// back to espeak-ng. espeak in Japanese mode reads kana correctly and cannot
+// read kanji at all: 「朝、六時に起きました」 comes back as the phonemes for
+// "Chinese letter, Chinese letter ni Chinese letter kimashita", which is what a
+// reader actually hears. The same sentence in kana reads as "asa, rokuji ni
+// okimashita".
+//
+// The furigana on screen is exactly that kana, already corrected for context,
+// so speech is given the reading rather than the writing. A word the scaffold
+// does not annotate — kana words, katakana, particles — is already its own
+// reading and passes through untouched.
+function kanaForSpeech(text) {
+  const source = String(text || '');
+  if (!source || currentLang() !== 'ja') return source;
+  const root = document.getElementById('reader-chapter-text');
+  if (!root) return source;
+
+  const pairs = [];
+  for (const el of root.querySelectorAll('.reader-word[data-lang="ja"][data-word]')) {
+    const word = clean(el.dataset.word || '', 40);
+    const reading = renderedReading(el);
+    if (!word || !reading || word === reading) continue;
+    if (!/[\u4e00-\u9fff\u3005\u3006]/.test(word)) continue;
+    pairs.push([word, reading]);
+  }
+  if (!pairs.length) return source;
+  // Longest first: 会社員 must not be rewritten as the reading of 会社 with 員
+  // left dangling after it.
+  pairs.sort((a, b) => b[0].length - a[0].length);
+
+  let out = source;
+  for (const [word, reading] of pairs) out = out.split(word).join(reading);
+  return out;
+}
+
 // Repaint the furigana where the model read the word differently from the
 // dictionary. The core owns the ruby scaffold and rebuilds it on every render,
 // so this runs again after each one rather than trying to hold the change.
@@ -403,6 +441,7 @@ function install() {
 if (typeof window !== 'undefined') {
   globalThis.readerJaContextBatchNow = () => runPass();
   globalThis.readerJaApplyContextReadings = applyContextReadings;
+  globalThis.readerJaKanaForSpeech = kanaForSpeech;
   globalThis.readerJaContextGlossCache = loadCache;
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, { once: true });
   else install();
@@ -413,4 +452,4 @@ if (typeof window !== 'undefined') {
   window.addEventListener('reader:ja-vocab-ready', () => schedule(600));
 }
 
-export { runPass, cacheKeyFor, loadCache, applyContextReadings, loadReadingCache, readingKeyFor };
+export { runPass, cacheKeyFor, loadCache, applyContextReadings, loadReadingCache, readingKeyFor, kanaForSpeech };

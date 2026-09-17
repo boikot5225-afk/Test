@@ -129,6 +129,12 @@ jobs:
           grep -qF 'rw-migaku-unknown' "$WORK/inline.js"
           grep -qF 'ru === previous' "$WORK/inline.js"
           grep -qF 'applyContextReadings' "$WORK/batch.js"
+          # Speech is given the kana, not the writing: the server has no
+          # Japanese g2p, and espeak-ng names kanji rather than reading them.
+          # Shipping an APK without this is shipping "Chinese letter".
+          grep -qF 'readerJaKanaForSpeech' "$WORK/batch.js"
+          unzip -p "$APK" assets/www/js/tts.js > "$WORK/tts.js"
+          grep -qF 'readerJaKanaForSpeech' "$WORK/tts.js"
           grep -qF 'READING_CACHE_KEY' "$WORK/batch.js"
           grep -qF 'an2ReaderWordStateSnapshot' "$WORK/vocab.js"
           grep -qF 'INTERMEDIATE_STEMS' "$WORK/dict.js"
@@ -137,7 +143,7 @@ jobs:
           # cached; four rebuilds went out looking unchanged because it stayed at
           # v=1. One value for all three, checked here so half a bump fails the
           # build rather than shipping two old modules and one new one.
-          JA_MODULE_VERSION='3-fr-cost'
+          JA_MODULE_VERSION='4-kana'
           for module in ja-vocab-estimate ja-readable-inline ja-context-batch; do
             grep -qF "import './${module}.js?v=${JA_MODULE_VERSION}';" "$WORK/runtime.js" \
               || { echo "runtime.js does not import ${module} at v=${JA_MODULE_VERSION}" >&2; exit 1; }
