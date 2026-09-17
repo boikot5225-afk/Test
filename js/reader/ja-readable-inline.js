@@ -133,7 +133,7 @@ function russianOf(entry) {
   return clean(value);
 }
 
-function russianFor(word) {
+function cachedRussian(word) {
   const key = cacheKeyFor(word);
   if (!key) return '';
   const lexical = readJson(scopedKey(LEXICAL_CACHE_KEY))[`ja:${key}`] || null;
@@ -141,6 +141,19 @@ function russianFor(word) {
   // An explicit Instant translation is the reader's own most recent answer for
   // this word, so it outranks whatever the card cached earlier.
   return russianOf(instant) || russianOf(lexical);
+}
+
+// A word is cached under whichever form was tapped, and Japanese inflects, so
+// 寒かった in this paragraph and 寒い in the card are the same word with two
+// cache keys. Look under the form on the page first — an answer given for this
+// exact form is the most specific one there is — then under the dictionary
+// form, so one lookup lights up every conjugation of the word in the chapter.
+function russianFor(word) {
+  const direct = cachedRussian(word);
+  if (direct) return direct;
+  let lemma = '';
+  try { lemma = globalThis.readerJapaneseLemmaFor?.(word) || ''; } catch {}
+  return lemma && lemma !== word ? cachedRussian(lemma) : '';
 }
 
 function wrapperFor(el) {
@@ -155,10 +168,18 @@ function wordForWrapper(wrap) {
 // What this word should show, if anything. Returns '' when the word is done
 // being helped, when the reader has not resolved a Russian meaning for it yet,
 // or when that meaning is too long to belong under a line of text.
+//
+// Once the vocabulary test has run it owns the verdict, the way it does for
+// Chinese: a word it calls Unknown keeps its row even after the reader has met
+// it often enough to be faded, because "seen a lot" is not "known" and the test
+// is the thing that actually measured that. Before the test there is no verdict
+// to defer to, and the fading heuristic decides on its own.
 function meaningFor(el) {
   const surface = clean(el?.dataset?.word || el?.textContent || '');
   if (!surface) return '';
-  if (SETTLED_CLASSES.some(cls => el.classList.contains(cls))) return '';
+  if (el.classList.contains('rw-migaku-known')) return '';
+  if (!el.classList.contains('rw-migaku-unknown')
+      && SETTLED_CLASSES.some(cls => el.classList.contains(cls))) return '';
   return compactRussian(russianFor(surface));
 }
 

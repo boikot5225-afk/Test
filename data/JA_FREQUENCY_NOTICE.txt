@@ -1,0 +1,18 @@
+data/ja_vocab_frequency.tsv is derived from two sources.
+
+Word order comes from wordfreq (large_ja), by Robyn Speer, distributed under the
+Apache License 2.0:
+https://github.com/rspeer/wordfreq
+Its Japanese data aggregates several public corpora; the package documents the
+list of sources it combines.
+
+The vocabulary itself — which tokens count as words, their dictionary forms,
+readings and parts of speech — comes from JMdict, the property of the Electronic
+Dictionary Research and Development Group (EDRDG), used in conformance with the
+Group's licence:
+https://www.edrdg.org/edrdg/licence.html
+JMdict is distributed under the Creative Commons Attribution-ShareAlike 4.0
+International licence (CC BY-SA 4.0), which this derived file inherits.
+
+Rebuild with scripts/make_ja_freq.py, which reads the wordfreq package and
+data/ja_dict_core.json.

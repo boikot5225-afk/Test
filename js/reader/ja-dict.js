@@ -204,6 +204,51 @@ export function mergeByDictionary(tokens, isWord) {
   return out;
 }
 
+// Walks the rule table, breadth first, until a candidate is a word the caller
+// recognises with the part of speech its rule promised. Depth is capped because
+// chained rules (読まなかった → 読まない → 読む) can otherwise loop on each other.
+//
+// The word source is a parameter rather than this file's own dictionary so that
+// a caller holding a smaller index can conjugate against that instead. The
+// vocabulary test needs exactly that: it ranks against a 40k frequency list and
+// must reduce 食べました to 食べる to find its rank, but building a second copy
+// of the 18MB core dictionary to do it would double the parsed JSON a phone
+// holds. `rowFor` takes a candidate spelling and returns that word's
+// [reading, pos, ...] row, or null when it is not a word.
+export function createDeinflector(rowFor) {
+  return function deinflect(surface) {
+    const seen = new Set([surface]);
+    let frontier = [{ form: surface, note: '' }];
+    for (let depth = 0; depth < MAX_DEINFLECT_DEPTH; depth++) {
+      const next = [];
+      for (const { form, note } of frontier) {
+        for (const [from, to, requiredPos, formName] of DEINFLECT_RULES) {
+          if (!form.endsWith(from) || form.length - from.length + to.length < 2) continue;
+          const candidate = form.slice(0, form.length - from.length) + to;
+          const row = rowFor(candidate);
+          // Validate before deduping: several rules propose the same candidate
+          // while demanding different parts of speech (食べた is reached by both
+          // the vk and the ichidan rule), and only one of them is right.
+          // JMdict qualifies some classes with a suffix — 行く is v5k-s, ある is
+          // v5r-i, 出来る is vs-i — while a rule names the plain class it
+          // conjugates. Demanding an exact match left 行きます unresolved, so
+          // the word had no reading and no rank: it is a v5k that happens to be
+          // irregular in one form, which is what the suffix says.
+          if (row && (!requiredPos || row[1] === requiredPos || String(row[1] || '').startsWith(`${requiredPos}-`))) {
+            return { lemma: candidate, note: note || formName };
+          }
+          if (seen.has(candidate)) continue;
+          seen.add(candidate);
+          next.push({ form: candidate, note: note || formName });
+        }
+      }
+      if (!next.length) break;
+      frontier = next;
+    }
+    return null;
+  };
+}
+
 export function createJapaneseDictionary({ url, log = console }) {
   // The file stores each written form as an index into a shared entry table,
   // so 綺麗 and きれい cost one entry between them rather than two.
@@ -282,35 +327,7 @@ export function createJapaneseDictionary({ url, log = console }) {
     };
   }
 
-  // Walks the rule table, breadth first, until a candidate is in the dictionary
-  // with the part of speech its rule promised. Depth is capped because chained
-  // rules (読まなかった → 読まない → 読む) can otherwise loop on each other.
-  function deinflect(surface) {
-    const seen = new Set([surface]);
-    let frontier = [{ form: surface, note: '' }];
-    for (let depth = 0; depth < MAX_DEINFLECT_DEPTH; depth++) {
-      const next = [];
-      for (const { form, note } of frontier) {
-        for (const [from, to, requiredPos, formName] of DEINFLECT_RULES) {
-          if (!form.endsWith(from) || form.length - from.length + to.length < 2) continue;
-          const candidate = form.slice(0, form.length - from.length) + to;
-          const row = raw(candidate);
-          // Validate before deduping: several rules propose the same candidate
-          // while demanding different parts of speech (食べた is reached by both
-          // the vk and the ichidan rule), and only one of them is right.
-          if (row && (!requiredPos || row[1] === requiredPos)) {
-            return { lemma: candidate, note: note || formName };
-          }
-          if (seen.has(candidate)) continue;
-          seen.add(candidate);
-          next.push({ form: candidate, note: note || formName });
-        }
-      }
-      if (!next.length) break;
-      frontier = next;
-    }
-    return null;
-  }
+  const deinflect = createDeinflector(raw);
 
   // Segmentation asks about the same candidate strings over and over inside one
   // chapter, and a miss is the expensive case — it walks the whole rule table
