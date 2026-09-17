@@ -72,7 +72,11 @@ Japanese /a/ as `ä`, which is not in it, so 「あさ」 reaches the model as `
 `scripts/check_ja_phonemes.py` in the app repo measures that directly.
 
 If it prints a line, the container is running an image built before Japanese
-was wired in. See "Updating later".
+was wired in. `fix-japanese.sh` in this folder patches an already-deployed
+server in place and rebuilds it — it finds the service directory by asking
+docker for the running container's compose working_dir rather than guessing a
+path, and prints "НЕ СДЕЛАНО" with the reason on any failure instead of
+finishing quietly. See also "Updating later".
 
 ## 5. Expose it over HTTPS
 
