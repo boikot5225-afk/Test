@@ -84,29 +84,30 @@ function normalizeFrenchSpeechText(text) {
 
 function normalizeSpeechText(text, lang = 'fr') {
   const clean = String(text || '').replace(/\s+/g, ' ').trim();
-  const n = normalizeLang(lang);
-  if (n === 'fr') return normalizeFrenchSpeechText(clean);
-  // Japanese is handed to the engine as kana. Kokoro's Japanese voices want
-  // misaki's phonemes; without that optional package the server falls back to
-  // espeak-ng, which reads kana fine and cannot read kanji at all — it names
-  // them instead, so 朝 is spoken as "Chinese letter". The reader layer builds
-  // the kana from the furigana already on the page, context corrections and
-  // all, and leaves the text alone when it has nothing to offer.
+  // Japanese goes to the engine exactly as written. This flip-flopped twice, so
+  // here is the measurement that settles it.
   //
-  // This was removed once, on the assumption that the server now had misaki and
-  // would rather have the writing. It did not: its own logs say
-  // "misaki[ja] unavailable (No module named 'pyopenjtalk')", and the kanji went
-  // back to being named aloud. Kana is the reading that works against both — a
-  // server without the g2p speaks it correctly, and one with it phonemizes kana
-  // too (a little worse, since kana hides some word boundaries: わたしは会社員です
-  // comes out "βataɕi βakai ɕa iɴ desɨ" rather than "βataɕi βa kaiɕaiɴ desɨ").
-  // A little worse is not the same kind of thing as naming the characters, so
-  // do not take this out again without first reading the server's log line.
-  if (n === 'ja') {
-    try { return globalThis.readerJaKanaForSpeech?.(clean) || clean; }
-    catch (_) { return clean; }
-  }
-  return clean;
+  // Kokoro's vocabulary is 114 phoneme characters and kokoro_onnx drops anything
+  // outside it without a word: `"".join(filter(lambda p: p in vocab, phonemes))`.
+  // espeak in Japanese mode spells /a/ as "ä", which is not in that vocabulary,
+  // so every /a/ in the sentence is deleted before the model sees it:
+  //
+  //   あさ、ろくじにおきました。
+  //     espeak    ˈäsä ɽˌo̞kɯᵝdʑˌiniˌo̞kimäɕˈitä
+  //     kokoro    ˈs ɽˌokɯᵝdˌiniˌokimɕˈit
+  //
+  // "asa" arrives as "s". That is the mush, and sending kana cannot fix it —
+  // the vowels are lost downstream of anything this file can choose. Kanji fare
+  // no better, just differently: espeak renders them "tʃˈaɪniːz lˈetə", which is
+  // the "Chinese letter" heard on the device.
+  //
+  // misaki's Japanese g2p loses nothing (朝、六時に起きました。 → "asa, ɾokɯʥi ɲi
+  // okʲi maɕita."), and it reads the writing better than the reading, because
+  // kana hides word boundaries: わたしは会社員です is "βataɕi βa kaiɕaiɴ desɨ"
+  // from kanji and "βataɕi βakai ɕa iɴ desɨ" from kana. So the text goes as
+  // written, and Japanese speech depends on the server having misaki — there is
+  // no substitution here that makes espeak usable.
+  return normalizeLang(lang) === 'fr' ? normalizeFrenchSpeechText(clean) : clean;
 }
 
 function cacheHash(text) {

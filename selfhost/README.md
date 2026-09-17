@@ -65,6 +65,12 @@ And confirm Japanese loaded — this should print **nothing**:
 docker compose logs tts-stt | grep 'misaki\[ja\] unavailable'
 ```
 
+That line is the whole of it. With espeak-ng standing in, the requests still
+succeed and audio still plays — it just has no vowels in it. Kokoro drops every
+phoneme outside its 114-symbol vocabulary without saying so, and espeak spells
+Japanese /a/ as `ä`, which is not in it, so 「あさ」 reaches the model as `s`.
+`scripts/check_ja_phonemes.py` in the app repo measures that directly.
+
 If it prints a line, the container is running an image built before Japanese
 was wired in. See "Updating later".
 
