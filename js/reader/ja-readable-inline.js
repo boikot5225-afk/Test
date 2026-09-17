@@ -421,6 +421,19 @@ function bindObserver() {
       if (record.type === 'attributes') {
         const el = record.target;
         if (el instanceof Element && el.classList.contains('reader-word')) {
+          // A word in another language can never change what this module owes
+          // the page, so its class churn schedules nothing. That matters: the
+          // French reader repaints ~1800 words on a single tap, and each one
+          // arrives here as an attribute record. Reading one dataset property
+          // and dropping it is the whole cost; scheduling a pass would put two
+          // subtree queries into the frame the reader is waiting on.
+          //
+          // This is a per-record test, not the boot-time one that broke
+          // Known/Unknown: data-lang is in the attribute filter and is already
+          // the new value here, so a chapter that becomes Japanese after the
+          // module loads still arrives — as childList records below, and as
+          // this test passing on the words themselves.
+          if (el.dataset?.lang !== 'ja') continue;
           relevant = true;
           // Marking a word known has to take its row down in the same frame as
           // the class change. Left to the debounced pass below, the row would
