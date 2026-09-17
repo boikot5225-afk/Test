@@ -370,6 +370,17 @@ function schedule(delay = 400) {
 
 function bindObserver() {
   if (typeof MutationObserver === 'undefined') return;
+  // Only while a Japanese book is open. The callback returned immediately for
+  // other languages, but the observer itself is not free: it was watching every
+  // class change across a 1800-word French chapter and charging that to the
+  // frame the reader is waiting on. Nothing here has anything to say about
+  // French, so it should not be listening to it.
+  if (currentLang() !== 'ja') {
+    observer?.disconnect();
+    observer = null;
+    observedRoot = null;
+    return;
+  }
   const root = document.getElementById('reader-chapter-text');
   if (!root) { setTimeout(bindObserver, 250); return; }
   if (observer && observedRoot === root) return;
@@ -404,7 +415,7 @@ if (typeof window !== 'undefined') {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, { once: true });
   else install();
   window.addEventListener('pageshow', install);
-  window.addEventListener('an2:languagechange', () => schedule(600));
+  window.addEventListener('an2:languagechange', () => { bindObserver(); schedule(600); });
   window.addEventListener('reader:pagechange', () => { applyContextReadings(); schedule(500); });
   window.addEventListener('scroll', () => schedule(700), { passive: true });
   window.addEventListener('reader:ja-vocab-ready', () => schedule(600));

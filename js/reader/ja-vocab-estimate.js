@@ -739,6 +739,15 @@ function schedulePendingWordBatch() {
 
 function installRenderObserver() {
   if (typeof MutationObserver === 'undefined') return;
+  // Same reasoning as the batch module: watching a French chapter's every
+  // class change costs frame time that the reader feels, and this layer has
+  // nothing to say about French.
+  if (currentLang() !== 'ja') {
+    renderObserver?.disconnect();
+    renderObserver = null;
+    renderObserverRoot = null;
+    return;
+  }
   const root = document.getElementById('reader-chapter-text');
   if (!root) { setTimeout(installRenderObserver, 250); return; }
   if (renderObserver && renderObserverRoot === root) return;
@@ -827,6 +836,7 @@ export function installJapaneseVocabularyEstimate() {
   window.addEventListener('pageshow', boot);
   window.addEventListener('an2:languagechange', () => {
     ensureVocabularyButton();
+    installRenderObserver();
     if (currentLang() === 'ja') warmJapaneseDataWhenUseful();
   });
   window.addEventListener('reader:ja-vocab-ready', () => {
