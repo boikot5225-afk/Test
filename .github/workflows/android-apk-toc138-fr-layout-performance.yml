@@ -151,6 +151,10 @@ jobs:
           grep -qF "import './handler-bridge.js?v=2-stt-background';" "$WORK/runtime.js"
           grep -qF '__sttBackgroundV1' "$WORK/stt.js"
           grep -qF '__sttRetryV1' "$WORK/stt.js"
+          # Размер куска, уходящего на распознавание, — то, из-за чего оно не
+          # работало на телефоне. Вернуть 480 значит вернуть 19.5MB на запрос.
+          unzip -p "$APK" assets/www/js/reader-app.js > "$WORK/app.js"
+          grep -qF 'const READER_STT_CHUNK_SECONDS = 120;' "$WORK/app.js"
           grep -qF 'dataset?.lang !== ' "$WORK/inline.js"
           # Bumping this token is what makes a phone drop the module it already
           # cached; four rebuilds went out looking unchanged because it stayed at
@@ -213,14 +217,14 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Sign and validate vc1034 A54 APK
+      - name: Sign and validate vc1035 A54 APK
         shell: bash
         run: |
           set -euo pipefail
           APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
           BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           mkdir -p unique-out
-          OUT=unique-out/Reader-AI-77.42-toc138-fr-layout-performance-a54-vc1034.apk
+          OUT=unique-out/Reader-AI-77.42-toc138-fr-layout-performance-a54-vc1035.apk
           KSPASS="${ANDROID_KEYSTORE_PASSWORD:-readerai2026}"
           KEYPASS="${ANDROID_KEY_PASSWORD:-$KSPASS}"
           ALIAS="${ANDROID_KEY_ALIAS:-reader-ai}"
@@ -254,7 +258,7 @@ jobs:
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
           grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
           grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
-          grep -q "versionCode='1034'" unique-out/BADGING.txt
+          grep -q "versionCode='1035'" unique-out/BADGING.txt
           grep -q "versionName='77.42-toc138-fr-layout-performance-debug'" unique-out/BADGING.txt
           grep -q "targetSdkVersion:'35'" unique-out/BADGING.txt
           grep -q "native-code: 'arm64-v8a'" unique-out/BADGING.txt
@@ -268,7 +272,7 @@ jobs:
       - name: Upload verified toc138 A54 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-77.42-toc138-fr-layout-performance-a54-vc1034
+          name: Reader-AI-77.42-toc138-fr-layout-performance-a54-vc1035
           path: unique-out/
           if-no-files-found: error
           retention-days: 30

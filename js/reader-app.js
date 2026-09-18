@@ -2119,7 +2119,19 @@ function readerFileToBase64(file) {
 // to trim/compress the file by hand, decode it client-side with Web Audio,
 // resample to 16kHz mono (Whisper's native rate — also shrinks it drastically)
 // and slice it into WAV chunks small enough to always clear that limit.
-const READER_STT_CHUNK_SECONDS = 480; // 8 min ≈ 14.6MB raw WAV ≈ 19.5MB base64 — safe margin under 32MB
+// 2 min ≈ 3.7MB raw WAV ≈ 4.9MB base64. The 32MB request cap would allow eight
+// times this, and it used to: 480s chunks sat at ~19.5MB per request. That size
+// is what made recognition unusable on a phone. Backgrounding the app hands the
+// radio over from Wi-Fi to mobile, the socket dies mid-upload, and the retry
+// starts the same 19.5MB again — on a weak link a long recording never lands.
+// At 4.9MB a dropped attempt costs two minutes of work instead of eight, and
+// the upload is short enough to finish between handovers.
+//
+// The cost is boundaries: 29 cuts per hour of audio instead of 6. Chunks are
+// cut on the clock, not on silence, so a cut can bisect a word; the DeepSeek
+// cleanup pass repairs some of that. 60s would halve the request again but
+// double the damage, which is the wrong side of the trade.
+const READER_STT_CHUNK_SECONDS = 120;
 const READER_STT_SAMPLE_RATE = 16000;
 
 function readerAudioBufferToWavBlob(audioBuffer) {

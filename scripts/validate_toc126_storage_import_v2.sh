@@ -18,7 +18,13 @@ def sha(path):
 frozen = {
     'js/reader/interactions.js': 'b709451dec2849b8487b054fd8f52c57ef9fc91dc5f5818ed5720e00dda08ba6',
     'js/reader/pages-mode.js': '13ce9f42db4427e1c2442abad7c0e66343aad92d79a4e945376fb42afed8e7d9',
-    'js/reader-app.js': '202e287af1158b8498e44ae3e9ce28cf43b1a0aaaba9f01b25bfdfa2fde47f04',
+    # Разморожено один раз и намеренно: READER_STT_CHUNK_SECONDS 480 -> 120.
+    # Восьмиминутные куски уходили на сервер как ~19.5MB base64 в одном
+    # запросе, и на телефоне это не работало: сворачивание приложения
+    # передаёт радио с Wi-Fi на мобильную сеть, сокет рвётся посреди
+    # заливки, а повтор начинает те же 19.5MB сначала. Изменена ровно эта
+    # константа, навигация и отрисовка не тронуты.
+    'js/reader-app.js': 'ae69a4aa44fb643d0eb9a30bdff6b259f9391b60700634229abf8268b4c690fb',
     'js/reader/chapter-render.js': 'c10f3680fb122c4f04a730ddb298f88165c29d5b24978cc5868560531f752361',
 }
 for path, expected in frozen.items():
