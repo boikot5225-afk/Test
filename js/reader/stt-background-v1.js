@@ -138,6 +138,12 @@ function remainingSeconds() {
   return perUnitSeconds * left;
 }
 
+// Доля выполненного. job.index — сколько единиц ЗАКРЫТО, поэтому та, что
+// обрабатывается прямо сейчас, считается наполовину: иначе на записи короче
+// восьми минут фрагмент всего один, и полоска стоит на месте всё распознавание
+// — то есть почти всю работу, — а потом прыгает к концу. Середина единицы это
+// не измерение, а честное «где-то посередине»: сколько сделано внутри одного
+// обращения к Whisper, отсюда не видно вообще.
 function progressPercent() {
   if (!job) return 0;
   if (job.state === 'done') return 100;
@@ -145,7 +151,9 @@ function progressPercent() {
   for (const phase of ['decode', 'stt', 'cleanup']) {
     if (job.seen[phase] === 'complete') { value += WEIGHTS[phase]; continue; }
     if (job.phase !== phase) continue;
-    const share = job.total > 0 ? clamp(job.index / job.total, 0, 1) : 0;
+    const share = job.total > 0
+      ? clamp((job.index + 0.5) / job.total, 0, 1)
+      : 0.5; // этап без счётчика (разбор записи) — тоже в работе, а не в нуле
     value += WEIGHTS[phase] * share;
   }
   return clamp(value, 0, 99);
@@ -171,7 +179,15 @@ function render() {
       : `🎙 ${label}${counter}`;
     const eta = humanTime(remainingSeconds());
     const pct = Math.round(progressPercent());
-    etaEl.textContent = eta ? `${pct}% · осталось ~${eta}` : `${pct}%`;
+    // Оценки может не быть вовсе: на одном фрагменте закрывать нечего, скорость
+    // измерить не на чем. Тогда показываем прошедшее время — счётчик, который
+    // идёт, отличает работу от зависания, а выдумывать остаток нельзя.
+    // «идёт 0 с» в первые мгновения только мельтешит.
+    const runningSec = (Date.now() - job.startedAt) / 1000;
+    const elapsed = runningSec >= 3 ? humanTime(runningSec) : '';
+    etaEl.textContent = eta
+      ? `${pct}% · осталось ~${eta}`
+      : (elapsed ? `${pct}% · идёт ${elapsed}` : `${pct}%`);
     fill.style.width = `${pct}%`;
     stop.textContent = '⏹';
     stop.title = 'Остановить распознавание';
@@ -217,6 +233,7 @@ function start({ onCancel, onReopen } = {}) {
     onReopen,
     seen: {},
     retrying: 0,
+    startedAt: Date.now(),
     stats: { stt: { done: 0, elapsed: 0 }, cleanup: { done: 0, elapsed: 0 } },
     unitStartedAt: Date.now(),
   };
