@@ -141,6 +141,13 @@ jobs:
           # Аудио кэшируется на устройстве навсегда; без поколения в ключе
           # починка сервера остаётся неслышной.
           grep -qF 'TTS_CACHE_GENERATION' "$WORK/tts.js"
+          # Фоновое распознавание: слой и его загрузка из handler-bridge.
+          # Без любого из двух индикатор просто не появится, молча.
+          unzip -p "$APK" assets/www/js/reader/stt-background-v1.js > "$WORK/stt.js"
+          unzip -p "$APK" assets/www/js/reader/handler-bridge.js > "$WORK/bridge.js"
+          grep -qF "import './stt-background-v1.js?v=1';" "$WORK/bridge.js"
+          grep -qF '__sttBackgroundV1' "$WORK/stt.js"
+          grep -qF '__sttRetryV1' "$WORK/stt.js"
           grep -qF 'dataset?.lang !== ' "$WORK/inline.js"
           # Bumping this token is what makes a phone drop the module it already
           # cached; four rebuilds went out looking unchanged because it stayed at

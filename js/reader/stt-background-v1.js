@@ -165,7 +165,10 @@ function render() {
   if (job.state === 'running') {
     const label = PHASE_LABEL[job.phase] || 'Работаю';
     const counter = job.total > 1 ? ` · ${Math.min(job.index + 1, job.total)}/${job.total}` : '';
-    phaseEl.textContent = `🎙 ${label}${counter}`;
+    // Молчаливая пауза на минуту выглядит как зависание, поэтому повтор виден.
+    phaseEl.textContent = job.retrying
+      ? `📶 Связь оборвалась, повторяю (${job.retrying})${counter}`
+      : `🎙 ${label}${counter}`;
     const eta = humanTime(remainingSeconds());
     const pct = Math.round(progressPercent());
     etaEl.textContent = eta ? `${pct}% · осталось ~${eta}` : `${pct}%`;
@@ -213,6 +216,7 @@ function start({ onCancel, onReopen } = {}) {
     onCancel,
     onReopen,
     seen: {},
+    retrying: 0,
     stats: { stt: { done: 0, elapsed: 0 }, cleanup: { done: 0, elapsed: 0 } },
     unitStartedAt: Date.now(),
   };
@@ -357,6 +361,55 @@ function installStatusWatch() {
   new MutationObserver(watchStatus).observe(document.body, { childList: true, subtree: true });
 }
 
+// Свёрнутое приложение роняет запрос на полпути: Android переводит сеть, Wi-Fi
+// уступает мобильной, сокет закрывается — и fetch падает с TypeError «Failed to
+// fetch». Ядро считает это концом работы и теряет весь час распознавания из-за
+// одной просевшей секунды. Для фонового режима это и есть главный дефект.
+//
+// Ядро заморожено, но fetch — наш. Повтор здесь узкий намеренно: только POST на
+// transcribeAudio, только сетевой сбой (HTTP-ошибку ядро разбирает само и
+// показывает осмысленно), и никогда после отмены. Запрос на распознавание
+// фрагмента не имеет побочных эффектов, повторять его безопасно.
+const RETRY_DELAYS_MS = [2000, 5000, 12000, 30000];
+
+function isTranscribeRequest(input) {
+  try {
+    const url = typeof input === 'string' ? input : input?.url || '';
+    return url.includes('/transcribeAudio');
+  } catch { return false; }
+}
+
+function installFetchRetry() {
+  const original = globalThis.fetch;
+  if (typeof original !== 'function' || original.__sttRetryV1) return;
+  const wrapped = async function sttRetryingFetch(input, init) {
+    if (!job || job.state !== 'running' || !isTranscribeRequest(input)) {
+      return original.call(this, input, init);
+    }
+    let lastError = null;
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        const response = await original.call(this, input, init);
+        if (job?.retrying) { job.retrying = 0; render(); }
+        return response;
+      } catch (error) {
+        // Отмена пользователем — не сбой связи, повторять нечего.
+        if (error?.name === 'AbortError' || init?.signal?.aborted) throw error;
+        // HTTP-ответ сюда не попадает: fetch отвергает промис только на сетевом
+        // уровне. Значит это именно обрыв, и он переживается повтором.
+        lastError = error;
+        if (attempt === RETRY_DELAYS_MS.length || !job || job.state !== 'running') break;
+        job.retrying = attempt + 1;
+        render();
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+      }
+    }
+    throw lastError;
+  };
+  wrapped.__sttRetryV1 = true;
+  globalThis.fetch = wrapped;
+}
+
 // Ядро экспортирует обработчик в window, поэтому начало и конец работы видно
 // без единой правки в нём.
 function installWrapper() {
@@ -388,6 +441,7 @@ function installWrapper() {
 }
 
 function install() {
+  installFetchRetry();
   installStatusWatch();
   if (installWrapper()) return;
   // reader-app.js мог ещё не успеть выставить обработчик в window.
