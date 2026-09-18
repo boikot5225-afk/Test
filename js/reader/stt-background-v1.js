@@ -174,9 +174,11 @@ function render() {
     const label = PHASE_LABEL[job.phase] || 'Работаю';
     const counter = job.total > 1 ? ` · ${Math.min(job.index + 1, job.total)}/${job.total}` : '';
     // Молчаливая пауза на минуту выглядит как зависание, поэтому повтор виден.
-    phaseEl.textContent = job.retrying
-      ? `📶 Связь оборвалась, повторяю (${job.retrying})${counter}`
-      : `🎙 ${label}${counter}`;
+    phaseEl.textContent = job.offline
+      ? '📵 Нет сети — жду соединения'
+      : job.retrying
+        ? `📶 Связь оборвалась, повторяю (${job.retrying})${counter}`
+        : `🎙 ${label}${counter}`;
     const eta = humanTime(remainingSeconds());
     const pct = Math.round(progressPercent());
     // Оценки может не быть вовсе: на одном фрагменте закрывать нечего, скорость
@@ -233,6 +235,7 @@ function start({ onCancel, onReopen } = {}) {
     onReopen,
     seen: {},
     retrying: 0,
+    offline: false,
     startedAt: Date.now(),
     stats: { stt: { done: 0, elapsed: 0 }, cleanup: { done: 0, elapsed: 0 } },
     unitStartedAt: Date.now(),
@@ -387,7 +390,41 @@ function installStatusWatch() {
 // transcribeAudio, только сетевой сбой (HTTP-ошибку ядро разбирает само и
 // показывает осмысленно), и никогда после отмены. Запрос на распознавание
 // фрагмента не имеет побочных эффектов, повторять его безопасно.
-const RETRY_DELAYS_MS = [2000, 5000, 12000, 30000];
+// Повтор слепым быть не должен. При сворачивании приложения Wi-Fi уступает
+// мобильной сети, и какое-то время её нет вообще — фиксированные задержки в
+// этот момент просто сгорают в пустоту, после чего слой сдаётся, хотя связь
+// вот-вот вернётся. Поэтому: пока устройство сообщает, что сети нет, ждём
+// события online и попытку не тратим.
+//
+// Потолок задержки, а не список: отдавать через минуту то, ради чего затевался
+// фоновый режим, бессмысленно — у человека есть «Стоп». Ограничение на число
+// попыток всё же есть: каждая заново заливает фрагмент целиком (ядро режет
+// запись по восемь минут, это около 20 МБ base64 на кусок), и бесконечно
+// жечь мобильный трафик нельзя.
+const RETRY_DELAYS_MS = [2000, 5000, 12000, 30000, 30000, 30000, 60000, 60000];
+const OFFLINE_WAIT_MS = 15 * 60 * 1000;
+
+function isOffline() {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
+
+// Ждём, пока устройство само скажет, что сеть вернулась. Потолок — чтобы
+// зависший навсегда навигатор не оставил задачу висеть без единого признака.
+function waitForNetwork() {
+  return new Promise(resolve => {
+    if (!isOffline()) { resolve(); return; }
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      globalThis.removeEventListener?.('online', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, OFFLINE_WAIT_MS);
+    globalThis.addEventListener?.('online', finish);
+  });
+}
 
 function isTranscribeRequest(input) {
   try {
@@ -417,6 +454,16 @@ function installFetchRetry() {
         lastError = error;
         if (attempt === RETRY_DELAYS_MS.length || !job || job.state !== 'running') break;
         job.retrying = attempt + 1;
+        if (isOffline()) {
+          // Сети нет — ждём её, а не отсчитываем попытки в пустоту.
+          job.offline = true;
+          render();
+          await waitForNetwork();
+          job.offline = false;
+          render();
+          attempt -= 1; // ожидание сети попыткой не считается
+          continue;
+        }
         render();
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
       }
