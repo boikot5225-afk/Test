@@ -68,6 +68,11 @@ jobs:
           bash scripts/validate_toc138_fr_layout_performance.sh
           python3 -m py_compile scripts/audit_toc138_fr_layout_performance_live.py
           python3 -m py_compile scripts/audit_toc138_fr_word_panel_jank_live.py
+          node --check js/reader/stt-background-v1.js
+          # Индикатор распознавания читает прогресс из строк замороженного
+          # ядра. Переформулируют строку — индикатор молча встанет, поэтому
+          # связь проверяется, а не подразумевается.
+          node scripts/check-stt-status-contract.mjs
 
       - name: Build universal APK from validated source
         working-directory: android

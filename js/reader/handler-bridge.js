@@ -9,6 +9,10 @@
 // through to the established semantic route.
 import './audio-epub-import-isolation.js?v=1';
 
+// Фоновое распознавание: оборачивает window.readerTranscribeAudioFile и
+// выносит прогресс из окна импорта наружу. Ядро не трогает, оно заморожено.
+import './stt-background-v1.js?v=1';
+
 const READER_APP_URL = '../reader-app.js?v=77.42-zh-reader-quality';
 const LIBRARY_IDB_URL = './library-idb-store.js?v=2';
 let appPromise = null;
