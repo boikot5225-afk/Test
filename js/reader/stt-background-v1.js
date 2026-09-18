@@ -151,9 +151,14 @@ function progressPercent() {
   for (const phase of ['decode', 'stt', 'cleanup']) {
     if (job.seen[phase] === 'complete') { value += WEIGHTS[phase]; continue; }
     if (job.phase !== phase) continue;
+    // Общее число известно — считаем честно, засчитывая идущую единицу
+    // наполовину. Неизвестно (статус до слоя не дошёл) — полоска всё равно
+    // обязана двигаться с каждым фрагментом, но приближаться к концу только
+    // асимптотически: обещать «почти готово», не зная, сколько осталось, хуже,
+    // чем ползти.
     const share = job.total > 0
       ? clamp((job.index + 0.5) / job.total, 0, 1)
-      : 0.5; // этап без счётчика (разбор записи) — тоже в работе, а не в нуле
+      : 1 - 1 / (job.index + 2);
     value += WEIGHTS[phase] * share;
   }
   return clamp(value, 0, 99);
@@ -177,7 +182,7 @@ function render() {
     phaseEl.textContent = job.offline
       ? '📵 Нет сети — жду соединения'
       : job.retrying
-        ? `📶 Связь оборвалась, повторяю (${job.retrying})${counter}`
+        ? `📶 Повтор ${job.retrying}${job.lastError ? ` · ${job.lastError}` : ''}`
         : `🎙 ${label}${counter}`;
     const eta = humanTime(remainingSeconds());
     const pct = Math.round(progressPercent());
@@ -236,6 +241,7 @@ function start({ onCancel, onReopen } = {}) {
     seen: {},
     retrying: 0,
     offline: false,
+    lastError: '',
     startedAt: Date.now(),
     stats: { stt: { done: 0, elapsed: 0 }, cleanup: { done: 0, elapsed: 0 } },
     unitStartedAt: Date.now(),
@@ -247,7 +253,10 @@ function start({ onCancel, onReopen } = {}) {
 
 // Конвейер зовёт это перед каждой единицей работы: фрагментом для Whisper,
 // куском текста для DeepSeek. index — сколько уже закрыто, не номер текущего.
-function step(phase, { index = 0, total = 0 } = {}) {
+// total передаётся только тогда, когда он действительно известен — то есть из
+// строки статуса. Вызовы, порождённые самими запросами, его не трогают, чтобы
+// не затирать настоящее число фрагментов выдуманным.
+function step(phase, { index = 0, total = null } = {}) {
   if (!job || job.state !== 'running') return;
   const now = Date.now();
   if (job.phase !== phase) {
@@ -263,7 +272,7 @@ function step(phase, { index = 0, total = 0 } = {}) {
     job.unitStartedAt = now;
   }
   job.index = index;
-  job.total = total;
+  if (total !== null) job.total = total;
   render();
 }
 
@@ -426,11 +435,38 @@ function waitForNetwork() {
   });
 }
 
+function requestUrl(input) {
+  try { return typeof input === 'string' ? input : input?.url || ''; }
+  catch { return ''; }
+}
+
 function isTranscribeRequest(input) {
-  try {
-    const url = typeof input === 'string' ? input : input?.url || '';
-    return url.includes('/transcribeAudio');
-  } catch { return false; }
+  return requestUrl(input).includes('/transcribeAudio');
+}
+
+// Этап берётся из самой работы, а не из строки статуса. Разбор чужого текста
+// дважды подвёл на устройстве: полоска оставалась на «разбор записи», пока ядро
+// уже распознавало. Запрос на transcribeAudio — это по определению распознавание
+// очередного фрагмента, и видно его здесь напрямую, без посредника.
+//
+// Строка статуса всё ещё полезна: только из неё известно, сколько всего
+// фрагментов («1/7»), и только она сообщает об успехе и ошибке. Но двигать
+// полоску теперь её обязанность не единственная.
+function noteRequestPhase(input) {
+  if (!job || job.state !== 'running') return;
+  if (!isTranscribeRequest(input)) return;
+  // Сколько всего фрагментов, знает только строка статуса («1/7»); по запросам
+  // это не восстановить, и выдумывать нельзя — один запрос из семи иначе даёт
+  // 80%. Поэтому отсюда идут этап и номер, а общее число остаётся за статусом.
+  step('stt', { index: job.phase === 'stt' ? job.index : 0 });
+}
+
+// Фрагмент ушёл целиком — можно засчитать его закрытым, не дожидаясь, пока
+// ядро напишет про следующий.
+function noteRequestDone(input) {
+  if (!job || job.state !== 'running' || job.phase !== 'stt') return;
+  if (!isTranscribeRequest(input)) return;
+  step('stt', { index: job.index + 1 });
 }
 
 function installFetchRetry() {
@@ -440,11 +476,13 @@ function installFetchRetry() {
     if (!job || job.state !== 'running' || !isTranscribeRequest(input)) {
       return original.call(this, input, init);
     }
+    noteRequestPhase(input);
     let lastError = null;
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       try {
         const response = await original.call(this, input, init);
-        if (job?.retrying) { job.retrying = 0; render(); }
+        if (job?.retrying) { job.retrying = 0; job.lastError = ''; render(); }
+        noteRequestDone(input);
         return response;
       } catch (error) {
         // Отмена пользователем — не сбой связи, повторять нечего.
@@ -454,6 +492,7 @@ function installFetchRetry() {
         lastError = error;
         if (attempt === RETRY_DELAYS_MS.length || !job || job.state !== 'running') break;
         job.retrying = attempt + 1;
+        job.lastError = String(error?.message || error || '').slice(0, 80);
         if (isOffline()) {
           // Сети нет — ждём её, а не отсчитываем попытки в пустоту.
           job.offline = true;
@@ -467,6 +506,12 @@ function installFetchRetry() {
         render();
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
       }
+    }
+    // Попытки кончились. Ядро сейчас покажет свою ошибку в статусе, но она
+    // теряется за закрытым окном импорта, а полоска без причины бесполезна.
+    if (job?.state === 'running') {
+      job.retrying = 0;
+      fail(`Связь не восстановилась: ${job.lastError || 'обрыв соединения'}`);
     }
     throw lastError;
   };
