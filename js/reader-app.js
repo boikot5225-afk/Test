@@ -2296,9 +2296,24 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
   } else {
     setStatus(isVideo ? '⏳ Извлекаю звук из видео (браузер)...' : '⏳ Разбираю аудио (браузер)...');
   }
+  // decodeAudioData resamples to the decoding context's rate, so the context is
+  // created at 16kHz — the rate every chunk is rendered at a few lines below
+  // anyway. Decoding at the device rate instead was holding the whole recording
+  // in memory at 44.1/48kHz for no downstream benefit: a 54-minute stereo file
+  // is 1.06GB of Float32 that way and 384MB this way, and a phone does not
+  // survive the first figure. That was the real ceiling — it failed on chunk 1
+  // regardless of how small the chunks were, because nothing had been uploaded
+  // yet when the memory ran out.
+  //
+  // 384MB is still a lot. Removing the ceiling properly means decoding in
+  // pieces (WebCodecs AudioDecoder) rather than one decodeAudioData over the
+  // whole blob, which is a different piece of work.
+  const OfflineCtor = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   const AudioCtor = window.AudioContext || window.webkitAudioContext;
-  if (!AudioCtor) throw new Error('Этот браузер не поддерживает Web Audio API.');
-  const audioCtx = new AudioCtor();
+  if (!OfflineCtor && !AudioCtor) throw new Error('Этот браузер не поддерживает Web Audio API.');
+  const audioCtx = OfflineCtor
+    ? new OfflineCtor(1, 1, READER_STT_SAMPLE_RATE)
+    : new AudioCtor();
   let decoded;
   try {
     decoded = await audioCtx.decodeAudioData(await blob.arrayBuffer());
