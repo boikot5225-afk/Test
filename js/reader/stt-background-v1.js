@@ -236,6 +236,10 @@ function startTicking() {
     // показа. Читать текст дешевле, чем разбираться, почему MutationObserver
     // на устройстве иногда молчит.
     try { applyStatus(watchedStatusEl?.textContent); } catch {}
+    // Сторож висящего запроса. Таймеры в свёрнутом приложении душатся, но тогда
+    // сработает возврат к приложению; здесь мы ловим случай, когда человек
+    // смотрит на экран, а запрос давно мёртв.
+    abortIfStalled(currentAttempt, HARD_MS);
     render();
   }, 1000);
 }
@@ -580,6 +584,51 @@ async function probeEndpoint(input, init) {
   }
 }
 
+// Запрос, повисший на восемнадцать минут, — это не медленная сеть, это
+// мёртвое соединение, о котором никто не сообщил. В ядре на этот случай есть
+// свой обрыв по таймеру (85 секунд), но в свёрнутом приложении Chromium душит
+// таймеры, и setTimeout на 85 секунд просто не срабатывает вовремя. Пока
+// человек не вернётся, никто ничего не обрывает — и не вернётся ничего.
+//
+// Поэтому обрыв здесь привязан к событию, а не к таймеру: возвращение к
+// приложению будит страницу гарантированно. Если к этому моменту попытка висит
+// дольше STALL_MS, она мертва — обрываем и повторяем немедленно, уже на живой
+// сети. Именно возврат человека и есть тот момент, когда повтор имеет смысл.
+// Возврат к приложению: запрос, проживший больше минуты, почти наверняка умер
+// вместе с той сетью, которую Android отдал при сворачивании. Перезалить кусок
+// дешевле, чем ждать, пока система через восемнадцать минут признает сокет
+// мёртвым.
+const STALL_MS = 60000;
+// Потолок для любого состояния. Функция на сервере сама отваливается по своему
+// таймауту в 180 секунд, так что живой ответ после четырёх минут невозможен —
+// это висящий сокет, о котором никто не сообщит. У самого запроса на
+// распознавание никакого таймаута в ядре нет вовсе: единственный сигнал там —
+// кнопка «Стоп». Отсюда и наблюдавшиеся 1088 секунд на одной попытке.
+const HARD_MS = 240000;
+
+let currentAttempt = null;
+
+function abortIfStalled(state, limit = STALL_MS) {
+  if (!state || !state.running || state.stalled) return;
+  if (Date.now() - state.startedAt < limit) return;
+  state.stalled = true;
+  try { state.controller?.abort(); } catch {}
+}
+
+// Свой контроллер на попытку, сцепленный с отменой от ядра: различать «человек
+// нажал Стоп» и «мы сами прибили зависший запрос» обязательно, иначе второе
+// выглядит как первое и повтора не будет.
+function attemptOptions(options, state) {
+  if (typeof AbortController === 'undefined') return options;
+  state.controller = new AbortController();
+  const outer = options?.signal;
+  if (outer) {
+    if (outer.aborted) state.controller.abort();
+    else outer.addEventListener('abort', () => { try { state.controller.abort(); } catch {} }, { once: true });
+  }
+  return { ...(options || {}), signal: state.controller.signal };
+}
+
 function installFetchRetry() {
   const original = globalThis.fetch;
   if (typeof original !== 'function' || original.__sttRetryV1) return;
@@ -596,8 +645,18 @@ function installFetchRetry() {
       // секунду (адрес, подпись, запрет) и обрыв на минуте (объём, канал)
       // выглядят одинаково как «Failed to fetch».
       const attemptStarted = Date.now();
+      const state = { running: true, stalled: false, startedAt: attemptStarted, controller: null };
+      currentAttempt = state;
+      const wake = () => { if (!isHidden()) abortIfStalled(state); };
+      document.addEventListener('visibilitychange', wake);
+      const releaseWake = () => {
+        state.running = false;
+        if (currentAttempt === state) currentAttempt = null;
+        document.removeEventListener('visibilitychange', wake);
+      };
       try {
-        const response = await original.call(this, input, options);
+        const response = await original.call(this, input, attemptOptions(options, state));
+        releaseWake();
         // Протухший пропуск — не отказ в доступе, а истёкший час. Обновляем и
         // повторяем, не тратя на это попытки, отведённые обрывам связи.
         if ((response.status === 401 || response.status === 403) && authRetries < AUTH_RETRY_LIMIT) {
@@ -613,6 +672,19 @@ function installFetchRetry() {
         noteRequestDone(input);
         return response;
       } catch (error) {
+        releaseWake();
+        // Мы сами прибили зависший запрос — это повод повторить немедленно.
+        if (state.stalled && !init?.signal?.aborted) {
+          lastError = new Error(`соединение зависло (${Math.round((Date.now() - attemptStarted) / 1000)} с)`);
+          if (job?.state === 'running') {
+            job.lastError = 'соединение зависло — обрываю и повторяю';
+            job.verdict = '';
+            job.retrying = Math.max(job.retrying, 1);
+            render();
+          }
+          attempt -= 1;
+          continue;
+        }
         // Отмена пользователем — не сбой связи, повторять нечего.
         if (error?.name === 'AbortError' || init?.signal?.aborted) throw error;
         // HTTP-ответ сюда не попадает: fetch отвергает промис только на сетевом
