@@ -2176,6 +2176,18 @@ function readerHardSliceText(text, maxLen) {
   return slices;
 }
 
+// Пересказ вместо правки виден по длине: чистка убирает слова-паразиты и
+// повторы, то есть проценты, а не разы. Порог 0.7 оставляет запас на реально
+// болтливую речь и всё равно ловит сокращение в полтора раза и сильнее.
+// Пустой ответ — тоже потеря, а не «нечего чистить».
+function readerCleanedTextKeepsContent(raw, cleaned, minRatio = 0.7) {
+  const before = String(raw || '').trim().length;
+  const after = String(cleaned || '').trim().length;
+  if (!before) return true;
+  if (!after) return false;
+  return after / before >= minRatio;
+}
+
 function readerChunkTranscriptForCleanup(text, maxLen = 3500) {
   const sentences = readerSplitIntoSentences(String(text || ''));
   if (!sentences.length) return [];
@@ -2363,13 +2375,26 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
 
   const groups = readerChunkTranscriptForCleanup(rawTranscript).map(text => ({ text }));
 
+  // Чистка транскрипта косметическая: убрать «э-э», повторы, расставить точки.
+  // Терять содержание она не имеет права, а модель на длинном куске охотно
+  // пересказывает вместо того, чтобы править, и результат принимался молча —
+  // так 54 минуты речи превращались в книгу на 26 страниц. Ниже 70% исходной
+  // длины это уже не чистка, и такой ответ отбрасывается в пользу сырого
+  // куска: неотредактированный текст лучше отсутствующего.
+  let shortenedGroups = 0;
   const cleaned = [];
   for (let i = 0; i < groups.length; i++) {
     if (signal?.aborted) throw new ReaderTranscribeCancelled();
     setStatus(`⏳ DeepSeek чистит текст... (${i + 1}/${groups.length})`);
     try {
       const d = await readerAI({ task: 'clean_transcript', text: groups[i].text, sourceLang: lang });
-      cleaned.push({ text: d?.text || groups[i].text });
+      const candidate = String(d?.text || '');
+      if (readerCleanedTextKeepsContent(groups[i].text, candidate)) {
+        cleaned.push({ text: candidate || groups[i].text });
+      } else {
+        shortenedGroups += 1;
+        cleaned.push({ text: groups[i].text });
+      }
     } catch (e) {
       // Keep the raw group rather than losing it if DeepSeek fails mid-way.
       cleaned.push({ text: groups[i].text });
@@ -2407,7 +2432,7 @@ async function readerTranscribeBlob(blob, { filenameHint = 'audio', isVideo = fa
     console.warn('[reader audio] storing original recording failed:', e);
   }
 
-  setStatus(`✅ Готово: ${cleaned.length} фрагмент(ов)${hasAudio ? ' · аудио сохранено' : ''}${useTimestamps ? ' · тайм-коды (приблизительно)' : ''}. Проверь текст перед сохранением.`);
+  setStatus(`✅ Готово: ${cleaned.length} фрагмент(ов)${hasAudio ? ' · аудио сохранено' : ''}${useTimestamps ? ' · тайм-коды (приблизительно)' : ''}${shortenedGroups ? ` · ${shortenedGroups} без чистки (модель сокращала текст)` : ''}. Проверь текст перед сохранением.`);
 }
 
 let readerTranscribeController = null;
