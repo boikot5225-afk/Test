@@ -469,6 +469,35 @@ function noteRequestDone(input) {
   step('stt', { index: job.index + 1 });
 }
 
+// Firebase ID token живёт час, а ядро берёт его один раз перед циклом по
+// фрагментам (reader-app.js, getIdToken(false) до `for`) и подписывает им все
+// запросы. Запись, которая обрабатывается дольше часа, на середине начинает
+// получать 401 «Firebase ID token has expired» — и вся работа пропадает.
+// Именно это и стояло за обрывами: пропуск протухал прямо посреди дела.
+//
+// Ядро трогать не нужно: подпись живёт в заголовке, а заголовок проходит через
+// этот слой. На 401 берём свежий токен принудительно и повторяем тот же запрос.
+const AUTH_RETRY_LIMIT = 2;
+
+async function withFreshToken(init) {
+  const user = globalThis.firebase?.auth?.()?.currentUser;
+  if (!user?.getIdToken) return null;
+  let token = '';
+  try { token = await user.getIdToken(true); } catch { return null; }
+  if (!token) return null;
+  const next = { ...(init || {}) };
+  // Заголовки могут прийти и объектом, и Headers — ядро шлёт объект, но
+  // полагаться на это нельзя.
+  if (init?.headers instanceof Headers) {
+    const headers = new Headers(init.headers);
+    headers.set('Authorization', `Bearer ${token}`);
+    next.headers = headers;
+  } else {
+    next.headers = { ...(init?.headers || {}), Authorization: `Bearer ${token}` };
+  }
+  return next;
+}
+
 function installFetchRetry() {
   const original = globalThis.fetch;
   if (typeof original !== 'function' || original.__sttRetryV1) return;
@@ -478,9 +507,22 @@ function installFetchRetry() {
     }
     noteRequestPhase(input);
     let lastError = null;
+    let options = init;
+    let authRetries = 0;
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       try {
-        const response = await original.call(this, input, init);
+        const response = await original.call(this, input, options);
+        // Протухший пропуск — не отказ в доступе, а истёкший час. Обновляем и
+        // повторяем, не тратя на это попытки, отведённые обрывам связи.
+        if ((response.status === 401 || response.status === 403) && authRetries < AUTH_RETRY_LIMIT) {
+          const refreshed = await withFreshToken(options);
+          if (refreshed) {
+            authRetries += 1;
+            options = refreshed;
+            if (job) { job.lastError = 'обновляю пропуск'; render(); }
+            continue;
+          }
+        }
         if (job?.retrying) { job.retrying = 0; job.lastError = ''; render(); }
         noteRequestDone(input);
         return response;
@@ -505,6 +547,10 @@ function installFetchRetry() {
         }
         render();
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+        // Пока ждали, час мог истечь — идём дальше с обновлённым пропуском,
+        // если он вообще доступен.
+        const refreshed = await withFreshToken(options);
+        if (refreshed) options = refreshed;
       }
     }
     // Попытки кончились. Ядро сейчас покажет свою ошибку в статусе, но она
