@@ -179,7 +179,9 @@ function render() {
     const label = PHASE_LABEL[job.phase] || 'Работаю';
     const counter = job.total > 1 ? ` · ${Math.min(job.index + 1, job.total)}/${job.total}` : '';
     // Молчаливая пауза на минуту выглядит как зависание, поэтому повтор виден.
-    phaseEl.textContent = job.offline
+    phaseEl.textContent = job.hidden
+      ? '⏸ Приложение свёрнуто — продолжу при возврате'
+      : job.offline
       ? '📵 Нет сети — жду соединения'
       : job.retrying
         ? `📶 Повтор ${job.retrying}${job.verdict ? ` · ${job.verdict}` : job.lastError ? ` · ${job.lastError}` : ''}`
@@ -251,6 +253,7 @@ function start({ onCancel, onReopen } = {}) {
     seen: {},
     retrying: 0,
     offline: false,
+    hidden: false,
     lastError: '',
     verdict: '',
     startedAt: Date.now(),
@@ -428,6 +431,38 @@ function isOffline() {
   return typeof navigator !== 'undefined' && navigator.onLine === false;
 }
 
+// navigator.onLine в Android WebView почти всегда возвращает true, даже когда
+// радио уже отдано другой сети. Опираться на него нельзя — и именно поэтому
+// ожидание сети ни разу не срабатывало у пользователя: попытки сгорали в
+// свёрнутом приложении против мёртвого соединения, по пятнадцать секунд каждая,
+// и к возвращению человека бюджет повторов был исчерпан.
+//
+// Свёрнутость видна достоверно: document.hidden. Пока приложение свёрнуто,
+// пробовать не перестаём — сеть может и работать, — но неудачи бюджета не
+// тратят. Возврат к приложению повторяет немедленно, не досиживая паузу.
+function isHidden() {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+}
+
+// Пауза, которую прерывает возвращение к приложению.
+function waitOrWake(ms) {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      globalThis.removeEventListener?.('online', finish);
+      resolve();
+    };
+    const onVisible = () => { if (!isHidden()) finish(); };
+    const timer = setTimeout(finish, ms);
+    document.addEventListener('visibilitychange', onVisible);
+    globalThis.addEventListener?.('online', finish);
+  });
+}
+
 // Ждём, пока устройство само скажет, что сеть вернулась. Потолок — чтобы
 // зависший навсегда навигатор не оставил задачу висеть без единого признака.
 function waitForNetwork() {
@@ -575,6 +610,20 @@ function installFetchRetry() {
         // HTTP-ответ сюда не попадает: fetch отвергает промис только на сетевом
         // уровне. Значит это именно обрыв, и он переживается повтором.
         lastError = error;
+        // Неудача в свёрнутом приложении бюджета не тратит: почти наверняка это
+        // Android забрал сеть, а не сервер отказал. Иначе одно сворачивание
+        // съедает все попытки, и работа умирает к возвращению человека.
+        if (isHidden() && job?.state === 'running') {
+          job.hidden = true;
+          job.retrying = Math.max(job.retrying, 1);
+          render();
+          await waitOrWake(20000);
+          job.hidden = isHidden();
+          render();
+          attempt -= 1;
+          continue;
+        }
+        job.hidden = false;
         if (attempt === RETRY_DELAYS_MS.length || !job || job.state !== 'running') break;
         job.retrying = attempt + 1;
         const heldSec = Math.round((Date.now() - attemptStarted) / 1000);
@@ -597,7 +646,9 @@ function installFetchRetry() {
           continue;
         }
         render();
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+        // Паузу прерывает возвращение к приложению: ждать полминуты, когда
+        // человек уже смотрит на экран и сеть вернулась, незачем.
+        await waitOrWake(RETRY_DELAYS_MS[attempt]);
         // Пока ждали, час мог истечь — идём дальше с обновлённым пропуском,
         // если он вообще доступен.
         const refreshed = await withFreshToken(options);
