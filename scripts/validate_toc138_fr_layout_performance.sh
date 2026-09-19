@@ -16,9 +16,9 @@ python3 - <<'PY'
 from pathlib import Path
 p=Path('android/app/build.gradle')
 s=p.read_text(encoding='utf-8')
-assert s.count('versionCode 1043') == 1
+assert s.count('versionCode 1044') == 1
 assert s.count("versionName '77.42-toc138-fr-layout-performance'") == 1
-s=s.replace('versionCode 1043','versionCode 1030',1)
+s=s.replace('versionCode 1044','versionCode 1030',1)
 s=s.replace("versionName '77.42-toc138-fr-layout-performance'","versionName '77.42-toc137-es-card-status'",1)
 p.write_text(s,encoding='utf-8')
 PY
@@ -41,7 +41,7 @@ panel=text('js/reader/fr-word-panel-smooth-v1.js')
 interactions=text('js/reader/interactions-runtime.js')
 gradle=text('android/app/build.gradle')
 
-assert 'versionCode 1043' in gradle
+assert 'versionCode 1044' in gradle
 assert "versionName '77.42-toc138-fr-layout-performance'" in gradle
 
 for probe in [

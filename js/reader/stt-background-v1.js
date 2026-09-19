@@ -663,6 +663,7 @@ function installFetchRetry() {
     let lastError = null;
     let options = init;
     let authRetries = 0;
+    let stalls = 0;
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       // Сколько запрос продержался до отказа — это разные болезни: отлуп за
       // секунду (адрес, подпись, запрет) и обрыв на минуте (объём, канал)
@@ -698,14 +699,23 @@ function installFetchRetry() {
         releaseWake();
         // Мы сами прибили зависший запрос — это повод повторить немедленно.
         if (state.stalled && !init?.signal?.aborted) {
-          lastError = new Error(`соединение зависло (${Math.round((Date.now() - attemptStarted) / 1000)} с)`);
+          const heldSec = Math.round((Date.now() - attemptStarted) / 1000);
+          lastError = new Error(`соединение зависло (${heldSec} с)`);
+          // Раньше здесь стояло attempt -= 1, и счётчик попыток не рос никогда:
+          // запрос виснет, обрываем, виснет снова — сорок три минуты по кругу,
+          // по пять мегабайт за круг. Зависание — такая же неудача, как любая
+          // другая, и бюджет тратит наравне. Повторять вечно то, что стабильно
+          // не проходит, это не надёжность, а зацикливание.
+          stalls += 1;
           if (job?.state === 'running') {
-            job.lastError = 'соединение зависло — обрываю и повторяю';
+            job.lastError = `соединение зависло (${heldSec} с)`;
             job.verdict = '';
-            job.retrying = Math.max(job.retrying, 1);
+            job.retrying = attempt + 1;
             render();
           }
-          attempt -= 1;
+          // Три зависания подряд означают, что дело не в связи: так себя ведёт
+          // запрос, который на той стороне никто не дочитывает до конца.
+          if (stalls >= 3 || attempt === RETRY_DELAYS_MS.length) break;
           continue;
         }
         // Отмена пользователем — не сбой связи, повторять нечего.
@@ -762,8 +772,15 @@ function installFetchRetry() {
     // теряется за закрытым окном импорта, а полоска без причины бесполезна.
     if (job?.state === 'running') {
       job.retrying = 0;
-      const verdict = job.verdict || await probeEndpoint(input, options);
-      fail(`${job.lastError || 'обрыв соединения'}${verdict ? ` · ${verdict}` : ''}`);
+      if (stalls >= 3) {
+        // Повторять бессмысленно: так выглядит не плохая связь, а запрос,
+        // который на сервере не завершается. Говорим это прямо, а не прячем за
+        // «связь не восстановилась».
+        fail('Сервер не отвечает на загрузку фрагмента. Похоже, распознавание на нём не укладывается в отведённое время — проверь свой сервер распознавания.');
+      } else {
+        const verdict = job.verdict || await probeEndpoint(input, options);
+        fail(`${job.lastError || 'обрыв соединения'}${verdict ? ` · ${verdict}` : ''}`);
+      }
     }
     throw lastError;
   };
