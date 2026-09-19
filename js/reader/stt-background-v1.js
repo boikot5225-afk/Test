@@ -182,7 +182,7 @@ function render() {
     phaseEl.textContent = job.offline
       ? '📵 Нет сети — жду соединения'
       : job.retrying
-        ? `📶 Повтор ${job.retrying}${job.lastError ? ` · ${job.lastError}` : ''}`
+        ? `📶 Повтор ${job.retrying}${job.verdict ? ` · ${job.verdict}` : job.lastError ? ` · ${job.lastError}` : ''}`
         : `🎙 ${label}${counter}`;
     const eta = humanTime(remainingSeconds());
     const pct = Math.round(progressPercent());
@@ -217,7 +217,17 @@ function startTicking() {
   stopTicking();
   // Оценка времени должна сокращаться сама, а не только в момент, когда
   // закрывается очередной фрагмент: между ними проходят минуты.
-  tick = setInterval(() => { if (job?.state === 'running') render(); }, 1000);
+  tick = setInterval(() => {
+    if (job?.state !== 'running') return;
+    // Наблюдатель за статусом подводил уже трижды: полоска оставалась на
+    // «разбор записи» или теряла общее число фрагментов, хотя в статусе оно
+    // было. Раз перерисовка и так идёт каждую секунду, пусть она перечитывает
+    // статус сама — тогда пропущенное изменение стоит секунды, а не всего
+    // показа. Читать текст дешевле, чем разбираться, почему MutationObserver
+    // на устройстве иногда молчит.
+    try { applyStatus(watchedStatusEl?.textContent); } catch {}
+    render();
+  }, 1000);
 }
 
 function stopTicking() { if (tick) { clearInterval(tick); tick = null; } }
@@ -242,6 +252,7 @@ function start({ onCancel, onReopen } = {}) {
     retrying: 0,
     offline: false,
     lastError: '',
+    verdict: '',
     startedAt: Date.now(),
     stats: { stt: { done: 0, elapsed: 0 }, cleanup: { done: 0, elapsed: 0 } },
     unitStartedAt: Date.now(),
@@ -498,6 +509,34 @@ async function withFreshToken(init) {
   return next;
 }
 
+// «Failed to fetch» не говорит ничего: так браузер сообщает и об оборванном
+// сокете, и о запрете CORS, и об упавшем контейнере, и о запросе, который не
+// приняли целиком. Поэтому когда попытки кончились, слой спрашивает сам:
+// отправляет на тот же адрес с той же подписью заведомо крошечный запрос.
+//
+// Ответ разделяет пространство ошибок пополам. Маленький запрос проходит (пусть
+// даже с осмысленной ошибкой в ответе) — значит адрес, сеть и пропуск в порядке,
+// и не проходит именно объём. Маленький тоже падает — значит дело не в объёме, и
+// чинить надо доступ к серверу. Без этого различения я снова буду угадывать.
+async function probeEndpoint(input, init) {
+  const url = requestUrl(input);
+  if (!url) return '';
+  try {
+    const response = await globalThis.fetch.__sttOriginal.call(globalThis, url, {
+      method: 'POST',
+      headers: init?.headers instanceof Headers
+        ? init.headers
+        : { ...(init?.headers || {}) },
+      // Тело заведомо негодное, но крошечное: нас интересует, доходит ли запрос
+      // до сервера вообще, а не результат распознавания.
+      body: JSON.stringify({ audioBase64: '', format: 'wav', lang: 'probe' }),
+    });
+    return `сервер отвечает (${response.status}) — не проходит объём`;
+  } catch (error) {
+    return `сервер недоступен: ${String(error?.message || error).slice(0, 40)}`;
+  }
+}
+
 function installFetchRetry() {
   const original = globalThis.fetch;
   if (typeof original !== 'function' || original.__sttRetryV1) return;
@@ -510,6 +549,10 @@ function installFetchRetry() {
     let options = init;
     let authRetries = 0;
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+      // Сколько запрос продержался до отказа — это разные болезни: отлуп за
+      // секунду (адрес, подпись, запрет) и обрыв на минуте (объём, канал)
+      // выглядят одинаково как «Failed to fetch».
+      const attemptStarted = Date.now();
       try {
         const response = await original.call(this, input, options);
         // Протухший пропуск — не отказ в доступе, а истёкший час. Обновляем и
@@ -534,7 +577,15 @@ function installFetchRetry() {
         lastError = error;
         if (attempt === RETRY_DELAYS_MS.length || !job || job.state !== 'running') break;
         job.retrying = attempt + 1;
-        job.lastError = String(error?.message || error || '').slice(0, 80);
+        const heldSec = Math.round((Date.now() - attemptStarted) / 1000);
+        job.lastError = `${String(error?.message || error || '').slice(0, 60)} (${heldSec} с)`;
+        // Спрашиваем сервер сразу после второго отказа, а не в конце всех
+        // повторов: ждать вердикта четыре минуты бессмысленно, а знать, в чём
+        // дело, нужно с первых секунд — и человеку, и мне.
+        if (attempt === 1 && !job.verdict) {
+          job.verdict = await probeEndpoint(input, options);
+          render();
+        }
         if (isOffline()) {
           // Сети нет — ждём её, а не отсчитываем попытки в пустоту.
           job.offline = true;
@@ -557,11 +608,14 @@ function installFetchRetry() {
     // теряется за закрытым окном импорта, а полоска без причины бесполезна.
     if (job?.state === 'running') {
       job.retrying = 0;
-      fail(`Связь не восстановилась: ${job.lastError || 'обрыв соединения'}`);
+      const verdict = job.verdict || await probeEndpoint(input, options);
+      fail(`${job.lastError || 'обрыв соединения'}${verdict ? ` · ${verdict}` : ''}`);
     }
     throw lastError;
   };
   wrapped.__sttRetryV1 = true;
+  // Проба ходит мимо обёртки: повторять её бессмысленно, а рекурсия вредна.
+  wrapped.__sttOriginal = original;
   globalThis.fetch = wrapped;
 }
 
