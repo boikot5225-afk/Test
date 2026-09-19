@@ -59,7 +59,15 @@ function installStyle() {
       display: flex; justify-content: space-between; gap: 10px;
       margin-bottom: 6px; line-height: 1.3;
     }
-    #${BAR_ID} .rd-stt-phase { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* Не обрезаем: в этой строке живёт причина отказа, и ровно её и нужно
+       прочитать. Обрезанное «серве…» одинаково подходит и к «сервер отвечает»,
+       и к «сервер недоступен» — то есть не сообщает ничего. Разрешаем две
+       строки; больше двух не нужно, тексты короткие. */
+    #${BAR_ID} .rd-stt-phase {
+      overflow: hidden; word-break: break-word;
+      display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    }
+    #${BAR_ID} .rd-stt-eta { flex: none; }
     #${BAR_ID} .rd-stt-eta { color: var(--text-muted, #9a9aa2); white-space: nowrap; }
     #${BAR_ID} .rd-stt-track {
       height: 5px; border-radius: 3px; overflow: hidden;
