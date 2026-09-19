@@ -135,6 +135,11 @@ public class MainActivity extends Activity {
         englishContextTranslateBridge = new EnglishContextTranslateBridge(this, webView);
         webView.addJavascriptInterface(englishContextTranslateBridge, "ReaderEnglishContextTranslate");
 
+        // Распознавание аудио идёт минутами и должно переживать выключенный
+        // экран. Страница сама договориться с Android не может — сеть выдаёт
+        // система, — поэтому она поднимает foreground-сервис через этот мост.
+        webView.addJavascriptInterface(new BackgroundWorkBridge(this), "ReaderBackgroundWork");
+
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {

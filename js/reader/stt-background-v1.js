@@ -253,6 +253,24 @@ function markActive(active) {
   } catch {}
 }
 
+// Android гасит фоновым приложениям сеть: уход из приложения и особенно
+// выключение экрана переводят процесс в Doze, радио паркуется, сокеты рвутся.
+// Со стороны страницы это непобедимо — сколько ни повторяй запрос, связь выдаёт
+// система. Единственный способ попросить иначе — foreground-сервис, который
+// поднимает Android-часть через этот мост.
+//
+// Мост есть только в приложении. В браузере его нет, и это не ошибка: там и
+// Doze нет.
+function holdSystemAwake(on) {
+  const bridge = globalThis.ReaderBackgroundWork;
+  if (!bridge) return false;
+  try {
+    return on ? bridge.startTranscription?.() : bridge.stopTranscription?.();
+  } catch {
+    return false;
+  }
+}
+
 function start({ onCancel, onReopen } = {}) {
   job = {
     state: 'running',
@@ -273,6 +291,7 @@ function start({ onCancel, onReopen } = {}) {
     unitStartedAt: Date.now(),
   };
   markActive(true);
+  holdSystemAwake(true);
   startTicking();
   render();
 }
@@ -307,6 +326,7 @@ function done(message) {
   job.state = 'done';
   job.message = message || 'Готово';
   markActive(false);
+  holdSystemAwake(false);
   stopTicking();
   render();
 }
@@ -316,6 +336,7 @@ function fail(message) {
   job.state = 'error';
   job.message = message || 'Ошибка распознавания';
   markActive(false);
+  holdSystemAwake(false);
   stopTicking();
   render();
 }
@@ -325,6 +346,7 @@ function cancel() {
   try { job.onCancel?.(); } catch {}
   job.state = 'cancelled';
   markActive(false);
+  holdSystemAwake(false);
   stopTicking();
   render();
 }
@@ -332,6 +354,7 @@ function cancel() {
 function hide() {
   job = null;
   markActive(false);
+  holdSystemAwake(false);
   stopTicking();
   const bar = document.getElementById(BAR_ID);
   if (bar) bar.style.display = 'none';

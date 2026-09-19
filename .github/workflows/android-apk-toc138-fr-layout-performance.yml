@@ -166,6 +166,13 @@ jobs:
           # сигнал там — кнопка «Стоп». Без этого сторожа запрос висит, пока его
           # не добьёт система: наблюдались 1088 секунд на одной попытке.
           grep -qF 'function abortIfStalled' "$WORK/stt.js"
+          # Без foreground-сервиса Android паркует радио при выключенном экране,
+          # и никакие повторы на стороне страницы этого не обходят.
+          grep -qF 'ReaderBackgroundWork' "$WORK/stt.js"
+          AAPT="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)/aapt"
+          "$AAPT" dump badging "$APK" > "$WORK/badging.txt"
+          grep -qF "uses-permission: name='android.permission.FOREGROUND_SERVICE_DATA_SYNC'" "$WORK/badging.txt"
+          grep -qF "uses-permission: name='android.permission.WAKE_LOCK'" "$WORK/badging.txt"
           # Декодирование обязано идти в 16 кГц: на частоте устройства час
           # записи это ~1 ГБ в памяти, и телефон падает, не начав грузить.
           grep -qF 'new OfflineCtor(1, 1, READER_STT_SAMPLE_RATE)' "$WORK/app.js"
@@ -234,14 +241,14 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Sign and validate vc1042 A54 APK
+      - name: Sign and validate vc1043 A54 APK
         shell: bash
         run: |
           set -euo pipefail
           APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
           BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           mkdir -p unique-out
-          OUT=unique-out/Reader-AI-77.42-toc138-fr-layout-performance-a54-vc1042.apk
+          OUT=unique-out/Reader-AI-77.42-toc138-fr-layout-performance-a54-vc1043.apk
           KSPASS="${ANDROID_KEYSTORE_PASSWORD:-readerai2026}"
           KEYPASS="${ANDROID_KEY_PASSWORD:-$KSPASS}"
           ALIAS="${ANDROID_KEY_ALIAS:-reader-ai}"
@@ -275,7 +282,7 @@ jobs:
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" unique-out/APKSIGNER.txt
           grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" unique-out/APKSIGNER.txt
           grep -q "certificate SHA-256 digest: 9d853f2c43529b55a2d63202b7377c7485bae700b6e4113ca71ceae930664790" unique-out/APKSIGNER.txt
-          grep -q "versionCode='1042'" unique-out/BADGING.txt
+          grep -q "versionCode='1043'" unique-out/BADGING.txt
           grep -q "versionName='77.42-toc138-fr-layout-performance-debug'" unique-out/BADGING.txt
           grep -q "targetSdkVersion:'35'" unique-out/BADGING.txt
           grep -q "native-code: 'arm64-v8a'" unique-out/BADGING.txt
@@ -289,7 +296,7 @@ jobs:
       - name: Upload verified toc138 A54 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Reader-AI-77.42-toc138-fr-layout-performance-a54-vc1042
+          name: Reader-AI-77.42-toc138-fr-layout-performance-a54-vc1043
           path: unique-out/
           if-no-files-found: error
           retention-days: 30
