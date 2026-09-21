@@ -16,8 +16,8 @@ python3 - <<'PY'
 from pathlib import Path
 p=Path('android/app/build.gradle')
 s=p.read_text(encoding='utf-8')
-assert s.count('versionCode 1045') == 1
-s=s.replace('versionCode 1045','versionCode 1045',1)
+assert s.count('versionCode 1046') == 1
+s=s.replace('versionCode 1046','versionCode 1046',1)
 p.write_text(s,encoding='utf-8')
 PY
 bash scripts/validate_toc138_fr_layout_performance.sh
@@ -139,6 +139,9 @@ functions = Path('functions/index.js').read_text(encoding='utf-8')
 builder = Path('scripts/build_de_reader_resources.py').read_text(encoding='utf-8')
 batch = Path('js/reader/de-context-batch-v1.js').read_text(encoding='utf-8')
 data_layer = Path('js/reader/de-vocab-data-v1.js').read_text(encoding='utf-8')
+de_pipeline = Path('js/reader/de-reader-pipeline-v1.js').read_text(encoding='utf-8')
+import_isolation = Path('js/reader/audio-epub-import-isolation.js').read_text(encoding='utf-8')
+semantic_bridge = Path('js/reader/semantic-import-bridge.js').read_text(encoding='utf-8')
 
 # Сборка немецких ресурсов обязательна, как французская и испанская.
 for probe in [
@@ -209,6 +212,16 @@ assert "require('./de-context-task')" in functions
 assert "task: 'de_context_batch'" in batch
 assert 'parts: item.parts' in batch, 'разбор составного слова не уходит в запрос'
 assert 'readerGermanCaseAwareLemmaFor' in batch, 'разбор абзаца потерял регистр слова'
+assert "task: 'reader_word'" in batch and "sourceLang: 'de'" in batch, \
+    'German context fallback to the established backend is missing'
+assert 'callEstablishedContextFallback(context, missing)' in batch
+assert 'display:inline!important;position:relative!important' in de_pipeline, \
+    'German gloss wrappers again became atomic inline-block boxes'
+assert 'display:inline-block!important' not in de_pipeline, \
+    'German layout again stretches justified EPUB lines'
+assert 'const capturedEvent = stableFileEvent(event, file)' in import_isolation
+assert 'semanticImport.call(this, capturedEvent, ...args)' in import_isolation
+assert "setStatus(`⏳ Открываю ${String(file.name || 'EPUB')}…`)" in semantic_bridge
 # Словарный тест — копия французского владельца, и он публикует свою,
 # слепую к регистру, лемму под именем readerGermanLemmaFor, причём грузится
 # позже подсветки. Имена обязаны быть разными, иначе немецкий молча теряет

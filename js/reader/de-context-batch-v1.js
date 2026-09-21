@@ -18,6 +18,7 @@ const MAX_VISIBLE_PARAGRAPHS = 4;
 const MIN_CONFIDENCE = 0.90;
 const CALL_TIMEOUT_MS = 55_000;
 const RETRY_MS = 12_000;
+const FALLBACK_PARALLEL = 3;
 
 const state = globalThis.__readerDeContextBatchV1 || {
   cache: null,
@@ -314,6 +315,45 @@ async function callBatch(context, targets) {
   return Array.isArray(payload?.items) ? payload.items : [];
 }
 
+async function callOneWithEstablishedTask(context, target) {
+  const firebase = firebaseFunctionsClient();
+  if (!firebase?.app) throw new Error('Firebase Functions not ready');
+  const fn = firebase.app().functions(functionRegion()).httpsCallable('readerAI');
+  const result = await withTimeout(fn({
+    task: 'reader_word',
+    sourceLang: 'de',
+    lang: 'de',
+    word: target.surface,
+    surface: target.surface,
+    context,
+  }), CALL_TIMEOUT_MS);
+  const payload = result?.data?.data || result?.data || {};
+  return {
+    id: target.id,
+    ru: cleanRu(payload?.ru || payload?.translation || payload?.meaning),
+    lemma: clean(payload?.lemma || payload?.infinitive || target.lemma, 48),
+    pos: clean(payload?.pos, 24).toLowerCase(),
+    // reader_word has no numeric confidence field, but its German prompt is
+    // explicitly occurrence/context based. Treat only a valid Russian answer
+    // as accepted; malformed/empty results still keep the offline gloss.
+    confidence: cleanRu(payload?.ru || payload?.translation || payload?.meaning) ? 0.91 : 0,
+    note: clean(payload?.note || payload?.form_note, 90),
+  };
+}
+
+async function callEstablishedContextFallback(context, targets) {
+  const items = [];
+  for (let start = 0; start < targets.length; start += FALLBACK_PARALLEL) {
+    const group = targets.slice(start, start + FALLBACK_PARALLEL);
+    const settled = await Promise.allSettled(group.map(target => callOneWithEstablishedTask(context, target)));
+    settled.forEach(result => {
+      if (result.status === 'fulfilled' && result.value?.ru) items.push(result.value);
+    });
+    if (settled.every(result => result.status === 'rejected')) break;
+  }
+  return items;
+}
+
 function applyCached(targets) {
   const cache = loadCache();
   for (const target of targets) {
@@ -370,7 +410,17 @@ async function refineParagraph(paragraph, dict) {
 
   state.inFlight.add(paragraphKey);
   try {
-    const items = await callBatch(context, missing);
+    let items = [];
+    try {
+      items = await callBatch(context, missing);
+    } catch (batchError) {
+      // The APK can be installed before the new batch backend is deployed.
+      // English/Japanese already survive that situation through the long-live
+      // reader_word task; German must not silently remain on nonsense first
+      // dictionary senses while waiting for a server rollout.
+      console.warn('[de context batch] batch unavailable; using reader_word', batchError?.code || batchError?.message || batchError);
+      items = await callEstablishedContextFallback(context, missing);
+    }
     const byId = new Map(items.map(item => [clean(item?.id, 40), item]));
     let changed = false;
     for (const target of missing) {

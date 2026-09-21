@@ -1,10 +1,11 @@
-name: Android APK toc139 German Reader
+name: Android APK toc140 German Context Import Layout
 
 on:
   push:
     branches:
       - claude/affectionate-knuth-6xm017
       - feature/77.42-toc139-de-reader
+      - fix/77.42-toc140-de-reader
     paths:
       - '.github/workflows/android-apk-toc139-german-reader.yml'
       - 'scripts/build_de_reader_resources.py'
@@ -14,6 +15,8 @@ on:
       - 'js/reader/de-reader-pipeline-v1.js'
       - 'js/reader/de-lexical-pipeline-v1.js'
       - 'js/reader/de-context-batch-v1.js'
+      - 'js/reader/audio-epub-import-isolation.js'
+      - 'js/reader/semantic-import-bridge.js'
       - 'js/reader/word-lookup.js'
       - 'js/reader/interactions-runtime.js'
       - 'js/reader-app.js'
@@ -179,7 +182,7 @@ jobs:
       - name: Upload validated debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: toc139-german-reader-debug-apk
+          name: toc140-de-context-import-layout-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 30
