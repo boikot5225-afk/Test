@@ -88,7 +88,15 @@ GENUS = ("m", "f", "n")
 # Пометки Викисловаря для имён: имя, фамилия, топоним, название улицы. Слово,
 # у которого есть только они, — имя собственное; слово, у которого есть и
 # обычное значение (Hans — это ещё и разговорное «парень»), именем не считаем.
-NAME_TAGS = ("Vorname", "Nachname", "Toponym", "Eigenname", "Straßenname")
+#
+# Eigenname в этот список не входит намеренно. Немецкий Викисловарь ставит его
+# солнцу: Sonne — «Eigenname, Substantiv», потому что солнце одно. Со списком,
+# считающим эту пометку именем, солнце выпадало из существительных вместе со
+# своим склонением, и Sonnenschein раскладывался на глагол sonnen «загорать» и
+# Schein. Настоящее имя отличается не пометкой, а пустой таблицей склонений:
+# у Berlin, Maria, Schmidt форм нет вовсе, а у Sonne, Deutschland и Rhein
+# таблица полная, и они ведут себя в тексте как обычные слова.
+NAME_TAGS = ("Vorname", "Nachname", "Toponym", "Straßenname", "Eigenname")
 
 # Соединительные элементы немецких составных слов: Arbeit+s+zimmer,
 # Sonne+n+schein, Kind+er+garten.
@@ -186,8 +194,9 @@ def read_nouns(items):
         lemma = norm(item.get("lemma") or "")
         if not lemma or not WORD_RE.match(lemma):
             continue
-        is_name = any(tag in pos for tag in NAME_TAGS)
-        if is_name:
+        forms = {norm(value) for value in (item.get("flexion") or {}).values() if value}
+        forms = {form for form in forms if WORD_RE.match(form)}
+        if any(tag in pos for tag in NAME_TAGS) and not forms:
             names.add(lemma)
             continue
         if "Substantiv" not in pos or "adjektivische Deklination" in pos:
@@ -196,8 +205,6 @@ def read_nouns(items):
             continue
         commons.add(lemma)
         genus = (item.get("genus") or "").strip().lower()
-        forms = {norm(value) for value in (item.get("flexion") or {}).values() if value}
-        forms = {form for form in forms if WORD_RE.match(form)}
         forms.add(lemma)
         entries.append((lemma, genus if genus in GENUS else "", forms))
     return entries, names - commons
@@ -524,16 +531,18 @@ def self_test():
         # пара из данных Викисловаря.
         {"lemma": "Mare", "pos": ["Substantiv"], "genus": "n",
          "flexion": {"nominativ singular": "Mare", "nominativ plural": "Maria"}},
-        {"lemma": "Maria", "pos": ["Vorname"], "genus": "f",
-         "flexion": {"nominativ singular": "Maria"}},
+        {"lemma": "Maria", "pos": ["Substantiv", "Vorname"], "flexion": {}},
         # Strassen — деревня в Австрии и в то же время множественное число
         # Straße. Редкое имя формы у частотного слова не отнимает.
         {"lemma": "Strassen", "pos": ["Toponym"], "genus": "n",
          "flexion": {"nominativ singular": "Strassen"}},
-        # Топоним: в тексте он ничем не отличается от существительного, кроме
-        # того, что его нет среди нарицательных.
-        {"lemma": "Berlin", "pos": ["Toponym"], "genus": "n",
-         "flexion": {"nominativ singular": "Berlin"}},
+        # Топоним без таблицы склонений — настоящее имя.
+        {"lemma": "Berlin", "pos": ["Substantiv", "Toponym"], "flexion": {}},
+        # А солнце Викисловарь тоже помечает именем собственным — и даёт ему
+        # полное склонение. Это обычное слово, и Sonnenschein без него
+        # раскладывается на глагол sonnen «загорать».
+        {"lemma": "Sonne", "pos": ["Eigenname", "Substantiv"], "genus": "f",
+         "flexion": {"nominativ singular": "Sonne", "nominativ plural": "Sonnen"}},
         # Существительное, которого корпус не видел ни в одной форме.
         {"lemma": "Zwirnsfaden", "pos": ["Substantiv"], "genus": "m",
          "flexion": {"nominativ singular": "Zwirnsfaden"}},
@@ -546,6 +555,7 @@ def self_test():
         "strasse": "strass", "aufgaben": "aufgeben", "strasses": "strass",
         "reis": "reis", "real": "real", "aufgeben": "aufgeben", "berlin": "berlin",
         "maria": "maria", "mare": "mare", "strassen": "strass",
+        "sonne": "sonnen", "sonnen": "sonnen",
     }
     lemmatize = lambda value: answers.get(norm(value), value)
 
@@ -558,7 +568,7 @@ def self_test():
                 "lampen", "tür", "türen", "arbeit", "strasse", "aufgaben",
                 # Настоящий глагол в списке есть и сам по себе — ранг он берёт
                 # оттуда, а не у формы существительного Aufgaben.
-                "aufgeben", "berlin", "maria", "strassen",
+                "aufgeben", "berlin", "maria", "sonne", "sonnen", "strassen",
                 # Real Madrid сделал реал частотнее риса — на настоящих данных
                 # реал стоит 1479-м, а рис 3795-м. Порядок здесь тот же.
                 "real", "reis", "strasses", "mare"]
@@ -604,6 +614,9 @@ def self_test():
         assert "gehen\t" in head and "gut\t" in head
         assert "berlin\tNAME" in head, "топоним помечен как имя собственное"
         assert "maria\tNAME" in head, "имя осталось в словаре и помечено"
+        assert "sonne\tNOUN" in head, "солнце — обычное слово, а не имя собственное"
+        assert form_map["sonnen"] == "sonne", "множественное число солнца потеряно"
+        assert genders["sonne"] == "f"
         assert "lampe\tNOUN" in head
         nouns_file = (Path(td) / "de_noun_lemma.tsv").read_text(encoding="utf-8")
         assert "strasse\tstraße\n" in nouns_file

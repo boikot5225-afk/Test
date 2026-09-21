@@ -54,12 +54,13 @@ const { translationFor, looksProper } = await import('./js/reader/de-reader-pipe
 // Выжимка из настоящих файлов сборки: тех же строк, в том же формате.
 const data = buildData({
   frequency: ['der\t', 'die\t', 'haus\tNOUN', 'tür\tNOUN', 'stunde\tNOUN', 'straße\tNOUN',
-              'lampe\tNOUN', 'gehen\t', 'haben\t', 'gut\t', 'berlin\tNAME', 'bahnhof\tNOUN',
-              'aufgabe\tNOUN', 'strass\tNOUN'].join('\n'),
+              'sonne\tNOUN', 'schein\tNOUN', 'lampe\tNOUN', 'gehen\t', 'haben\t', 'gut\t',
+              'berlin\tNAME', 'bahnhof\tNOUN', 'aufgabe\tNOUN', 'strass\tNOUN'].join('\n'),
   general: ['habe\thaben', 'ging\tgehen', 'gute\tgut', 'strassen\tstrass'].join('\n'),
   noun: ['häuser\thaus', 'stunden\tstunde', 'lampen\tlampe', 'straßen\tstraße',
-         'strassen\tstraße', 'strasse\tstraße', 'aufgaben\taufgabe'].join('\n'),
-  gender: ['haus\tn', 'tür\tf', 'stunde\tf', 'straße\tf', 'lampe\tf', 'bahnhof\tm'].join('\n'),
+         'strassen\tstraße', 'strasse\tstraße', 'aufgaben\taufgabe', 'sonnen\tsonne'].join('\n'),
+  gender: ['haus\tn', 'tür\tf', 'stunde\tf', 'straße\tf', 'lampe\tf', 'bahnhof\tm',
+           'sonne\tf'].join('\n'),
 });
 
 const fails = [];
@@ -82,6 +83,12 @@ check('strassen без регистра', mergedLemma(data, 'strassen'), 'straß
 check('Haustür', compoundParts(data, 'Haustür'), ['haus', 'tür']);
 check('Bahnhofstraße', compoundParts(data, 'Bahnhofstraße'), ['bahnhof', 'straße']);
 check('Hausaufgaben', compoundParts(data, 'Hausaufgaben'), ['haus', 'aufgabe']);
+// Соединительное -n: Sonne + n + Schein. Викисловарь помечает солнце именем
+// собственным, и стоит принять эту пометку всерьёз — Sonne выпадает из
+// существительных, а слово раскладывается на глагол sonnen «загорать».
+check('Sonnenschein', compoundParts(data, 'Sonnenschein'), ['sonne', 'schein']);
+check('род Sonne', genderFor(data, 'sonne'), 'f');
+check('Sonne именем не помечена', isName(data, 'sonne'), false);
 // Артикль неотделим от существительного.
 check('род Haus', genderFor(data, 'haus'), 'n');
 check('род Straße', genderFor(data, 'straße'), 'f');
@@ -222,7 +229,11 @@ assert 'MIN_PART = 3' in data_layer and "FUGEN = ['', 's', 'es', 'n', 'en', 'er'
 for probe in [
     'REQUIREMENTS = ("wordfreq==3.1.1", "simplemma==2.0.0", "german-nouns==1.2.5")',
     'VOCAB_LIMIT = 60_000',
-    'NAME_TAGS = ("Vorname", "Nachname", "Toponym", "Eigenname", "Straßenname")',
+    'NAME_TAGS = ("Vorname", "Nachname", "Toponym", "Straßenname", "Eigenname")',
+    # Имя отличается от обычного слова пустой таблицей склонений, а не
+    # пометкой: Sonne у Викисловаря — «Eigenname», и по пометке солнце уехало
+    # бы в имена вместе со своим склонением.
+    'if any(tag in pos for tag in NAME_TAGS) and not forms:',
     'def fold(value: str) -> str:',
 ]:
     assert probe in builder, f'German builder contract missing: {probe}'
