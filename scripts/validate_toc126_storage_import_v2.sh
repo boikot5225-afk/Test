@@ -43,7 +43,7 @@ frozen = {
     # попадала ни в один диапазон в наборе букв, и обрезка краёв слова съедала
     # её на конце — Fuß превращался в fu, groß в gro, weiß в wei. Буква есть
     # только в немецком, остальные языки этого не замечают.
-    'js/reader-app.js': 'ef85fa2759a8a527ec48e814e1b0da61971eeee0465227c2478b56d801f7448c',
+    'js/reader-app.js': 'f04fbf79bf1dac47d3eb0bf641dd10ecbbec7af2a8e4dcd44cd304b76d8b1f62',
     'js/reader/chapter-render.js': 'c10f3680fb122c4f04a730ddb298f88165c29d5b24978cc5868560531f752361',
 }
 for path, expected in frozen.items():

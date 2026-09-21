@@ -1744,7 +1744,7 @@ function readerSentenceContext(paragraphText, word, lang = null) {
   if (!sentences.length) return String(paragraphText || '').trim();
   const found = readerIsCjkLang(l)
     ? sentences.find(sent => String(sent || '').includes(norm))
-    : sentences.find(sent => readerNormalizeWord(sent, l).split(/[^a-zà-öø-ÿœæ'-]+/i).includes(norm)
+    : sentences.find(sent => readerNormalizeWord(sent, l).split(/[^a-zà-öø-ÿœæß'-]+/i).includes(norm)
       || readerNormalizeWord(sent, l).includes(norm));
   return (found || sentences[0] || paragraphText || '').trim();
 }

@@ -16,6 +16,7 @@ function canonicalLang(lang) {
   if (raw === 'ja' || raw.startsWith('ja-') || raw === 'jp') return 'ja';
   if (raw === 'en' || raw.startsWith('en-')) return 'en';
   if (raw === 'es' || raw.startsWith('es-')) return 'es';
+  if (raw === 'de' || raw.startsWith('de-')) return 'de';
   return 'fr';
 }
 
@@ -30,7 +31,9 @@ function normalizeWord(word, lang = 'fr') {
   return String(word || '')
     .toLowerCase()
     .normalize('NFC')
-    .replace(/^[^a-zà-öø-ÿœæ'-]+|[^a-zà-öø-ÿœæ'-]+$/gi, '')
+    // ß — буква: без неё обрезка краёв съедает её на конце, и Fuß
+    // превращается в fu. В остальных языках читалки этой буквы нет.
+    .replace(/^[^a-zà-öø-ÿœæß'-]+|[^a-zà-öø-ÿœæß'-]+$/gi, '')
     .replace(/[’`´]/g, "'")
     .trim();
 }

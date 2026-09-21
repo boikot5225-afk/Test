@@ -159,8 +159,14 @@ for probe in [
 ]:
     assert probe in core, f'German language rail missing in Reader core: {probe}'
 
-# ß — буква, а не пунктуация. Без неё Fuß обрезается до fu.
-assert "[^a-zà-öø-ÿœæß'-]" in core, 'ß снова выпала из набора букв ядра'
+# ß — буква, а не пунктуация. Без неё Fuß обрезается до fu. Набор букв в
+# ядре встречается дважды (обрезка краёв слова и разбиение предложения на
+# слова), и обе копии обязаны знать эту букву.
+assert core.count("[^a-zà-öø-ÿœæß'-]") >= 3, 'ß снова выпала из набора букв ядра'
+candidates = Path('js/reader/word-candidates.js').read_text(encoding='utf-8')
+assert "[^a-zà-öø-ÿœæß'-]" in candidates, 'ß выпала из набора букв в word-candidates'
+assert "raw === 'de' || raw.startsWith('de-')" in candidates, \
+    'немецкий снова считается французским при разборе слова'
 
 assert "const allowed = ['fr', 'zh', 'en', 'es', 'ja', 'de'];" in app
 assert "id=\"hlb-de\"" in html and "setAppLang('de')" in html
