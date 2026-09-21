@@ -130,7 +130,7 @@ function surface(el) {
 function lemmaFor(shownSurface) {
   const shown = clean(shownSurface, 48);
   const raw = normalize(shown);
-  try { return normalize(globalThis.readerGermanLemmaFor?.(shown) || raw); }
+  try { return normalize(globalThis.readerGermanCaseAwareLemmaFor?.(shown) || raw); }
   catch { return raw; }
 }
 

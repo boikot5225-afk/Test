@@ -201,7 +201,16 @@ assert "if (task === 'de_context_batch') {" in functions
 assert "require('./de-context-task')" in functions
 assert "task: 'de_context_batch'" in batch
 assert 'parts: item.parts' in batch, 'разбор составного слова не уходит в запрос'
-assert 'readerGermanLemmaFor' in batch
+assert 'readerGermanCaseAwareLemmaFor' in batch, 'разбор абзаца потерял регистр слова'
+# Словарный тест — копия французского владельца, и он публикует свою,
+# слепую к регистру, лемму под именем readerGermanLemmaFor, причём грузится
+# позже подсветки. Имена обязаны быть разными, иначе немецкий молча теряет
+# регистр: Stunden перестаёт находиться.
+vocab_module = Path('/tmp/toc139-de-vocab-estimate.js').read_text(encoding='utf-8')
+assert 'globalThis.readerGermanLemmaFor=' in vocab_module
+assert 'readerGermanCaseAwareLemmaFor' not in vocab_module
+assert 'globalThis.readerGermanLemmaFor' not in data_layer, \
+    'слой данных снова занял имя словарного теста'
 
 # Два источника, а не один: регистр восстановить из частотного списка нельзя.
 for probe in ['de_noun_lemma.tsv', 'de_vocab_lemma.tsv', 'de_noun_gender.tsv']:

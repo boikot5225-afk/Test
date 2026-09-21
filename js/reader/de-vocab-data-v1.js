@@ -282,7 +282,11 @@ export function compoundParts(source, word) {
 if (typeof window !== 'undefined' && !window.__readerDeVocabDataV1) {
   window.__readerDeVocabDataV1 = true;
   globalThis.readerLoadGermanVocabularyData = vocabularyData;
-  globalThis.readerGermanLemmaFor = (surface, options) => {
+  // Имя намеренно своё. Словарный тест — механическая копия французского
+  // владельца — публикует readerGermanLemmaFor со своей, слепой к регистру,
+  // леммой и грузится позже: заняв это имя, он тихо отобрал бы у подсветки
+  // весь регистр, и Stunden перестало бы находиться.
+  globalThis.readerGermanCaseAwareLemmaFor = (surface, options) => {
     if (!data) { vocabularyData().catch(() => {}); return normalize(surface); }
     return lemmaFor(data, surface, options || {});
   };
