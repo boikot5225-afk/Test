@@ -186,7 +186,10 @@ export async function analyze(surface) {
   const pos = override?.pos || (noun ? 'noun' : '');
   const article = gender ? ARTICLES[gender] || '' : '';
   const notes = [];
-  if (article) notes.push(`${article} ${raw.charAt(0).toUpperCase()}${lemma.slice(1)}`);
+  // Существительное в немецком пишется с заглавной, и в карточке оно должно
+  // стоять так же: «die Stunde», а не «die stunde».
+  const capitalized = lemma.charAt(0).toUpperCase() + lemma.slice(1);
+  if (article) notes.push(`${article} ${capitalized}`);
   else if (lemma !== word) notes.push(`лемма ${lemma}`);
   if (compound?.parts?.length > 1) notes.push(`состав: ${compound.parts.join(' + ')}`);
   if (rank) notes.push(`частотность #${rank}`);

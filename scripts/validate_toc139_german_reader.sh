@@ -220,7 +220,11 @@ assert 'globalThis.readerGermanLemmaFor' not in data_layer, \
     'слой данных снова занял имя словарного теста'
 
 # Два источника, а не один: регистр восстановить из частотного списка нельзя.
-for probe in ['de_noun_lemma.tsv', 'de_vocab_lemma.tsv', 'de_noun_gender.tsv']:
+# Строки проверяются ровно в том виде, в каком их ищет проверка собранного
+# APK: склеенный из кусков путь там не найдётся, и сборка упадёт после всей
+# долгой работы.
+for probe in ['dereader/de_noun_lemma.tsv', 'dereader/de_vocab_lemma.tsv',
+              'dereader/de_noun_gender.tsv', 'dereader/de_vocab_frequency.tsv']:
     assert probe in data_layer, f'German data layer lost a table: {probe}'
 assert 'MIN_PART = 3' in data_layer and "FUGEN = ['', 's', 'es', 'n', 'en', 'er', 'e']" in data_layer, \
     'разбор составных на устройстве разошёлся со сборщиком'
@@ -241,5 +245,52 @@ assert 'MIN_PART = 3' in builder and 'FUGEN = ("", "s", "es", "n", "en", "er", "
 
 print('toc139 German source gate: PASS')
 PY
+
+# Проверка собранного APK ищет в файлах точные строки, и найти их она может
+# только если они там есть буквально. Одна такая строка уже стоила полной
+# сборки: путь к словарю был склеен из двух кусков, и grep не нашёл ничего.
+# Поэтому каждую её строку сверяем с исходником здесь, до сборки.
+python3 - <<'PYPROBE'
+import re
+from pathlib import Path
+import yaml
+
+workflow = yaml.safe_load(
+    Path('.github/workflows/android-apk-toc139-german-reader.yml').read_text(encoding='utf-8')
+)
+step = next(
+    s['run'] for s in workflow['jobs']['german-reader-quality']['steps']
+    if 'PYCHECK' in (s.get('run') or '')
+)
+sources = {
+    'de-vocab-data-v1.js': 'js/reader/de-vocab-data-v1.js',
+    'de-reader-pipeline-v1.js': 'js/reader/de-reader-pipeline-v1.js',
+    'de-lexical-pipeline-v1.js': 'js/reader/de-lexical-pipeline-v1.js',
+    'de-context-batch-v1.js': 'js/reader/de-context-batch-v1.js',
+    'de-vocab-estimate.js': '/tmp/toc139-de-vocab-estimate.js',
+    'interactions-runtime.js': 'js/reader/interactions-runtime.js',
+    'word-lookup.js': 'js/reader/word-lookup.js',
+    'app.js': 'js/reader-app.js',
+    'tts.js': 'js/tts.js',
+}
+checked = 0
+for line in step.split('\n'):
+    match = re.match(r'grep -qF ("[^"]*"|\'[^\']*\') "\$WORK/([^"]+)"', line.strip())
+    if not match:
+        continue
+    needle, name = match.group(1)[1:-1], match.group(2)
+    if '$' in needle or '$' in name:
+        continue  # строки с подстановкой проверяются ниже, уже раскрытыми
+    assert name in sources, f'проверка APK смотрит в неизвестный файл: {name}'
+    text = Path(sources[name]).read_text(encoding='utf-8')
+    assert needle in text, f'проверка APK ищет в {name} строку, которой там нет: {needle}'
+    checked += 1
+for module in ['de-vocab-data-v1', 'de-reader-pipeline-v1', 'de-context-batch-v1', 'de-lexical-pipeline-v1']:
+    runtime = Path('js/reader/interactions-runtime.js').read_text(encoding='utf-8')
+    assert f"import './{module}.js?v=1';" in runtime, f'модуль не импортирован: {module}'
+    checked += 1
+assert checked >= 12, f'сверка с проверкой APK нашла подозрительно мало строк: {checked}'
+print(f'toc139 APK probe contract: PASS ({checked} строк)')
+PYPROBE
 
 echo "toc139 German Reader gate: PASS"

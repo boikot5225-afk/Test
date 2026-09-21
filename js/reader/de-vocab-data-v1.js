@@ -14,11 +14,13 @@
 // путь: там сначала спрашивается существительное, а если его нет — общая
 // карта. Слово в середине предложения с заглавной — почти наверняка
 // существительное, и оно спрашивается только как существительное.
-const BASE = '../../../dereader/';
-const FREQUENCY_URL = new URL(`${BASE}de_vocab_frequency.tsv?v=1`, import.meta.url).href;
-const GENERAL_URL = new URL(`${BASE}de_vocab_lemma.tsv?v=1`, import.meta.url).href;
-const NOUN_URL = new URL(`${BASE}de_noun_lemma.tsv?v=1`, import.meta.url).href;
-const GENDER_URL = new URL(`${BASE}de_noun_gender.tsv?v=1`, import.meta.url).href;
+// Пути выписаны целиком, как у французского и испанского слоёв: склеенный из
+// кусков путь нельзя найти в файле ни глазами, ни проверкой APK — а проверка,
+// которая ищет несуществующую строку, падает на ровном месте.
+const FREQUENCY_URL = new URL('../../../dereader/de_vocab_frequency.tsv?v=1', import.meta.url).href;
+const GENERAL_URL = new URL('../../../dereader/de_vocab_lemma.tsv?v=1', import.meta.url).href;
+const NOUN_URL = new URL('../../../dereader/de_noun_lemma.tsv?v=1', import.meta.url).href;
+const GENDER_URL = new URL('../../../dereader/de_noun_gender.tsv?v=1', import.meta.url).href;
 
 // Те же числа, что в scripts/build_de_reader_resources.py: разбор на телефоне
 // обязан давать ровно то же, что проверено на сборке.
