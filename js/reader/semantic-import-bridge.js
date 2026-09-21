@@ -15,6 +15,66 @@ let pendingImport = null;
 let pendingLocalLibrary = [];
 let pendingImportAndroidExternal = false;
 let bridgeStarted = false;
+let manualFile = null;
+let manualInput = null;
+let manualQueue = Promise.resolve();
+let manualSaving = false;
+let manualParsing = false;
+
+function selectedEpub(input) {
+  const file = input?.files?.[0];
+  return file && (/\.epub$/i.test(file.name || '') || file.type === 'application/epub+zip') ? file : null;
+}
+
+function startManualEpub(file, input) {
+  manualFile = file;
+  manualInput = input;
+  manualParsing = true;
+  const run = manualQueue.catch(() => {}).then(async () => {
+    // A newer selection supersedes a queued one; the parsers never overlap.
+    if (manualFile !== file || manualInput !== input) return;
+    const app = await canonicalReaderApp();
+    await handleSemanticEpub({ target: { files: [file] } }, app.readerImportFromFile);
+  });
+  const settled = run.finally(() => {
+    if (manualQueue === settled) manualParsing = false;
+  });
+  manualQueue = settled;
+  return settled;
+}
+
+// Own actual UI events, rather than depending on which startup layer last
+// assigned window.readerImportFromFile/saveReaderImport. The save path also
+// recovers a native picker selection whose change handler did not run.
+function installManualEpubEvents() {
+  document.addEventListener('change', event => {
+    const input = event.target;
+    if (input?.id !== 'reader-import-file') return;
+    const file = selectedEpub(input);
+    if (!file) { manualFile = null; manualInput = null; pendingImport = null; return; }
+    event.stopImmediatePropagation();
+    void startManualEpub(file, input).catch(error => setStatus(`❌ EPUB: ${error.message || error}`, 'error'));
+  }, true);
+  document.addEventListener('click', event => {
+    const button = event.target?.closest?.('button');
+    if (!/^\s*saveReaderImport\s*\(/.test(button?.getAttribute('onclick') || '')) return;
+    const input = document.getElementById('reader-import-file');
+    const file = selectedEpub(input) || (input === manualInput ? manualFile : null);
+    if (!file) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (manualSaving) return;
+    manualSaving = true;
+    button.disabled = true;
+    void (async () => {
+      if (manualFile !== file || manualInput !== input || (!pendingImport && !manualParsing)) await startManualEpub(file, input);
+      else await manualQueue;
+      if (!pendingImport) return; // Keep parse error visible; never save empty text.
+      await savePendingSemanticBook(() => {});
+    })().catch(error => setStatus(`❌ EPUB: ${error.message || error}`, 'error'))
+      .finally(() => { manualSaving = false; button.disabled = false; });
+  }, true);
+}
 
 function canonicalReaderApp() {
   if (!canonicalReaderPromise) canonicalReaderPromise = import(READER_APP_URL);
@@ -158,7 +218,7 @@ function buildPreview(result) {
 
 async function handleSemanticEpub(event, originalImport) {
   const file = event?.target?.files?.[0];
-  if (!file || !String(file.name || '').toLowerCase().endsWith('.epub')) {
+  if (!file || (!String(file.name || '').toLowerCase().endsWith('.epub') && file.type !== 'application/epub+zip')) {
     pendingImportAndroidExternal = false;
     return originalImport(event);
   }
@@ -413,6 +473,7 @@ export function installSemanticRouteNow() {
 export function installSemanticImportBridge() {
   if (bridgeStarted) return;
   bridgeStarted = true;
+  installManualEpubEvents();
   if (installWhenReady()) return;
 
   let attempts = 0;

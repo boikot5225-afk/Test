@@ -1,4 +1,4 @@
-name: Android APK toc140 German Context Import Layout
+name: Android APK toc141 EPUB UI Route
 
 on:
   push:
@@ -71,6 +71,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/validate_toc139_german_reader.sh
+          node scripts/check-epub-ui-route.mjs
           node scripts/check-stt-status-contract.mjs
 
       - name: Build universal APK from validated source
@@ -182,7 +183,7 @@ jobs:
       - name: Upload validated debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: toc140-de-context-import-layout-debug-apk
+          name: toc141-epub-ui-route-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 30

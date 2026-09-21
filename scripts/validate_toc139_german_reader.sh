@@ -16,8 +16,8 @@ python3 - <<'PY'
 from pathlib import Path
 p=Path('android/app/build.gradle')
 s=p.read_text(encoding='utf-8')
-assert s.count('versionCode 1046') == 1
-s=s.replace('versionCode 1046','versionCode 1046',1)
+assert s.count('versionCode 1047') == 1
+s=s.replace('versionCode 1047','versionCode 1047',1)
 p.write_text(s,encoding='utf-8')
 PY
 bash scripts/validate_toc138_fr_layout_performance.sh
