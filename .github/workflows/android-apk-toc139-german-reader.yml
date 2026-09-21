@@ -1,0 +1,185 @@
+name: Android APK toc139 German Reader
+
+on:
+  push:
+    branches:
+      - claude/affectionate-knuth-6xm017
+      - feature/77.42-toc139-de-reader
+    paths:
+      - '.github/workflows/android-apk-toc139-german-reader.yml'
+      - 'scripts/build_de_reader_resources.py'
+      - 'scripts/materialize_de_vocab_module.py'
+      - 'scripts/validate_toc139_german_reader.sh'
+      - 'js/reader/de-vocab-data-v1.js'
+      - 'js/reader/de-reader-pipeline-v1.js'
+      - 'js/reader/de-lexical-pipeline-v1.js'
+      - 'js/reader/de-context-batch-v1.js'
+      - 'js/reader/word-lookup.js'
+      - 'js/reader/interactions-runtime.js'
+      - 'js/reader-app.js'
+      - 'js/tts.js'
+      - 'functions/index.js'
+      - 'functions/de-context-task.js'
+      - 'android/app/build.gradle'
+  workflow_dispatch:
+
+jobs:
+  german-reader-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # The action's default package list still asks for the withdrawn
+          # legacy `tools` package; platform-tools is all this job needs.
+          packages: platform-tools
+
+      - name: Restore established Reader AI signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_KEYSTORE_BASE64}"
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/reader-ai.jks"
+          echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/reader-ai.jks" >> "$GITHUB_ENV"
+
+      - name: Materialize offline guest cold-start fix
+        shell: bash
+        run: python3 scripts/patch_toc126_guest_cold_start.py
+
+      - name: Validate frozen toc138 plus German contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/validate_toc139_german_reader.sh
+          node scripts/check-stt-status-contract.mjs
+
+      - name: Build universal APK from validated source
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify German resources and modules inside APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          test -f "$APK"
+          unzip -t "$APK" >/dev/null
+          WORK="$(mktemp -d)"
+          for asset in de_vocab_frequency.tsv de_vocab_lemma.tsv de_noun_lemma.tsv \
+                       de_noun_gender.tsv de_ru_core.json de_ru_senses.json de_vocab_manifest.json; do
+            unzip -p "$APK" "assets/dereader/${asset}" > "$WORK/${asset}"
+            test -s "$WORK/${asset}"
+          done
+
+          # Немецкий словарь собран из двух источников, и провалиться может
+          # каждый по отдельности: частотный список без таблиц склонений даёт
+          # выдуманные глаголы вместо существительных, а таблицы без частотного
+          # списка — слова без порядка. Поэтому проверяются оба, на настоящих
+          # словах, а не по размеру файла.
+          python3 - "$WORK" <<'PYCHECK'
+          import json, sys
+          from pathlib import Path
+
+          work = Path(sys.argv[1])
+          rank, kind = {}, {}
+          for index, line in enumerate(work.joinpath('de_vocab_frequency.tsv').read_text(encoding='utf-8').splitlines()):
+              if not line:
+                  continue
+              word, _, tag = line.partition('\t')
+              rank.setdefault(word, index)
+              kind[word] = tag.strip()
+          assert len(rank) == 60000, f'ranked lemmas: {len(rank)}'
+          for word in ('der', 'die', 'und', 'ich', 'nicht'):
+              assert rank.get(word, 10**9) < 40, f'{word} ranked #{rank.get(word)}'
+
+          # Выдуманные simplemma инфинитивы: их не должно быть вовсе.
+          for ghost in ('lampen', 'tischen', 'zimmern', 'stunden'):
+              assert ghost not in rank, f'invented lemma shipped: {ghost}'
+          for real in ('lampe', 'tisch', 'zimmer', 'stunde'):
+              assert real in rank, f'missing real noun: {real}'
+
+          # ß сворачивается в ss в частотном списке — настоящее написание
+          # приходит из таблиц склонений, и без него этих слов нет вовсе.
+          for word in ('straße', 'fußball', 'groß'):
+              assert word in rank, f'missing ß spelling: {word}'
+
+          nouns = {w for w, t in kind.items() if t == 'NOUN'}
+          names = {w for w, t in kind.items() if t == 'NAME'}
+          assert len(nouns) > 20000, f'nouns marked: {len(nouns)}'
+          assert len(names) > 1000, f'names marked: {len(names)}'
+          assert 'berlin' in names and 'haus' in nouns
+
+          forms = dict(line.split('\t', 1) for line in
+                       work.joinpath('de_noun_lemma.tsv').read_text(encoding='utf-8').splitlines() if '\t' in line)
+          assert len(forms) > 30000, f'noun forms: {len(forms)}'
+          for form, lemma in {'häuser': 'haus', 'stunden': 'stunde', 'lampen': 'lampe',
+                              'strassen': 'straße', 'aufgaben': 'aufgabe'}.items():
+              assert forms.get(form) == lemma, f'{form} -> {forms.get(form)}, expected {lemma}'
+          assert forms.get('maria') is None, 'имя записано формой чужого существительного'
+          assert forms.get('reis') is None, 'рис записан формой бразильского реала'
+
+          gender = dict(line.split('\t', 1) for line in
+                        work.joinpath('de_noun_gender.tsv').read_text(encoding='utf-8').splitlines() if '\t' in line)
+          for word, genus in {'haus': 'n', 'straße': 'f', 'tisch': 'm'}.items():
+              assert gender.get(word) == genus, f'{word} gender {gender.get(word)} != {genus}'
+
+          core = json.loads(work.joinpath('de_ru_core.json').read_text(encoding='utf-8'))
+          assert len(core) > 8000, f'DE-RU entries: {len(core)}'
+          manifest = json.loads(work.joinpath('de_vocab_manifest.json').read_text(encoding='utf-8'))
+          assert manifest['language'] == 'de'
+          assert manifest['ranked_lemmas'] == 60000
+          print(f"German assets: {len(rank)} lemmas, {len(nouns)} nouns, {len(names)} names, "
+                f"{len(forms)} noun forms, {len(gender)} genders, {len(core)} DE-RU entries")
+          PYCHECK
+
+          for module in de-vocab-data-v1 de-reader-pipeline-v1 de-lexical-pipeline-v1 \
+                        de-context-batch-v1 de-vocab-estimate interactions-runtime word-lookup; do
+            unzip -p "$APK" "assets/www/js/reader/${module}.js" > "$WORK/${module}.js"
+            test -s "$WORK/${module}.js"
+          done
+          # Модуль, который не импортирован, на телефоне просто не существует —
+          # и выглядит это как «немецкий не работает», без единой ошибки.
+          for module in de-vocab-data-v1 de-reader-pipeline-v1 de-context-batch-v1 de-lexical-pipeline-v1; do
+            grep -qF "import './${module}.js?v=1';" "$WORK/interactions-runtime.js"
+          done
+          grep -qF "if (lang === 'de') {" "$WORK/word-lookup.js"
+          grep -qF 'readerGermanLexicalAnalysisFor' "$WORK/word-lookup.js"
+          grep -qF 'dereader/de_noun_lemma.tsv' "$WORK/de-vocab-data-v1.js"
+          grep -qF 'dereader/de_vocab_lemma.tsv' "$WORK/de-vocab-estimate.js"
+          grep -qF 'readerGermanLexicalOverrideLemmaFor' "$WORK/de-vocab-estimate.js"
+          grep -qF "task: 'de_context_batch'" "$WORK/de-context-batch-v1.js"
+
+          # ß — буква. Без неё в наборе ядро обрезает Fuß до fu.
+          unzip -p "$APK" assets/www/js/reader-app.js > "$WORK/app.js"
+          grep -qF "[^a-zà-öø-ÿœæß'-]" "$WORK/app.js"
+          grep -qF "label: 'Deutsch'" "$WORK/app.js"
+          # У Kokoro нет немецкого голоса; уход в облако читал бы Mädchen
+          # по-английски.
+          unzip -p "$APK" assets/www/js/tts.js > "$WORK/tts.js"
+          grep -qF "'de-DE'" "$WORK/tts.js"
+          rm -rf "$WORK"
+
+      - name: Upload validated debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: toc139-german-reader-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30

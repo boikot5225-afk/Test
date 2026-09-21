@@ -24,6 +24,7 @@ import './es-lexical-pipeline-v1.js?v=134'; // toc134: Spanish word cards use Sp
 import './es-parity-ui-v1.js?v=136'; // toc136: preserve EPUB justification with inline Spanish gloss anchors
 import './de-vocab-data-v1.js?v=1'; // немецкий: частотность, склонения, род, разбор составных
 import './de-reader-pipeline-v1.js?v=1'; // немецкий: Known/Unknown и перевод под словом, с учётом регистра
+import './de-context-batch-v1.js?v=1'; // немецкий: уточнение перевода по абзацу, с разбором составных в запросе
 import './de-lexical-pipeline-v1.js?v=1'; // немецкий: карточка слова с артиклем и разбором, без французских запасных путей
 import './toc51-stability.js?v=2';
 import './toolbar-scroll.js?v=1';

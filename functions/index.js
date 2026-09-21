@@ -2,6 +2,7 @@ const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https')
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
 const { resolveDeepSeekModel } = require('./deepseek-model');
+const { buildDeContextBatchPrompt } = require('./de-context-task');
 
 const DEEPSEEK_API_KEY = defineSecret('DEEPSEEK_API_KEY');
 const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');
@@ -392,6 +393,10 @@ Return ONLY valid JSON:
 Use the infinitive if the token is a conjugated form. Always set group as exactly er, ir, re, or irr. Always set aux as exactly avoir or être. Include all requested tenses even for common verbs.
 TOKEN: ${body.word || body.infinitive || body.surface || ''}
 CONTEXT: ${body.context || ''}`;
+  }
+
+  if (task === 'de_context_batch') {
+    return buildDeContextBatchPrompt(body);
   }
 
   if (task === 'reverse_lookup') {

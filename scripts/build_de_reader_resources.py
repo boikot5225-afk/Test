@@ -261,9 +261,10 @@ def build_noun_index(entries, names, rank_of):
                 if variant == lemma:
                     continue
                 # Reis — это рис, а не множественное число бразильского Real.
-                # Форму, которая сама есть более частое словарное слово, чужой
-                # лемме не отдаём.
-                if lemma_rank.get(variant, 10**12) <= rank:
+                # Слово, у которого есть своя словарная статья, чужой лемме не
+                # отдаём вовсе: частотность тут не судья — Real Madrid сделал
+                # реал частотнее риса, и по частоте рис проиграл бы.
+                if variant in lemma_rank:
                     continue
                 # Maria — это имя, а не множественное число лунного Mare:
                 # частое имя чужой лемме не отдаём, иначе оно исчезнет из
@@ -554,15 +555,19 @@ def self_test():
     assert "berlin" in names and "lampe" not in names, sorted(names)
 
     surfaces = ["habe", "haben", "ging", "gehen", "gute", "haus", "häuser", "lampe",
-                "lampen", "tür", "türen", "arbeit", "strasse", "aufgaben", "reis",
+                "lampen", "tür", "türen", "arbeit", "strasse", "aufgaben",
                 # Настоящий глагол в списке есть и сам по себе — ранг он берёт
                 # оттуда, а не у формы существительного Aufgaben.
-                "aufgeben", "berlin", "maria", "strassen", "strasses", "real", "mare"]
+                "aufgeben", "berlin", "maria", "strassen",
+                # Real Madrid сделал реал частотнее риса — на настоящих данных
+                # реал стоит 1479-м, а рис 3795-м. Порядок здесь тот же.
+                "real", "reis", "strasses", "mare"]
     rank_of = {surface: rank for rank, surface in enumerate(surfaces)}
     form_map, lemma_rank, genders = build_noun_index(entries, names, rank_of)
     assert form_map["strasse"] == "straße", form_map.get("strasse")
     assert form_map["straßen"] == "straße"
-    assert form_map.get("reis") is None, "рис не может быть формой бразильского реала"
+    assert form_map.get("reis") is None, \
+        "рис не может быть формой бразильского реала, даже если реал частотнее"
     assert form_map.get("maria") is None, "частое имя не может быть формой чужого существительного"
     assert form_map.get("strassen") == "straße", "редкое имя не отнимает форму у частотного слова"
     assert "zwirnsfaden" not in lemma_rank, "слово, которого корпус не видел, в словарь не берём"
