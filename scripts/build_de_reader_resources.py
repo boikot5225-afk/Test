@@ -55,6 +55,10 @@ import sqlite3
 import urllib.request
 from pathlib import Path
 
+# Версии закреплены: список слов и таблицы склонений — это данные, и молчаливое
+# обновление источника меняет словарь под ногами у читателя.
+REQUIREMENTS = ("wordfreq==3.1.1", "simplemma==2.0.0", "german-nouns==1.2.5")
+
 WIKDICT_URL = "https://download.wikdict.com/dictionaries/sqlite/2_2026-06/de-ru.sqlite3"
 USER_AGENT = "Reader-AI-German-resource-builder/1.0"
 
@@ -70,6 +74,12 @@ MIN_DICT_ENTRIES = 8_000
 # подменили заглушкой.
 MIN_NOUNS = 80_000
 MIN_NOUN_FORMS = 30_000
+# Сколько лемм уезжает на телефон. Весь список — это 142 тысячи слов и пять
+# мегабайт, из которых последние сто тысяч покрывают полтора процента живого
+# текста: замерено по частотам wordfreq на его же списке форм. Шестьдесят тысяч
+# дают 97% текста и 2.9 МБ — столько же, сколько английский слой, а остальное
+# добирается разбором составных слов, части которых и так частотные.
+VOCAB_LIMIT = 60_000
 
 # Однобуквенных слов в немецком нет: одиночные буквы в частотном списке —
 # это обрывки сокращений, и в словаре им делать нечего.
@@ -122,6 +132,16 @@ def download(url: str, path: Path, *, sha256: str = "", min_size: int = 1) -> Pa
         if actual != sha256:
             raise RuntimeError(f"sha256 mismatch for {url}: {actual} != {sha256}")
     return path
+
+
+def install_requirements():
+    """Ставит ровно те пакеты, на которых собран словарь."""
+    import subprocess
+    import sys
+
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", *REQUIREMENTS]
+    )
 
 
 def read_surfaces():
@@ -280,7 +300,12 @@ def build_lexical_assets(surfaces, generals, noun_index, output_dir: Path):
             continue
         general_map[surface] = general
 
-    ranked = [lemma for lemma, _ in sorted(best_rank.items(), key=lambda kv: (kv[1], kv[0]))]
+    ordered = [lemma for lemma, _ in sorted(best_rank.items(), key=lambda kv: (kv[1], kv[0]))]
+    ranked = ordered[:VOCAB_LIMIT]
+    shipped = set(ranked)
+    form_map = {form: lemma for form, lemma in form_map.items() if lemma in shipped}
+    general_map = {form: lemma for form, lemma in general_map.items() if lemma in shipped}
+    genders = {lemma: genus for lemma, genus in genders.items() if lemma in shipped}
     with (output_dir / "de_vocab_frequency.tsv").open("w", encoding="utf-8", newline="\n") as fh:
         for lemma in ranked:
             # Часть речи заполняем только там, где её подтвердил Викисловарь;
@@ -552,15 +577,21 @@ def self_test():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--output-dir", required=True)
-    ap.add_argument("--cache-dir", required=True)
+    ap.add_argument("--output-dir")
+    ap.add_argument("--cache-dir")
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--install-deps", action="store_true")
     args = ap.parse_args()
 
+    if args.install_deps:
+        install_requirements()
+        return
     if args.self_test:
         self_test()
         return
 
+    if not args.output_dir or not args.cache_dir:
+        ap.error("нужны --output-dir и --cache-dir")
     output_dir = Path(args.output_dir)
     cache_dir = Path(args.cache_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -580,6 +611,8 @@ def main():
     )
     if len(ranked) < MIN_LEMMAS:
         raise RuntimeError(f"лемм получилось {len(ranked)}, ожидалось не меньше {MIN_LEMMAS}")
+    if len(ranked) > VOCAB_LIMIT:
+        raise RuntimeError(f"в словарь уехало {len(ranked)} лемм при пределе {VOCAB_LIMIT}")
 
     # Составные слова — половина немецких существительных в тексте. Ресурс, на
     # котором Haustür не раскладывается, немецким читателю не будет.

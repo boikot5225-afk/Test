@@ -24,6 +24,9 @@ def frenchReaderCacheDir = new File(repoRoot, 'build/fr-reader-cache')
 def spanishReaderAssetDir = layout.buildDirectory.dir('generated/spanishReaderAssets')
 def spanishReaderOutputDir = layout.buildDirectory.dir('generated/spanishReaderAssets/esreader')
 def spanishReaderCacheDir = new File(repoRoot, 'build/es-reader-cache')
+def germanReaderAssetDir = layout.buildDirectory.dir('generated/germanReaderAssets')
+def germanReaderOutputDir = layout.buildDirectory.dir('generated/germanReaderAssets/dereader')
+def germanReaderCacheDir = new File(repoRoot, 'build/de-reader-cache')
 def spanishWebCodeDir = layout.buildDirectory.dir('generated/spanishWebCode')
 def spanishVocabModuleFile = layout.buildDirectory.file('generated/spanishWebCode/es-vocab-estimate.js')
 
@@ -40,7 +43,7 @@ android {
         // отдавал закэшированные js-модули, и любая правка выглядела как
         // «ничего не изменилось» — включая слои, которые вообще не грузились.
         // Этот номер обязан расти на каждой сборке, уходящей на устройство.
-        versionCode 1044
+        versionCode 1045
         versionName '77.42-toc138-fr-layout-performance'
     }
 
@@ -86,6 +89,7 @@ android {
                     migakuZhAssetDir.get().asFile,
                     frenchReaderAssetDir.get().asFile,
                     spanishReaderAssetDir.get().asFile,
+                    germanReaderAssetDir.get().asFile,
             ]
         }
     }
@@ -289,10 +293,52 @@ tasks.register('prepareSpanishReaderResources') {
     }
 }
 
+tasks.register('prepareGermanReaderResources') {
+    inputs.file(new File(repoRoot, 'scripts/build_de_reader_resources.py'))
+    outputs.file(layout.buildDirectory.file('generated/germanReaderAssets/dereader/de_vocab_frequency.tsv'))
+    outputs.file(layout.buildDirectory.file('generated/germanReaderAssets/dereader/de_vocab_lemma.tsv'))
+    outputs.file(layout.buildDirectory.file('generated/germanReaderAssets/dereader/de_noun_lemma.tsv'))
+    outputs.file(layout.buildDirectory.file('generated/germanReaderAssets/dereader/de_noun_gender.tsv'))
+    outputs.file(layout.buildDirectory.file('generated/germanReaderAssets/dereader/de_vocab_manifest.json'))
+    outputs.file(layout.buildDirectory.file('generated/germanReaderAssets/dereader/de_ru_core.json'))
+    outputs.file(layout.buildDirectory.file('generated/germanReaderAssets/dereader/de_ru_senses.json'))
+    outputs.file(layout.buildDirectory.file('generated/germanReaderAssets/dereader/NOTICE.txt'))
+
+    doLast {
+        File script = new File(repoRoot, 'scripts/build_de_reader_resources.py')
+        File outputDir = germanReaderOutputDir.get().asFile
+        outputDir.mkdirs()
+        germanReaderCacheDir.mkdirs()
+        logger.lifecycle("Building mandatory German Reader lexical resources…")
+        // Немецкий словарь собирается из pip-пакетов, и версии у них закреплены
+        // в самом скрипте: ставить их отдельным списком здесь — значит однажды
+        // собрать словарь не из того, из чего он проверен.
+        exec {
+            commandLine 'python3', script.absolutePath, '--install-deps'
+        }
+        exec {
+            commandLine 'python3', script.absolutePath, '--self-test'
+        }
+        exec {
+            commandLine 'python3', script.absolutePath,
+                    '--output-dir', outputDir.absolutePath,
+                    '--cache-dir', germanReaderCacheDir.absolutePath
+        }
+        ['de_vocab_frequency.tsv', 'de_vocab_lemma.tsv', 'de_noun_lemma.tsv',
+         'de_noun_gender.tsv', 'de_ru_core.json', 'de_ru_senses.json'].each { name ->
+            File generated = new File(outputDir, name)
+            if (!generated.exists() || generated.length() == 0L) {
+                throw new GradleException("Missing mandatory German Reader asset: ${name}")
+            }
+        }
+    }
+}
+
 tasks.named('preBuild') {
     dependsOn 'syncWebAssets'
     dependsOn 'prepareEnRuWikDict'
     dependsOn 'prepareZhMigakuResources'
     dependsOn 'prepareFrenchReaderResources'
     dependsOn 'prepareSpanishReaderResources'
+    dependsOn 'prepareGermanReaderResources'
 }

@@ -2062,7 +2062,7 @@ export function startSRSReview() {
 
 // ── Переключение языка ──
 function setAppLang(lang) {
-  const allowed = ['fr', 'zh', 'en', 'es', 'ja'];
+  const allowed = ['fr', 'zh', 'en', 'es', 'ja', 'de'];
   if (!allowed.includes(lang)) return;
   globalThis.AN2_LANG = lang;
   try { localStorage.setItem('an2_lang', lang); } catch {}
@@ -2101,11 +2101,13 @@ function updateLangUI() {
   const btnZh = document.getElementById('hlb-zh');
   const btnEs = document.getElementById('hlb-es');
   const btnJa = document.getElementById('hlb-ja');
+  const btnDe = document.getElementById('hlb-de');
   if (btnFr) btnFr.classList.toggle('active', lang === 'fr');
   if (btnEn) btnEn.classList.toggle('active', isEn);
   if (btnZh) btnZh.classList.toggle('active', isZh);
   if (btnEs) btnEs.classList.toggle('active', isEs);
   if (btnJa) btnJa.classList.toggle('active', lang === 'ja');
+  if (btnDe) btnDe.classList.toggle('active', lang === 'de');
 
   // 4th nav button
   const icon = document.getElementById('bn-practice-icon');
