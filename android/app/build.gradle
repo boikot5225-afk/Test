@@ -29,6 +29,8 @@ def germanReaderOutputDir = layout.buildDirectory.dir('generated/germanReaderAss
 def germanReaderCacheDir = new File(repoRoot, 'build/de-reader-cache')
 def spanishWebCodeDir = layout.buildDirectory.dir('generated/spanishWebCode')
 def spanishVocabModuleFile = layout.buildDirectory.file('generated/spanishWebCode/es-vocab-estimate.js')
+def germanWebCodeDir = layout.buildDirectory.dir('generated/germanWebCode')
+def germanVocabModuleFile = layout.buildDirectory.file('generated/germanWebCode/de-vocab-estimate.js')
 
 android {
     namespace 'space.saintjust.reader.stage1'
@@ -119,8 +121,28 @@ tasks.register('prepareSpanishWebCode') {
     }
 }
 
+tasks.register('prepareGermanWebCode') {
+    inputs.file(new File(repoRoot, 'js/reader/fr-vocab-estimate.js'))
+    inputs.file(new File(repoRoot, 'scripts/materialize_de_vocab_module.py'))
+    outputs.file(germanVocabModuleFile)
+
+    doLast {
+        File output = germanVocabModuleFile.get().asFile
+        output.parentFile.mkdirs()
+        exec {
+            commandLine 'python3',
+                    new File(repoRoot, 'scripts/materialize_de_vocab_module.py').absolutePath,
+                    output.absolutePath
+        }
+        if (!output.exists() || output.length() == 0L) {
+            throw new GradleException('Missing generated German vocabulary module')
+        }
+    }
+}
+
 tasks.register('syncWebAssets', Sync) {
     dependsOn 'prepareSpanishWebCode'
+    dependsOn 'prepareGermanWebCode'
     from(repoRoot) {
         exclude '.git/**'
         exclude '.github/**'
@@ -146,6 +168,9 @@ tasks.register('syncWebAssets', Sync) {
         exclude { it.relativePath.toString() == 'app.js' }
     }
     from(spanishWebCodeDir) {
+        into 'js/reader'
+    }
+    from(germanWebCodeDir) {
         into 'js/reader'
     }
     into layout.buildDirectory.dir('generated/webAssets/www')

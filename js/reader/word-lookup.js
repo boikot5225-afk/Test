@@ -1,7 +1,8 @@
 // Reader local lookup.
 // It keeps language owners isolated:
 // Chinese local/remote dictionary → Japanese local dictionary →
-// Spanish WordHoard/WikDict lexical owner → legacy French quick/cache/verb/noun.
+// Spanish WordHoard/WikDict lexical owner → German Wiktionary/WikDict owner →
+// legacy French quick/cache/verb/noun.
 // DeepSeek is deliberately not called here.
 
 export function createReaderWordLookup({
@@ -54,6 +55,21 @@ export function createReaderWordLookup({
       try { return await analyze(normalized); }
       catch (error) {
         console.warn('[reader lookup] Spanish lexical analysis failed', error?.message || error);
+        return null;
+      }
+    }
+
+    // Немецкий, как испанский, обязан остановиться здесь. Французская цепочка
+    // ниже разобрала бы немецкое слово французской морфологией, а главное —
+    // normalized уже в нижнем регистре, и заглавная буква, которая в немецком
+    // отличает существительное от глагола, до владельца не дошла бы. Поэтому
+    // сюда уходит слово как оно стоит на странице.
+    if (lang === 'de') {
+      const analyze = globalThis.readerGermanLexicalAnalysisFor;
+      if (typeof analyze !== 'function') return null;
+      try { return await analyze(String(word || '').trim() || normalized); }
+      catch (error) {
+        console.warn('[reader lookup] German lexical analysis failed', error?.message || error);
         return null;
       }
     }

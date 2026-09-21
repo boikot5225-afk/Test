@@ -1481,10 +1481,13 @@ function readerNormalizeWord(word, lang = null) {
   // Latin-1 accented range covers French, English and Spanish (á í ó ú ñ Ñ ¿ ¡
   // are stripped as punctuation only when not letters — ñ/Ñ and á/í/ó/ú fall
   // inside À-ÖØ-öø-ÿ, so trimming a Spanish word's edges no longer eats them.
+  // ß (U+00DF) sits below à-ö and its capital ẞ is outside every range here, so
+  // without naming it the trim eats a final ß: Fuß became fu, groß became gro,
+  // weiß became wei. No other language in this reader uses the letter.
   return String(word || '')
     .toLowerCase()
     .normalize('NFC')
-    .replace(/^[^a-zà-öø-ÿœæ'-]+|[^a-zà-öø-ÿœæ'-]+$/gi, '')
+    .replace(/^[^a-zà-öø-ÿœæß'-]+|[^a-zà-öø-ÿœæß'-]+$/gi, '')
     .replace(/[’`´]/g, "'")
     .trim();
 }

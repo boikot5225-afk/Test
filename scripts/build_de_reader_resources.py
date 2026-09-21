@@ -85,6 +85,10 @@ VOCAB_LIMIT = 60_000
 # это обрывки сокращений, и в словаре им делать нечего.
 WORD_RE = re.compile(r"^[a-zäöüß][a-zäöüß'’-]+$")
 GENUS = ("m", "f", "n")
+# Пометки Викисловаря для имён: имя, фамилия, топоним, название улицы. Слово,
+# у которого есть только они, — имя собственное; слово, у которого есть и
+# обычное значение (Hans — это ещё и разговорное «парень»), именем не считаем.
+NAME_TAGS = ("Vorname", "Nachname", "Toponym", "Eigenname", "Straßenname")
 
 # Соединительные элементы немецких составных слов: Arbeit+s+zimmer,
 # Sonne+n+schein, Kind+er+garten.
@@ -174,23 +178,29 @@ def fold(value: str) -> str:
 
 
 def read_nouns(items):
-    """(лемма, род, формы) для каждой статьи-существительного."""
+    """(лемма, род, формы) для существительных и отдельно — множество имён."""
     entries = []
+    names, commons = set(), set()
     for item in items:
         pos = item.get("pos") or []
+        lemma = norm(item.get("lemma") or "")
+        if not lemma or not WORD_RE.match(lemma):
+            continue
+        is_name = any(tag in pos for tag in NAME_TAGS)
+        if is_name:
+            names.add(lemma)
+            continue
         if "Substantiv" not in pos or "adjektivische Deklination" in pos:
             # Субстантивированные прилагательные (das Gute) склоняются как
             # прилагательные, и форма gute в тексте почти всегда прилагательное.
             continue
-        lemma = norm(item.get("lemma") or "")
-        if not lemma or not WORD_RE.match(lemma):
-            continue
+        commons.add(lemma)
         genus = (item.get("genus") or "").strip().lower()
         forms = {norm(value) for value in (item.get("flexion") or {}).values() if value}
         forms = {form for form in forms if WORD_RE.match(form)}
         forms.add(lemma)
         entries.append((lemma, genus if genus in GENUS else "", forms))
-    return entries
+    return entries, names - commons
 
 
 def load_nouns():
@@ -219,7 +229,7 @@ def load_lemmatizer():
     return lemmatize
 
 
-def build_noun_index(entries, rank_of):
+def build_noun_index(entries, names, rank_of):
     """Карта «форма -> существительное» и его место в частотном списке.
 
     Слово берётся, только если корпус видел хоть одну его форму: Викисловарь
@@ -255,6 +265,13 @@ def build_noun_index(entries, rank_of):
                 # лемме не отдаём.
                 if lemma_rank.get(variant, 10**12) <= rank:
                     continue
+                # Maria — это имя, а не множественное число лунного Mare:
+                # частое имя чужой лемме не отдаём, иначе оно исчезнет из
+                # словаря, растворившись в редком слове. Редкое имя — отдаём:
+                # Strassen — деревня в Австрии, но в тексте это множественное
+                # число улицы, и мерилом тут опять частотность.
+                if variant in names and rank_of.get(fold(variant), 10**12) <= rank:
+                    continue
                 old = form_map.get(variant)
                 if old is None or rank < lemma_rank[old]:
                     form_map[variant] = lemma
@@ -273,7 +290,7 @@ def general_lemmas(surfaces, lemmatize):
     return out
 
 
-def build_lexical_assets(surfaces, generals, noun_index, output_dir: Path):
+def build_lexical_assets(surfaces, generals, noun_index, names, output_dir: Path):
     """Из форм и двух источников делает порядок лемм и две карты форм.
 
     Порядок леммы — это ранг самой частой её формы: слово, которое читатель
@@ -290,8 +307,13 @@ def build_lexical_assets(surfaces, generals, noun_index, output_dir: Path):
         # число Lampe, а не словарное слово.
         if form_map.get(general, general) != general:
             continue
-        if rank < best_rank.get(general, 10**12):
-            best_rank[general] = rank
+        # Частотность формы принадлежит слову, чьей формой её знают таблицы
+        # склонений. simplemma отвечает на strasse «strass», и без этой строки
+        # редкий Strass занимал бы в словаре место Straße — 323-е.
+        noun_of_surface = form_map.get(surface, "")
+        if not noun_of_surface or noun_of_surface == general:
+            if rank < best_rank.get(general, 10**12):
+                best_rank[general] = rank
         if general == surface:
             continue
         # abarbeiten — не лемма слова arbeit: форма сидит внутри чужого глагола
@@ -310,7 +332,12 @@ def build_lexical_assets(surfaces, generals, noun_index, output_dir: Path):
         for lemma in ranked:
             # Часть речи заполняем только там, где её подтвердил Викисловарь;
             # для остальных слов её никто не знает, и выдумывать нельзя.
-            fh.write(f"{lemma}\t{'NOUN' if lemma in lemma_rank else ''}\n")
+            # Колонка части речи: NOUN — подтверждённое Викисловарём
+            # существительное, NAME — слово, у которого есть только имя
+            # собственное. Немецкое имя в тексте ничем другим не отличается:
+            # с заглавной буквы пишется каждое существительное.
+            kind = "NOUN" if lemma in lemma_rank else ("NAME" if lemma in names else "")
+            fh.write(f"{lemma}\t{kind}\n")
     with (output_dir / "de_noun_lemma.tsv").open("w", encoding="utf-8", newline="\n") as fh:
         for form in sorted(form_map):
             fh.write(f"{form}\t{form_map[form]}\n")
@@ -492,6 +519,20 @@ def self_test():
         # Субстантивированное прилагательное: форма gute должна остаться за gut.
         {"lemma": "Guter", "pos": ["Substantiv", "adjektivische Deklination"], "genus": "m",
          "flexion": {"nominativ singular schwach": "Gute"}},
+        # Maria — имя, и она же множественное число лунного Mare. Настоящая
+        # пара из данных Викисловаря.
+        {"lemma": "Mare", "pos": ["Substantiv"], "genus": "n",
+         "flexion": {"nominativ singular": "Mare", "nominativ plural": "Maria"}},
+        {"lemma": "Maria", "pos": ["Vorname"], "genus": "f",
+         "flexion": {"nominativ singular": "Maria"}},
+        # Strassen — деревня в Австрии и в то же время множественное число
+        # Straße. Редкое имя формы у частотного слова не отнимает.
+        {"lemma": "Strassen", "pos": ["Toponym"], "genus": "n",
+         "flexion": {"nominativ singular": "Strassen"}},
+        # Топоним: в тексте он ничем не отличается от существительного, кроме
+        # того, что его нет среди нарицательных.
+        {"lemma": "Berlin", "pos": ["Toponym"], "genus": "n",
+         "flexion": {"nominativ singular": "Berlin"}},
         # Существительное, которого корпус не видел ни в одной форме.
         {"lemma": "Zwirnsfaden", "pos": ["Substantiv"], "genus": "m",
          "flexion": {"nominativ singular": "Zwirnsfaden"}},
@@ -501,30 +542,36 @@ def self_test():
         "lampe": "lampen", "lampen": "lampen", "haus": "hausen", "häuser": "Haus",
         "gute": "gut", "ging": "gehen", "gehen": "gehen", "habe": "haben",
         "haben": "haben", "tür": "Tür", "türen": "Tür", "arbeit": "abarbeiten",
-        "strasse": "strasse", "aufgaben": "aufgeben", "strasses": "strasses",
-        "reis": "reis", "real": "real",
+        "strasse": "strass", "aufgaben": "aufgeben", "strasses": "strass",
+        "reis": "reis", "real": "real", "aufgeben": "aufgeben", "berlin": "berlin",
+        "maria": "maria", "mare": "mare", "strassen": "strass",
     }
     lemmatize = lambda value: answers.get(norm(value), value)
 
-    entries = read_nouns(articles)
+    entries, names = read_nouns(articles)
     assert ("gute" not in {form for _l, _g, forms in entries for form in forms}), \
         "субстантивированное прилагательное в существительные не берём"
+    assert "berlin" in names and "lampe" not in names, sorted(names)
 
     surfaces = ["habe", "haben", "ging", "gehen", "gute", "haus", "häuser", "lampe",
                 "lampen", "tür", "türen", "arbeit", "strasse", "aufgaben", "reis",
-                "strasses", "real"]
+                # Настоящий глагол в списке есть и сам по себе — ранг он берёт
+                # оттуда, а не у формы существительного Aufgaben.
+                "aufgeben", "berlin", "maria", "strassen", "strasses", "real", "mare"]
     rank_of = {surface: rank for rank, surface in enumerate(surfaces)}
-    form_map, lemma_rank, genders = build_noun_index(entries, rank_of)
+    form_map, lemma_rank, genders = build_noun_index(entries, names, rank_of)
     assert form_map["strasse"] == "straße", form_map.get("strasse")
     assert form_map["straßen"] == "straße"
     assert form_map.get("reis") is None, "рис не может быть формой бразильского реала"
+    assert form_map.get("maria") is None, "частое имя не может быть формой чужого существительного"
+    assert form_map.get("strassen") == "straße", "редкое имя не отнимает форму у частотного слова"
     assert "zwirnsfaden" not in lemma_rank, "слово, которого корпус не видел, в словарь не берём"
     assert genders["haus"] == "n" and genders["lampe"] == "f" and genders["straße"] == "f"
 
     generals = general_lemmas(surfaces, lemmatize)
     with tempfile.TemporaryDirectory() as td:
         ranked, form_map, general_map, genders = build_lexical_assets(
-            surfaces, generals, (form_map, lemma_rank, genders), Path(td)
+            surfaces, generals, (form_map, lemma_rank, genders), names, Path(td)
         )
         assert "lampen" not in ranked, "форма множественного числа не может быть леммой"
         assert "lampe" in ranked and "straße" in ranked
@@ -537,6 +584,8 @@ def self_test():
         assert general_map["gute"] == "gut"
         assert "lampe" not in general_map, "выдуманный инфинитив lampen в карту не попадает"
         assert "arbeit" not in general_map, "abarbeiten — не лемма слова arbeit"
+        assert ranked.index("straße") < ranked.index("strass"), \
+            "частотность формы strasse принадлежит Straße, а не редкому Strass"
         # aufgeben — настоящий глагол, и в словаре ему место; форма aufgaben
         # при этом остаётся и формой существительного Aufgabe. Что показать,
         # решает регистр в тексте: карта существительных отвечает на Aufgaben,
@@ -548,6 +597,9 @@ def self_test():
         head = (Path(td) / "de_vocab_frequency.tsv").read_text(encoding="utf-8").splitlines()
         assert head[:2] == ["habe\tNOUN", "haben\tNOUN"], head[:3]
         assert "gehen\t" in head and "gut\t" in head
+        assert "berlin\tNAME" in head, "топоним помечен как имя собственное"
+        assert "maria\tNAME" in head, "имя осталось в словаре и помечено"
+        assert "lampe\tNOUN" in head
         nouns_file = (Path(td) / "de_noun_lemma.tsv").read_text(encoding="utf-8")
         assert "strasse\tstraße\n" in nouns_file
 
@@ -599,7 +651,8 @@ def main():
 
     surfaces = read_surfaces()
     rank_of = {surface: rank for rank, surface in enumerate(surfaces)}
-    noun_index = build_noun_index(load_nouns(), rank_of)
+    entries, names = load_nouns()
+    noun_index = build_noun_index(entries, names, rank_of)
     if len(noun_index[0]) < MIN_NOUN_FORMS:
         raise RuntimeError(
             f"форм существительных нашлось {len(noun_index[0])}, ожидалось не меньше {MIN_NOUN_FORMS}"
@@ -607,7 +660,7 @@ def main():
 
     generals = general_lemmas(surfaces, load_lemmatizer())
     ranked, form_map, general_map, genders = build_lexical_assets(
-        surfaces, generals, noun_index, output_dir
+        surfaces, generals, noun_index, names, output_dir
     )
     if len(ranked) < MIN_LEMMAS:
         raise RuntimeError(f"лемм получилось {len(ranked)}, ожидалось не меньше {MIN_LEMMAS}")
@@ -640,6 +693,7 @@ def main():
         "ranked_lemmas": len(ranked),
         "noun_forms": len(form_map),
         "nouns_with_gender": len(genders),
+        "proper_names": sum(1 for lemma in ranked if lemma in names),
         "mapped_surface_forms": len(general_map),
         "dictionary_entries": dict_count,
         "ambiguous_heads": sense_count,
