@@ -75,11 +75,17 @@ function sourceLang(body) {
   if (raw === 'ja' || raw.startsWith('ja-') || raw === 'jp' || raw === 'japanese') return 'ja';
   if (raw === 'en' || raw.startsWith('en-') || raw === 'english') return 'en';
   if (raw === 'es' || raw.startsWith('es-') || raw === 'spanish') return 'es';
+  if (raw === 'de' || raw.startsWith('de-') || raw === 'german' || raw === 'deutsch') return 'de';
   return 'fr';
 }
 
 function sourceLangName(code) {
-  return code === 'zh' ? 'Chinese' : code === 'ja' ? 'Japanese' : code === 'en' ? 'English' : code === 'es' ? 'Spanish' : 'French';
+  if (code === 'zh') return 'Chinese';
+  if (code === 'ja') return 'Japanese';
+  if (code === 'en') return 'English';
+  if (code === 'es') return 'Spanish';
+  if (code === 'de') return 'German';
+  return 'French';
 }
 
 function buildPrompt(task, body) {
@@ -101,6 +107,12 @@ CONTEXT: ${body.context || ''}`;
         ? `\nThe reader's local JMdict entry gives lemma "${body.hint.lemma}", reading "${body.hint.reading || ''}", English "${body.hint.en || ''}". Keep those unless the context clearly contradicts them, and spend the answer on a natural Russian meaning.`
         : '';
       return `You are a Japanese-Russian lexical assistant for a language reader. Analyze the selected Japanese token IN ITS CONTEXT. Return ONLY valid JSON with keys: pos (noun|verb|i_adjective|na_adjective|adverb|particle|counter|proper_noun|other), lemma, surface, reading, ru, level (N5|N4|N3|N2|N1|unknown), form_note, note. Rules: lemma is the dictionary form (辞書形) written the way it appears in text — 読んだ → 読む, 高くて → 高い; reading is the WHOLE word in hiragana (a katakana word keeps katakana); form_note names the inflected surface form in Russian ("て-форма", "прошедшее", "отрицание", "вежливая форма", "потенциальная форма"); ru must reflect the meaning AS USED IN THIS CONTEXT — if the token belongs to a set phrase or a compound verb, ru gives the contextual meaning and note names the expression with its Russian meaning; if the token is a name or place, mark proper_noun. Do not invent grammar essays.${hint}
+
+TOKEN: ${body.word || body.surface || ''}
+CONTEXT: ${body.context || ''}`;
+    }
+    if (lang === 'de') {
+      return `You are a German-Russian lexical assistant for a language reader. Analyze the selected German token IN ITS CONTEXT. Return ONLY valid JSON with keys: pos (noun|verb|adjective|adverb|preposition|pronoun|other), lemma, infinitive, ru, gender (m|f|n|), level (A1|A2|B1|B2), case, form_note, note. Rules: German nouns are capitalised — keep the capital in lemma and always give gender, because der/die/das is part of the word. For a verb, lemma and infinitive are the whole verb including a separable prefix (steht … auf → aufstehen), and form_note says the prefix stands apart. form_note also names the form and, for a noun or pronoun, its case (винительный, дательный…). ru must be the meaning of the token AS USED IN THIS CONTEXT, not the most common dictionary sense — if the token belongs to a set phrase or a separable verb, ru gives that meaning and note names the expression with its Russian meaning. For a compound noun, note breaks it into parts with their meanings (Haustür — Haus «дом» + Tür «дверь»); the reader meets compounds no dictionary lists. If the token is a name or place, mark proper_noun and do not invent grammar essays.
 
 TOKEN: ${body.word || body.surface || ''}
 CONTEXT: ${body.context || ''}`;
@@ -540,7 +552,7 @@ const TTS_ENGINES = Object.freeze({
     // Dated/versioned slug — OpenRouter's audio/speech endpoint 502s on the
     // unversioned "openai/gpt-4o-mini-tts" (confirmed in Cloud Function logs).
     model: 'openai/gpt-4o-mini-tts-2025-12-15',
-    voices: { fr: 'alloy', zh: 'alloy', ja: 'alloy', en: 'alloy', es: 'alloy' },
+    voices: { fr: 'alloy', zh: 'alloy', ja: 'alloy', en: 'alloy', es: 'alloy', de: 'alloy' },
   },
 });
 
@@ -554,6 +566,7 @@ function ttsLang(raw) {
   if (v === 'ja' || v.startsWith('ja-') || v === 'jp' || v === 'japanese') return 'ja';
   if (v === 'en' || v.startsWith('en-') || v === 'english') return 'en';
   if (v === 'es' || v.startsWith('es-') || v === 'spanish') return 'es';
+  if (v === 'de' || v.startsWith('de-') || v === 'german' || v === 'deutsch') return 'de';
   return 'fr';
 }
 
@@ -611,7 +624,17 @@ exports.ttsAudio = onRequest(
     const requestedVoice = typeof req.body?.voice === 'string' ? req.body.voice.trim() : '';
     // Voices are server-controlled by language. This prevents a French voice
     // accidentally receiving Chinese text and keeps the UI deterministic.
-    const voice = requestedVoice || engineConf.voices[lang] || engineConf.voices.en;
+    // У Kokoro нет немецкого голоса, а английский читает немецкий текст не
+    // по-немецки: его фонемный словарь не знает ä/ö/ü и молча их выбрасывает —
+    // ровно так японский однажды звучал набором «китайских букв». Лучше
+    // честный отказ: приложение прочитает голосом устройства.
+    if (!engineConf.voices[lang]) {
+      return res.status(400).json({
+        error: 'unsupported_language',
+        message: `Для языка ${lang} у движка ${engine} нет голоса.`,
+      });
+    }
+    const voice = requestedVoice || engineConf.voices[lang];
     const speed = safeTtsSpeed(req.body?.speed ?? req.body?.rate);
 
     let audio = null;

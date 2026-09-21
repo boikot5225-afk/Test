@@ -26,6 +26,7 @@ function normalizeLang(lang = 'fr') {
   if (raw === 'ja' || raw.startsWith('ja-') || raw === 'jp' || raw === 'japanese') return 'ja';
   if (raw === 'en' || raw.startsWith('en-') || raw === 'english') return 'en';
   if (raw === 'es' || raw.startsWith('es-') || raw === 'spanish') return 'es';
+  if (raw === 'de' || raw.startsWith('de-') || raw === 'german' || raw === 'deutsch') return 'de';
   return 'fr';
 }
 
@@ -316,7 +317,7 @@ function hasBrowserVoice(lang = 'fr') {
 
 function pickBrowserVoice(lang = 'fr') {
   const n = normalizeLang(lang);
-  const prefix = n === 'zh' ? 'zh' : n === 'ja' ? 'ja' : n === 'en' ? 'en' : n === 'es' ? 'es' : 'fr';
+  const prefix = n === 'zh' ? 'zh' : n === 'ja' ? 'ja' : n === 'en' ? 'en' : n === 'es' ? 'es' : n === 'de' ? 'de' : 'fr';
   const voices = window.speechSynthesis?.getVoices?.() || [];
   const local = voices.find((v) => v.lang.toLowerCase().startsWith(prefix) && v.localService);
   if (local) return local;
@@ -326,7 +327,9 @@ function pickBrowserVoice(lang = 'fr') {
   // the characters, it describes them: 朝 comes out as "Chinese letter". A
   // French sentence read by an English voice is at least still the sentence, so
   // only the character-based languages insist on a downloaded voice.
-  if (n === 'ja' || n === 'zh') return null;
+  // Немецкий тоже требует установленного голоса: облачного для него нет, и
+  // английский движок прочитает Mädchen как английское слово.
+  if (n === 'ja' || n === 'zh' || n === 'de') return null;
   return voices.find((v) => v.lang.toLowerCase().startsWith(prefix)) || null;
 }
 
@@ -337,7 +340,7 @@ function speakViaWebSpeech(text, { lang = 'fr', rate = 1 } = {}) {
   if (!prepared) return Promise.resolve(false);
   window.speechSynthesis.cancel();
   const utt = new SpeechSynthesisUtterance(prepared);
-  utt.lang = normalizedLang === 'zh' ? 'zh-CN' : normalizedLang === 'ja' ? 'ja-JP' : normalizedLang === 'en' ? 'en-US' : normalizedLang === 'es' ? 'es-ES' : 'fr-FR';
+  utt.lang = normalizedLang === 'zh' ? 'zh-CN' : normalizedLang === 'ja' ? 'ja-JP' : normalizedLang === 'en' ? 'en-US' : normalizedLang === 'es' ? 'es-ES' : normalizedLang === 'de' ? 'de-DE' : 'fr-FR';
   utt.rate = Math.max(0.65, Math.min(1.25, Number(rate) || 1));
   const voice = pickBrowserVoice(normalizedLang);
   if (voice) utt.voice = voice;
@@ -456,6 +459,31 @@ export async function speak(text, opts = {}) {
   const engine = String(localStorage.getItem('ttsEngine') || 'firebase').toLowerCase() === 'webspeech' ? 'webspeech' : 'firebase';
   const rate = opts.rate != null ? Math.max(0.6, Math.min(2, Number(opts.rate))) : getTtsRate();
   if (engine === 'webspeech') return speakViaWebSpeech(prepared, { lang, rate });
+
+  // У облачного Kokoro немецкого голоса нет вовсе, а его фонемный словарь не
+  // знает ä/ö/ü и молча их выбрасывает — так японский когда-то читался
+  // «китайскими буквами». Немецкий поэтому сразу идёт голосом устройства, а не
+  // после неудачного запроса в облако.
+  if (lang === 'de') {
+    if (hasBrowserVoice(lang)) {
+      stopSpeak();
+      try {
+        emitTtsState('playing');
+        return await speakViaWebSpeech(prepared, { lang, rate });
+      } catch (error) {
+        console.warn('[tts] device German voice failed:', error);
+      } finally {
+        emitTtsState('idle');
+      }
+    }
+    if (window.showToast) {
+      window.showToast(
+        '🔇 Нет немецкого голоса. Настройки Android → Язык и ввод → Синтез речи → установи немецкий для Google TTS',
+        8000,
+      );
+    }
+    return false;
+  }
 
   const voiceEngine = getTtsVoiceEngine();
   const voice = getTtsVoice(lang) || defaultKokoroVoice(lang);
