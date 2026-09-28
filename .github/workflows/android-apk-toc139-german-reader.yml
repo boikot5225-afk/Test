@@ -18,6 +18,8 @@ on:
       - 'js/reader/interactions-runtime.js'
       - 'js/reader-app.js'
       - 'js/tts.js'
+      - 'js/reader/ja-readable-inline.js'
+      - 'scripts/check-ja-inline-cache.mjs'
       - 'functions/index.js'
       - 'functions/de-context-task.js'
       - 'android/app/build.gradle'
@@ -69,6 +71,9 @@ jobs:
           set -euo pipefail
           bash scripts/validate_toc139_german_reader.sh
           node scripts/check-stt-status-contract.mjs
+          # Японский текст был нечитаем из-за разбора трёх словарей на каждое
+          # слово главы. Форма, из-за которой это случилось, сторожится здесь.
+          node scripts/check-ja-inline-cache.mjs
 
       - name: Build universal APK from validated source
         working-directory: android
@@ -165,6 +170,13 @@ jobs:
           grep -qF 'dereader/de_vocab_lemma.tsv' "$WORK/de-vocab-estimate.js"
           grep -qF 'readerGermanLexicalOverrideLemmaFor' "$WORK/de-vocab-estimate.js"
           grep -qF "task: 'de_context_batch'" "$WORK/de-context-batch-v1.js"
+          # Японский слой строк перевода: разбор словарей обязан стоять в
+          # одном месте, а не на пути каждого слова главы — иначе проход по
+          # главе занимает секунды, и текст невозможно читать.
+          unzip -p "$APK" assets/www/js/reader/ja-readable-inline.js > "$WORK/ja-readable-inline.js"
+          grep -qF 'function invalidateCaches' "$WORK/ja-readable-inline.js"
+          grep -qF 'const store = caches();' "$WORK/ja-readable-inline.js"
+          test "$(grep -c 'readJson(' "$WORK/ja-readable-inline.js")" -eq 4
 
           # ß — буква. Без неё в наборе ядро обрезает Fuß до fu.
           unzip -p "$APK" assets/www/js/reader-app.js > "$WORK/app.js"

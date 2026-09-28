@@ -16,8 +16,8 @@ python3 - <<'PY'
 from pathlib import Path
 p=Path('android/app/build.gradle')
 s=p.read_text(encoding='utf-8')
-assert s.count('versionCode 1045') == 1
-s=s.replace('versionCode 1045','versionCode 1045',1)
+assert s.count('versionCode 1046') == 1
+s=s.replace('versionCode 1046','versionCode 1046',1)
 p.write_text(s,encoding='utf-8')
 PY
 bash scripts/validate_toc138_fr_layout_performance.sh
@@ -268,6 +268,7 @@ sources = {
     'de-lexical-pipeline-v1.js': 'js/reader/de-lexical-pipeline-v1.js',
     'de-context-batch-v1.js': 'js/reader/de-context-batch-v1.js',
     'de-vocab-estimate.js': '/tmp/toc139-de-vocab-estimate.js',
+    'ja-readable-inline.js': 'js/reader/ja-readable-inline.js',
     'interactions-runtime.js': 'js/reader/interactions-runtime.js',
     'word-lookup.js': 'js/reader/word-lookup.js',
     'app.js': 'js/reader-app.js',

@@ -184,7 +184,7 @@ jobs:
           # cached; four rebuilds went out looking unchanged because it stayed at
           # v=1. One value for all three, checked here so half a bump fails the
           # build rather than shipping two old modules and one new one.
-          JA_MODULE_VERSION='6-tts-cache'
+          JA_MODULE_VERSION='7-ja-inline-speed'
           for module in ja-vocab-estimate ja-readable-inline ja-context-batch; do
             grep -qF "import './${module}.js?v=${JA_MODULE_VERSION}';" "$WORK/runtime.js" \
               || { echo "runtime.js does not import ${module} at v=${JA_MODULE_VERSION}" >&2; exit 1; }
