@@ -16,10 +16,10 @@ python3 - <<'PY'
 from pathlib import Path
 p=Path('android/app/build.gradle')
 s=p.read_text(encoding='utf-8')
-assert s.count('versionCode 1046') == 1
-assert s.count("versionName '77.42-toc138-fr-layout-performance'") == 1
-s=s.replace('versionCode 1046','versionCode 1030',1)
-s=s.replace("versionName '77.42-toc138-fr-layout-performance'","versionName '77.42-toc137-es-card-status'",1)
+assert s.count('versionCode 1048') == 1
+assert s.count("versionName '77.42-toc142-ja-inline-speed'") == 1
+s=s.replace('versionCode 1048','versionCode 1030',1)
+s=s.replace("versionName '77.42-toc142-ja-inline-speed'","versionName '77.42-toc137-es-card-status'",1)
 p.write_text(s,encoding='utf-8')
 PY
 bash scripts/validate_toc137_es_card_status.sh
@@ -41,8 +41,8 @@ panel=text('js/reader/fr-word-panel-smooth-v1.js')
 interactions=text('js/reader/interactions-runtime.js')
 gradle=text('android/app/build.gradle')
 
-assert 'versionCode 1046' in gradle
-assert "versionName '77.42-toc138-fr-layout-performance'" in gradle
+assert 'versionCode 1048' in gradle
+assert "versionName '77.42-toc142-ja-inline-speed'" in gradle
 
 for probe in [
     "import { wordStateIdbPut } from './word-state-idb-store.js?v=1';",

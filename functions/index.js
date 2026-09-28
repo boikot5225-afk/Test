@@ -423,6 +423,7 @@ ${body.query || body.text || ''}`;
 }
 
 function maxTokensForTask(task) {
+  if (task === 'de_context_batch') return 4000;
   if (task === 'generate_verb') return 1400;
   if (task === 'analyze_sentence') return 900;
   if (task === 'song_strophe') return 500;

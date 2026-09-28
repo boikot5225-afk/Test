@@ -31,6 +31,21 @@ function fingerprint(file) {
   return `${String(file?.name || '')}|${Number(file?.size || 0)}|${Number(file?.lastModified || 0)}`;
 }
 
+// Android is allowed to clear/change HTMLInputElement.files as soon as the
+// native picker event has returned. Manual EPUB import deliberately waits for
+// the previous parse and for the audio-state reset, so keeping the original
+// DOM event across those awaits is unsafe. Snapshot the File itself and pass a
+// tiny stable event to the semantic importer later.
+function stableFileEvent(event, file) {
+  return {
+    androidExternal: event?.androidExternal === true,
+    target: {
+      files: [file],
+      value: '',
+    },
+  };
+}
+
 function setStatus(message) {
   const status = document.getElementById('reader-import-status');
   if (!status) return;
@@ -118,6 +133,7 @@ function installIsolation() {
     }
 
     const selectionGeneration = ++manualSelectionGeneration;
+    const capturedEvent = stableFileEvent(event, file);
     const previousPromise = activeManualEpubImport?.promise || Promise.resolve();
     if (activeManualEpubImport) importIsolationStats.supersededCalls += 1;
 
@@ -143,7 +159,7 @@ function installIsolation() {
       clearStaleImportUi();
       setStatus(`⏳ Открываю ${file.name}...`);
       importIsolationStats.epubStarts += 1;
-      return semanticImport.call(this, event, ...args);
+      return semanticImport.call(this, capturedEvent, ...args);
     })().finally(() => {
       if (activeManualEpubImport?.promise === promise) activeManualEpubImport = null;
     });

@@ -138,10 +138,13 @@ function injectStyles() {
   const style = document.createElement('style');
   style.id = 'rd-de-pipeline-v1-style';
   style.textContent = `
-#reader-reading-view.rd-de-pipeline-v1 .reader-paragraph-text{line-height:1.82!important}
-#reader-reading-view.rd-de-pipeline-v1 .rw-de-v1-wrap{display:inline-block!important;position:relative!important;vertical-align:-.37em!important;line-height:1!important;padding:0 0 .58em!important;margin:0 .018em!important;white-space:nowrap!important;overflow:visible!important}
-#reader-reading-view.rd-de-pipeline-v1 .rw-de-v1-wrap>.reader-word{display:inline!important;margin:0!important;padding:0 1px!important;line-height:1.04!important;white-space:nowrap!important;word-break:keep-all!important;overflow-wrap:normal!important}
-#reader-reading-view.rd-de-pipeline-v1 .rw-de-v1-gloss{position:absolute!important;left:50%!important;bottom:.02em!important;transform:translateX(-50%)!important;white-space:nowrap!important;pointer-events:none!important;font-family:'IBM Plex Sans',sans-serif!important;font-size:var(--de-v1-gloss-font,.37em)!important;font-weight:400!important;line-height:1!important;color:var(--text-muted)!important;text-decoration:none!important}
+#reader-reading-view.rd-de-pipeline-v1 .reader-paragraph-text{line-height:1.72!important}
+/* Keep German in the EPUB's normal inline formatting context. inline-block
+   made every annotated word an atomic box; justified paragraphs then stretched
+   the spaces between those boxes across the full phone width. */
+#reader-reading-view.rd-de-pipeline-v1 .rw-de-v1-wrap{display:inline!important;position:relative!important;vertical-align:baseline!important;line-height:inherit!important;padding:0!important;margin:0!important;white-space:normal!important;overflow:visible!important}
+#reader-reading-view.rd-de-pipeline-v1 .rw-de-v1-wrap>.reader-word{display:inline!important;position:relative!important;margin:0!important;padding:0!important;line-height:inherit!important;white-space:nowrap!important;word-break:keep-all!important;overflow-wrap:normal!important}
+#reader-reading-view.rd-de-pipeline-v1 .rw-de-v1-gloss{display:block!important;position:absolute!important;left:50%!important;top:100%!important;bottom:auto!important;transform:translateX(-50%)!important;max-width:none!important;white-space:nowrap!important;pointer-events:none!important;font-family:'IBM Plex Sans',sans-serif!important;font-size:var(--de-v1-gloss-font,.37em)!important;font-weight:400!important;line-height:1!important;color:var(--text-muted)!important;text-decoration:none!important}
 #reader-reading-view.rd-de-pipeline-v1 .rw-de-v1-gloss:empty{visibility:hidden!important}
 `;
   document.head.appendChild(style);
@@ -326,6 +329,8 @@ function processScope(scope, { core, data }) {
       const surface = wordSurface(el);
       if (!surface) continue;
       const key = occurrenceKey(el, paragraph, context);
+      const existingWrap = el.parentElement;
+      if (existingWrap?.dataset?.deContextKey && /^(context-deepseek-batch|context-batch-cache)$/.test(existingWrap.dataset.deProvider || '')) continue;
       const cached = compactRussian(cache[key]?.ru || '');
       if (cached) {
         setGloss(el, cached, cache[key]?.provider || 'occurrence-cache', key);
