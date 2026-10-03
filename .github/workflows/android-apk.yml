@@ -268,7 +268,7 @@ jobs:
             || { echo 'immediate delete IndexedDB delete did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/chapter-render.js | grep -qF "import './delete-fix.js?v=1'" \
             || { echo 'delete fix loader did not ship'; exit 1; }
-          unzip -p "$APK" assets/www/js/reader/library-idb-store.js | grep -qF 'IDB_READ_TIMEOUT_MS = 1200' \
+          unzip -p "$APK" assets/www/js/reader/library-idb-store.js | grep -qF 'IDB_READ_TIMEOUT_MS = 5000' \
             || { echo 'library IndexedDB deadline did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/word-state-idb-store.js | grep -qF 'IDB_READ_TIMEOUT_MS = 700' \
             || { echo 'word-state IndexedDB deadline did not ship'; exit 1; }
