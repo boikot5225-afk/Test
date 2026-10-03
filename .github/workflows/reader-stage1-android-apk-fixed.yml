@@ -34,6 +34,10 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default package list still asks for the withdrawn
+          # legacy `tools` package; platform-tools is sufficient here.
+          packages: platform-tools
 
       - name: Install Android platform 35
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
