@@ -45,8 +45,8 @@ android {
         // отдавал закэшированные js-модули, и любая правка выглядела как
         // «ничего не изменилось» — включая слои, которые вообще не грузились.
         // Этот номер обязан расти на каждой сборке, уходящей на устройство.
-        versionCode 1048
-        versionName '77.42-toc142-ja-inline-speed'
+        versionCode 1049
+        versionName '77.42-toc142-ja-inline-speed-enperf'
     }
 
     buildFeatures {
