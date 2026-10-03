@@ -187,8 +187,8 @@ jobs:
           set -euo pipefail
           grep -qF "TOMBSTONES_BASE_KEY" js/reader/delete-fix.js \
             || { echo 'reader deletion tombstones missing'; exit 1; }
-          grep -qF "libraryIdbPut(storageKey, books)" js/reader/delete-fix.js \
-            || { echo 'reader deletion does not update IndexedDB immediately'; exit 1; }
+          grep -qF "libraryIdbDeleteBook(storageKey, wantedId)" js/reader/delete-fix.js \
+            || { echo 'reader deletion does not delete from IndexedDB immediately'; exit 1; }
           grep -qF "deleteCloudBook(id)" js/reader/delete-fix.js \
             || { echo 'reader deletion cloud cleanup missing'; exit 1; }
           grep -qF "__readerDurableDeleteFix" js/reader/delete-fix.js \
