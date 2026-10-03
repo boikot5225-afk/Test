@@ -1211,6 +1211,23 @@ function readerRefreshParagraphWordClasses(index = null) {
   });
 }
 
+function readerRefreshMatchingWordClasses(targetWord, lang = 'en') {
+  const root = document.getElementById('reader-chapter-text');
+  if (!root) return;
+  const target = readerNormalizeWord(targetWord, lang);
+  if (!target) return;
+  root.querySelectorAll('.reader-word').forEach(span => {
+    const spanLang = span.dataset.lang || readerCurrentLang();
+    if (readerCanonicalLang(spanLang) !== readerCanonicalLang(lang)) return;
+    const raw = span.dataset.word || span.textContent || '';
+    if (readerNormalizeWord(raw, spanLang) !== target) return;
+    const visual = readerWordVisual(raw, spanLang);
+    span.classList.remove(...READER_WORD_COLOR_CLASSES);
+    span.classList.add(visual.cls);
+    span.title = visual.title || '';
+  });
+}
+
 function readerTrackParagraphIndexSeen(index, opts = {}) {
   const book = readerCurrentBook?.();
   if (!book) return false;
@@ -3806,17 +3823,22 @@ async function readerOpenWordPanel(word, paragraphIndex = 0) {
   readerSelectedParagraphIndex = paragraphIndex;
   const activeLang = readerCurrentLang();
   readerMarkWordClicked(readerSelectedWord, activeLang);
-  // Paint only the paragraph containing the clicked word immediately (cheap),
-  // then rebuild the full chapter on the next animation frame so every other
-  // occurrence of the word also gets the updated color without blocking the UI.
+  // English chapters can contain thousands of word spans. Rebuilding the whole
+  // chapter after every tap blocks WebView's UI thread even when scheduled via
+  // requestAnimationFrame. The click only changes word-state styling, so update
+  // the live matching spans in-place and leave pagination/DOM untouched.
   readerRefreshParagraphWordClasses(paragraphIndex);
-  requestAnimationFrame(() => {
-    try { renderReaderChapter(); }
-    catch (e) {
-      console.warn('[reader word repaint] chapter render failed; keeping direct refresh', e);
-      try { readerRefreshParagraphWordClasses(paragraphIndex); } catch {}
-    }
-  });
+  if (activeLang === 'en') {
+    readerRefreshMatchingWordClasses(readerSelectedWord, activeLang);
+  } else {
+    requestAnimationFrame(() => {
+      try { renderReaderChapter(); }
+      catch (e) {
+        console.warn('[reader word repaint] chapter render failed; keeping direct refresh', e);
+        try { readerRefreshParagraphWordClasses(paragraphIndex); } catch {}
+      }
+    });
+  }
   const panel = ensureReaderWordPanel();
   panel.dataset.lang = activeLang;
   panel.classList.toggle('zh-word-panel', activeLang === 'zh');
