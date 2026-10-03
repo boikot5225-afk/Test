@@ -230,11 +230,11 @@ jobs:
           done
           unzip -p "$APK" assets/www/js/reader-app.js | grep -qF 'readerTokenizeJapaneseParagraph' \
             || { echo 'reader-app.js in the APK has no Japanese tokenizer'; exit 1; }
-          unzip -p "$APK" assets/www/js/app.js | grep -qF "from './reader-app.js?v=77.32'" \
+          unzip -p "$APK" assets/www/js/app.js | grep -qF "from './reader-app.js?v=77.42-zh-reader-quality'" \
             || { echo 'canonical reader-app URL changed unexpectedly'; exit 1; }
-          unzip -p "$APK" assets/www/js/reader/toc-upgrade.js | grep -qF "import('../reader-app.js?v=77.32')" \
+          unzip -p "$APK" assets/www/js/reader/toc-upgrade.js | grep -qF "import('../reader-app.js?v=77.42-zh-reader-quality')" \
             || { echo 'TOC module would create a second reader-app instance'; exit 1; }
-          unzip -p "$APK" assets/www/js/reader/delete-fix.js | grep -qF "import('../reader-app.js?v=77.32')" \
+          unzip -p "$APK" assets/www/js/reader/delete-fix.js | grep -qF "import('../reader-app.js?v=77.42-zh-reader-quality')" \
             || { echo 'delete module would create a second reader-app instance'; exit 1; }
           if unzip -p "$APK" assets/www/js/reader/toc-upgrade.js | grep -qF "import('../reader-app.js')"; then
             echo 'query-less TOC reader-app import leaked into APK'; exit 1
@@ -264,8 +264,8 @@ jobs:
             || { echo 'TOC persistence did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/delete-fix.js | grep -qF 'TOMBSTONES_BASE_KEY' \
             || { echo 'durable book deletion did not ship'; exit 1; }
-          unzip -p "$APK" assets/www/js/reader/delete-fix.js | grep -qF 'libraryIdbPut(storageKey, books)' \
-            || { echo 'immediate delete IndexedDB write did not ship'; exit 1; }
+          unzip -p "$APK" assets/www/js/reader/delete-fix.js | grep -qF 'libraryIdbDeleteBook(storageKey, wantedId)' \
+            || { echo 'immediate delete IndexedDB delete did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/chapter-render.js | grep -qF "import './delete-fix.js?v=1'" \
             || { echo 'delete fix loader did not ship'; exit 1; }
           unzip -p "$APK" assets/www/js/reader/library-idb-store.js | grep -qF 'IDB_READ_TIMEOUT_MS = 1200' \
