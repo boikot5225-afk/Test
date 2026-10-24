@@ -4212,26 +4212,26 @@ function readerFirebaseClientWithAuthenticatedCallable() {
 }
 
 async function readerAI(payload) {
-  // v67: reader-ai переехал с Supabase Edge Function в Firebase Callable Function.
-  // Контракт с остальным приложением сохраняем прежним: на вход task/payload, на выход готовый JSON.
-  const firebaseClient = readerFirebaseClientWithAuthenticatedCallable();
-  if (!firebaseClient?.app) {
-    throw new Error('Firebase SDK не загружен. Проверь index.html и доступ к gstatic/jsdelivr.');
-  }
-
-  try { if (!isSupabaseReady()) initSupabase(); } catch {}
-
   const task = String(payload?.task || '').trim();
   if (!task) throw new Error('readerAI: пустой task.');
 
-  // Experimental Android build: word analysis + paragraph translation are
-  // handled by the on-device OpenAI-compatible server through a native bridge.
+  // Experimental Android build: these two reader tasks are truly local-first.
+  // Resolve them before touching Firebase at all, so the experiment still
+  // works with suspended billing, no Firebase auth and even no internet.
   if (readerLocalAiSupported(payload) && readerLocalAiBridgeReady()) {
     return readerLocalAi(payload);
   }
   if (readerLocalAiSupported(payload) && location.hostname === 'appassets.androidplatform.net') {
     throw new Error('Локальный AI не запущен. Загрузи модель и запусти Server на 127.0.0.1:8080.');
   }
+
+  // Other AI tasks keep the existing Firebase/DeepSeek path unchanged.
+  const firebaseClient = readerFirebaseClientWithAuthenticatedCallable();
+  if (!firebaseClient?.app) {
+    throw new Error('Firebase SDK не загружен. Проверь index.html и доступ к gstatic/jsdelivr.');
+  }
+
+  try { if (!isSupabaseReady()) initSupabase(); } catch {}
 
   try {
     const app = firebaseClient.app();
