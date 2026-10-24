@@ -14,6 +14,7 @@ on:
       - perf/77.41-reader-core
       - feature/77.42-epub-toc
       - fix/reader-v7731-english-performance
+      - experiment/local-ai-pocketllm
     paths:
       - '.github/workflows/android-apk.yml'
       - 'android/**'
@@ -126,6 +127,21 @@ jobs:
           while IFS= read -r -d '' file; do
             node --check "$file"
           done < <(find js -type f -name '*.js' -print0)
+
+      - name: Check local AI experiment guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qF "reader/local-ai.js?v=1" js/reader-app.js \
+            || { echo 'local AI module import missing'; exit 1; }
+          grep -qF "ReaderLocalAI" android/app/src/main/java/space/saintjust/reader/stage1/MainActivity.java \
+            || { echo 'native local AI bridge is not exposed'; exit 1; }
+          grep -qF "127.0.0.1:8080/v1/chat/completions" android/app/src/main/java/space/saintjust/reader/stage1/LocalAiBridge.java \
+            || { echo 'localhost OpenAI endpoint missing'; exit 1; }
+          grep -qF "translate_paragraph" js/reader/local-ai.js \
+            || { echo 'local paragraph translation missing'; exit 1; }
+          grep -qF "reader_word" js/reader/local-ai.js \
+            || { echo 'local word analysis missing'; exit 1; }
 
       - name: Check Reader module identity
         shell: bash
