@@ -53,6 +53,7 @@ public class MainActivity extends Activity {
     private ChineseOfflineTranslateBridge chineseOfflineTranslateBridge;
     private EnglishResidualTranslateBridge englishResidualTranslateBridge;
     private EnglishContextTranslateBridge englishContextTranslateBridge;
+    private LocalAiBridge localAiBridge;
 
     private Uri pendingImportUri;
     private String pendingImportName = "";
@@ -134,6 +135,11 @@ public class MainActivity extends Activity {
         webView.addJavascriptInterface(englishResidualTranslateBridge, "ReaderEnglishResidualTranslate");
         englishContextTranslateBridge = new EnglishContextTranslateBridge(this, webView);
         webView.addJavascriptInterface(englishContextTranslateBridge, "ReaderEnglishContextTranslate");
+
+        // Experimental local LLM bridge. It talks only to localhost, so the
+        // reader can use a PocketLLM/llama.cpp server without Firebase or CORS.
+        localAiBridge = new LocalAiBridge(webView);
+        webView.addJavascriptInterface(localAiBridge, "ReaderLocalAI");
 
         // Распознавание аудио идёт минутами и должно переживать выключенный
         // экран. Страница сама договориться с Android не может — сеть выдаёт
@@ -448,6 +454,10 @@ public class MainActivity extends Activity {
         if (englishContextTranslateBridge != null) {
             englishContextTranslateBridge.shutdown();
             englishContextTranslateBridge = null;
+        }
+        if (localAiBridge != null) {
+            localAiBridge.shutdown();
+            localAiBridge = null;
         }
         if (webView != null) {
             webView.loadUrl("about:blank");
