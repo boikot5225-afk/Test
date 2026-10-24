@@ -30,6 +30,7 @@ import { createReaderPinyinControls } from './reader/pinyin.js?v=1';
 import { createJapaneseDictionary, splitJapaneseRuby } from './reader/ja-dict.js?v=1';
 import { createReaderChapterRenderer } from './reader/chapter-render.js?v=12';
 import { createReaderPagesMode } from './reader/pages-mode.js?v=4-context-wakeup';
+import { readerLocalAiSupported, readerLocalAiBridgeReady, readerLocalAi } from './reader/local-ai.js?v=1';
 import { ensureZhSegmentRanks, zhSegmentRanksReady, segmentChineseWeighted, scoreChineseSegmentation } from './reader/zh-segment-v2.js?v=1';
 import { splitTextToChapters as readerImportSplitTextToChapters,
          splitSongToChapters as readerImportSplitSongToChapters } from './reader/import-parsers.js?v=1';
@@ -4223,6 +4224,15 @@ async function readerAI(payload) {
   const task = String(payload?.task || '').trim();
   if (!task) throw new Error('readerAI: пустой task.');
 
+  // Experimental Android build: word analysis + paragraph translation are
+  // handled by the on-device OpenAI-compatible server through a native bridge.
+  if (readerLocalAiSupported(payload) && readerLocalAiBridgeReady()) {
+    return readerLocalAi(payload);
+  }
+  if (readerLocalAiSupported(payload) && location.hostname === 'appassets.androidplatform.net') {
+    throw new Error('Локальный AI не запущен. Загрузи модель и запусти Server на 127.0.0.1:8080.');
+  }
+
   try {
     const app = firebaseClient.app();
     if (typeof app?.functions !== 'function') {
@@ -4454,11 +4464,11 @@ async function readerTranslateParagraphAI(i = null, opts = {}) {
   const book = readerCurrentBook();
   const ch = book?.chapters?.[book.currentChapter || 0];
   if (!text || !book || !ch) return;
-  if (!silent) showToast('⏳ DeepSeek переводит абзац...');
+  if (!silent) showToast('⏳ Локальная модель переводит абзац...');
   try {
     const d = await readerAI({ task: 'translate_paragraph', text, sourceLang: readerBookLang(book), targetLang: 'ru' });
     const ru = d.ru || d.translation || d.text || '';
-    if (!ru) throw new Error('Пустой ответ от DeepSeek');
+    if (!ru) throw new Error('Пустой ответ от локальной модели');
     book.readerTranslations = book.readerTranslations || {};
     book.readerTranslations[`${ch.id}:${index}`] = ru;
     readerTranslationsHidden = false;
@@ -4475,8 +4485,8 @@ async function readerTranslateParagraphAI(i = null, opts = {}) {
     // than just not having this one paragraph's translation yet.
     if (silent) return;
     const msg = e?.message || String(e);
-    showToast('⚠️ DeepSeek не сработал');
-    alert('DeepSeek не сработал для перевода абзаца.\n\nСкорее всего, не развернута Supabase Edge Function reader-ai или нет DEEPSEEK_API_KEY.\n\nОшибка: ' + msg);
+    showToast('⚠️ Локальная модель не сработала');
+    alert('Локальная модель не сработала.\n\nПроверь, что модель загружена и локальный Server запущен на 127.0.0.1:8080 без API key.\n\nОшибка: ' + msg);
   }
 }
 
@@ -5600,7 +5610,7 @@ async function readerTranslateSelection() {
     panel?.classList.add('show');
     return;
   }
-  if (ruEl) ruEl.textContent = '⏳ DeepSeek переводит...';
+  if (ruEl) ruEl.textContent = '⏳ Локальная модель переводит...';
   panel?.classList.add('show');
   try {
     const d = await readerAI({ task: 'translate_paragraph', text, sourceLang: readerBookLang(readerCurrentBook?.()), targetLang: 'ru' });
