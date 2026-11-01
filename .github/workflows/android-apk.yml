@@ -138,6 +138,8 @@ jobs:
             || { echo 'native local AI bridge is not exposed'; exit 1; }
           grep -qF "127.0.0.1:8080/v1/chat/completions" android/app/src/main/java/space/saintjust/reader/stage1/LocalAiBridge.java \
             || { echo 'localhost OpenAI endpoint missing'; exit 1; }
+          grep -qF 'Authorization", "Bearer local' android/app/src/main/java/space/saintjust/reader/stage1/LocalAiBridge.java \
+            || { echo 'PocketOrca local bearer token missing'; exit 1; }
           grep -qF "translate_paragraph" js/reader/local-ai.js \
             || { echo 'local paragraph translation missing'; exit 1; }
           grep -qF "reader_word" js/reader/local-ai.js \
