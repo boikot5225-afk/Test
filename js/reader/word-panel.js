@@ -33,7 +33,7 @@ export function createReaderWordPanel({
         <button onclick="readerSpeakSelectedContext()" class="btn btn-secondary">🔊 контекст</button>
         <button onclick="readerMarkSelectedWordKnown()" class="btn btn-secondary">✓ знаю</button>
         <button onclick="readerMarkSelectedWordProblem()" class="btn btn-secondary">⚠ проблема</button>
-        <button onclick="readerTranslateWordAI(true)" class="btn btn-secondary">↻ DeepSeek</button>
+        <button onclick="readerTranslateWordAI(true)" class="btn btn-secondary">↻ Локальный AI</button>
         <button onclick="readerSendParagraphToPhrase(readerSelectedParagraphIndex)" class="btn btn-secondary">＋ фраза</button>
       </div>
       <details class="reader-word-edit" style="margin:12px 0 0">
@@ -154,7 +154,7 @@ export function createReaderWordPanel({
       known.textContent = source === 'local'
         ? 'найдено в твоей базе'
         : source === 'deepseek'
-          ? 'разобрано через DeepSeek'
+          ? 'разобрано локальной моделью'
           : 'готово';
     }
     // French-only: the verb-conjugation database (groups/aux/tense tables) is
@@ -178,7 +178,7 @@ export function createReaderWordPanel({
         <div class="reader-analysis-card ja">
           <div class="reader-analysis-kicker">${escape(posRu(filled.pos))} · японский</div>
           <div class="reader-analysis-main ja-main"><b>${escape(form)}</b></div>
-          ${jaReading ? `<div class="reader-analysis-pinyin">${escape(jaReading)}</div>` : `<div class="reader-analysis-pinyin muted">чтение не пришло — нажми ↻ DeepSeek</div>`}
+          ${jaReading ? `<div class="reader-analysis-pinyin">${escape(jaReading)}</div>` : `<div class="reader-analysis-pinyin muted">чтение не пришло — нажми ↻ Локальный AI</div>`}
           <div class="reader-analysis-ru">${meaning}</div>
           ${lemmaLine}
           <div class="reader-analysis-meta">${escape(filled.level)}${formInfo ? ' · ' + escape(formInfo) : ''}</div>
@@ -193,7 +193,7 @@ export function createReaderWordPanel({
         <div class="reader-analysis-card zh">
           <div class="reader-analysis-kicker">${escape(posRu(filled.pos))} · китайский</div>
           <div class="reader-analysis-main zh-main"><b>${escape(form)}</b></div>
-          ${pinyin ? `<div class="reader-analysis-pinyin">${escape(pinyin)}</div>` : `<div class="reader-analysis-pinyin muted">пиньинь не пришёл — нажми ↻ DeepSeek</div>`}
+          ${pinyin ? `<div class="reader-analysis-pinyin">${escape(pinyin)}</div>` : `<div class="reader-analysis-pinyin muted">пиньинь не пришёл — нажми ↻ Локальный AI</div>`}
           <div class="reader-analysis-ru">${escape(ru)}</div>
           ${lemmaLine}
           <div class="reader-analysis-meta">${escape(filled.level)}${zhNote && zhNote !== pinyin ? ' · ' + escape(zhNote) : ''}</div>
@@ -236,7 +236,7 @@ export function createReaderWordPanel({
       </div>`;
   }
 
-  function renderLoading(message = '⏳ DeepSeek разбирает слово...') {
+  function renderLoading(message = '⏳ локальная модель разбирает слово...') {
     const box = ensure().querySelector('#reader-word-analysis');
     if (box) box.innerHTML = `<div class="reader-word-loading">${escape(message)}</div>`;
   }
