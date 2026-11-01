@@ -119,7 +119,7 @@ export function readerLocalAi(payload) {
     stream: false,
     temperature: 0.1,
     top_p: 0.9,
-    max_tokens: task === 'reader_word' ? 650 : 1200,
+    max_tokens: task === 'reader_word' ? 220 : 700,
     messages: [
       {
         role: 'system',
