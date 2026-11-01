@@ -67,6 +67,30 @@ final class LocalAiBridge {
     }
 
     private static String postJson(String body) throws IOException {
+        IOException last = null;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                return postJsonOnce(body);
+            } catch (IOException e) {
+                last = e;
+                if (attempt > 0 || !isRetryableTransportError(e)) {
+                    throw e;
+                }
+            }
+        }
+        throw last == null ? new IOException("Local AI request failed") : last;
+    }
+
+    private static boolean isRetryableTransportError(IOException e) {
+        String message = String.valueOf(e.getMessage()).toLowerCase();
+        return message.contains("unexpected end of stream")
+                || message.contains("connection reset")
+                || message.contains("broken pipe")
+                || message.contains("socket closed")
+                || message.contains("eof");
+    }
+
+    private static String postJsonOnce(String body) throws IOException {
         HttpURLConnection connection = (HttpURLConnection) new URL(ENDPOINT).openConnection();
         try {
             connection.setRequestMethod("POST");
@@ -75,6 +99,8 @@ final class LocalAiBridge {
             connection.setDoOutput(true);
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             connection.setRequestProperty("Accept", "application/json");
+            // Avoid reusing a stale localhost socket after PocketOrca has closed it.
+            connection.setRequestProperty("Connection", "close");
             // PocketOrca / MobileCore use a bearer token on the local endpoint.
             // The experimental Reader build standardises on the simple local-only
             // key "local" so setup on the phone stays one line.
