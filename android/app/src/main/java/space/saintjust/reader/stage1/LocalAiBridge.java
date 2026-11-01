@@ -75,6 +75,10 @@ final class LocalAiBridge {
             connection.setDoOutput(true);
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             connection.setRequestProperty("Accept", "application/json");
+            // PocketOrca / MobileCore use a bearer token on the local endpoint.
+            // The experimental Reader build standardises on the simple local-only
+            // key "local" so setup on the phone stays one line.
+            connection.setRequestProperty("Authorization", "Bearer local");
 
             byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
             connection.setFixedLengthStreamingMode(bytes.length);
