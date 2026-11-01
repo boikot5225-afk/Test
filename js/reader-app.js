@@ -589,7 +589,7 @@ function readerNormalizeZhCoreEntry(row = {}, surface = '') {
     pos: row.pos || row.part_of_speech || row.type || '',
     level: row.level || row.hsk || row.hsk_level || 'CC-CEDICT',
     form_note: pinyin || '',
-    note: row.note || 'полный локальный CC-CEDICT: pinyin + English fallback; русский смысл — через DeepSeek/ручной кэш',
+    note: row.note || 'полный локальный CC-CEDICT: pinyin + English fallback; русский смысл — через локальный AI/ручной кэш',
     _source: row.source || 'cc-cedict-full',
     _note: 'полный локальный CC-CEDICT / data/zh_dict_core.json'
   };
@@ -3813,7 +3813,7 @@ function readerSetPanelFields(data = {}) { return readerWordPanel.setFields(data
 
 function readerRenderWordAnalysis(data = {}, source = '') { return readerWordPanel.renderAnalysis(data, source); }
 
-function readerRenderWordLoading(message = '⏳ DeepSeek разбирает слово...') { return readerWordPanel.renderLoading(message); }
+function readerRenderWordLoading(message = '⏳ Локальная модель разбирает слово...') { return readerWordPanel.renderLoading(message); }
 
 function readerRenderWordError(message) { return readerWordPanel.renderError(message); }
 
@@ -4568,14 +4568,14 @@ async function readerTranslateWordAI(forceOrOptions = true) {
     if (aiBtn) {
       aiButtonWasDisabled = !!aiBtn.disabled;
       aiBtn.disabled = true;
-      aiBtn.textContent = '⏳ DeepSeek';
+      aiBtn.textContent = '⏳ Local AI';
     }
 
     if (force) {
-      readerRenderWordLoading('⏳ DeepSeek заново разбирает слово...');
-      if (st) { st.style.display = 'block'; st.style.color = 'var(--accent)'; st.textContent = '⏳ DeepSeek готовит разбор...'; }
+      readerRenderWordLoading('⏳ Локальная модель заново разбирает слово...');
+      if (st) { st.style.display = 'block'; st.style.color = 'var(--accent)'; st.textContent = '⏳ Локальная модель готовит разбор...'; }
     } else if (st) {
-      st.style.display = 'block'; st.style.color = 'var(--accent)'; st.textContent = skipLocal ? '⏳ DeepSeek добирает русский смысл...' : '⏳ DeepSeek готовит разбор...';
+      st.style.display = 'block'; st.style.color = 'var(--accent)'; st.textContent = skipLocal ? '⏳ Локальная модель добирает русский смысл...' : '⏳ Локальная модель готовит разбор...';
     }
 
     if (!force) {
@@ -4702,19 +4702,19 @@ async function readerTranslateWordAI(forceOrOptions = true) {
     const cachedFallback = readerGetCachedContextLexical(word, context, readerCurrentLang()) || readerGetCachedLexical(word, readerCurrentLang());
     const localFallback = cachedFallback || (skipLocal ? (readerLookupChineseWord(word) || readerLookupJapaneseWord(word)) : null);
     if (localFallback) readerRenderWordAnalysis(localFallback, cachedFallback ? 'context-cache' : 'local');
-    else readerRenderWordError('DeepSeek не сработал: ' + msg);
+    else readerRenderWordError('Локальная модель не сработала: ' + msg);
     if (st) {
       st.style.display = 'block';
       st.style.color = 'var(--bad)';
       st.textContent = localFallback
-        ? '❌ DeepSeek не сработал, показан локальный словарь: ' + msg
-        : '❌ DeepSeek не сработал: ' + msg;
+        ? '❌ Локальная модель не сработала, показан локальный словарь: ' + msg
+        : '❌ Локальная модель не сработала: ' + msg;
     }
     throw e;
   } finally {
     if (aiBtn) {
       aiBtn.disabled = aiButtonWasDisabled;
-      aiBtn.textContent = '↻ DeepSeek';
+      aiBtn.textContent = '↻ Local AI';
     }
   }
 }
